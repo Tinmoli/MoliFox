@@ -1,7 +1,7 @@
 .gradle/
 .work/
 .tooling/
-MoliFox/
+/MoliFox/
 MoliFox.exe
 MoliFox-linux-*.run
 .gradle-home/
@@ -12,7 +12,7 @@ MoliFox-linux-*.run
 archive/
 release/
 .local-test/
-data/
+/data/
 *.log
 .DS_Store
 # Local-only launcher references; never publish third-party screenshots or cached source.
