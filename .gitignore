@@ -1,0 +1,19 @@
+.gradle/
+.work/
+.tooling/
+MoliFox/
+MoliFox.exe
+MoliFox-linux-*.run
+.gradle-home/
+.kotlin/
+**/build/
+.idea/
+*.iml
+archive/
+release/
+.local-test/
+data/
+*.log
+.DS_Store
+# Local-only launcher references; never publish third-party screenshots or cached source.
+docs/ui-reference/

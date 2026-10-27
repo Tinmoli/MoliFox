@@ -1,0 +1,53 @@
+name: Build MoliFox
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Prepare wrapper
+        if: runner.os == 'Linux'
+        run: chmod +x gradlew
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - name: Test and build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MOLIFOX_MINGW_BIN = 'C:\msys64\mingw64\bin'
+          .\gradlew.bat :launcher-core:test :desktop-app:portableWindows --console plain
+      - name: Test and build Linux
+        if: runner.os == 'Linux'
+        run: ./gradlew :launcher-core:test :desktop-app:portableLinux --console plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoliFox-${{ runner.os }}-x64
+          path: |
+            MoliFox.exe
+            docs/validation/windows-package.sha256
+            MoliFox-linux-x64.run
+            docs/validation/linux-package.sha256
+            LICENSE
+            THIRD_PARTY.md
+            README.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-results-${{ runner.os }}
+          path: launcher-core/build/reports/tests/test/
