@@ -58,6 +58,15 @@ fun main(): Unit = runBlocking {
 private suspend fun runRealGameSmoke() {
     check(!GraphicsEnvironment.isHeadless()) { "Real game acceptance requires a graphical desktop" }
     val testRoot = Path.of(requireNotNull(System.getProperty("molifox.test.dir")))
+    val seedRoot = System.getProperty("molifox.game.seedRoot", "").takeIf { it.isNotBlank() }
+    if (seedRoot != null) {
+        val source = Path.of(seedRoot).toAbsolutePath().normalize()
+        require(source != testRoot && !source.startsWith(testRoot) && !testRoot.startsWith(source))
+        for (folder in listOf("assets", "libraries")) {
+            val cached = source.resolve(folder)
+            if (cached.isDirectory()) copyTree(cached, testRoot.resolve(".minecraft/$folder"))
+        }
+    }
     val profileRoot = testRoot.resolve("profile")
     val version = System.getProperty("molifox.game.version", "1.20.1")
     val loader = LoaderType.valueOf(System.getProperty("molifox.game.loader", "Vanilla"))
@@ -72,7 +81,9 @@ private suspend fun runRealGameSmoke() {
             "loader" to loader.name,
             "mainMenuConfirmed" to false,
             "installationMode" to
-                if (prepared) "cross-prepared-offline-launch" else "online-install",
+                if (prepared) "cross-prepared-offline-launch"
+                else if (seedRoot != null) "online-install-with-copied-public-cache"
+                else "online-install",
         )
     var gameHandle: ProcessHandle? = null
     LauncherController(dataDirectory = profileRoot).use { controller ->
@@ -367,6 +378,7 @@ internal object GameWindowCapture {
         }
         Robot().apply {
             mouseMove(window.rectangle.x + x, window.rectangle.y + y)
+            delay(300)
             mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)
             delay(120)
             mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK)

@@ -28,7 +28,7 @@ class LaunchLifecycleTest {
         source.writeText(
             """import java.nio.file.*; public class CommandFixture { public static void main(String[] args) throws Exception {
             String mode=args[0];
-            if(mode.equals("wait")) { Files.writeString(Path.of("waiting.pid"), Long.toString(ProcessHandle.current().pid())); Thread.sleep(30000); return; }
+            if(mode.equals("wait")) { Files.writeString(Path.of("waiting.pid.tmp"), Long.toString(ProcessHandle.current().pid())); Files.move(Path.of("waiting.pid.tmp"), Path.of("waiting.pid")); Thread.sleep(30000); return; }
             String entry=mode.equals("post") ? "post:"+System.getenv("MOLIFOX_EXIT_CODE") : mode;
             Files.writeString(Path.of("order.txt"), entry+"\n", StandardOpenOption.CREATE,StandardOpenOption.APPEND);
             System.out.println("COMMAND_SECRET="+System.getenv("SAMPLE_API_KEY"));

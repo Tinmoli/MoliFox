@@ -49,6 +49,8 @@ tasks.register<JavaExec>("gameSmoke") {
     systemProperty("molifox.game.version", providers.gradleProperty("gameVersion").getOrElse("1.20.1"))
     systemProperty("molifox.game.loader", providers.gradleProperty("gameLoader").getOrElse("Vanilla"))
     systemProperty("molifox.game.loaderVersion", providers.gradleProperty("gameLoaderVersion").getOrElse(""))
+    systemProperty("molifox.game.seedRoot", providers.gradleProperty("gameSeedRoot").getOrElse(""))
+    systemProperty("molifox.game.javaPath", providers.gradleProperty("gameJavaPath").getOrElse(""))
     systemProperty("molifox.game.downloadSource", providers.gradleProperty("gameDownloadSource").getOrElse("official"))
     systemProperty("molifox.game.windowMode", providers.gradleProperty("gameWindowMode").getOrElse("custom"))
     systemProperty("molifox.game.report", rootProject.file("docs/validation/real-game-${System.getProperty("os.name").lowercase().substringBefore(' ')}-${providers.gradleProperty("gameLoader").getOrElse("Vanilla").lowercase()}.json").absolutePath)

@@ -392,7 +392,8 @@ public final class UiSmoke {
                     List<AccessibleContext> nodes = new ArrayList<>();
                     walk(window.getAccessibleContext(), 0, nodes);
                     for (AccessibleContext node : nodes) {
-                        if (!javax.accessibility.AccessibleRole.PUSH_BUTTON.equals(node.getAccessibleRole())) continue;
+                        if (!javax.accessibility.AccessibleRole.PUSH_BUTTON.equals(node.getAccessibleRole()) &&
+                            !javax.accessibility.AccessibleRole.COMBO_BOX.equals(node.getAccessibleRole())) continue;
                         if (isolationTitles.contains(node.getAccessibleName()) && componentBounds(node) != null) {
                             found.set(node);
                             return;
@@ -779,7 +780,7 @@ public final class UiSmoke {
         click(robot, "移除游戏目录");
         waitFor("移除目录「" + fixtureName + "」？");
         clickTopButton(robot, "移除目录记录");
-        waitFor(MAIN_INSTANCE_NAME);
+        waitFor("启动 " + MAIN_INSTANCE_NAME);
         click(robot, "更多操作");
         click(robot, "管理实例");
         waitFor("基本信息");
@@ -933,7 +934,7 @@ public final class UiSmoke {
         waitFor("游戏实例");
         click(robot, "选择游戏目录");
         chooseDirectory(fixture.toFile());
-        waitFor("1.20.1");
+        waitFor("启动 1.20.1");
         System.out.println(
             "NEW_UI_STEPS_OK instance-saves isolation-change move-dialog saves-dir=" + saves);
     }
@@ -954,7 +955,10 @@ public final class UiSmoke {
         json.getAsJsonArray("instances").get(0).getAsJsonObject().addProperty("loader", "Fabric");
         json.getAsJsonArray("instances").get(0).getAsJsonObject().addProperty("loaderVersion", "0.19.5");
         Files.writeString(config, new com.google.gson.Gson().toJson(json));
-        var skin = ImageIO.read(UiSmoke.class.getResourceAsStream("/icons/loaders/steve.png"));
+        var skin = new java.awt.image.BufferedImage(64, 64, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        var drawing = skin.createGraphics();
+        drawing.drawImage(ImageIO.read(UiSmoke.class.getResourceAsStream("/icons/loaders/steve.png")), 0, 0, null);
+        drawing.dispose();
         for (int x = 8; x < 16; x++) for (int y = 8; y < 16; y++) skin.setRGB(x, y, 0xff36b5a5);
         String key = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(texture.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         Path cached = root.resolve("profile/cache/skins/" + key + ".png");
@@ -1003,7 +1007,8 @@ public final class UiSmoke {
         click(robot, "更新日志"); waitUntilGone("选择推荐");
         capture(robot, target, new File(output.getParentFile(), "MoliFox-download-changelog.png"), true);
         click(robot, "版本列表"); click(robot, "选择推荐");
-        click(robot, "下一步"); waitFor("开始安装");
+        click(robot, "下载", false); waitFor("快捷位置");
+        click(robot, "选择"); waitUntilGone("快捷位置"); waitFor("开始安装");
         waitFor("已匹配");
         if (!waitFor("开始安装").getAccessibleComponent().isEnabled())
             throw new IllegalStateException("Compatible selected resource version did not produce an installable plan");
@@ -1326,7 +1331,7 @@ public final class UiSmoke {
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-download-settings.png"), true);
                 click(robot, "实例");
                 {
-                    click(robot, "选择游戏目录"); chooseDirectory(fixture.toFile()); waitFor("1.20.1");
+                    click(robot, "选择游戏目录"); chooseDirectory(fixture.toFile()); waitFor("启动 1.20.1");
                     capture(robot, target, new File(output.getParentFile(), "MoliFox-game-directories.png"), true);
                     // 列表/网格切换只剩图标：按工具行里「收藏」右侧的两个按钮定位。
                     clickViewMode(robot, true); waitFor("管理");
@@ -1345,7 +1350,7 @@ public final class UiSmoke {
                     click(robot, "更多操作"); click(robot, "查看启动参数"); waitFor("启动参数预览");
                     capture(robot, target, new File(output.getParentFile(), "MoliFox-launch-preview.png"), true);
                     click(robot, "关闭预览");
-                    // 「安装与更新」页签已并入「概览」：维护卡片就是其中的「组件维护」。
+                    // 组件维护位于实例设置页。
                     clickRail(robot, "设置"); waitFor("组件维护");
                     capture(robot, target, new File(output.getParentFile(), "MoliFox-instance-install.png"), true);
                     click(robot, "模组"); waitFor("茉狐测试模组");
@@ -1397,17 +1402,16 @@ public final class UiSmoke {
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-install.png"), true);
                 click(robot, "模组"); robot.delay(7000);
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-discover.png"), true);
-                click(robot, "资源包"); waitFor("安装");
+                click(robot, "资源包"); waitFor("选择版本");
                 // Scroll the grid so the first card's clipped install button is visible.
                 robot.mouseMove(target.getX()+650,target.getY()+540); robot.mouseWheel(2); robot.delay(700);
-                click(robot, "安装"); waitFor("展开项目介绍");
-                click(robot, "正式版");
-                // 「打开项目网页」会交给系统浏览器（本测试窗口之外），只断言入口存在且可用，不点击。
-                AccessibleContext projectPage = waitFor("打开项目网页");
+                click(robot, "选择版本"); waitFor("项目详情 · 先选游戏与资源版本，再安装");
+                // 外链交给系统浏览器；验证入口，不操作用户已有浏览器。
+                AccessibleContext projectPage = waitFor("MC 百科搜索");
                 if (!projectPage.getAccessibleComponent().isEnabled()) throw new IllegalStateException("Install dialog project website button disabled");
                 System.out.println("INSTALL_DIALOG_PROJECT_WEB_OK present=true enabled=true clicked=false");
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-content-versions.png"), true);
-                click(robot, "展开项目介绍"); waitFor("收起项目介绍"); click(robot, "取消");
+                click(robot, "关闭", false);
                 click(robot, "设置"); click(robot, "日志"); waitFor("运行日志");
                 click(robot, "运行日志"); waitFor("自动滚动");
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-logs.png"), true);

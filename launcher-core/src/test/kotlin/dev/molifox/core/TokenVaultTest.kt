@@ -104,6 +104,7 @@ class TokenVaultTest {
     @Test
     fun `failed migration keeps legacy entry`() {
         val store = store()
+        store.directories.credentials.deleteExisting()
         store.dataDirectory.resolve("credentials").writeText("directory collision")
         var removed = false
         val legacy =

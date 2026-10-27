@@ -108,7 +108,7 @@ class InstanceToolsTest {
         assertEquals(PackOwnershipStore.read(root, store)!!.files, copiedLedger.files)
         val copiedArchive = Path.of(copy.packFile)
         assertNotEquals(archive, copiedArchive)
-        assertTrue(copiedArchive.startsWith(store.dataDirectory.resolve("packs")))
+        assertTrue(copiedArchive.startsWith(store.directories.packArchives))
         assertEquals("archive-v1", copiedArchive.readText())
         assertEquals(2, store.data.instances.size)
     }

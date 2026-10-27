@@ -627,7 +627,7 @@ class PackUpgradeTest {
             val updated = store.instance(instance.id)
             assertTrue(updated.installed)
             val saved = Path.of(updated.packFile)
-            assertTrue(saved.startsWith(store.dataDirectory.resolve("packs")))
+            assertTrue(saved.startsWith(store.directories.packArchives))
             assertEquals(digest(next, "SHA-256"), digest(saved, "SHA-256"))
             val ownership = PackOwnershipStore.read(root, store)
             assertNotNull(ownership)
