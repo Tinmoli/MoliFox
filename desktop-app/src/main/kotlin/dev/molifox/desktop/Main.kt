@@ -127,10 +127,11 @@ fun main() {
         try {
             val platform = DesktopPlatform()
             val storage = StartupStorageResolver().resolve(platform.defaultDataDirectory)
-            java.nio.file.Files.createDirectories(storage.resolve("cache/skiko"))
+            val nativeDirectory = storage.resolve("dependencies/native")
+            java.nio.file.Files.createDirectories(nativeDirectory)
             System.setProperty(
                 "skiko.data.path",
-                storage.resolve("cache/skiko").toString(),
+                nativeDirectory.toString(),
             )
             LauncherController(platform, storage)
         } catch (error: Exception) {

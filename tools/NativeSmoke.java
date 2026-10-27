@@ -87,6 +87,12 @@ public final class NativeSmoke {
                 if (payloads.noneMatch(path -> path.getFileName().toString().endsWith(".jar")))
                     throw new IllegalStateException("Launcher payload was not placed under dependencies");
             }
+            if (Files.exists(root.resolve("MoliFox/cache/skiko")))
+                throw new IllegalStateException("The desktop entry point recreated the obsolete native cache");
+            try (var natives = Files.list(root.resolve("MoliFox/dependencies/native"))) {
+                if (natives.noneMatch(Files::isRegularFile))
+                    throw new IllegalStateException("Native UI libraries are missing from dependencies/native");
+            }
             if (args.length > 2 && args[2].equals("offline") && Files.isDirectory(root.resolve("MoliFox/runtimes"))) {
                 try (var runtimes = Files.list(root.resolve("MoliFox/runtimes"))) {
                     if (runtimes.findAny().isPresent()) throw new IllegalStateException("Offline system-Java test unexpectedly prepared a runtime");
