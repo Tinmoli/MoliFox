@@ -1,3 +1,5 @@
+// 负责远端资源缩略图的缓存与显示。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Image

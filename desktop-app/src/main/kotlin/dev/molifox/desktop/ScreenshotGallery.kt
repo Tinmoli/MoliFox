@@ -1,3 +1,5 @@
+// 负责截图库筛选、预览和文件操作。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Image

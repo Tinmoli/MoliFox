@@ -1,3 +1,5 @@
+// 负责皮肤库、三维预览和正版上传界面。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.background

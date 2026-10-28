@@ -1,3 +1,5 @@
+// 负责外观主题、背景、透明度与动画偏好。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.Crossfade
@@ -417,8 +419,7 @@ private fun ThemePreferences(
         ) { value ->
             apply { it.copy(backgroundBlur = value) }
         }
-        if (!settings.glassEnabled)
-            MutedText("需开启玻璃效果后这些滑块才生效。", Modifier.padding(top = 4.dp))
+        if (!settings.glassEnabled) MutedText("需开启玻璃效果后这些滑块才生效。", Modifier.padding(top = 4.dp))
     }
     var removing by remember { mutableStateOf(false) }
     val backgroundOn = settings.backgroundPath.isNotBlank()
@@ -497,8 +498,7 @@ private fun ThemePreferences(
                 enabled = backgroundOn && settings.backgroundFit != "stretch",
             )
         }
-        if (!backgroundOn)
-            MutedText("未选择背景图时使用纯色背景。", Modifier.padding(top = 4.dp))
+        if (!backgroundOn) MutedText("未选择背景图时使用纯色背景。", Modifier.padding(top = 4.dp))
     }
     // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行（C-11）。
     if (removing)

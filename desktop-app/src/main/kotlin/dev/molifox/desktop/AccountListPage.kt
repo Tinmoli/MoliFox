@@ -1,10 +1,12 @@
+// 负责账户列表、账户切换和账户操作入口。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,23 +46,20 @@ import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 
 /**
- * 账户列表页（P2）：左侧常驻 220dp 添加入口栏 + 右侧账户卡片栏。
+ * 账户列表页：左侧常驻 220dp 添加入口栏 + 右侧账户卡片栏。
  *
- * - 顶栏固定：返回箭头 + 「账户列表」标题（右侧不再有「添加账户」菜单按钮）；
- * - 左栏四条入口逐行铺满宽度：微软账户 / 离线账户 / 认证服务器 / 添加认证服务器，
- *   行高 40dp、图标 + 文字、悬停淡入行底色，与全站列表行同一节奏；
- *   认证服务器入口直接列出已保存的服务器（默认含核心内置的 LittleSkin），
- *   添加认证服务器入口打开同一个对话框并把焦点放在地址框上；
+ * - 顶栏固定：返回箭头 + 「账户列表」标题；
+ * - 左栏四条入口逐行铺满宽度：微软账户 / 离线账户 / 认证服务器 / 添加认证服务器， 行高 40dp、图标 + 文字、悬停淡入行底色，与全站列表行同一节奏；
+ *   认证服务器入口直接列出已保存的服务器（默认含核心内置的 LittleSkin）， 添加认证服务器入口打开同一个对话框并把焦点放在地址框上；
  * - 右栏保持原样：单选圆点、40dp 头像、名字 + 类型、悬停才出现的删除；
  * - 列表为空时右栏居中显示史蒂夫头像 + 「没有游戏账户」+ 一行「从左侧添加账户」提示。
  *
- * 认证服务器入口打开 [AuthlibLoginDialog]：先校验并保存 Yggdrasil 服务器，再用用户名与密码登录；
- * 对话框保存账户后会写入同一个 store，本页直接随 [LauncherState] 重新组合，无需回调刷新。
+ * 认证服务器入口打开 [AuthlibLoginDialog]：先校验并保存 Yggdrasil 服务器，再用用户名与密码登录； 对话框保存账户后会写入同一个 store，本页直接随
+ * [LauncherState] 重新组合，无需回调刷新。
  *
- * 切换与删除直接复用核心的 AccountService：[AccountService.select] 切换当前账户，
- * [AccountService.remove] 在删除当前账户时自动落到剩下的第一个账户上（列表空了就是无账户态）。
- * 皮肤概览与刷新已按用户反馈移回开始页的账户卡，这里只留删除，避免同一操作存在两套入口。
- * 视觉沿用本项目樱花粉：白卡片、1dp 细边、圆角 6，当前账户只多一圈主题色描边与实心圆点。
+ * 切换与删除直接复用核心的 AccountService：[AccountService.select] 切换当前账户， [AccountService.remove]
+ * 在删除当前账户时自动落到剩下的第一个账户上（列表空了就是无账户态）。 皮肤概览与刷新由开始页账户卡提供，此页提供删除入口。 视觉沿用本项目樱花粉：白卡片、1dp 细边、圆角
+ * 6，当前账户只多一圈主题色描边与实心圆点。
  */
 @Composable
 fun ColumnScope.AccountListPage(
@@ -196,8 +195,7 @@ fun ColumnScope.AccountListPage(
         }
     }
 
-    if (offlineDialog)
-        OfflineAccountDialog(actions) { offlineDialog = false }
+    if (offlineDialog) OfflineAccountDialog(actions) { offlineDialog = false }
 
     authlibEntry?.let { entry ->
         // 同一个对话框：入口决定先看已保存列表，还是直接填地址。
@@ -302,9 +300,7 @@ fun ColumnScope.AccountListPage(
                     // 重新复制同样要给结果：成功提示已复制，失败继续显示手动复制的引导。
                     val ok = copyToClipboard(code.userCode)
                     copied = ok
-                    actions.controller.store.notify(
-                        if (ok) "验证码已复制" else "验证码复制失败，请手动复制"
-                    )
+                    actions.controller.store.notify(if (ok) "验证码已复制" else "验证码复制失败，请手动复制")
                 }) {
                     Text("重新复制", fontSize = 13.sp)
                 }
@@ -321,8 +317,8 @@ fun ColumnScope.AccountListPage(
 private val addAccountRowHeight = 40.dp
 
 /**
- * 左栏添加入口：整行铺满宽度、圆角 6、16dp 图标 + 13sp 文字、左侧 10dp 内边距。
- * 悬停时行底色按 120ms 淡入（与账户卡片同一套 [rowHoverColor]），禁用行降到 38% 且不响应悬停与点击。
+ * 左栏添加入口：整行铺满宽度、圆角 6、16dp 图标 + 13sp 文字、左侧 10dp 内边距。 悬停时行底色按 120ms 淡入（与账户卡片同一套
+ * [rowHoverColor]），禁用行降到 38% 且不响应悬停与点击。
  */
 @Composable
 private fun AddAccountRow(
@@ -371,10 +367,7 @@ private fun AddAccountRow(
     }
 }
 
-/**
- * 账户卡片副标题：外置认证账户显示服务器名（已保存的名称，否则退回主机名）。
- * 服务器记录被移除时核心不会抛错，仍识别不出时退回账户上的原始地址，列表照常渲染。
- */
+/** 账户卡片副标题：外置认证账户显示服务器名（已保存的名称，否则退回主机名）。 服务器记录被移除时核心不会抛错，仍识别不出时退回账户上的原始地址，列表照常渲染。 */
 private fun accountSubtitle(account: Account, actions: UiActions): String =
     when (account.type) {
         AccountType.Microsoft -> "微软账户"
@@ -426,7 +419,7 @@ private fun AccountCard(
                 onClickLabel = "切换为当前账户",
                 onClick = onSelect,
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             RadioMark(current)
@@ -462,11 +455,7 @@ private fun AccountCard(
     }
 }
 
-/**
- * 行尾操作：悬停才淡入的「删除」，宽度固定由外层占位，不推挤名字列。
- * 皮肤概览与刷新已移回开始页账户卡（用户反馈），列表里只保留删除；
- * 切换不单独放按钮：整张卡片本身就是单选行，点卡片即切换。
- */
+/** 行尾操作：悬停才淡入的「删除」，宽度固定由外层占位，不推挤名字列。 皮肤概览与刷新由开始页账户卡提供； 切换不单独放按钮：整张卡片本身就是单选行，点卡片即切换。 */
 @Composable
 private fun AccountRowActions(visible: Boolean, onDelete: () -> Unit) {
     AnimatedVisibility(
@@ -500,7 +489,7 @@ private fun RadioMark(current: Boolean) {
     }
 }
 
-/** 离线账户创建：沿用原来的 3–16 位字母、数字或下划线校验，添加后核心自动切为当前账户。 */
+/** 离线账户创建：校验名称为 3–16 位字母、数字或下划线校验，添加后核心自动切为当前账户。 */
 @Composable
 private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
     var playerName by remember { mutableStateOf("") }
@@ -539,15 +528,11 @@ private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
     }
 }
 
-/**
- * 复制文本到系统剪贴板。AWT 在剪贴板被占用或没有可用剪贴板时会抛异常，
- * 这里统一折算成布尔结果，交给对话框显示「验证码复制失败，请手动复制」而不是静默失败。
- */
-private fun copyToClipboard(text: String): Boolean =
-    runCatching {
-        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-    }
-        .isSuccess
+/** 复制文本到系统剪贴板。AWT 在剪贴板被占用或没有可用剪贴板时会抛异常， 这里统一折算成布尔结果，交给对话框显示「验证码复制失败，请手动复制」而不是静默失败。 */
+private fun copyToClipboard(text: String): Boolean = runCatching {
+    Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+}
+    .isSuccess
 
 /** 微软登录流程已经结束的提示：成功、验证码过期、被拒绝或失败都要收掉屏幕上的验证码。 */
 private fun loginSettled(toast: String?): Boolean =

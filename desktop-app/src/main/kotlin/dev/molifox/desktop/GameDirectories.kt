@@ -1,3 +1,5 @@
+// 负责游戏目录的选择、登记和管理界面。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.background
@@ -19,10 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 
-/**
- * 游戏目录控件：34dp 工具行（下拉 + 选择 / 刷新 / 解绑）+ 44dp 目录行。
- * 开始页之外的实例页与设置页共用，路径一律 12sp 单行省略。
- */
+/** 游戏目录控件：34dp 工具行（下拉 + 选择 / 刷新 / 解绑）+ 44dp 目录行。 开始页之外的实例页与设置页共用，路径一律 12sp 单行省略。 */
 @Composable
 fun GameDirectoryControls(state: LauncherState, actions: UiActions) {
     val selected = state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }
@@ -37,9 +36,10 @@ fun GameDirectoryControls(state: LauncherState, actions: UiActions) {
             Icon(Icons.Outlined.FolderOpen, null, Modifier.size(16.dp), MutedGreen)
             CompactSelect(
                 selected?.id.orEmpty(),
-                listOf("" to "MoliFox 默认目录") +
-                    state.data.gameDirectories.map { it.id to it.name },
-                { id -> actions.run { actions.controller.selectGameDirectory(id.ifBlank { null }) } },
+                listOf("" to "MoliFox 默认目录") + state.data.gameDirectories.map { it.id to it.name },
+                { id ->
+                    actions.run { actions.controller.selectGameDirectory(id.ifBlank { null }) }
+                },
                 Modifier.weight(1f),
                 enabled = !busy,
             )
@@ -72,17 +72,19 @@ fun GameDirectoryControls(state: LauncherState, actions: UiActions) {
             onRemove = if (selected != null) ({ removing = selected }) else null,
         )
         // 其它目录：点击整行或行尾图标都能设为默认
-        state.data.gameDirectories.filter { it.id != selected?.id }.forEach { directory ->
-            DirectoryRow(
-                name = directory.name,
-                path = directory.path,
-                current = false,
-                onMakeDefault = {
-                    actions.run { actions.controller.selectGameDirectory(directory.id) }
-                },
-                onRemove = { removing = directory },
-            )
-        }
+        state.data.gameDirectories
+            .filter { it.id != selected?.id }
+            .forEach { directory ->
+                DirectoryRow(
+                    name = directory.name,
+                    path = directory.path,
+                    current = false,
+                    onMakeDefault = {
+                        actions.run { actions.controller.selectGameDirectory(directory.id) }
+                    },
+                    onRemove = { removing = directory },
+                )
+            }
     }
     removing?.let { directory ->
         AlertDialog(
@@ -161,7 +163,10 @@ internal fun CompactSelect(
                                 else MaterialTheme.colorScheme.onSurface,
                         )
                     },
-                    { onSelect(id); expanded = false },
+                    {
+                        onSelect(id)
+                        expanded = false
+                    },
                     modifier =
                         Modifier.background(
                             if (current) selectedRowBackground() else Color.Transparent

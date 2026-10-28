@@ -1,3 +1,5 @@
+// 负责实例自定义图标与列表图形。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Image

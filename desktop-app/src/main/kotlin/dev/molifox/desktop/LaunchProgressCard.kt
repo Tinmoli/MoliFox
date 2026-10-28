@@ -1,3 +1,5 @@
+// 负责游戏启动进度、阶段和错误反馈。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -34,25 +36,30 @@ import kotlinx.coroutines.delay
 /**
  * 开始页的启动浮窗状态。
  *
- * 这里只记录「哪个任务、哪个实例、从何时开始」，阶段与百分比一律读 [DownloadJob] 的真实进度（由
- * `JobContext.progress` 写入），不另造一套启动进度模型。状态挂在 `LaunchPage` 的 `remember` 上，
- * 离开页面即随组合释放（启动任务本身仍在任务队列里继续）。
+ * 这里只记录「哪个任务、哪个实例、从何时开始」，阶段与百分比一律读 [DownloadJob] 的真实进度（由 `JobContext.progress` 写入），不另造一套启动进度模型。状态挂在
+ * `LaunchPage` 的 `remember` 上， 离开页面即随组合释放（启动任务本身仍在任务队列里继续）。
  */
 class LaunchCardState {
     var jobId by mutableStateOf<String?>(null)
         private set
+
     var instanceId by mutableStateOf("")
         private set
+
     var instanceName by mutableStateOf("")
         private set
+
     var startedAtMillis by mutableLongStateOf(0L)
         private set
+
     /** `controller.launch()` 同步抛出的错误（尚未生成任务时也要在卡片里说明原因）。 */
     var localError by mutableStateOf<String?>(null)
         private set
+
     /** 任务被「清除已结束任务」等操作移除后，卡片仍保留最后一帧真实进度。 */
     var lastJob by mutableStateOf<DownloadJob?>(null)
         private set
+
     /** 是否真的看到过游戏进程运行：用来区分「上一次退出事件」和本次启动。 */
     var sawRunning by mutableStateOf(false)
         private set
@@ -134,8 +141,7 @@ private fun stagePhases(job: DownloadJob?): List<LaunchStagePhase> {
 /**
  * 启动进度浮窗：360dp 宽、约 220dp 高的圆角卡片，悬浮在开始页右下角。
  *
- * 阶段行三态：等待中灰色空心圆 / 进行中主题色箭头（脉动）/ 已完成勾选；失败时追加红色错误块与
- * 「重试」「查看日志」，成功时显示「已启动」并在 1.5 秒后自动收起。
+ * 阶段行三态：等待中灰色空心圆 / 进行中主题色箭头（脉动）/ 已完成勾选；失败时追加红色错误块与 「重试」「查看日志」，成功时显示「已启动」并在 1.5 秒后自动收起。
  */
 @Composable
 fun LaunchProgressCard(
@@ -167,8 +173,7 @@ fun LaunchProgressCard(
             delay(500)
         }
     }
-    val elapsed =
-        if (startedAtMillis <= 0L) 0L else (now - startedAtMillis).coerceAtLeast(0L)
+    val elapsed = if (startedAtMillis <= 0L) 0L else (now - startedAtMillis).coerceAtLeast(0L)
 
     // 成功停留 1.5 秒再收起；取消后稍作停留说明结果。
     LaunchedEffect(status, error) {
@@ -240,7 +245,7 @@ fun LaunchProgressCard(
                         .clip(CircleShape)
                         .background(
                             (if (failed) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.primary)
+                                else MaterialTheme.colorScheme.primary)
                                 .copy(alpha = .12f)
                         ),
                     contentAlignment = Alignment.Center,
@@ -341,8 +346,7 @@ fun LaunchProgressCard(
                     ) {
                         Text(
                             failure ?: "启动失败，请查看日志",
-                            Modifier.fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
                             color = MaterialTheme.colorScheme.error,
@@ -419,8 +423,7 @@ private fun LaunchStageRow(title: String, phase: LaunchStagePhase) {
             title,
             fontSize = 12.sp,
             fontWeight =
-                if (phase == LaunchStagePhase.Active) FontWeight.SemiBold
-                else FontWeight.Normal,
+                if (phase == LaunchStagePhase.Active) FontWeight.SemiBold else FontWeight.Normal,
             color =
                 when (phase) {
                     LaunchStagePhase.Waiting -> colors.onSurfaceVariant.copy(alpha = .72f)

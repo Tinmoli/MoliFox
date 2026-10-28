@@ -1,3 +1,5 @@
+// 负责资源介绍和日志的 Markdown 文本显示。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.background
@@ -379,7 +381,8 @@ private fun buildInlineMarkup(source: String, palette: MarkdownPalette): InlineM
 private class InlineRenderer(private val palette: MarkdownPalette) {
     private val builder = AnnotatedString.Builder()
     private val links = mutableListOf<InlineLink>()
-    private val linkStyle = SpanStyle(color = palette.primary, textDecoration = TextDecoration.Underline)
+    private val linkStyle =
+        SpanStyle(color = palette.primary, textDecoration = TextDecoration.Underline)
     private val codeStyle =
         SpanStyle(
             fontFamily = FontFamily.Monospace,
@@ -418,7 +421,11 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
                     current == '!'
             // 连续匹配失败时放弃该类标记，避免病态输入造成回溯风暴。
             val match =
-                if (marker && depth < MAX_INLINE_DEPTH && (failures[current] ?: 0) < MAX_MARKER_FAILURES)
+                if (
+                    marker &&
+                        depth < MAX_INLINE_DEPTH &&
+                        (failures[current] ?: 0) < MAX_MARKER_FAILURES
+                )
                     inlineMatchAt(source, cursor)
                 else null
             if (match == null) {
@@ -431,17 +438,30 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
             when (match.kind) {
                 InlineKind.Code -> emit(match.text, style + codeStyle, link)
                 InlineKind.Bold ->
-                    scan(match.text, style + SpanStyle(fontWeight = FontWeight.SemiBold), link, depth + 1)
+                    scan(
+                        match.text,
+                        style + SpanStyle(fontWeight = FontWeight.SemiBold),
+                        link,
+                        depth + 1,
+                    )
                 InlineKind.BoldItalic ->
                     scan(
                         match.text,
                         style +
-                            SpanStyle(fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Italic),
+                            SpanStyle(
+                                fontWeight = FontWeight.SemiBold,
+                                fontStyle = FontStyle.Italic,
+                            ),
                         link,
                         depth + 1,
                     )
                 InlineKind.Italic ->
-                    scan(match.text, style + SpanStyle(fontStyle = FontStyle.Italic), link, depth + 1)
+                    scan(
+                        match.text,
+                        style + SpanStyle(fontStyle = FontStyle.Italic),
+                        link,
+                        depth + 1,
+                    )
                 InlineKind.Strike ->
                     scan(
                         match.text,
@@ -498,12 +518,18 @@ private fun inlineMatchAt(source: String, index: Int): InlineMatch? {
                 previous.isLetterOrDigit() -> null
                 source.startsWith("__", index) ->
                     emphasisMatchAt(source, index, boldUnderscorePattern, InlineKind.Bold)
-                        ?: emphasisMatchAt(source, index, italicUnderscorePattern, InlineKind.Italic)
+                        ?: emphasisMatchAt(
+                            source,
+                            index,
+                            italicUnderscorePattern,
+                            InlineKind.Italic,
+                        )
                 else -> emphasisMatchAt(source, index, italicUnderscorePattern, InlineKind.Italic)
             }
         }
         '!' ->
-            if (source.startsWith("![", index)) linkMatchAt(source, index, imagePattern, InlineKind.Image)
+            if (source.startsWith("![", index))
+                linkMatchAt(source, index, imagePattern, InlineKind.Image)
             else null
         '[' -> linkMatchAt(source, index, linkPattern, InlineKind.Link)
         else -> null
@@ -559,8 +585,7 @@ private fun safeUrl(raw: String?): String? {
 
 private fun urlHost(url: String): String {
     val rest = url.substringAfter("://", url)
-    val host =
-        rest.substringBefore('/').substringBefore('?').substringBefore('#').ifBlank { "链接" }
+    val host = rest.substringBefore('/').substringBefore('?').substringBefore('#').ifBlank { "链接" }
     return host.take(48)
 }
 
@@ -586,8 +611,7 @@ private fun MarkdownBlockView(
                 source = block.text,
                 palette = palette,
                 modifier =
-                    Modifier.fillMaxWidth()
-                        .padding(top = if (block.level <= 2) 4.dp else 2.dp),
+                    Modifier.fillMaxWidth().padding(top = if (block.level <= 2) 4.dp else 2.dp),
                 style =
                     body.copy(
                         fontSize = size,
@@ -768,8 +792,7 @@ private fun splitImageSegments(source: String): List<ImageSegment> {
     for (match in imagePattern.findAll(source)) {
         if (match.range.first > cursor)
             segments += ImageSegment.Text(source.substring(cursor, match.range.first))
-        segments +=
-            ImageSegment.Image(match.groupValues[1].trim(), match.groupValues[2].trim())
+        segments += ImageSegment.Image(match.groupValues[1].trim(), match.groupValues[2].trim())
         cursor = match.range.last + 1
     }
     if (cursor < source.length) segments += ImageSegment.Text(source.substring(cursor))

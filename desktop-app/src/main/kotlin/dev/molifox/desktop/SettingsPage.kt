@@ -1,3 +1,5 @@
+// 负责启动、下载、Java 和通用设置表单。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
@@ -100,8 +102,7 @@ private fun settingControl(title: String, content: @Composable () -> Unit) =
 private fun settingNote(text: String) = SettingBlock(text, "") { MutedText(text) }
 
 /**
- * 还原默认配置的取值：设置页负责的选项全部回到出厂值。
- * 游戏目录、游戏目录语义、正版登录身份与 CurseForge Key 不属于本页，保持原样；
+ * 还原默认配置的取值：设置页负责的选项全部回到出厂值。 游戏目录、游戏目录语义、正版登录身份与 CurseForge Key 不属于本页，保持原样；
  * 已导入的字体、背景图片属于文件资产，只重置它们的选项，不删除文件本身。
  */
 private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): LauncherSettings {
@@ -183,7 +184,7 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
     val downloadCards = downloadSettingCards(actions, writer, settings)
     val aboutCards = aboutSettingCards()
     val searchCards = gameCards + javaCards + generalCards + downloadCards + aboutCards
-    // 主标题已删除（P1）：搜索框仍在原来的右上角；右侧留出与滚动列一致的 12dp，
+    // 搜索框位于右上角；右侧留出与滚动列一致的 12dp，
     // 否则会比下面白卡的右边缘多探出一截。
     Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
         Row(
@@ -314,7 +315,7 @@ private fun SettingCardFlow(
         SettingsSection(
             card.title,
             card.detail,
-            // 行间改用 1dp 细分隔线：首行之前、末行之后都不画，卡片内边距与 44/52 行高不变。
+            // 行间使用 1dp 细分隔线：首行之前、末行之后都不画，卡片保留内边距与 44/52 行高。
             contentGap = 0.dp,
         ) {
             blocks.forEachIndexed { index, block ->
@@ -492,7 +493,9 @@ private fun gameSettingCards(
                             128..settings.memoryMb,
                             Modifier.weight(1f),
                             enabled = !settings.autoMemory,
-                        ) { value -> applySetting(actions) { it.copy(initialMemoryMb = value) } }
+                        ) { value ->
+                            applySetting(actions) { it.copy(initialMemoryMb = value) }
+                        }
                     }
                     MutedText("原版通常从 2–4 GB 开始；大型整合包按需要调整。初始内存不能超过最大内存。")
                 },
@@ -521,14 +524,18 @@ private fun gameSettingCards(
                             640..7680,
                             Modifier.weight(1f),
                             enabled = !settings.fullscreen,
-                        ) { value -> applySetting(actions) { it.copy(width = value) } }
+                        ) { value ->
+                            applySetting(actions) { it.copy(width = value) }
+                        }
                         LiveNumberField(
                             settings.height,
                             "窗口高度（px）",
                             480..4320,
                             Modifier.weight(1f),
                             enabled = !settings.fullscreen,
-                        ) { value -> applySetting(actions) { it.copy(height = value) } }
+                        ) { value ->
+                            applySetting(actions) { it.copy(height = value) }
+                        }
                     }
                 },
                 settingRow("启动后最小化", "游戏退出后恢复启动器窗口") {
@@ -896,9 +903,7 @@ private fun downloadSettingCards(
                             {
                                 actions.run {
                                     val chosen =
-                                        actions
-                                            .choose("选择下载缓存文件夹", directory = true)
-                                            .firstOrNull()
+                                        actions.choose("选择下载缓存文件夹", directory = true).firstOrNull()
                                     if (chosen != null)
                                         withContext(Dispatchers.Swing) {
                                             applySetting(actions) {
@@ -936,7 +941,8 @@ private fun downloadSettingCards(
                                         // 否则这次切换会被校验拒绝、下拉会跳回旧值。
                                         proxyHost = it.proxyHost.ifBlank { "127.0.0.1" },
                                         proxyPort =
-                                            it.proxyPort.takeIf { port -> port in 1..65535 } ?: 1080,
+                                            it.proxyPort.takeIf { port -> port in 1..65535 }
+                                                ?: 1080,
                                     )
                             }
                         },
@@ -967,7 +973,9 @@ private fun downloadSettingCards(
                             Modifier.width(120.dp),
                             placeholder = "端口",
                             enabled = settings.effectiveProxyMode() == "manual",
-                        ) { value -> applySetting(actions) { it.copy(proxyPort = value) } }
+                        ) { value ->
+                            applySetting(actions) { it.copy(proxyPort = value) }
+                        }
                     }
                 },
             ),

@@ -1,3 +1,5 @@
+// 负责游戏启动计划和参数预览。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*

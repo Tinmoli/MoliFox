@@ -1,3 +1,5 @@
+// 负责资源项目详情、版本选择和下载入口。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.*
@@ -78,16 +80,21 @@ fun ContentProjectDialog(
     }
     val versions =
         filteredContentVersions(
-            details?.versions.orEmpty(),
-            ContentFilter(gameVersion, loader),
-            channel,
-        )
+                details?.versions.orEmpty(),
+                ContentFilter(gameVersion, loader),
+                channel,
+            )
             .sortedWith(newestVersionFirst)
     val target = state.data.instances.find { it.id == targetId && it.installed }
     val recommendation = recommendedContentVersion(versions, target, hit.type)
     LaunchedEffect(hit.id, targetId, gameVersion, loader, channel, details) {
         val current = versions.find { it.id == versionId }
-        if (current == null || (target != null && hit.type != "modpack" && !compatibleContentVersion(current, target, hit.type))) {
+        if (
+            current == null ||
+                (target != null &&
+                    hit.type != "modpack" &&
+                    !compatibleContentVersion(current, target, hit.type))
+        ) {
             versionId = recommendation?.id.orEmpty()
         }
     }
@@ -119,9 +126,9 @@ fun ContentProjectDialog(
         instanceRoot
             ?.let { root ->
                 runCatching {
-                        if (hit.type == "datapack") contentDestination(root, hit.type, worldName)
-                        else contentDestination(root, hit.type)
-                    }
+                    if (hit.type == "datapack") contentDestination(root, hit.type, worldName)
+                    else contentDestination(root, hit.type)
+                }
                     .getOrNull()
             }
             ?.toAbsolutePath()
@@ -430,8 +437,7 @@ fun ContentProjectDialog(
                 if (hit.type == "modpack") "将先预览整合包，不会立即安装。"
                 else if (target == null) "先选实例或点「下载」挑一个保存文件夹。"
                 else if (!compatible) "所选文件不兼容此实例的游戏版本或加载器。"
-                else if (hit.type == "datapack") "数据包需要安装到具体存档。"
-                else "下载前会确认目标文件夹，并检查前置与文件冲突。",
+                else if (hit.type == "datapack") "数据包需要安装到具体存档。" else "下载前会确认目标文件夹，并检查前置与文件冲突。",
                 Modifier.weight(1f),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -509,17 +515,14 @@ internal fun contentFolderForType(type: String): String =
         else -> "mods"
     }
 
-/**
- * 默认下载目标：模组 / 资源包 / 光影落在实例内容目录，数据包落在所选存档的 datapacks。
- * 显示给用户的就是最终会被写入的路径。
- */
+/** 默认下载目标：模组 / 资源包 / 光影落在实例内容目录，数据包落在所选存档的 datapacks。 显示给用户的就是最终会被写入的路径。 */
 internal fun contentDestination(instanceRoot: Path, type: String, worldName: String = ""): Path =
     if (type == "datapack") instanceRoot.resolve("saves").resolve(worldName).resolve("datapacks")
     else instanceRoot.resolve(contentFolderForType(type))
 
 /**
- * 用户确认的文件夹 → 实例内的资源子目录名（mods / resourcepacks / shaderpacks）。
- * 不在实例内、或者不是这三个目录之一时返回 null：安装仍走默认目录，不写入用户没有确认的位置。
+ * 用户确认的文件夹 → 实例内的资源子目录名（mods / resourcepacks / shaderpacks）。 不在实例内、或者不是这三个目录之一时返回
+ * null：安装仍走默认目录，不写入用户没有确认的位置。
  */
 internal fun contentFolderOf(instanceRoot: Path?, destination: Path?): String? {
     if (instanceRoot == null || destination == null) return null
@@ -530,10 +533,7 @@ internal fun contentFolderOf(instanceRoot: Path?, destination: Path?): String? {
     return relative.toString().takeIf { it in setOf("mods", "resourcepacks", "shaderpacks") }
 }
 
-/**
- * 版本列表排序：发布时间降序（最新文件排在最上面）；时间相同或缺失时，按版本号里的数字段降序回退，
- * 避免字符串日期格式不一致时列表变成「最旧在上」。
- */
+/** 版本列表排序：发布时间降序（最新文件排在最上面）；时间相同或缺失时，按版本号里的数字段降序回退， 避免字符串日期格式不一致时列表变成「最旧在上」。 */
 private val newestVersionFirst: Comparator<ContentVersion> =
     compareByDescending<ContentVersion> { it.published }
         .thenComparator { left, right -> compareVersionNumbers(right.number, left.number) }
@@ -549,8 +549,4 @@ private fun compareVersionNumbers(left: String, right: String): Int {
 }
 
 private fun versionNumberSegments(value: String): List<Int> =
-    Regex("[0-9]+")
-        .findAll(value)
-        .mapNotNull { it.value.toIntOrNull() }
-        .take(4)
-        .toList()
+    Regex("[0-9]+").findAll(value).mapNotNull { it.value.toIntOrNull() }.take(4).toList()

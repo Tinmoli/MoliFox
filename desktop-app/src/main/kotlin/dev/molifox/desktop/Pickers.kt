@@ -1,3 +1,5 @@
+// 负责应用内路径选择器与挂起请求结果桥。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*
@@ -44,10 +46,7 @@ enum class PickMode {
     Save,
 }
 
-/**
- * 一次选择请求。标题只作为副标题展示，弹窗主标题由模式决定（选择文件 / 选择文件夹 / 保存位置）；
- * [extensions] 在文件模式用于过滤列表，在保存模式用于自动补后缀。
- */
+/** 一次选择请求。标题只作为副标题展示，弹窗主标题由模式决定（选择文件 / 选择文件夹 / 保存位置）； [extensions] 在文件模式用于过滤列表，在保存模式用于自动补后缀。 */
 data class PickRequest(
     val title: String = "",
     val mode: PickMode = PickMode.File,
@@ -58,8 +57,7 @@ data class PickRequest(
 )
 
 /**
- * 请求/结果桥：挂起函数等待界面返回，界面只在 [PathPickerHost] 里渲染一次。
- * 结果一律是绝对路径；取消返回空列表。既有 `choosePaths(...)` 调用点无需改动。
+ * 请求/结果桥：挂起函数等待界面返回，界面只在 [PathPickerHost] 里渲染一次。 结果一律是绝对路径；取消返回空列表。既有 `choosePaths(...)` 调用点无需改动。
  */
 object PathPicker {
     var request by mutableStateOf<PickRequest?>(null)
@@ -98,7 +96,8 @@ object PathPicker {
         request = null
         val resolved = paths.map { it.toAbsolutePath().normalize() }
         resolved.firstOrNull()?.let { first ->
-            lastDirectory = if (runCatching { first.isDirectory() }.getOrDefault(false)) first else first.parent
+            lastDirectory =
+                if (runCatching { first.isDirectory() }.getOrDefault(false)) first else first.parent
         }
         continuation.resume(resolved)
     }
@@ -106,10 +105,7 @@ object PathPicker {
     fun cancel() = complete(emptyList())
 }
 
-/**
- * 选择器宿主：挂在应用根级、主题内部渲染一次。
- * [quickPlaces] 由调用方补充（MoliFox 数据目录、各游戏目录），主目录/桌面/文档/下载在这里自动加入。
- */
+/** 选择器宿主：挂在应用根级、主题内部渲染一次。 [quickPlaces] 由调用方补充（MoliFox 数据目录、各游戏目录），主目录/桌面/文档/下载在这里自动加入。 */
 @Composable
 fun PathPickerHost(quickPlaces: List<Pair<String, Path>> = emptyList()) {
     val spec = PathPicker.request ?: return
@@ -189,8 +185,7 @@ private fun PathPickerDialog(spec: PickRequest, quickPlaces: List<Pair<String, P
     val createFolder: () -> Unit = {
         val name = folderName.trim()
         when {
-            !validPickName(name) ->
-                createError = "名称不能为空，也不能包含 < > : \" / \\ | ? *"
+            !validPickName(name) -> createError = "名称不能为空，也不能包含 < > : \" / \\ | ? *"
             else -> {
                 val target = runCatching { current.resolve(name) }.getOrNull()
                 val failure =
@@ -209,7 +204,8 @@ private fun PathPickerDialog(spec: PickRequest, quickPlaces: List<Pair<String, P
             }
         }
     }
-    val replaceWarning = saveTarget != null && runCatching { saveTarget.exists() }.getOrDefault(false)
+    val replaceWarning =
+        saveTarget != null && runCatching { saveTarget.exists() }.getOrDefault(false)
     val summary =
         when {
             spec.mode == PickMode.Save ->
@@ -305,9 +301,7 @@ private fun PathPickerDialog(spec: PickRequest, quickPlaces: List<Pair<String, P
             ) {
                 // 左侧快捷位置：主目录 / 桌面 / 文档 / 下载 + 数据目录与各游戏目录。
                 Column(
-                    Modifier.width(136.dp)
-                        .fillMaxHeight()
-                        .verticalScroll(rememberScrollState()),
+                    Modifier.width(136.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     Text(
@@ -372,7 +366,8 @@ private fun PathPickerDialog(spec: PickRequest, quickPlaces: List<Pair<String, P
                                                 if (!spec.multiple) listOf(file)
                                                 else if (selection.any { it == file })
                                                     selection.filterNot { it == file }
-                                                // Path is Iterable<Path>; adding it directly adds path segments.
+                                                // Path is Iterable<Path>; adding it directly adds
+                                                // path segments.
                                                 else selection + listOf(file)
                                         },
                                         onDoubleClick = {
@@ -505,7 +500,8 @@ private fun PickerRow(
             )
             .rowHoverHighlight(shape, enabled = !selected)
             .combinedClickable(
-                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                interactionSource =
+                    remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
                 onDoubleClick = onDoubleClick,
@@ -585,10 +581,7 @@ private data class PickerListing(
     val error: String? = null,
 )
 
-/**
- * 列出子目录与文件：读不到（权限、拔出磁盘、已删除）时返回错误行文本；
- * 隐藏文件默认不显示，勾选后才出现。
- */
+/** 列出子目录与文件：读不到（权限、拔出磁盘、已删除）时返回错误行文本； 隐藏文件默认不显示，勾选后才出现。 */
 private fun readDirectory(directory: Path, showHidden: Boolean): PickerListing {
     val entries =
         try {
@@ -629,8 +622,7 @@ private fun matchesExtensions(path: Path, extensions: List<String>): Boolean {
 private fun saveNameFor(value: String, extensions: List<String>): String {
     if (extensions.isEmpty()) return value
     val suffixes = extensions.map { "." + it.trim().trimStart('.').lowercase() }
-    return if (suffixes.any { value.lowercase().endsWith(it) }) value
-    else value + suffixes.first()
+    return if (suffixes.any { value.lowercase().endsWith(it) }) value else value + suffixes.first()
 }
 
 /** 保存模式下的文件名检查：拒绝路径分隔符与 Windows 不允许的字符，避免确认后才失败。 */
@@ -642,25 +634,28 @@ private fun validPickName(value: String): Boolean =
         value.none { it < ' ' || it in "<>:\"/\\|?*" }
 
 /** 文件大小只用于列表右侧提示，读不到时留空。 */
-private fun fileSizeLabel(path: Path): String =
-    runCatching {
-            val bytes = path.fileSize()
-            when {
-                bytes >= 1073741824L -> "%.1f GB".format(bytes / 1073741824f)
-                bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
-                bytes >= 1024L -> "%.0f KB".format(bytes / 1024f)
-                else -> "$bytes B"
-            }
-        }
-        .getOrDefault("")
+private fun fileSizeLabel(path: Path): String = runCatching {
+    val bytes = path.fileSize()
+    when {
+        bytes >= 1073741824L -> "%.1f GB".format(bytes / 1073741824f)
+        bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
+        bytes >= 1024L -> "%.0f KB".format(bytes / 1024f)
+        else -> "$bytes B"
+    }
+}
+    .getOrDefault("")
 
-private fun homeDirectory(): Path =
-    runCatching { Path.of(System.getProperty("user.home", ".")) }
-        .getOrDefault(Path.of("."))
-        .toAbsolutePath()
-        .normalize()
+private fun homeDirectory(): Path = runCatching {
+    Path.of(System.getProperty("user.home", "."))
+}
+    .getOrDefault(Path.of("."))
+    .toAbsolutePath()
+    .normalize()
 
-private fun isDirectory(path: Path): Boolean = runCatching { path.isDirectory() }.getOrDefault(false)
+private fun isDirectory(path: Path): Boolean = runCatching {
+    path.isDirectory()
+}
+    .getOrDefault(false)
 
 /** 从给定路径向上找到第一个存在的目录；整条路径都不存在时回落到主目录。 */
 private fun nearestExistingDirectory(path: Path): Path {
@@ -689,10 +684,7 @@ private fun segmentLabel(path: Path): String =
 /** 主目录 / 桌面 / 文档 / 下载 + 所有磁盘根目录 + 调用方补充的目录；不存在的不显示，重复只留一次。 */
 private fun mergeQuickPlaces(extra: List<Pair<String, Path>>): List<Pair<String, Path>> {
     val home = homeDirectory()
-    val base =
-        listOf(
-            "下载" to home.resolve("Downloads"),
-        )
+    val base = listOf("下载" to home.resolve("Downloads"))
     val seen = mutableSetOf<String>()
     return (base + drivePlaces() + extra).mapNotNull { (label, path) ->
         val normalized = runCatching { path.toAbsolutePath().normalize() }.getOrNull()
@@ -703,11 +695,12 @@ private fun mergeQuickPlaces(extra: List<Pair<String, Path>>): List<Pair<String,
 }
 
 /** 当前机器上的所有磁盘根（Windows 的 C:\ D:\ …，Linux 的 /），用于选择其他盘。 */
-private fun drivePlaces(): List<Pair<String, Path>> =
-    runCatching { File.listRoots().orEmpty().toList() }
-        .getOrDefault(emptyList())
-        .map { root ->
-            val path = root.path
-            val label = if (path.endsWith("\\")) path.trimEnd('\\') else path
-            label.ifBlank { path } to root.toPath()
-        }
+private fun drivePlaces(): List<Pair<String, Path>> = runCatching {
+    File.listRoots().orEmpty().toList()
+}
+    .getOrDefault(emptyList())
+    .map { root ->
+        val path = root.path
+        val label = if (path.endsWith("\\")) path.trimEnd('\\') else path
+        label.ifBlank { path } to root.toPath()
+    }

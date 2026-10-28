@@ -1,3 +1,5 @@
+// 负责桌面导航状态、顶部导航和通用交互效果。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.animateColorAsState
@@ -72,10 +74,7 @@ class DesktopNavigationState {
 private fun <T> stateSpec(): AnimationSpec<T> =
     if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.fast)
 
-/**
- * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。
- * 导航仍在顶部（用户要求保留原位置），只做视觉收紧。
- */
+/** 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧。 */
 @Composable
 fun AppHeader(
     navigation: DesktopNavigationState,
@@ -88,8 +87,7 @@ fun AppHeader(
     val headerColor =
         if (state.data.settings.titlebarTransparent) colors.surface.copy(alpha = 0f)
         else colors.surface
-    val runningJobs =
-        state.jobs.count { it.status in listOf(JobStatus.Queued, JobStatus.Running) }
+    val runningJobs = state.jobs.count { it.status in listOf(JobStatus.Queued, JobStatus.Running) }
     Column(Modifier.fillMaxWidth().background(headerColor)) {
         Row(
             Modifier.fillMaxWidth()
@@ -131,12 +129,14 @@ fun AppHeader(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // 主导航固定四个板块；日志与个性化从设置页进入。
-                    listOf(Page.Home, Page.Instances, Page.Discover, Page.Settings).forEach {
-                        item ->
+                    listOf(Page.Home, Page.Instances, Page.Discover, Page.Settings).forEach { item
+                        ->
                         TopNavItem(
                             page = item,
                             selected = navigation.activeTab == item,
-                            badge = if (item == Page.Settings && runningJobs > 0) "$runningJobs" else null,
+                            badge =
+                                if (item == Page.Settings && runningJobs > 0) "$runningJobs"
+                                else null,
                             onClick = { navigation.navigate(item) },
                         )
                     }
@@ -209,10 +209,7 @@ private fun TopNavItem(
     }
 }
 
-/**
- * 标题栏双击：只观察按下事件、不消费，因此不会吞掉 WindowDraggableArea 的拖动。
- * 400ms 内同一位置两次按下视为双击。
- */
+/** 标题栏双击：只观察按下事件、不消费，因此不会吞掉 WindowDraggableArea 的拖动。 400ms 内同一位置两次按下视为双击。 */
 private fun Modifier.titlebarDoubleClick(onDoubleClick: () -> Unit): Modifier =
     pointerInput(onDoubleClick) {
         awaitPointerEventScope {
@@ -303,10 +300,7 @@ fun NavigationEntry(
     }
 }
 
-/**
- * 紧凑侧栏条目：实例管理与下载页的条目多、窗口高度有限，
- * 用固定小高度保证整栏在 720 高度窗口内完整可见。
- */
+/** 紧凑侧栏条目：实例管理与下载页的条目多、窗口高度有限， 用固定小高度保证整栏在 720 高度窗口内完整可见。 */
 @Composable
 fun RailEntry(
     title: String,

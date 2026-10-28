@@ -1,3 +1,5 @@
+// 负责资源安装计划、兼容提示和安装确认。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*
@@ -40,7 +42,9 @@ fun ContentInstallDialog(
     var changelog by remember(hit.id, instanceId) { mutableStateOf<ContentVersion?>(null) }
     var changelogError by remember(hit.id, instanceId) { mutableStateOf<String?>(null) }
     val instanceRoot =
-        remember(instanceId) { runCatching { actions.controller.store.instancePath(instanceId) }.getOrNull() }
+        remember(instanceId) {
+            runCatching { actions.controller.store.instancePath(instanceId) }.getOrNull()
+        }
     // 用户在下载对话框里确认过的目录 → 实例内的资源子目录；无法映射时沿用计划里的默认目录。
     val destinationFolder = contentFolderOf(instanceRoot, destination)
     LaunchedEffect(versionId) {

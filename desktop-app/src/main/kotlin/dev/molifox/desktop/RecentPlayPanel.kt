@@ -1,3 +1,5 @@
+// 负责当前实例的最近世界、服务器和展开列表。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
@@ -65,16 +67,13 @@ private const val RECENT_PLAY_ROWS = 8
 /**
  * 开始页右栏下半：「最近游玩的存档或服务器」。
  *
- * 混合列出当前实例 `saves/` 下的世界（[SaveManager.listSaves]）与游戏目录 `servers.dat`
- * 的服务器（[listServers]），按时间倒序取前 [RECENT_PLAY_ROWS] 条：
- * 世界用目录修改时间，服务器用本启动器记录的 [RecentUsage.lastUsed]（没有记录时算最旧）。
- * 每次加载/刷新在读完磁盘后调用 [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录
- * 清掉；读取与清理全部在 `Dispatchers.IO` 上完成，刷新按钮只是递增 [refreshToken] 重新读一遍磁盘。
+ * 混合列出当前实例 `saves/` 下的世界（[SaveManager.listSaves]）与游戏目录 `servers.dat` 的服务器（[listServers]），按时间倒序取前
+ * [RECENT_PLAY_ROWS] 条： 条目优先使用本启动器记录的 [RecentUsage.lastUsed]，无使用记录时按当前列表规则排序。 每次加载/刷新在读完磁盘后调用
+ * [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录 清掉；读取与清理全部在 `Dispatchers.IO` 上完成，刷新按钮只是递增
+ * [refreshToken] 重新读一遍磁盘。
  *
- * 「开始游戏」走调用方传入的 [onLaunch]——开始页的主「启动游戏」按钮用的就是同一条
- * [LauncherController.launch] 路径；本面板只负责先记一次 [RecentUsage.record]。
- * 「查看全部」不再跳转实例详情页，而是在面板内打开「存档与服务器」浮层（Esc 或关闭按钮退出）。
- * [instance] 为 null（未选择版本）时整块不渲染。
+ * 「开始游戏」走调用方传入的 [onLaunch]——开始页的主「启动游戏」按钮用的就是同一条 [LauncherController.launch] 路径；本面板只负责先记一次
+ * [RecentUsage.record]。 「查看全部」在面板内打开「存档与服务器」浮层（Esc 或关闭按钮退出）。 [instance] 为 null（未选择版本）时整块不渲染。
  */
 @Composable
 fun RecentPlayPanel(
@@ -93,7 +92,7 @@ fun RecentPlayPanel(
     var refreshToken by remember(instance.id) { mutableStateOf(0) }
     // 删除存档先确认：实际动作用 SaveManager 移入回收站，不在面板里做硬删除。
     var deleting by remember(instance.id) { mutableStateOf<SaveEntry?>(null) }
-    // 「查看全部」在本页浮层里展开全部存档与服务器，不再跳转到实例详情页。
+    // 「查看全部」在本页浮层里展开全部存档与服务器。
     var showAll by remember(instance.id) { mutableStateOf(false) }
     val data by
         produceState(RecentPlayData(), instance.id, refreshToken) {
@@ -108,9 +107,7 @@ fun RecentPlayPanel(
     // 点「开始游戏」：先写最近使用记录，再走与主启动按钮相同的入口。记录的写入放到 IO 线程，
     // 启动本身仍是调用方那条同步路径，进度与失败原因继续留在开始页的启动浮窗。
     fun beginPlay(kind: EntryKind, key: String) {
-        // TODO(P6 快速进入)：这里将来把 --quickPlaySingleplayer「saves/<目录名>」或
-        //  --quickPlayMultiplayer <地址> 作为启动参数交给 controller.launch(instance.id, ...)；
-        //  本轮只记录最近使用并普通启动，不添加任何快速进入参数。
+        // 记录选中条目的使用时间；启动仍进入游戏主界面。
         scope.launch {
             withContext(Dispatchers.IO) { runCatching { usage.record(kind, instance.id, key) } }
             refreshToken += 1
@@ -119,8 +116,7 @@ fun RecentPlayPanel(
     }
     fun openSaveFolder(entry: SaveEntry) {
         // 世界目录本身；`.zip` 存档只能打开它所在的 saves/ 目录。
-        val target =
-            if (entry.path.isDirectory()) entry.path else (entry.path.parent ?: return)
+        val target = if (entry.path.isDirectory()) entry.path else (entry.path.parent ?: return)
         scope.launch {
             withContext(Dispatchers.IO) {
                 runCatching { controller.platform.openFolder(target) }
@@ -131,12 +127,11 @@ fun RecentPlayPanel(
         scope.launch {
             val moved =
                 withContext(Dispatchers.IO) {
-                    runCatching { controller.deleteSave(instance.id, entry.name) }.getOrDefault(false)
+                    runCatching { controller.deleteSave(instance.id, entry.name) }
+                        .getOrDefault(false)
                 }
             if (!moved)
-                controller.store.notify(
-                    "「" + entry.name + "」没有移入回收站：存档可能已不存在，或回收站不可用；详情见日志。"
-                )
+                controller.store.notify("「" + entry.name + "」没有移入回收站：存档可能已不存在，或回收站不可用；详情见日志。")
             else {
                 // 行菜单删除成功后立刻删掉这条世界记录；下一次加载的 pruneMissing 还会按磁盘
                 // 再兜一次（例如存档被别的工具删掉、或删除时记录恰好不存在）。
@@ -158,9 +153,7 @@ fun RecentPlayPanel(
     }
     fun copyAddress(item: RecentPlayItem) {
         val copied = runCatching { clipboard.setText(AnnotatedString(item.key)) }.isSuccess
-        controller.store.notify(
-            if (copied) "已复制服务器地址：" + item.key else "复制失败，请手动复制：" + item.key
-        )
+        controller.store.notify(if (copied) "已复制服务器地址：" + item.key else "复制失败，请手动复制：" + item.key)
     }
     HomeCard(modifier = modifier, fillContent = true) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -290,10 +283,7 @@ fun RecentPlayPanel(
     }
 }
 
-/**
- * 存档行：32dp 实例图标（没有自定义图标时就是草方块）、目录名、「单人存档」、
- * 相对时间 + 主题色「开始游戏」+ 三点菜单（打开存档文件夹 / 删除）。
- */
+/** 存档行：32dp 实例图标（没有自定义图标时就是草方块）、目录名、「单人存档」、 相对时间 + 主题色「开始游戏」+ 三点菜单（打开存档文件夹 / 删除）。 */
 @Composable
 private fun WorldPlayRow(
     instance: GameInstance,
@@ -322,12 +312,10 @@ private fun WorldPlayRow(
 }
 
 /**
- * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名、
- * 查询到 MOTD 时用带颜色的 MOTD 取代地址（悬停显示完整地址），否则显示地址；
+ * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名、 查询到 MOTD 时用带颜色的 MOTD 取代地址（悬停显示完整地址），否则显示地址；
  * 行尾是玩家数或「离线」、游玩时间 + 主题色「开始游戏」+ 三点菜单（复制地址 / 删除记录）。
  *
- * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个次要色「离线」
- * 标签，开始游戏不受影响。
+ * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个次要色「离线」 标签，开始游戏不受影响。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -474,12 +462,10 @@ private fun PlayRowMenu(
 }
 
 /**
- * 「查看全部」浮层：列出当前实例的全部存档与服务器（不受面板 [RECENT_PLAY_ROWS] 限制），
- * 分为「存档 / 服务器」两组，组内按时间倒序。
+ * 「查看全部」浮层：列出当前实例的全部存档与服务器（不受面板 [RECENT_PLAY_ROWS] 限制）， 分为「存档 / 服务器」两组，组内按时间倒序。
  *
- * 行样式直接复用面板的 [WorldPlayRow] / [ServerPlayRow]，所以开始游戏、打开文件夹、删除、
- * 复制地址、删除记录的行为与卡片里完全一致。高度最多占主窗口的 70%，超出时列表内部滚动；
- * Esc 或右上角关闭按钮退出，右上角刷新重新扫描磁盘。
+ * 行样式直接复用面板的 [WorldPlayRow] / [ServerPlayRow]，所以开始游戏、打开文件夹、删除、 复制地址、删除记录的行为与卡片里完全一致。高度最多占主窗口的
+ * 70%，超出时列表内部滚动； Esc 或右上角关闭按钮退出，右上角刷新重新扫描磁盘。
  */
 @Composable
 private fun AllRecentPlayDialog(
@@ -506,24 +492,20 @@ private fun AllRecentPlayDialog(
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            Modifier.width(520.dp)
-                .focusRequester(focusRequester)
-                .focusable()
-                .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                        onDismiss()
-                        true
-                    } else false
-                },
+            Modifier.width(520.dp).focusRequester(focusRequester).focusable().onPreviewKeyEvent {
+                event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    onDismiss()
+                    true
+                } else false
+            },
             shape = RoundedCornerShape(Metrics.dialogRadius),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, hairline()),
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Row(
-                    Modifier.fillMaxWidth()
-                        .height(44.dp)
-                        .padding(start = 14.dp, end = 6.dp),
+                    Modifier.fillMaxWidth().height(44.dp).padding(start = 14.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("存档与服务器", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -614,8 +596,7 @@ private fun AllRecentPlayList(
                 ServerPlayRow(
                     entry = item,
                     timeLabel =
-                        if (item.usedAt == null) "尚未游玩"
-                        else relativeTimeLabel(item.usedAt, now),
+                        if (item.usedAt == null) "尚未游玩" else relativeTimeLabel(item.usedAt, now),
                     status = ping?.status,
                     pinged = ping != null,
                     enabled = !busy,
@@ -640,11 +621,9 @@ private fun RecentSectionLabel(text: String) {
 }
 
 /**
- * MOTD 片段的样式表：每段按自己的颜色与粗体/斜体/下划线/删除线渲染，
- * 没有指定颜色的片段沿用副标题的次要色。
+ * MOTD 片段的样式表：每段按自己的颜色与粗体/斜体/下划线/删除线渲染， 没有指定颜色的片段沿用副标题的次要色。
  *
- * 深色主题下 `§0` 这类近黑色会看不清，统一向白色提亮 50%；
- * 浅色主题保持服务器给出的原色。
+ * 深色主题下 `§0` 这类近黑色会看不清，统一向白色提亮 50%； 浅色主题保持服务器给出的原色。
  */
 @Composable
 private fun rememberMotdText(segments: List<MotdSegment>): AnnotatedString {
@@ -704,8 +683,7 @@ private fun AddressTooltip(address: String) {
 private data class ServerPingSnapshot(val status: ServerStatus?, val atMillis: Long)
 
 /**
- * 进程内服务器状态缓存：同一地址 60 秒内不重复查询，滚动、切换页面再回来都命中缓存。
- * 键是 `servers.dat` 里的 `ip`（含可选端口），不同实例里的同一个服务器共用一份结果。
+ * 进程内服务器状态缓存：同一地址 60 秒内不重复查询，滚动、切换页面再回来都命中缓存。 键是 `servers.dat` 里的 `ip`（含可选端口），不同实例里的同一个服务器共用一份结果。
  */
 private object ServerPingCache {
     private const val TTL_MILLIS = 60_000L
@@ -724,8 +702,7 @@ private object ServerPingCache {
 }
 
 /**
- * 行内查询服务器状态：只有行真正进入组合（可见）时才发请求，默认 4 秒超时，
- * 全程在 IO 线程上，不阻塞界面。[refreshToken] 变化时重新查询——刷新按钮会先清空缓存，
+ * 行内查询服务器状态：只有行真正进入组合（可见）时才发请求，默认 4 秒超时， 全程在 IO 线程上，不阻塞界面。[refreshToken] 变化时重新查询——刷新按钮会先清空缓存，
  * 因此可见行会真正重发；查询失败缓存 null，界面显示「离线」并保留保存的名称与地址。
  */
 @Composable
@@ -768,12 +745,10 @@ private data class RecentPlayItem(
 )
 
 /**
- * 在 IO 线程读一遍磁盘：存档按修改时间、服务器按最近使用时间各自倒序，再按时间合并。
- * 单个来源失败只影响自己那一类，读取异常由调用方兜底成空列表。
+ * 在 IO 线程读一遍磁盘：存档按修改时间、服务器按最近使用时间各自倒序，再按时间合并。 单个来源失败只影响自己那一类，读取异常由调用方兜底成空列表。
  *
- * 读完顺手做一次过期清理（[RecentUsage.pruneMissing]）：世界要求 `saves/<名称>` 仍是带
- * `level.dat` 的世界（目录或 `.zip` 都算），服务器要求 `servers.dat` 里仍有这个 `ip`。
- * 只有本轮扫描**成功**才清理——扫描失败时拿到的是空列表，不能据此把记录全删掉。
+ * 读完顺手做一次过期清理（[RecentUsage.pruneMissing]）：世界要求 `saves/<名称>` 仍是带 `level.dat` 的世界（目录或 `.zip`
+ * 都算），服务器要求 `servers.dat` 里仍有这个 `ip`。 只有扫描**成功**才清理——扫描失败时拿到的是空列表，不能据此把记录全删掉。
  */
 private fun loadRecentPlays(
     controller: LauncherController,
@@ -783,10 +758,11 @@ private fun loadRecentPlays(
     // 两路各保留 Result：判断「这一轮到底读到了什么」，供下面的清理使用。
     val savesScan = runCatching { controller.listSaves(instance.id) }
     val saves = savesScan.getOrDefault(emptyList())
-    val serversScan =
-        runCatching { controller.store.gamePath(instance) }
-            .getOrNull()
-            ?.let { directory -> runCatching { listServers(directory) } }
+    val serversScan = runCatching {
+        controller.store.gamePath(instance)
+    }
+        .getOrNull()
+        ?.let { directory -> runCatching { listServers(directory) } }
     val servers = serversScan?.getOrDefault(emptyList()).orEmpty()
     savesScan.onSuccess { entries ->
         usage.pruneMissing(
@@ -799,7 +775,8 @@ private fun loadRecentPlays(
         usage.pruneMissing(EntryKind.Server, instance.id, entries.map { it.ip }.toSet())
     }
     val worlds =
-        saves.sortedByDescending { it.lastModified ?: Instant.EPOCH }
+        saves
+            .sortedByDescending { it.lastModified ?: Instant.EPOCH }
             .map { save ->
                 RecentPlayItem(
                     kind = EntryKind.World,
@@ -854,17 +831,15 @@ private fun mergeByTime(
 }
 
 /** `ServerEntry.icon` 已经是校验过的 PNG 字节；解不出来就按「没有图标」处理。 */
-private fun decodeServerIcon(bytes: ByteArray?): ImageBitmap? =
-    bytes?.let { data ->
-        runCatching { SkiaImage.makeFromEncoded(data).toComposeImageBitmap() }.getOrNull()
-    }
+private fun decodeServerIcon(bytes: ByteArray?): ImageBitmap? = bytes?.let { data ->
+    runCatching { SkiaImage.makeFromEncoded(data).toComposeImageBitmap() }.getOrNull()
+}
 
 /**
  * 相对时间：「刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 上个月 / N 个月前 / N 年前」。
  *
- * 应用里原本没有相对时间工具——实例列表（[LaunchPage] 的 `playedAtLabel`）用的是
- * 「MM-dd HH:mm」绝对时间，不能直接复用；这里保留全应用唯一一份相对时间格式化，
- * 不再另写第二份。
+ * 应用里原本没有相对时间工具——实例列表（[LaunchPage] 的 `playedAtLabel`）用的是 「MM-dd
+ * HH:mm」绝对时间，不能直接复用；这里保留全应用唯一一份相对时间格式化， 不再另写第二份。
  */
 private fun relativeTimeLabel(time: Instant?, now: Instant = Instant.now()): String {
     if (time == null) return ""

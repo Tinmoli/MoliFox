@@ -1,3 +1,5 @@
+// 负责各页面布局与显示项的设置。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.*

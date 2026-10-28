@@ -1,3 +1,5 @@
+// 负责内置和用户字体的加载。
+
 package dev.molifox.desktop
 
 import androidx.compose.ui.text.font.FontFamily

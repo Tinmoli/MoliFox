@@ -1,3 +1,5 @@
+// 负责已安装资源的更新检查、版本锁定和应用。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*
@@ -14,10 +16,7 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 import kotlinx.coroutines.*
 
-/**
- * 资源更新管理：卡片化的检查设置 + 44dp 资源行（勾选、详情、锁定）。
- * 行为与原来一致：先检查得到报告，勾选后准备安装计划，最后确认更新走安装任务。
- */
+/** 资源更新管理：检查更新后选择资源、准备安装计划，再确认执行更新任务。 */
 @Composable
 fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -> Unit) {
     var report by remember(instanceId) { mutableStateOf<ContentUpdateReport?>(null) }
@@ -116,8 +115,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                             )
                         }
                     }
-                    if (prepared.optional.isNotEmpty())
-                        MutedText("可选前置默认不安装；可在项目详情中单独选择。")
+                    if (prepared.optional.isNotEmpty()) MutedText("可选前置默认不安装；可在项目详情中单独选择。")
                 }
             } else
                 report?.let { result ->
@@ -163,9 +161,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                                 item.update != null ->
                                                     "${item.currentVersion} → " +
                                                         "${item.update?.number}"
-                                                else ->
-                                                    "${item.currentVersion} · " +
-                                                        "当前筛选下没有更高版本"
+                                                else -> "${item.currentVersion} · " + "当前筛选下没有更高版本"
                                             },
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -1,3 +1,5 @@
+// 负责高级启动配置的表单编辑。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.*

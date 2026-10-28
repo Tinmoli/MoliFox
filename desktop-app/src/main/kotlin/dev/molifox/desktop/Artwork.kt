@@ -1,3 +1,5 @@
+// 负责品牌图形与界面通用装饰。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Canvas
@@ -63,22 +65,24 @@ fun FoxMark(modifier: Modifier = Modifier.size(36.dp)) {
 
 /** 内置方块图标的统一入口：把资源图片直接放进布局，交给 Compose 默认方式绘制。 */
 @Composable
-internal fun BundledBlockIcon(resource: String, description: String, modifier: Modifier = Modifier) {
+internal fun BundledBlockIcon(
+    resource: String,
+    description: String,
+    modifier: Modifier = Modifier,
+) {
     val bitmap = remember(resource) { loadBundledImage(resource) }
     if (bitmap != null) Image(bitmap, description, modifier, contentScale = ContentScale.Fit)
     else Box(modifier)
 }
 
-private fun loadBundledImage(resource: String): ImageBitmap? =
-    runCatching {
-            val stream =
-                LoaderType::class.java.classLoader.getResourceAsStream(resource)
-                    ?: return@runCatching null
-            stream.use {
-                org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap()
-            }
-        }
-        .getOrNull()
+private fun loadBundledImage(resource: String): ImageBitmap? = runCatching {
+    val stream =
+        LoaderType::class.java.classLoader.getResourceAsStream(resource) ?: return@runCatching null
+    stream.use {
+        org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap()
+    }
+}
+    .getOrNull()
 
 /** 加载器标识使用随包内置的方块图片。 */
 private fun LoaderType.blockIcon(): String =

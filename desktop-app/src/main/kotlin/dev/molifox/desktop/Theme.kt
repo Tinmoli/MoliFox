@@ -1,3 +1,5 @@
+// 负责颜色、字号、间距和动态效果的统一主题。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -324,7 +326,7 @@ fun selectedRowBackground(): Color {
     return lerp(colors.surfaceVariant, colors.primary, if (isDarkScheme()) .30f else .34f)
 }
 
-/** 白卡片容器：1dp 细边、无阴影、圆角 6、内边距 16。 传入 title 时渲染 14sp SemiBold 标题行，并用 1dp 分隔线与内容隔开（不再有整块色带）。 */
+/** 白卡片容器：1dp 细边、无阴影、圆角 6、内边距 16。 传入 title 时渲染 14sp SemiBold 标题行，并用 1dp 分隔线与内容隔开。 */
 @Composable
 fun Panel(
     modifier: Modifier = Modifier,

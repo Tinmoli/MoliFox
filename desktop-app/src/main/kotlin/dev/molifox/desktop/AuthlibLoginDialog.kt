@@ -1,3 +1,5 @@
+// 负责外置认证服务器选择、登记与账户登录界面。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
@@ -33,8 +35,7 @@ private enum class AuthlibLoginStep {
 }
 
 /**
- * 账户页的两个认证服务器入口：[SavedServers] 打开即列出已保存的服务器（默认含核心内置的
- * LittleSkin），[NewServer] 打开即把光标放进地址框，直接添加新服务器。
+ * 账户页的两个认证服务器入口：[SavedServers] 打开即列出已保存的服务器（默认含核心内置的 LittleSkin），[NewServer] 打开即把光标放进地址框，直接添加新服务器。
  */
 enum class AuthlibEntry {
     SavedServers,
@@ -44,11 +45,11 @@ enum class AuthlibEntry {
 /**
  * 添加外置认证（authlib-injector / Yggdrasil）账户的两步对话框。
  *
- * - 第 1 步是服务器选择：已保存的服务器（[AuthlibEntry.SavedServers] 入口的主体）点一下就直接
- *   进入第 2 步，不需要先点「下一步」；[AuthlibEntry.NewServer] 入口把焦点放在地址框上，
- *   校验通过后 `addAuthlibServer` 会先保存再用它登录。已保存行可在行尾移除（不影响已添加账户）；
- * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框，
- *   成功后关闭由账户列表的 store 变更自动刷新（与离线账户、微软账户同一路径）。
+ * - 第 1 步是服务器选择：已保存的服务器（[AuthlibEntry.SavedServers] 入口的主体）点一下就直接 进入第 2
+ *   步，不需要先点「下一步」；[AuthlibEntry.NewServer] 入口把焦点放在地址框上， 校验通过后 `addAuthlibServer`
+ *   会先保存再用它登录。已保存行可在行尾移除（不影响已添加账户）；
+ * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框， 成功后关闭由账户列表的 store
+ *   变更自动刷新（与离线账户、微软账户同一路径）。
  *
  * 请求期间按钮置灰并显示 14dp 转圈，界面线程不做阻塞等待；Esc 关闭，Enter 执行当前一步。
  */
@@ -60,16 +61,18 @@ fun AuthlibLoginDialog(
 ) {
     val state by actions.controller.state.collectAsState()
     // 服务器列表跟随 launcher.json 的 authlibServers：新增或删除后对话框不必重开。
-    val servers = remember(state.data.authlibServers) {
-        actions.controller.accounts.authlibServers()
-    }
+    val servers =
+        remember(state.data.authlibServers) {
+            actions.controller.accounts.authlibServers()
+        }
     var step by remember { mutableStateOf(AuthlibLoginStep.Server) }
     var address by remember { mutableStateOf("") }
     var selectedUrl by remember { mutableStateOf("") }
     var resolved by remember { mutableStateOf<AuthlibServer?>(null) }
     // 已保存列表是「认证服务器」入口的主体；只有「添加认证服务器」入口或列表为空时才直接展开地址框。
-    var showAddress by
-        remember { mutableStateOf(entry == AuthlibEntry.NewServer || servers.isEmpty()) }
+    var showAddress by remember {
+        mutableStateOf(entry == AuthlibEntry.NewServer || servers.isEmpty())
+    }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -161,15 +164,14 @@ fun AuthlibLoginDialog(
     // 「添加认证服务器」入口：打开即把光标放进地址框；等首帧布局完成再请求，避免 FocusRequester 尚未挂载。
     LaunchedEffect(entry, step) {
         if (entry == AuthlibEntry.NewServer && step == AuthlibLoginStep.Server) {
-            withFrameNanos { }
+            withFrameNanos {}
             runCatching { addressFocus.requestFocus() }
         }
     }
 
     Modal(
         if (entry == AuthlibEntry.NewServer) "添加认证服务器" else "认证服务器",
-        if (entry == AuthlibEntry.NewServer)
-            "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
+        if (entry == AuthlibEntry.NewServer) "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
         else "选择一个已保存的认证服务器，输入用户名与密码即可登录；也可以添加新的服务器。",
         width = 480.dp,
         onDismiss = onDismiss,
@@ -311,7 +313,10 @@ fun AuthlibLoginDialog(
                 }
                 CompactTextField(
                     username,
-                    { username = it.take(320); error = null },
+                    {
+                        username = it.take(320)
+                        error = null
+                    },
                     Modifier.fillMaxWidth(),
                     label = "用户名",
                     placeholder = "认证服务器上的用户名或邮箱",
@@ -319,7 +324,10 @@ fun AuthlibLoginDialog(
                 )
                 CompactTextField(
                     password,
-                    { password = it; error = null },
+                    {
+                        password = it
+                        error = null
+                    },
                     Modifier.fillMaxWidth(),
                     label = "密码",
                     placeholder = "输入密码",
@@ -410,10 +418,7 @@ private fun AuthlibStepLabel(text: String) {
     )
 }
 
-/**
- * 把 [AuthlibException] 的类别折算成一步就能照做的中文提示；未知异常保留原始文案。
- * 密码错误与网络错误必须能区分开，避免用户反复重试密码。
- */
+/** 把 [AuthlibException] 的类别折算成一步就能照做的中文提示；未知异常保留原始文案。 密码错误与网络错误必须能区分开，避免用户反复重试密码。 */
 private fun authlibErrorMessage(failure: Throwable): String {
     if (failure !is AuthlibException) return failure.message ?: "操作失败，请稍后重试"
     return when (failure.error) {

@@ -1,3 +1,5 @@
+// 负责开始页账户摘要、实例选择和启动操作。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
@@ -33,13 +35,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * 开始页：左栏「游戏账户」摘要卡 +「最近游玩的游戏实例」，右栏「当前游戏」。
- *
- * P1 删掉了页首的「开始」大标题，账户区收缩为一张摘要卡（头像 + 名字 + 进入账户列表的箭头）；
- * P3 把原右栏的「最近游玩」列表移到左栏账户卡下方。右栏下半留给 P4 的
- * 「最近游玩的存档或服务器」，本轮只占位、不建内容。业务回调与门禁保持原样。
- */
+/** 开始页展示账户摘要、最近实例、当前游戏及世界与服务器入口。 */
 @Composable
 fun ColumnScope.HomePage(
     state: LauncherState,
@@ -127,7 +123,7 @@ fun ColumnScope.HomePage(
         launchCard.clear()
     }
     val visible = rememberEntranceOnce()
-    // 主标题已删除（P1）：右上角保留原来的统计文字，位置与改动前的标题行完全一致。
+    // 右上角显示当前实例和游戏目录统计。
     if (preferences.showStatistics)
         Row(
             Modifier.fillMaxWidth(),
@@ -161,17 +157,18 @@ fun ColumnScope.HomePage(
                     Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
                 ) {
-                    // 账户摘要卡（P1）：只有头像、名字与进入账户列表的箭头，安装 / 启动已移到右栏。
+                    // 账户摘要卡提供头像、名字和账户列表入口。
                     HomeCard("游戏账户") { HomeAccountSummary(state, actions, onOpenAccounts) }
                     if (preferences.showRecent)
                         HomeCard(
                             modifier = Modifier.fillMaxWidth().weight(1f),
                             fillContent = true,
                         ) {
-                            // 最近游玩（P3）：原来在右栏，现在放到账户卡下方；最多 6 条，其余去实例页。
+                            // 账户卡下方最多显示六个最近实例，其余从实例页查看。
                             val all =
-                                state.data.instances
-                                    .sortedByDescending { it.lastPlayed ?: it.createdAt }
+                                state.data.instances.sortedByDescending {
+                                    it.lastPlayed ?: it.createdAt
+                                }
                             val recent = all.take(minOf(preferences.recentCount, 6))
                             Text(
                                 "最近游玩的游戏实例",
@@ -200,7 +197,9 @@ fun ColumnScope.HomePage(
                                                 current = instance.id == selected?.id,
                                                 onClick = {
                                                     actions.run {
-                                                        actions.controller.selectInstance(instance.id)
+                                                        actions.controller.selectInstance(
+                                                            instance.id
+                                                        )
                                                     }
                                                 },
                                             )
@@ -296,7 +295,8 @@ fun ColumnScope.HomePage(
                                         }
                                     },
                                     enabled = !busy,
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                    contentPadding =
+                                        PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                                 ) {
                                     Icon(Icons.Outlined.FolderOpen, null, Modifier.size(15.dp))
                                     Spacer(Modifier.width(5.dp))
@@ -312,7 +312,8 @@ fun ColumnScope.HomePage(
                                 SecondaryButton(
                                     { onManage(selected.id) },
                                     enabled = !busy,
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                    contentPadding =
+                                        PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                                 ) {
                                     Text("管理", fontSize = 13.sp)
                                 }
@@ -320,7 +321,7 @@ fun ColumnScope.HomePage(
                             PrimaryButton("安装版本", Icons.Outlined.Add, onClick = onNew)
                         }
                         Spacer(Modifier.height(12.dp))
-                        // 启动主按钮从账户卡移到这里：右栏「当前游戏」自带走安装与启动。
+                        // 当前游戏区域提供安装与启动操作。
                         LaunchActionButton(
                             progress = launchJob?.progress,
                             running = running,
@@ -353,8 +354,7 @@ fun ColumnScope.HomePage(
                                 // 外部目录的版本文件被移走或删掉时无法自动补全，直接启动只会报错。
                                 selected.externalProfile && !filesPresent -> {
                                     actions.controller.store.notify(
-                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" +
-                                            "可重新选择目录或修复原版本"
+                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" + "可重新选择目录或修复原版本"
                                     )
                                     onNew()
                                 }
@@ -366,7 +366,7 @@ fun ColumnScope.HomePage(
                             }
                         }
                     }
-                    // 右栏下半（P4）：「最近游玩的存档或服务器」。只列当前选中实例；没有选中实例时
+                    // 世界与服务器区域只列当前选中实例；没有选中实例时
                     // 整页已经是「未选择版本」空态，这里不再画第二个空块。「查看全部」在面板内开浮层。
                     if (selected != null)
                         RecentPlayPanel(
@@ -401,10 +401,9 @@ fun ColumnScope.HomePage(
 }
 
 /**
- * 白卡片：与 Panel 同一套尺寸（圆角 6、1dp 细边、无阴影、内边距 16）。
- * 单独实现是因为账户与最近游玩卡需要内容列撑满剩余高度，Panel 的内容列是包内容的。
- * [title] 留空时不渲染标题行与分隔线：左栏「最近游玩的游戏实例」用的就是无标题卡片 + 12sp 小标题。
- * 右栏的 [RecentPlayPanel] 复用同一张卡片，因此这里是 internal 而不是 private。
+ * 白卡片：与 Panel 同一套尺寸（圆角 6、1dp 细边、无阴影、内边距 16）。 单独实现是因为账户与最近游玩卡需要内容列撑满剩余高度，Panel 的内容列是包内容的。 [title]
+ * 留空时不渲染标题行与分隔线：左栏「最近游玩的游戏实例」用的就是无标题卡片 + 12sp 小标题。 右栏的 [RecentPlayPanel] 复用同一张卡片，因此这里是 internal 而不是
+ * private。
  */
 @Composable
 internal fun HomeCard(
@@ -576,15 +575,14 @@ private fun instanceFilesPresent(
     store: LauncherStore,
     platform: PlatformServices,
     instance: GameInstance,
-): Boolean =
-    runCatching {
-        val root = store.minecraftRoot(instance)
-        val profile = VersionResolver(root, platform).resolve(instance.versionId)
-        Files.isRegularFile(
-            root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar")
-        )
-    }
-        .getOrDefault(false)
+): Boolean = runCatching {
+    val root = store.minecraftRoot(instance)
+    val profile = VersionResolver(root, platform).resolve(instance.versionId)
+    Files.isRegularFile(
+        root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar")
+    )
+}
+    .getOrDefault(false)
 
 /** 最近游玩时间：ISO 时间戳转本地「月-日 时:分」，解析失败时退回原始日期部分。 */
 private fun playedAtLabel(instance: GameInstance): String {

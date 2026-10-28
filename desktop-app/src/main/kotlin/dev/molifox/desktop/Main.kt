@@ -1,3 +1,5 @@
+// 负责桌面程序入口、窗口生命周期与页面协调。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedContent
@@ -56,10 +58,7 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
         controller.perform(action)
     }
 
-    /**
-     * 所有路径选择统一走应用内的 Compose 选择器（[PathPicker]），不再打开 Swing 文件对话框。
-     * 入参与返回形状保持不变：空列表表示取消，结果一律是绝对路径。
-     */
+    /** 所有路径选择统一走应用内的 Compose 选择器（[PathPicker]），返回结果中，空列表表示取消，结果一律是绝对路径。 */
     suspend fun choose(
         title: String,
         save: Boolean = false,
@@ -168,8 +167,7 @@ fun main() {
             // 标题栏双击与最大化按钮共用同一段切换逻辑。
             val toggleMaximize: () -> Unit = {
                 windowState.placement =
-                    if (windowState.placement == WindowPlacement.Maximized)
-                        WindowPlacement.Floating
+                    if (windowState.placement == WindowPlacement.Maximized) WindowPlacement.Floating
                     else WindowPlacement.Maximized
             }
             var confirmExit by remember { mutableStateOf(false) }
@@ -317,7 +315,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     var tidyReport by remember { mutableStateOf<Pair<String, TidyReport>?>(null) }
     var verifyingInstance by remember { mutableStateOf<GameInstance?>(null) }
     var upgradingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
-    // B09 隔离切换与跨游戏目录移动：对话框挂在根级，任务开始后实例记录更新不会打断页面动画。
+    // 隔离切换与跨游戏目录移动：对话框挂在根级，任务开始后实例记录更新不会打断页面动画。
     var switchingIsolation by remember { mutableStateOf<GameInstance?>(null) }
     var movingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
     var pendingMove by remember { mutableStateOf<Pair<String, String?>?>(null) }
@@ -385,7 +383,8 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             }
             val current = state.data.instances.find { it.id == navigation.editing }
             // 实例详情与主页面共用一次切换动画；key 语义保持不变。
-            val target = if (current != null) "instance:" + current.id else "page:" + navigation.page.name
+            val target =
+                if (current != null) "instance:" + current.id else "page:" + navigation.page.name
             val content: @Composable ColumnScope.(String) -> Unit = { targetKey ->
                 if (targetKey.startsWith("instance:")) {
                     val instance =
@@ -579,9 +578,14 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             buildList {
                 add("MoliFox 数据目录" to actions.controller.store.dataDirectory)
                 state.data.gameDirectories.forEach { directory ->
-                    runCatching { Path.of(directory.path) }.getOrNull()?.let { path ->
-                        add(directory.name.ifBlank { path.fileName?.toString().orEmpty() } to path)
-                    }
+                    runCatching { Path.of(directory.path) }
+                        .getOrNull()
+                        ?.let { path ->
+                            add(
+                                directory.name.ifBlank { path.fileName?.toString().orEmpty() } to
+                                    path
+                            )
+                        }
                 }
             }
     )

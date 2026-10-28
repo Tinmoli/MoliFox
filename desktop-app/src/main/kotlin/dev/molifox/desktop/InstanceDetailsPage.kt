@@ -1,3 +1,5 @@
+// 负责实例设置、组件、模组、存档和原理图页面。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedContent
@@ -85,7 +87,9 @@ fun ColumnScope.InstanceDetailsPage(
         draft =
             draft.copy(
                 name = if (draft.name == syncedInstance.name) instance.name else draft.name,
-                isolation = if (draft.isolation == syncedInstance.isolation) instance.isolation else draft.isolation,
+                isolation =
+                    if (draft.isolation == syncedInstance.isolation) instance.isolation
+                    else draft.isolation,
                 iconStyle = instance.iconStyle,
                 iconId = instance.iconId,
                 packIconId = instance.packIconId,
@@ -117,13 +121,13 @@ fun ColumnScope.InstanceDetailsPage(
             height != instance.height.toString()
     val launchEnabled =
         instance.installed && !actions.controller.busy && state.runningInstanceId == null
-    // B08 实例工具与 B07 整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
+    // 实例工具与 整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
     val isolated = actions.controller.store.isolated(instance)
     val canCopyInstance = isolated && !instance.externalProfile && !actions.controller.busy
     val canMaintainInstance = isolated && !actions.controller.busy
     val canUpgradePack =
         instance.packFile.isNotBlank() && instance.installed && !actions.controller.busy
-    // B09 跨游戏目录移动：外部目录由原启动器维护，共用游戏目录没有独立目录可搬。
+    // 跨游戏目录移动：外部目录由原启动器维护，共用游戏目录没有独立目录可搬。
     val canMoveInstance = isolated && !instance.externalProfile && !actions.controller.busy
     val moveBlockedNote =
         when {
@@ -1190,9 +1194,10 @@ private fun InstanceMods(
                 it.metadata.entries.any { entry -> entry.id.contains(query, true) }
         }
         // 模组图标从 JAR 自带资源里取，缓存在启动器 cache/mod-icons；行内按 JAR 路径 + 修改时间复用。
-        val modsDirectory =
-            runCatching { actions.controller.store.instancePath(instance.id).resolve("mods") }
-                .getOrNull()
+        val modsDirectory = runCatching {
+            actions.controller.store.instancePath(instance.id).resolve("mods")
+        }
+            .getOrNull()
         val iconCacheRoot = runCatching { actions.controller.store.cacheDirectory }.getOrNull()
         // 首次读取还没有数据时给骨架；刷新时保留旧列表，只在顶部显示一条细进度。
         if (loading && mods.isNotEmpty())
@@ -1267,8 +1272,7 @@ private fun ModRow(
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val sourceName = mod.filename.removeSuffix(".disabled")
     val icon =
-        if (jar != null && iconCacheRoot != null)
-            rememberModIcon(jar, mod.modified, iconCacheRoot)
+        if (jar != null && iconCacheRoot != null) rememberModIcon(jar, mod.modified, iconCacheRoot)
         else null
     Surface(
         modifier.fillMaxWidth().heightIn(min = 52.dp).pressScale(),
@@ -1285,8 +1289,7 @@ private fun ModRow(
         ) {
             // 图标小于两行文字（约 38dp），行高仍由文字与 52dp 下限决定，开关和删除按钮的位置不变。
             Box(
-                Modifier
-                    .size(28.dp)
+                Modifier.size(28.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(
                         MaterialTheme.colorScheme.surfaceVariant.copy(
@@ -1360,21 +1363,22 @@ private object ModIconBitmaps {
 
     @Synchronized operator fun get(key: String): ImageBitmap? = values[key]
 
-    @Synchronized fun put(key: String, value: ImageBitmap) {
+    @Synchronized
+    fun put(key: String, value: ImageBitmap) {
         values[key] = value
     }
 }
 
 /**
- * 异步读取一行模组图标：解析与解码都在 IO 线程完成（`modIcon` 只读 JAR 内的声明与图片，
- * 结果已按 JAR 身份缓存在 cache/mod-icons），解码结果再按 JAR 路径 + 修改时间放进内存缓存。
- * 没有可用图标时返回 null，行内退回拼图占位，不改变行高。
+ * 异步读取一行模组图标：解析与解码都在 IO 线程完成（`modIcon` 只读 JAR 内的声明与图片， 结果已按 JAR 身份缓存在 cache/mod-icons），解码结果再按 JAR
+ * 路径 + 修改时间放进内存缓存。 没有可用图标时返回 null，行内退回拼图占位，不改变行高。
  */
 @Composable
 private fun rememberModIcon(jar: Path, modified: Long, cacheRoot: Path): ImageBitmap? {
-    val key = remember(jar, modified) {
-        jar.toAbsolutePath().normalize().toString() + "|" + modified
-    }
+    val key =
+        remember(jar, modified) {
+            jar.toAbsolutePath().normalize().toString() + "|" + modified
+        }
     val image by
         produceState<ImageBitmap?>(ModIconBitmaps[key], key, cacheRoot) {
             if (value != null) return@produceState
@@ -1397,8 +1401,7 @@ private fun rememberModIcon(jar: Path, modified: Long, cacheRoot: Path): ImageBi
 }
 
 /**
- * 存档页签（B10）：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、
- * 「可能不是有效世界」提示），行尾「备份」「复制到…」「删除」；下方「备份」卡片列出可恢复的备份。
+ * 存档页签：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、 「可能不是有效世界」提示），行尾「备份」「复制到…」「删除」；下方「备份」卡片列出可恢复的备份。
  *
  * 列表在 IO 线程读取（备份列举会现算 SHA1，不能放在 Compose 线程）；首次加载给骨架、读取失败可
  * 重试、没有存档给空态。任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端中文 消息显示在工具行下方，不静默吞掉。

@@ -1,3 +1,5 @@
+// 负责设置页面的通用输入控件。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.animateColorAsState
@@ -49,8 +51,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 // ---------- 即时保存 ----------
 
@@ -60,8 +62,7 @@ internal const val LIVE_WRITE_DELAY = 300L
 /**
  * 设置页唯一的写入口：把改动合并到最新已保存设置后立即写入 store。
  *
- * 写入发生在用户操作的那一刻，不再有草稿与「保存设置」按钮。store 的 StateFlow 更新会驱动
- * `MoliTheme` / `LauncherBackdrop` 重新渲染，所以主题、字体、缩放、背景与透明效果当场生效。
+ * 操作时即时写入配置。store 的 StateFlow 更新会驱动 `MoliTheme` / `LauncherBackdrop` 重新渲染，所以主题、字体、缩放、背景与透明效果当场生效。
  * 返回 null 表示已保存；否则返回校验失败的原因——非法输入不落盘，由控件或页面就地提示。
  */
 internal fun applySetting(
@@ -73,16 +74,13 @@ internal fun applySetting(
     val next = change(current)
     if (next == current) return null
     val failure = runCatching { actions.controller.saveSettings(next) }.exceptionOrNull()
-    // 即时保存不再弹「设置已保存」：连续调整滑块或输入时提示会一直挂着，反而盖住真正的失败原因。
+    // 即时保存不显示成功提示：连续调整滑块或输入时提示会一直挂着，反而盖住真正的失败原因。
     if (actions.controller.state.value.toast == "设置已保存")
         actions.controller.store.dismissNotification()
     return failure?.message
 }
 
-/**
- * 滑块本地值：拖动时只改这份本地状态以保证跟手，停手 300ms 后写入设置。
- * 控件被销毁（切分区 / 离开页面）时补写还没到 300ms 的值，拖动结果不会丢。
- */
+/** 滑块本地值：拖动时只改这份本地状态以保证跟手，停手 300ms 后写入设置。 控件被销毁（切分区 / 离开页面）时补写还没到 300ms 的值，拖动结果不会丢。 */
 @Composable
 internal fun rememberSliderDraft(value: Float, onCommit: (Float) -> Unit): MutableFloatState {
     val draft = remember { mutableFloatStateOf(value) }
@@ -103,10 +101,7 @@ internal fun rememberSliderDraft(value: Float, onCommit: (Float) -> Unit): Mutab
 /** 文本输入的本地草稿：当前文本、输入回调与写盘失败原因。 */
 internal class LiveTextDraft(val text: String, val onChange: (String) -> Unit, val error: String?)
 
-/**
- * 文本本地草稿：输入时只改本地文本，停手 300ms 后写入设置；控件销毁时补写未落盘的输入。
- * [onCommit] 返回 null 表示已保存，否则是失败原因。
- */
+/** 文本本地草稿：输入时只改本地文本，停手 300ms 后写入设置；控件销毁时补写未落盘的输入。 [onCommit] 返回 null 表示已保存，否则是失败原因。 */
 @Composable
 internal fun rememberLiveTextDraft(value: String, onCommit: (String) -> String?): LiveTextDraft {
     var text by remember { mutableStateOf(value) }
@@ -122,7 +117,14 @@ internal fun rememberLiveTextDraft(value: String, onCommit: (String) -> String?)
     DisposableEffect(Unit) {
         onDispose { if (text != saved) runCatching { commit(text) } }
     }
-    return LiveTextDraft(text, { next -> text = next; error = null }, error)
+    return LiveTextDraft(
+        text,
+        { next ->
+            text = next
+            error = null
+        },
+        error,
+    )
 }
 
 /** 单行文本设置：输入框 + 可选的尾部按钮；写盘失败或需要提示时就地显示一行说明。 */
@@ -205,10 +207,7 @@ internal fun LiveNumberField(
     }
 }
 
-/**
- * 设置页滚动内容末尾的「还原默认配置」：上方一条分隔线，中间 12sp 次级色文字按钮。
- * 需要下拉才能看到，不与常用开关抢注意力；点击后先弹确认，再交给调用方把全部选项写回默认值。
- */
+/** 设置页滚动内容末尾的「还原默认配置」：上方一条分隔线，中间 12sp 次级色文字按钮。 需要下拉才能看到，不与常用开关抢注意力；点击后先弹确认，再交给调用方把全部选项写回默认值。 */
 @Composable
 internal fun SettingsResetFooter(onReset: () -> Unit) {
     var confirming by remember { mutableStateOf(false) }
@@ -235,10 +234,7 @@ internal fun SettingsResetFooter(onReset: () -> Unit) {
             460.dp,
             { confirming = false },
         ) {
-            MutedText(
-                "内存、游戏窗口、Java 路径、更新、下载与代理、外观、字体与页面布局都会恢复默认；" +
-                    "游戏目录、账户、已导入的字体与背景图片文件保持不动。"
-            )
+            MutedText("内存、游戏窗口、Java 路径、更新、下载与代理、外观、字体与页面布局都会恢复默认；" + "游戏目录、账户、已导入的字体与背景图片文件保持不动。")
             DialogActions(
                 confirmText = "还原默认配置",
                 onConfirm = {
@@ -265,7 +261,7 @@ fun SettingsGroupTitle(title: String, topPadding: Dp = 18.dp) {
 
 /**
  * 设置卡片：白底、圆角 6、1dp `outlineVariant@.5` 边、无阴影、内边距 16。 标题行 14sp SemiBold（可带 12sp 说明）+ 1dp
- * 分隔线；不再有整块色带与左侧竖条。 `action` 是标题行右侧插槽（例如外观页的「已启用」标记），垂直居中。
+ * 分隔线；标题区使用与内容一致的卡片背景。 `action` 是标题行右侧插槽（例如外观页的「已启用」标记），垂直居中。
  */
 @Composable
 fun SettingsSection(
@@ -352,11 +348,10 @@ fun SettingRow(title: String, detail: String = "", content: @Composable () -> Un
 /**
  * 卡片内相邻设置行之间的细分隔线：1dp、`outlineVariant@.65`，上下各留 5dp（`Metrics.rowGap/2`）。
  *
- * 旧实现用 `outlineVariant@.45` 画在 16dp 卡片内边距里，浅色主题下 `#E7DEE3` 叠到白卡上约等于
- * `#F4F0F2`，几乎看不见，而且线比文字窄 32dp，看起来像没画。现在改为：
+ * 旧实现用 `outlineVariant@.45` 画在 16dp 卡片内边距里，浅色主题下 `#E7DEE3` 叠到白卡上约等于 `#F4F0F2`，几乎看不见，而且线比文字窄
+ * 32dp，看起来像没画。现在改为：
  * - 颜色提到 65%，与白卡的明度差足够，深色主题同样可见；
- * - 线本身不占用水平内边距，绘制时左右各溢出 `Metrics.cardPadding`，因此是整卡宽度的通栏细线，
- *   溢出部分由卡片圆角裁掉，不会盖到卡片外；
+ * - 线本身不占用水平内边距，绘制时左右各溢出 `Metrics.cardPadding`，因此是整卡宽度的通栏细线， 溢出部分由卡片圆角裁掉，不会盖到卡片外；
  * - 只放在两行之间——首行之前、末行之后都不画；卡片标题下方已有 `SettingsSection` 自己的分隔线。
  *
  * 配合 `SettingsSection(contentGap = 0.dp)` 使用，行高仍是 44 / 52，卡片内边距不变。
@@ -366,16 +361,13 @@ fun SettingDivider(modifier: Modifier = Modifier) {
     val color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)
     val bleed = with(LocalDensity.current) { Metrics.cardPadding.toPx() }
     Spacer(
-        modifier.fillMaxWidth()
-            .padding(vertical = Metrics.rowGap / 2)
-            .height(1.dp)
-            .drawBehind {
-                drawRect(
-                    color,
-                    topLeft = Offset(-bleed, 0f),
-                    size = Size(size.width + bleed * 2f, size.height),
-                )
-            }
+        modifier.fillMaxWidth().padding(vertical = Metrics.rowGap / 2).height(1.dp).drawBehind {
+            drawRect(
+                color,
+                topLeft = Offset(-bleed, 0f),
+                size = Size(size.width + bleed * 2f, size.height),
+            )
+        }
     )
 }
 

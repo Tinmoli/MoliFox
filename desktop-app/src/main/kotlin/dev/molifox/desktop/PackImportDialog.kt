@@ -1,3 +1,5 @@
+// 负责整合包选择、预览和导入确认。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*

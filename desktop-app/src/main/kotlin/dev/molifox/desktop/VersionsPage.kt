@@ -1,3 +1,5 @@
+// 负责实例列表、筛选、排序和维护操作。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.Crossfade
@@ -115,7 +117,7 @@ fun ColumnScope.InstancesPage(
             it.status == JobStatus.Running &&
                 (it.title.startsWith("安装") || it.title.startsWith("修复"))
         }
-    // 主标题已删除（P1）：实例计数仍在右上角，位置与原来的标题行动作一致。
+    // 右上角显示实例计数和列表操作。
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Text(
             all.size.toString() + " 个实例 · " + all.count { it.installed } + " 个已安装",

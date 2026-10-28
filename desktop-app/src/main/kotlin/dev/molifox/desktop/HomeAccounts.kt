@@ -1,3 +1,5 @@
+// 负责开始页账户摘要卡。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.clickable
@@ -30,12 +32,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * 开始页账户摘要（P1）：当前账户的头像、名字，行尾是「皮肤概览 / 刷新 / 箭头」。
+ * 开始页账户摘要：当前账户的头像、名字，行尾是「皮肤概览 / 刷新 / 箭头」。
  *
- * 皮肤概览与刷新回到开始页（用户反馈）：两个 32dp 图标按钮紧挨箭头左侧，
- * 皮肤概览复用 [SkinManagerDialog]，刷新对正版账户先拉正版档案、再让头像重读纹理，
- * 离线 / 外置认证账户只重读本地皮肤。账户列表页因此只保留「删除」。
- * 整块卡片仍然可点：两个按钮都是独立 clickable，按下事件在按钮内部就被消费，不会冒泡成「打开账户列表」。
+ * 皮肤概览与刷新位于开始页账户卡：两个 32dp 图标按钮紧挨箭头左侧， 皮肤概览复用 [SkinManagerDialog]，刷新对正版账户先拉正版档案、再让头像重读纹理， 离线 /
+ * 外置认证账户只重读本地皮肤。账户列表页提供「删除」。 整块卡片仍然可点：两个按钮都是独立 clickable，按下事件在按钮内部就被消费，不会冒泡成「打开账户列表」。
  * 没有账户时只显示史蒂夫与「没有游戏账户」，不出现这两个按钮（没有可刷新的对象）。
  */
 @Composable
@@ -127,7 +127,7 @@ fun HomeAccountSummary(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            // 两个图标按钮紧挨箭头左侧：图标与文案和账户列表页原来的一致，触区放大到 32dp。
+            // 皮肤和刷新按钮位于箭头左侧，触区为 32dp。
             // 它们各自是可点击的 IconButton，会在自己的节点消费按下事件，因此不会触发卡片的 onOpenAccounts。
             AccountIconAction(
                 Icons.Outlined.Palette,

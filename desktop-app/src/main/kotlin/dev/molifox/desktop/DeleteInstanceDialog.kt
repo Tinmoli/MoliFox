@@ -1,3 +1,5 @@
+// 负责实例删除确认和 Shift 永久删除选择。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.*
@@ -36,10 +38,10 @@ private fun deletionTimeText(modified: Instant?): String =
 /**
  * 「删除实例」确认框（实例列表三点菜单与实例详情「管理」共用）。
  *
- * 文案与操作参考 PCL：标题「删除实例」，正文「你确定要删除实例「名称」吗？」；实例有独立游戏目录时追加
- * 「该实例的存档、资源包、Mod 等文件也将被一并删除！」并列出最多 6 个存档（名称 + 上次修改时间）。
- * 默认移入系统回收站；点击「删除」的瞬间读取 Shift 状态（[androidx.compose.ui.platform.WindowInfo.keyboardModifiers]），
- * 按住 Shift 则永久删除，按钮下方常驻说明。成功后提示「已移入回收站：名称」或「已永久删除：名称（释放 X MB）」。
+ * 文案与操作参考 PCL：标题「删除实例」，正文「你确定要删除实例「名称」吗？」；实例有独立游戏目录时追加 「该实例的存档、资源包、Mod 等文件也将被一并删除！」并列出最多 6 个存档（名称 +
+ * 上次修改时间）。 默认移入系统回收站；点击「删除」的瞬间读取 Shift
+ * 状态（[androidx.compose.ui.platform.WindowInfo.keyboardModifiers]）， 按住 Shift
+ * 则永久删除，按钮下方常驻说明。成功后提示「已移入回收站：名称」或「已永久删除：名称（释放 X MB）」。
  */
 @Composable
 fun DeleteInstanceDialog(
@@ -56,7 +58,8 @@ fun DeleteInstanceDialog(
     val running = liveState.runningInstanceId == instance.id
     // 只做展示：解析失败或没有可删目录时由核心给出明确的中文失败原因或只清记录。
     val targets = remember(instance.id) { actions.controller.deletionTargets(instance.id) }
-    val separate = remember(instance.id) { actions.controller.hasSeparateGameDirectory(instance.id) }
+    val separate =
+        remember(instance.id) { actions.controller.hasSeparateGameDirectory(instance.id) }
     val worlds = remember(instance.id) { actions.controller.deletionWorlds(instance.id) }
     val shownWorlds = worlds.take(6)
     val close: () -> Unit = { if (!busy) onDismiss() }

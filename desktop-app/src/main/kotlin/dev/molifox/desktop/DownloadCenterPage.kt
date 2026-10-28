@@ -1,3 +1,5 @@
+// 负责原版和模组加载器的下载选择。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.Crossfade
@@ -52,7 +54,7 @@ fun ColumnScope.DownloadCenterPage(
     onKindChange: (String) -> Unit,
     navigate: (Page) -> Unit,
 ) {
-    // 分类竖排在左侧，页面不显示“下载中心”标题（用户要求，节省纵向空间）。
+    // 分类竖排在左侧，页面不显示“下载中心”标题，节省纵向空间。
     // 右侧内容随分类淡入切换（150ms），避免整块内容硬切。
     Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(Modifier.width(158.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {

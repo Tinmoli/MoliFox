@@ -1,3 +1,5 @@
+// 负责配置桌面编译、依赖清单、单文件打包与 GUI 验收任务。
+
 import groovy.json.JsonOutput
 import java.security.MessageDigest
 import java.time.Duration
@@ -31,6 +33,7 @@ val extendedIcons =
     configurations.runtimeClasspath.map { configuration ->
         configuration.files.first { it.name.startsWith("material-icons-extended-desktop-") }
     }
+
 /** 清单中的一条运行时依赖：Maven 坐标 + 文件名 + 校验值。 */
 data class RuntimeEntry(
     val group: String,
@@ -49,9 +52,11 @@ fun sha256Of(file: File): String =
 /** 清单版本号 = 应用版本 + 依赖列表哈希；坐标或校验值一变就换新的缓存目录。 */
 fun manifestVersion(base: String, entries: List<RuntimeEntry>): String {
     val canonical =
-        entries
-            .sortedWith(compareBy({ it.group }, { it.artifact }, { it.version }))
-            .joinToString("\n") { "${it.group}:${it.artifact}:${it.version}:${it.sha256}" }
+        entries.sortedWith(compareBy({ it.group }, { it.artifact }, { it.version })).joinToString(
+            "\n"
+        ) {
+            "${it.group}:${it.artifact}:${it.version}:${it.sha256}"
+        }
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
     return "$base-" + digest.joinToString("") { "%02x".format(it) }.take(16)
 }
@@ -59,18 +64,16 @@ fun manifestVersion(base: String, entries: List<RuntimeEntry>): String {
 /** 生成 /molifox-runtime.json 的正文；[platform] 只给 Linux 包区分原生库用。 */
 fun manifestJson(entries: List<RuntimeEntry>, platform: String? = null): String {
     val dependencies =
-        entries
-            .sortedWith(compareBy({ it.group }, { it.artifact }, { it.version }))
-            .map { entry ->
-                linkedMapOf<String, Any>(
-                    "group" to entry.group,
-                    "artifact" to entry.artifact,
-                    "version" to entry.version,
-                    "filename" to entry.filename,
-                    "sha256" to entry.sha256,
-                    "size" to entry.size,
-                )
-            }
+        entries.sortedWith(compareBy({ it.group }, { it.artifact }, { it.version })).map { entry ->
+            linkedMapOf<String, Any>(
+                "group" to entry.group,
+                "artifact" to entry.artifact,
+                "version" to entry.version,
+                "filename" to entry.filename,
+                "sha256" to entry.sha256,
+                "size" to entry.size,
+            )
+        }
     val json =
         linkedMapOf<String, Any>(
             "version" to manifestVersion(project.version.toString(), entries),
@@ -114,9 +117,7 @@ fun runtimeEntries(configuration: Configuration, skikoPlatform: String): List<Ru
         }
         .distinctBy { it.filename }
 
-/**
- * 只写清单，不再把运行时 jar 塞进启动器：首次启动由引导程序从 Maven 镜像下载并校验。
- */
+/** 只写清单，不再把运行时 jar 塞进启动器：首次启动由引导程序从 Maven 镜像下载并校验。 */
 val preparePortableRuntime =
     tasks.register("preparePortableRuntime") {
         group = "distribution"
@@ -142,7 +143,11 @@ val bootstrapPayloadModules =
     setOf("launcher-core", "gson", "kotlin-stdlib", "kotlinx-coroutines-core-jvm")
 
 fun bootstrapPayloadFiles(): List<File> =
-    bootstrapProject.configurations.getByName("runtimeClasspath").incoming.artifacts.artifacts
+    bootstrapProject.configurations
+        .getByName("runtimeClasspath")
+        .incoming
+        .artifacts
+        .artifacts
         .mapNotNull { artifact ->
             val identifier = artifact.id.componentIdentifier
             val name =
@@ -287,7 +292,11 @@ tasks.register<Exec>("portableWindows") {
 }
 
 val skikoAwtVersion = providers.provider {
-    configurations.runtimeClasspath.get().incoming.artifacts.artifacts
+    configurations.runtimeClasspath
+        .get()
+        .incoming
+        .artifacts
+        .artifacts
         .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
         .first { it.group == "org.jetbrains.skiko" && it.module == "skiko-awt" }
         .version
@@ -423,10 +432,7 @@ tasks.register("verifyDesktopPackages") {
                     }
                 check(!embedded.iterator().hasNext()) { "MoliFox.jar 仍然内嵌了运行时依赖" }
                 val json =
-                    zip.getInputStream(
-                            zip.getEntry("molifox-runtime.json")
-                                ?: error("缺少运行时清单")
-                        )
+                    zip.getInputStream(zip.getEntry("molifox-runtime.json") ?: error("缺少运行时清单"))
                         .reader()
                         .use { groovy.json.JsonSlurper().parse(it) as Map<*, *> }
                 val dependencies = (json["dependencies"] as List<*>).map { it as Map<*, *> }
@@ -450,9 +456,11 @@ tasks.register("verifyDesktopPackages") {
                 check((native.single()["filename"] as String).contains("-$platform-x64")) {
                     "Wrong platform native library"
                 }
-                check(dependencies.any {
-                    (it["filename"] as String).startsWith("kotlin-stdlib-")
-                }) {
+                check(
+                    dependencies.any {
+                        (it["filename"] as String).startsWith("kotlin-stdlib-")
+                    }
+                ) {
                     "清单缺少 kotlin-stdlib"
                 }
                 check(zip.getEntry("dev/molifox/desktop/AppearancePageKt.class") != null)
@@ -511,7 +519,10 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                 configurations.runtimeClasspath,
             )
         mainClass.set(probe)
-        systemProperty("molifox.actions.report", rootProject.file("docs/validation/$name-actions.json").absolutePath)
+        systemProperty(
+            "molifox.actions.report",
+            rootProject.file("docs/validation/$name-actions.json").absolutePath,
+        )
         systemProperty("molifox.actions.seedPublicCache", (name == "packActionsSmoke").toString())
         timeout.set(Duration.ofMinutes(3))
         systemProperty("java.net.useSystemProxies", "true")
@@ -566,7 +577,27 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                 )
             } else {
                 setArgs(
-                    listOf(File(testDirectory, "screenshots/MoliFox-home.png").absolutePath, when (name) { "microsoftActionsSmoke" -> "actionsMicrosoft"; "windowActionsSmoke" -> "actionsWindow"; "logActionsSmoke" -> "actionsLogs"; "packActionsSmoke" -> "actionsPacks"; "downloadActionsSmoke" -> "actionsDownloads"; "javaActionsSmoke" -> "actionsJava"; "accountActionsSmoke" -> "actionsAccounts"; "instanceActionsSmoke" -> "actionsInstances"; "settingsActionsSmoke" -> "actionsSettings"; "storageUiSmoke" -> "storageUi"; "reviewSmoke" -> "review"; "skinSmoke" -> "skins"; "iconSmoke" -> "icons"; "screenshotsSmoke" -> "screenshots"; "downloadDetailsSmoke" -> "downloadDetails"; else -> "flow" })
+                    listOf(
+                        File(testDirectory, "screenshots/MoliFox-home.png").absolutePath,
+                        when (name) {
+                            "microsoftActionsSmoke" -> "actionsMicrosoft"
+                            "windowActionsSmoke" -> "actionsWindow"
+                            "logActionsSmoke" -> "actionsLogs"
+                            "packActionsSmoke" -> "actionsPacks"
+                            "downloadActionsSmoke" -> "actionsDownloads"
+                            "javaActionsSmoke" -> "actionsJava"
+                            "accountActionsSmoke" -> "actionsAccounts"
+                            "instanceActionsSmoke" -> "actionsInstances"
+                            "settingsActionsSmoke" -> "actionsSettings"
+                            "storageUiSmoke" -> "storageUi"
+                            "reviewSmoke" -> "review"
+                            "skinSmoke" -> "skins"
+                            "iconSmoke" -> "icons"
+                            "screenshotsSmoke" -> "screenshots"
+                            "downloadDetailsSmoke" -> "downloadDetails"
+                            else -> "flow"
+                        },
+                    )
                 )
             }
         }
@@ -588,17 +619,28 @@ val packActionsSmoke = registerGuiSmoke("packActionsSmoke", "UiSmoke", false)
 val windowActionsSmoke = registerGuiSmoke("windowActionsSmoke", "UiSmoke", false)
 val logActionsSmoke = registerGuiSmoke("logActionsSmoke", "UiSmoke", false)
 val microsoftActionsSmoke = registerGuiSmoke("microsoftActionsSmoke", "UiSmoke", false)
+
 microsoftActionsSmoke.configure { timeout.set(Duration.ofMinutes(20)) }
+
 windowActionsSmoke.configure { timeout.set(Duration.ofMinutes(5)) }
+
 logActionsSmoke.configure { timeout.set(Duration.ofMinutes(5)) }
+
 packActionsSmoke.configure { timeout.set(Duration.ofMinutes(15)) }
+
 downloadActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+
 javaActionsSmoke.configure { timeout.set(Duration.ofMinutes(20)) }
+
 accountActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+
 instanceActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+
 settingsActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+
 // uiSmoke 新增了存档备份/恢复/删除等真实文件步骤；3 分钟在负载高时会误杀。
 uiSmoke.configure { timeout.set(Duration.ofMinutes(6)) }
+
 val nativeSmoke = registerGuiSmoke("nativeSmoke", "NativeSmoke", true)
 
 nativeSmoke.configure { mustRunAfter(uiSmoke) }

@@ -1,3 +1,5 @@
+// 负责账户添加和微软设备码登录对话框。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
@@ -19,9 +21,8 @@ import androidx.compose.ui.unit.sp
 /**
  * 账户操作图标按钮：皮肤概览 / 刷新账户资料 / 删除账户共用的一套图标按钮。
  *
- * 开始页「游戏账户」卡片与账户列表页的行尾操作都调用它，保证两处的图标、中文提示与悬停反馈一致；
- * 触区由 [size] 决定（开始页 32dp、账户列表沿用 [Metrics.iconButton] 30dp）。
- * 按钮自身是 [SmallIconButton]（Material `IconButton`），按下事件在子节点就被消费，
+ * 开始页「游戏账户」卡片与账户列表页的行尾操作都调用它，保证两处的图标、中文提示与悬停反馈一致； 触区由 [size] 决定（开始页 32dp、账户列表沿用
+ * [Metrics.iconButton] 30dp）。 按钮自身是 [SmallIconButton]（Material `IconButton`），按下事件在子节点就被消费，
  * 因此放在整块可点的卡片里也不会把点击冒泡成「打开账户列表」。
  */
 @OptIn(ExperimentalFoundationApi::class)

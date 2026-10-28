@@ -1,3 +1,5 @@
+// 负责内容搜索、资源文件管理和日志任务页面。
+
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
@@ -49,8 +51,7 @@ import dev.molifox.core.*
 import kotlinx.coroutines.*
 
 /** 结果排序：只在当前页内重排（后端分页接口只按相关度返回，不改业务参数）。 */
-private val contentSortOptions =
-    listOf("downloads" to "下载量", "relevance" to "相关度", "name" to "名称")
+private val contentSortOptions = listOf("downloads" to "下载量", "relevance" to "相关度", "name" to "名称")
 
 private fun contentKindLabel(type: String): String =
     when (type) {
@@ -62,9 +63,8 @@ private fun contentKindLabel(type: String): String =
     }
 
 /**
- * Modrinth 分类（slug + 中文名），按项目类型分开维护：slug 全部取自 Modrinth 标签接口
- * `/v2/tag/category` 中该 `project_type` 的条目，顺序沿用官方标签页的分组
- * （模组；资源包：分辨率 → 分类 → 特性；光影：分类 → 特性 → 性能；等等）。
+ * Modrinth 分类（slug + 中文名），按项目类型分开维护：slug 全部取自 Modrinth 标签接口 `/v2/tag/category` 中该 `project_type`
+ * 的条目，顺序沿用官方标签页的分组 （模组；资源包：分辨率 → 分类 → 特性；光影：分类 → 特性 → 性能；等等）。
  */
 private val modCategories =
     listOf(
@@ -203,8 +203,7 @@ private fun otherContentSource(value: String): String =
     if (contentSourceName(value) == "CurseForge") "modrinth" else "curseforge"
 
 /**
- * 分类多选控件：按钮显示「分类」/「分类 · N」，弹出复选列表并可一键清除。 单选下拉是
- * [SimpleDropdown]，无法表达集合，所以这里用 DropdownMenu 自己维护选中集合。
+ * 分类多选控件：按钮显示「分类」/「分类 · N」，弹出复选列表并可一键清除。 单选下拉是 [SimpleDropdown]，无法表达集合，所以这里用 DropdownMenu 自己维护选中集合。
  */
 @Composable
 private fun ContentCategoryPicker(
@@ -269,9 +268,7 @@ private fun ContentCategoryPicker(
                 Row(
                     Modifier.fillMaxWidth()
                         .heightIn(min = 38.dp)
-                        .background(
-                            if (checked) selectedRowBackground() else Color.Transparent
-                        )
+                        .background(if (checked) selectedRowBackground() else Color.Transparent)
                         .rowHoverHighlight(enabled = !checked)
                         .clickable {
                             onChange(if (checked) selected - slug else selected + slug)
@@ -319,12 +316,14 @@ fun ColumnScope.ContentBrowser(
     val selected = state.data.instances.find { it.id == state.data.selectedInstanceId }
     var projectHit by remember(kind) { mutableStateOf<ContentHit?>(null) }
     // 默认筛选值直接取自当前实例，换实例时重新初始化；不存在单独的实例开关。
-    var gameVersion by remember(kind, selected?.id) {
-        mutableStateOf(selected?.gameVersion.orEmpty())
-    }
-    var loader by remember(kind, selected?.id) {
-        mutableStateOf(selected?.loader.takeIf { kind == "mod" })
-    }
+    var gameVersion by
+        remember(kind, selected?.id) {
+            mutableStateOf(selected?.gameVersion.orEmpty())
+        }
+    var loader by
+        remember(kind, selected?.id) {
+            mutableStateOf(selected?.loader.takeIf { kind == "mod" })
+        }
     // 分类是 Modrinth 的 slug 集合，切换类型时重置，避免把模组分类带到光影里。
     var categories by remember(kind) { mutableStateOf(emptySet<String>()) }
     val categoryOptions = categoriesFor(kind)
@@ -497,13 +496,12 @@ fun ColumnScope.ContentBrowser(
                         "modrinth" to contentSourceName("modrinth"),
                         "curseforge" to
                             contentSourceName("curseforge") +
-                            if (state.data.settings.curseForgeApiKey.isBlank()) "（需 API Key）"
-                            else "",
+                                if (state.data.settings.curseForgeApiKey.isBlank()) "（需 API Key）"
+                                else "",
                     ),
                     { picked ->
                         if (
-                            picked == "curseforge" &&
-                                state.data.settings.curseForgeApiKey.isBlank()
+                            picked == "curseforge" && state.data.settings.curseForgeApiKey.isBlank()
                         ) {
                             sourceNotice = "CurseForge 需要先在设置里填写 API Key，下载源仍是 Modrinth。"
                         } else {
@@ -807,10 +805,7 @@ private fun ViewToggle(listView: Boolean, onChange: (Boolean) -> Unit) {
             Box(
                 Modifier.width(30.dp)
                     .fillMaxHeight()
-                    .background(
-                        if (active) selectedRowBackground()
-                        else Color.Transparent
-                    )
+                    .background(if (active) selectedRowBackground() else Color.Transparent)
                     .clickable { onChange(isList) },
                 contentAlignment = Alignment.Center,
             ) {
@@ -1091,7 +1086,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
     var cancelTarget by remember { mutableStateOf<DownloadJob?>(null) }
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    // 主标题已删除（P1）：导出/停止按钮仍在右上角，间距不变。
+    // 右上角提供日志导出和停止操作。
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SecondaryButton({ actions.exportLogs() }) { Text("导出日志", fontSize = 12.sp) }
@@ -1241,7 +1236,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
                         autoScroll,
                         { enabled ->
                             autoScroll = enabled
-                            // 这个开关原来只改本地状态，设置页关掉后日志页照样滚动；现在写回同一偏好字段。
+                            // 与设置页写回同一偏好字段，保持自动滚动状态一致。
                             val settings = state.data.settings
                             actions.run {
                                 actions.controller.saveSettings(

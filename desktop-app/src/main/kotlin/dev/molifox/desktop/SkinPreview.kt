@@ -1,3 +1,5 @@
+// 负责账户头像和可拖动三维皮肤预览。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Image
@@ -121,9 +123,8 @@ fun SkinPreview(
 }
 
 /**
- * 开始页账户头像：一张静态正面图，皮肤正面 + 帽子/外层叠加，缓存于 `<数据目录>/icons/heads/`。
- * 不做 3D 旋转、不响应拖动，绘制时用最近邻放大保持像素直角；离线或皮肤不可用时回退到内置占位头像。
- * [revision] 是手动刷新计数：皮肤内容更新但地址不变时，靠它触发重新合成。
+ * 开始页账户头像：一张静态正面图，皮肤正面 + 帽子/外层叠加，缓存于 `<数据目录>/icons/heads/`。 不做 3D
+ * 旋转、不响应拖动，绘制时用最近邻放大保持像素直角；离线或皮肤不可用时回退到内置占位头像。 [revision] 是手动刷新计数：皮肤内容更新但地址不变时，靠它触发重新合成。
  */
 @Composable
 fun StaticSkinHead(
@@ -137,21 +138,21 @@ fun StaticSkinHead(
             value =
                 withContext(Dispatchers.IO) {
                     runCatching {
-                            // 先试账户皮肤，失败或没有皮肤时退回内置占位皮肤。
-                            val cached =
-                                skinFile?.let { file ->
-                                    SkinModelRenderer.cachedHeadFront(file, directories, 128)
-                                }
-                                    ?: SkinModelRenderer.cachedHeadFront(
-                                        defaultPlayerSkinBytes,
-                                        directories,
-                                        128,
-                                    )
-                            cached?.let { head ->
-                                SkiaImage.makeFromEncoded(Files.readAllBytes(head))
-                                    .toComposeImageBitmap()
+                        // 先试账户皮肤，失败或没有皮肤时退回内置占位皮肤。
+                        val cached =
+                            skinFile?.let { file ->
+                                SkinModelRenderer.cachedHeadFront(file, directories, 128)
                             }
+                                ?: SkinModelRenderer.cachedHeadFront(
+                                    defaultPlayerSkinBytes,
+                                    directories,
+                                    128,
+                                )
+                        cached?.let { head ->
+                            SkiaImage.makeFromEncoded(Files.readAllBytes(head))
+                                .toComposeImageBitmap()
                         }
+                    }
                         .getOrNull()
                 }
         }

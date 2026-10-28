@@ -1,3 +1,5 @@
+// 负责字体选择、导入、搜索与字号设置。
+
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*
