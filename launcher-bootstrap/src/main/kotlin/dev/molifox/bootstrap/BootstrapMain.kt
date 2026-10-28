@@ -1,3 +1,5 @@
+// 负责准备界面运行时依赖并加载桌面程序。
+
 package dev.molifox.bootstrap
 
 import com.google.gson.Gson
@@ -65,8 +67,7 @@ data class RuntimeDependency(
 /**
  * `MoliFox.jar` 内 `/molifox-runtime.json` 的内容。
  *
- * [version] 是“应用版本-依赖列表哈希”：任何一个依赖的坐标或校验值变化都会得到新的缓存目录，
- * 因此旧缓存不会被误用，也不需要额外的失效逻辑。
+ * [version] 是“应用版本-依赖列表哈希”：任何一个依赖的坐标或校验值变化都会得到新的缓存目录， 因此旧缓存不会被误用，也不需要额外的失效逻辑。
  */
 data class RuntimeManifest(val version: String, val dependencies: List<RuntimeDependency>)
 
@@ -78,12 +79,12 @@ private data class Mirror(
 )
 
 /** 镜像探测结果，只保留真正可用的源。 */
-private const val probeTimeoutMillis = 1500L
-private const val connectTimeoutMillis = 8000
-private const val readTimeoutMillis = 15000
-private const val fileTimeoutMillis = 60_000L
-private const val parallelDownloads = 4
-private const val retryLimit = 2
+private const val PROBE_TIMEOUT_MILLIS = 1500L
+private const val CONNECT_TIMEOUT_MILLIS = 8000
+private const val READ_TIMEOUT_MILLIS = 15000
+private const val FILE_TIMEOUT_MILLIS = 60_000L
+private const val PARALLEL_DOWNLOADS = 4
+private const val RETRY_LIMIT = 2
 
 private val mirrors =
     listOf(
@@ -111,8 +112,8 @@ private var logFile: Path? = null
 private val logLock = Any()
 
 /**
- * 首次启动的准备流程：读取自带清单 → 挑最快镜像 → 并行下载并校验运行时依赖 → 写 ready.marker →
- * 用 URLClassLoader 在同一个 JVM 里启动 Compose 界面。
+ * 首次启动的准备流程：读取自带清单 → 挑最快镜像 → 并行下载并校验运行时依赖 → 写 ready.marker → 用 URLClassLoader 在同一个 JVM 里启动 Compose
+ * 界面。
  *
  * 只有在下载、校验都完成后才会启动界面；失败会停在准备窗口里，提供「重试」「更换镜像」。
  */
@@ -159,9 +160,14 @@ fun main() {
         val manifest = readManifest()
         val cache = data.resolve("runtime").resolve(manifest.version)
         val marker = cache.resolve("ready.marker")
-        log("运行时清单 ${manifest.version}，依赖 ${manifest.dependencies.size} 个，共 ${manifest.dependencies.sumOf { it.size }} 字节")
+        log(
+            "运行时清单 ${manifest.version}，依赖 ${manifest.dependencies.size} 个，共 ${manifest.dependencies.sumOf { it.size }} 字节"
+        )
         log("缓存目录：$cache")
-        if (Files.isRegularFile(marker) && manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }) {
+        if (
+            Files.isRegularFile(marker) &&
+                manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
+        ) {
             // ready.marker 表示“已逐字节校验过”：这里只确认真实存在，不再重复计算哈希。
             log("运行时组件已就绪，跳过下载")
             launchUi(manifest, cache)
@@ -193,9 +199,10 @@ fun main() {
                 window.showError(failures, installer.canSwitchMirror)
                 when (window.awaitRecovery()) {
                     RecoveryAction.Retry -> Unit
-                    RecoveryAction.SwitchMirror -> installer.switchMirror().also {
-                        log("切换镜像：${installer.mirror?.name}")
-                    }
+                    RecoveryAction.SwitchMirror ->
+                        installer.switchMirror().also {
+                            log("切换镜像：${installer.mirror?.name}")
+                        }
                 }
                 window.clearError()
             }
@@ -242,18 +249,17 @@ private fun readManifest(): RuntimeManifest {
     val version = json.string("version")
     require(version.matches(Regex("[A-Za-z0-9._-]+"))) { "运行时清单版本号不合法：$version" }
     val items = json.getAsJsonArray("dependencies") ?: error("运行时清单缺少 dependencies")
-    val dependencies =
-        items.map { element ->
-            val item = element.asJsonObject
-            RuntimeDependency(
-                group = item.string("group"),
-                artifact = item.string("artifact"),
-                version = item.string("version"),
-                filename = item.string("filename"),
-                sha256 = item.string("sha256"),
-                size = item.get("size")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L,
-            )
-        }
+    val dependencies = items.map { element ->
+        val item = element.asJsonObject
+        RuntimeDependency(
+            group = item.string("group"),
+            artifact = item.string("artifact"),
+            version = item.string("version"),
+            filename = item.string("filename"),
+            sha256 = item.string("sha256"),
+            size = item.get("size")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L,
+        )
+    }
     require(dependencies.isNotEmpty()) { "运行时清单里没有任何依赖" }
     dependencies.forEach { dependency ->
         require(dependency.filename.matches(Regex("[A-Za-z0-9_.+-]+\\.jar"))) {
@@ -290,15 +296,15 @@ private suspend fun selectMirrors(mirrorPath: String): List<Mirror> = coroutineS
 }
 
 private suspend fun probeMirror(mirror: Mirror, mirrorPath: String): Mirror? =
-    withTimeoutOrNull(probeTimeoutMillis) {
+    withTimeoutOrNull(PROBE_TIMEOUT_MILLIS) {
         for (root in mirror.roots) {
             val started = System.nanoTime()
             try {
                 val connection =
                     open(root + mirrorPath).apply {
                         requestMethod = "GET"
-                        connectTimeout = probeTimeoutMillis.toInt()
-                        readTimeout = probeTimeoutMillis.toInt()
+                        connectTimeout = PROBE_TIMEOUT_MILLIS.toInt()
+                        readTimeout = PROBE_TIMEOUT_MILLIS.toInt()
                     }
                 try {
                     val status = connection.responseCode
@@ -330,9 +336,7 @@ private fun open(url: String): HttpURLConnection =
         setRequestProperty("User-Agent", "MoliFox-Bootstrap/1.0")
     }
 
-/**
- * 下载、校验与进度状态。所有可变状态都用并发容器保存，Swing 定时器只读取快照。
- */
+/** 下载、校验与进度状态。所有可变状态都用并发容器保存，Swing 定时器只读取快照。 */
 private class RuntimeInstaller(
     private val cacheDirectory: Path,
     private val dependencies: List<RuntimeDependency>,
@@ -369,7 +373,7 @@ private class RuntimeInstaller(
     suspend fun install(): List<String> {
         failures.clear()
         val pending = dependencies.filterNot { verified.containsKey(it.filename) }
-        val permits = Semaphore(parallelDownloads)
+        val permits = Semaphore(PARALLEL_DOWNLOADS)
         coroutineScope {
             pending
                 .map { dependency ->
@@ -386,7 +390,8 @@ private class RuntimeInstaller(
         return failureMessages()
     }
 
-    private fun failureMessages(): List<String> = synchronized(failures) { failures.values.toList() }
+    private fun failureMessages(): List<String> =
+        synchronized(failures) { failures.values.toList() }
 
     private suspend fun installOne(dependency: RuntimeDependency): String? {
         val target = cacheDirectory.resolve(dependency.filename)
@@ -399,15 +404,17 @@ private class RuntimeInstaller(
             }
             if (mirrorOrder.isEmpty()) return "没有可用的镜像"
             var lastMessage = "下载失败"
-            for (attempt in 0..retryLimit) {
+            for (attempt in 0..RETRY_LIMIT) {
                 val current = mirrorOrder[attempt % mirrorOrder.size]
                 val part = Files.createTempFile(cacheDirectory, ".molifox-", ".part")
                 try {
-                    val completed = withTimeoutOrNull(fileTimeoutMillis) {
-                        transfer(current, dependency, part)
-                        true
-                    }
-                    if (completed == null) throw IOException("下载超时（${fileTimeoutMillis / 1000} 秒）")
+                    val completed =
+                        withTimeoutOrNull(FILE_TIMEOUT_MILLIS) {
+                            transfer(current, dependency, part)
+                            true
+                        }
+                    if (completed == null)
+                        throw IOException("下载超时（${FILE_TIMEOUT_MILLIS / 1000} 秒）")
                     moveIntoPlace(part, target)
                     verified[dependency.filename] = dependency.size
                     log("下载完成：${dependency.filename} via ${current.name}")
@@ -422,7 +429,7 @@ private class RuntimeInstaller(
                     active[dependency.filename] = 0L
                 }
             }
-            return "$lastMessage（已重试 $retryLimit 次）"
+            return "$lastMessage（已重试 $RETRY_LIMIT 次）"
         } finally {
             active.remove(dependency.filename)
         }
@@ -454,8 +461,8 @@ private class RuntimeInstaller(
     private suspend fun downloadFrom(url: String, dependency: RuntimeDependency, part: Path) {
         val connection =
             open(url).apply {
-                connectTimeout = connectTimeoutMillis
-                readTimeout = readTimeoutMillis
+                connectTimeout = CONNECT_TIMEOUT_MILLIS
+                readTimeout = READ_TIMEOUT_MILLIS
                 setRequestProperty("Accept", "application/octet-stream")
             }
         try {
@@ -495,7 +502,12 @@ private class RuntimeInstaller(
 
     private fun moveIntoPlace(part: Path, target: Path) {
         try {
-            Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            Files.move(
+                part,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
         } catch (_: AtomicMoveNotSupportedException) {
             Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
         }
@@ -525,10 +537,7 @@ private enum class RecoveryAction {
     SwitchMirror,
 }
 
-/**
- * 准备窗口：镜像与延迟、文件数、字节数、实时速度，以及失败时的每条错误与两个按钮。
- * 只用 Swing，不加载 Compose（Compose 依赖正是在这一步下载的）。
- */
+/** 准备窗口：镜像与延迟、文件数、字节数、实时速度，以及失败时的每条错误与两个按钮。 只用 Swing，不加载 Compose（Compose 依赖正是在这一步下载的）。 */
 private class BootstrapWindow(private val installer: RuntimeInstaller) {
     private val frame = JFrame("MoliFox · 准备启动")
     private val progress =
@@ -647,7 +656,7 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         }
     }
 
-    /** 等待「重试」/「更换镜像」；窗口关闭导致的取消会照常抛 CancellationException。 */
+    /** 等待「重试」或「更换镜像」操作，并响应当前协程的取消。 */
     suspend fun awaitRecovery(): RecoveryAction {
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -686,15 +695,11 @@ private fun formatBytes(bytes: Long): String =
         else -> "$bytes B"
     }
 
-/**
- * 用缓存目录里的 jar 加上本程序集启动界面，方式与之前完全一致：同一个 JVM、
- * 父加载器为平台加载器，主类仍是 dev.molifox.desktop.MainKt。
- */
+/** 用缓存目录里的 jar 加上本程序集启动界面，使用同一个 JVM， 父加载器为平台加载器，主类仍是 dev.molifox.desktop.MainKt。 */
 private fun launchUi(manifest: RuntimeManifest, cache: Path) {
     val ownJar = BootstrapMainMarker::class.java.protectionDomain.codeSource.location
     val urls =
-        listOf(ownJar) +
-            manifest.dependencies.map { cache.resolve(it.filename).toUri().toURL() }
+        listOf(ownJar) + manifest.dependencies.map { cache.resolve(it.filename).toUri().toURL() }
     val loader = URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader())
     Thread.currentThread().contextClassLoader = loader
     loader.loadClass("dev.molifox.desktop.MainKt").getMethod("main").invoke(null)
@@ -707,7 +712,12 @@ private fun log(message: String) {
     synchronized(logLock) {
         runCatching {
             Files.createDirectories(target.parent)
-            Files.writeString(target, "$line\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+            Files.writeString(
+                target,
+                "$line\n",
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND,
+            )
         }
     }
 }

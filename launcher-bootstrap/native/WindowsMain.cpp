@@ -1,3 +1,5 @@
+// 负责定位系统 Java、准备启动环境并运行内嵌的启动器 JAR。
+
 #ifndef UNICODE
 #define UNICODE
 #endif
