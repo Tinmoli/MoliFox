@@ -762,11 +762,7 @@ class SaveManager(private val store: LauncherStore) {
         .getOrDefault(false)
 
     private fun moveIntoPlace(part: Path, target: Path) {
-        try {
-            Files.move(part, target, StandardCopyOption.ATOMIC_MOVE)
-        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-            Files.move(part, target)
-        }
+        commitSavePath(part, target)
     }
 
     /** 删除本次操作产生的目录/文件；链接与目录联接只删链接本身，不进入目标目录。 */

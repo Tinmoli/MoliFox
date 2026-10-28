@@ -7,7 +7,6 @@ import java.nio.file.Path
 import java.util.zip.ZipFile
 import kotlin.io.path.*
 import kotlin.test.*
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -262,14 +261,11 @@ class StorageLayoutTest {
     }
 
     @Test
-    fun `migration refuses symbolic directory targets and preserves external files`() {
+    fun `migration refuses directory links and preserves external files`() {
         val root = temporary.resolve("profile").createDirectory()
         val outside = temporary.resolve("external").createDirectory()
         put(outside, "marker", "untouched")
-        assumeTrue(
-            runCatching { Files.createSymbolicLink(root.resolve("config"), outside) }.isSuccess,
-            "Creating symbolic links requires platform permission",
-        )
+        createTestDirectoryLink(root.resolve("config"), outside)
         put(root, "launcher.json", "keep old")
         assertFails { LauncherStore(DesktopPlatform(), root) }
         assertEquals("keep old", root.resolve("launcher.json").readText())

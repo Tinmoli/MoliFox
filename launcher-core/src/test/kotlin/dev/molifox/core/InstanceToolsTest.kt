@@ -289,7 +289,7 @@ class InstanceToolsTest {
     }
 
     @Test
-    fun `tidy does not follow symbolic links outside the instance root`() {
+    fun `tidy does not follow directory links outside the instance root`() {
         val store = store()
         val source = instance(store)
         val root = store.instancePath(source.id)
@@ -297,8 +297,7 @@ class InstanceToolsTest {
         outside.resolve("nested").createDirectories()
         outside.resolve("keep.txt").writeText("outside")
         val link = root.resolve("linked")
-        val created = runCatching { Files.createSymbolicLink(link, outside) }.isSuccess
-        assumeTrue(created, "当前环境不允许创建符号链接")
+        createTestDirectoryLink(link, outside)
 
         val report = InstanceTools(store).tidyInstance(source.id)
 

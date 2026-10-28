@@ -135,16 +135,21 @@ class GameDirectoryTest {
         val folder = version(root)
         root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("my world")
         LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
+            controller.store.mutate {
+                it.copy(settings = it.settings.copy(isolateVersions = false))
+            }
             controller.directories.add(root)
             val instance = controller.store.data.instances.single()
-            assertEquals(VersionIsolation.Disabled, instance.isolation)
+            assertEquals(VersionIsolation.Inherit, instance.isolation)
+            assertEquals(root.toRealPath(), controller.store.instancePath(instance.id))
+            val expected = folder.toRealPath()
             // 这里只验证删除范围，用永久删除避免把测试夹具放进用户系统回收站。
             // 共用游戏根、存档与其它版本必须原样保留。
             val report = runBlocking {
                 controller.deleteInstance(instance.id, permanent = true)
             }
                 .getOrThrow()
-            assertEquals(listOf(folder.toRealPath()), report.removedPaths.map { Path.of(it) })
+            assertEquals(listOf(expected), report.removedPaths.map { Path.of(it) })
             assertFalse(report.movedToTrash)
             assertTrue(report.freedBytes > 0)
             assertFalse(folder.exists())
@@ -164,8 +169,12 @@ class GameDirectoryTest {
         root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("my world")
         root.resolve("launcher_profiles.json").writeText("private launcher data")
         LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
+            controller.store.mutate {
+                it.copy(settings = it.settings.copy(isolateVersions = false))
+            }
             controller.directories.add(root)
             val original = controller.store.data.instances.single()
+            assertEquals(root.toRealPath(), controller.store.instancePath(original.id))
             val created =
                 controller.installer.createInstance(InstallRequest("new version", "1.20.1"))
             assertEquals(controller.store.data.activeGameDirectoryId, created.gameDirectoryId)

@@ -81,6 +81,8 @@ class InstanceDeletionTest {
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
             controller.directories.add(root)
             val instance = controller.store.data.instances.single { it.versionId == id }
+            val fallback = controller.store.data.instances.single { it.id != instance.id }
+            controller.store.mutate { it.copy(selectedInstanceId = instance.id) }
             assertEquals(listOf(expected), controller.deletionTargets(instance.id))
             // 确认框的细节：独立游戏目录 + saves 名单（名称与上次修改时间）。
             assertTrue(controller.hasSeparateGameDirectory(instance.id))
@@ -107,7 +109,7 @@ class InstanceDeletionTest {
             assertTrue(root.resolve("libraries/x.jar").isRegularFile())
             assertTrue(root.resolve("assets/a.bin").isRegularFile())
             assertTrue(controller.store.data.instances.none { it.id == instance.id })
-            assertNull(controller.store.data.selectedInstanceId)
+            assertEquals(fallback.id, controller.store.data.selectedInstanceId)
         }
     }
 
@@ -157,16 +159,18 @@ class InstanceDeletionTest {
                 root.resolve("instances").resolve(second.id).apply { createDirectories() }
             firstOwn.resolve("mods").createDirectories().resolve("a.jar").writeText("mod")
             secondOwn.resolve("saves").createDirectories().resolve("level.dat").writeText("save")
+            val firstExpected = firstOwn.toRealPath()
+            val lastExpected = listOf(versionFolder.toRealPath(), secondOwn.toRealPath())
             runBlocking { controller.deleteInstance(first.id) }.getOrThrow()
             assertEquals(1, platform.trashCalls)
-            assertEquals(listOf(firstOwn.toRealPath()), platform.trashed)
+            assertEquals(listOf(firstExpected), platform.trashed)
             assertFalse(firstOwn.exists())
             assertTrue(secondOwn.isDirectory())
             assertTrue(versionFolder.resolve("1.20.1.json").isRegularFile())
             runBlocking { controller.deleteInstance(second.id) }.getOrThrow()
-            assertEquals(2, platform.trashCalls)
+            assertEquals(3, platform.trashCalls)
             assertEquals(
-                listOf(versionFolder.toRealPath(), secondOwn.toRealPath()),
+                lastExpected,
                 platform.trashed.takeLast(2),
             )
             assertFalse(secondOwn.exists())
