@@ -75,13 +75,19 @@ if ($IncludeDependencyCache -and (Test-Path -LiteralPath $cacheRoot)) {
     $null = Assert-OwnedPath $cacheRoot
     if ([IO.Directory]::GetFileSystemEntries($cacheRoot).Length -eq 0) { Remove-Item -LiteralPath $cacheRoot -Force }
 }
+$output = Join-Path $projectRoot 'docs\validation\closeout-cleanup-result.json'
+$previous = $null
+if (Test-Path -LiteralPath $output) {
+    $last = Get-Content -LiteralPath $output -Encoding UTF8 -Raw | ConvertFrom-Json
+    $previous = [ordered]@{updated=$last.updated; status=$last.status; removed=@($last.targets | Where-Object {$_.status -eq 'removed'}).Count; failed=@($last.targets | Where-Object {$_.status -eq 'failed'}).Count}
+}
 $report = [ordered]@{
     updated=[DateTime]::UtcNow.ToString('o')
     dependencyCacheIncluded=[bool]$IncludeDependencyCache
     status=$(if (@($results | Where-Object {$_.status -eq 'failed'}).Count) {'partial'} else {'completed'})
     targets=$results
+    previousRun=$previous
 }
-$output = Join-Path $projectRoot 'docs\validation\closeout-cleanup-result.json'
 [IO.File]::WriteAllText($output, ($report | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 Write-Output ("Cleanup {0}: {1} removed, {2} absent, {3} failed." -f $report.status, @($results | Where-Object {$_.status -eq 'removed'}).Count, @($results | Where-Object {$_.status -eq 'already-absent'}).Count, @($results | Where-Object {$_.status -eq 'failed'}).Count)
 if ($report.status -ne 'completed') { exit 1 }
