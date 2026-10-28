@@ -92,8 +92,6 @@ internal class TestNbtWriter {
         u8(0)
     }
 
-    fun intElement(value: Int) = i32(value)
-
     private fun header(type: Int, name: String) {
         u8(type)
         text(name)

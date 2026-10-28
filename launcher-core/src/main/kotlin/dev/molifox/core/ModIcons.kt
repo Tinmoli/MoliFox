@@ -15,7 +15,6 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
 import kotlin.io.path.*
-import org.tomlj.Toml
 
 /** 模组图标上限 1 MiB：超过上限的图片不当图标，避免把整包资源读进内存。 */
 private const val MOD_ICON_MAX_BYTES = 1024 * 1024
