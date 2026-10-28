@@ -2,6 +2,7 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -14,8 +15,14 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.molifox.core.LoaderType
+import kotlin.math.roundToInt
 
 private fun DrawScope.polygon(color: Color, vararg points: Pair<Float, Float>) {
     drawPath(
@@ -54,30 +61,37 @@ fun FoxMark(modifier: Modifier = Modifier.size(36.dp)) {
     }
 }
 
-/** Three-dimensional head preview using the account's original texture and hat layer. */
+/** 内置方块图标的统一入口：把资源图片直接放进布局，交给 Compose 默认方式绘制。 */
 @Composable
-fun SkinHead(skin: ImageBitmap?, modifier: Modifier = Modifier) {
-    SkinModelImage(skin, dev.molifox.core.SkinVariant.Classic, true, -25f, 12f, true, modifier)
+internal fun BundledBlockIcon(resource: String, description: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(resource) { loadBundledImage(resource) }
+    if (bitmap != null) Image(bitmap, description, modifier, contentScale = ContentScale.Fit)
+    else Box(modifier)
 }
 
-/** Original bundled game/loader artwork; source and rights notices accompany these resources. */
+private fun loadBundledImage(resource: String): ImageBitmap? =
+    runCatching {
+            val stream =
+                LoaderType::class.java.classLoader.getResourceAsStream(resource)
+                    ?: return@runCatching null
+            stream.use {
+                org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap()
+            }
+        }
+        .getOrNull()
+
+/** 加载器标识使用随包内置的方块图片。 */
+private fun LoaderType.blockIcon(): String =
+    when (this) {
+        LoaderType.Vanilla -> "icons/blocks/grass.png"
+        LoaderType.Fabric -> "icons/blocks/fabric.png"
+        LoaderType.Quilt -> "icons/blocks/quilt.png"
+        LoaderType.Forge -> "icons/blocks/anvil.png"
+        LoaderType.NeoForge -> "icons/blocks/neoforge.png"
+    }
+
+/** 内置的原版/加载器方块图标；图片随包分发，调用方无需再绘制。 */
 @Composable
 fun LoaderMark(loader: LoaderType, modifier: Modifier = Modifier.size(22.dp)) {
-    val bitmap =
-        remember(loader) {
-            val file = "icons/loaders/${loader.name.lowercase()}.png"
-            val bytes =
-                checkNotNull(LoaderType::class.java.classLoader.getResourceAsStream(file)) {
-                        "Missing bundled loader icon: $file"
-                    }
-                    .use { it.readBytes() }
-            org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
-        }
-    Image(
-        bitmap,
-        loader.title,
-        modifier,
-        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-        filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
-    )
+    BundledBlockIcon(loader.blockIcon(), loader.title, modifier)
 }

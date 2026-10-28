@@ -32,12 +32,17 @@ class DesktopPlatform : PlatformServices {
                     ?.div(1024 * 1024) ?: 8192)
                 .toInt()
 
+    /**
+     * 默认数据目录：仍优先使用显式指定的 molifox.data.dir / MOLIFOX_DATA_DIR，否则放在启动器
+     * 自身所在目录的 MoliFox/ 下。这里不能用 user.dir：它只是进程工作目录，可能是任意 shell
+     * 的位置，会让数据和默认 .minecraft 落到启动器之外。
+     */
     override val defaultDataDirectory: Path
         get() =
             (System.getProperty("molifox.data.dir") ?: System.getenv("MOLIFOX_DATA_DIR"))
                 ?.takeIf { it.isNotBlank() }
                 ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?: Path.of(System.getProperty("user.dir"), "MoliFox").toAbsolutePath().normalize()
+                ?: LauncherLocation.locate().resolve("MoliFox")
 
     override val availableMemoryMb: Int
         get() =

@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 
 val FoxOrange = Color(0xFFE67D4A)
-val ForestGreen = Color(0xFF287764)
 val MutedGreen = Color(0xFF398571)
 
 /** 关闭动画时页面切换与提示直接呈现，不做过渡。 */
@@ -374,7 +373,7 @@ fun Tag(text: String, color: Color = MaterialTheme.colorScheme.primary) {
     }
 }
 
-/** 图标按钮：30dp 触区、16dp 图标，悬停时 6% `onSurface` 圆底淡入。 */
+/** 图标按钮：默认 30dp 触区、16dp 图标，悬停时 6% `onSurface` 圆底淡入；[size] 可放大触区（开始页账户卡用 32dp）。 */
 @Composable
 fun SmallIconButton(
     icon: ImageVector,
@@ -382,6 +381,7 @@ fun SmallIconButton(
     onClick: () -> Unit,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     enabled: Boolean = true,
+    size: Dp = Metrics.iconButton,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -394,7 +394,7 @@ fun SmallIconButton(
     IconButton(
         onClick = onClick,
         modifier =
-            Modifier.size(Metrics.iconButton)
+            Modifier.size(size)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = hoverAlpha)),
         enabled = enabled,
@@ -468,25 +468,6 @@ fun SecondaryButton(
         ) {
             content()
         }
-    }
-}
-
-/** 页标题：18sp SemiBold + 12sp `onSurfaceVariant` 副标题，间距 2dp。 */
-@Composable
-fun SectionTitle(title: String, subtitle: String = "", action: @Composable (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineLarge)
-            if (subtitle.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        action?.invoke()
     }
 }
 

@@ -74,6 +74,7 @@ class LauncherController(
     val screenshots = ScreenshotManager(store)
     val content = ContentService(store, network, installer)
     val tools = InstanceTools(store)
+    val deletion = InstanceDeletionService(store)
     val saves = SaveManager(store)
     private val migration = IsolationMigration(store)
     val game = GameLauncher(store, installer, java, accounts, scope)
@@ -189,6 +190,14 @@ class LauncherController(
         requireIdle()
         directories.refresh()
     }
+
+    /**
+     * 启动时自动发现：按启动器自身位置（[LauncherLocation]，不是 user.dir）解析旁边的
+     * `.minecraft`、启动器自身即 `.minecraft`/游戏根、以及 `MoliFox/` 旁的目录，只读登记现有版本。
+     * 已登记目录不会重复添加，也不会覆盖用户的选择；没有发现时不产生任何日志或提示。
+     */
+    fun discoverStartupGameDirectories(): Int =
+        directories.discover(StartupGameRoots.resolve(LauncherLocation.locate()))
 
     fun removeGameDirectory(id: String) {
         requireIdle()
@@ -321,29 +330,80 @@ class LauncherController(
         store.updateInstance(id) { it.copy(favorite = !it.favorite) }
     }
 
-    fun deleteInstance(id: String) {
-        requireIdle()
-        val instance = store.instance(id)
-        val directory = store.ownedInstancePath(id)
-        require(!Files.isSymbolicLink(directory)) { "实例目录是符号链接，不能移除" }
-        if (
-            (instance.gameDirectoryId == null ||
-                (instance.managedGameDirectory && !instance.externalProfile)) &&
-                directory.exists(LinkOption.NOFOLLOW_LINKS)
-        )
-            platform.moveToTrash(directory)
-        store.mutate { data ->
-            val instances = data.instances.filter { it.id != id }
-            data.copy(
-                instances = instances,
-                selectedInstanceId =
-                    if (data.selectedInstanceId == id) instances.firstOrNull()?.id
-                    else data.selectedInstanceId,
-            )
+    /** 「删除实例」会永久删除的绝对路径（版本文件夹与游戏文件夹）；无法解析或只清记录时为空，仅用于对话框展示。 */
+    fun deletionTargets(instanceId: String): List<Path> =
+        runCatching { deletion.plan(instanceId).targets }.getOrElse { emptyList() }
+
+    /** 删除实例会一并删除的存档名单（名称 + 上次修改时间），只用于确认框展示。 */
+    fun deletionWorlds(instanceId: String): List<InstanceDeletionWorld> =
+        runCatching { deletion.worlds(instanceId) }.getOrElse { emptyList() }
+
+    /** 实例是否有独立游戏目录；为真时存档、资源包、Mod 都在会被删除的目录里。 */
+    fun hasSeparateGameDirectory(instanceId: String): Boolean =
+        runCatching {
+                val instance = store.instance(instanceId)
+                store.gamePath(instance).toAbsolutePath().normalize() !=
+                    store.minecraftRoot(instance).toAbsolutePath().normalize()
+            }
+            .getOrDefault(false)
+
+    /**
+     * 删除实例：先清除启动器记录，再把实例自己的版本文件夹与游戏文件夹移到回收站或永久删除。
+     *
+     * [deleteFiles] 为 false 时只清记录，保留游戏文件（界面不再提供入口）。
+     * [permanent] 为 true（界面上按住 Shift 确认）时永久删除，否则移入系统回收站；回收站不可用时自动回退永久删除，
+     * 结果里的 [InstanceDeletionReport.movedToTrash] 会说明实际去向。
+     * 实例正在运行、路径无法解析、目标是符号链接或不在实例自己目录下时返回失败，磁盘完全不动；
+     * 删除中途失败时返回失败，已处理的部分不回滚。
+     */
+    suspend fun deleteInstance(
+        instanceId: String,
+        deleteFiles: Boolean = true,
+        permanent: Boolean = false,
+    ): Result<InstanceDeletionReport> =
+        withContext(Dispatchers.IO) {
+            try {
+                require(store.state.value.runningInstanceId != instanceId) {
+                    "实例正在运行，请先退出游戏再删除"
+                }
+                requireIdle()
+                val instance = store.instance(instanceId)
+                val plan =
+                    if (deleteFiles) deletion.plan(instanceId)
+                    else InstanceDeletionPlan(emptyList())
+                plan.preserved.forEach { store.log("删除实例时保留：$it") }
+                val report = deletion.delete(plan, permanent)
+                store.mutate { data ->
+                    val instances = data.instances.filter { it.id != instanceId }
+                    // 回退优先同一游戏目录里的实例，开始页与实例列表都不会跳到别的目录。
+                    val fallback =
+                        instances.firstOrNull {
+                            it.gameDirectoryId == instance.gameDirectoryId
+                        } ?: instances.firstOrNull()
+                    data.copy(
+                        instances = instances,
+                        selectedInstanceId =
+                            if (data.selectedInstanceId == instanceId) fallback?.id
+                            else data.selectedInstanceId,
+                    )
+                }
+                icons.releaseUnused(instance.iconId)
+                icons.releaseUnused(instance.packIconId)
+                val mode =
+                    when {
+                        !deleteFiles -> "仅清除记录，游戏文件保留"
+                        report.movedToTrash -> "版本文件夹与游戏文件夹已移入回收站"
+                        else -> "版本文件夹与游戏文件夹已永久删除"
+                    }
+                store.log("已删除实例：${instance.name}（$mode，共 ${report.freedBytes} 字节）")
+                Result.success(report)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                store.log("删除实例失败：${failure.message ?: "未知错误"}", true)
+                Result.failure(failure)
+            }
         }
-        icons.releaseUnused(instance.iconId)
-        icons.releaseUnused(instance.packIconId)
-    }
 
     fun saveSettings(settings: LauncherSettings) {
         validateAdvancedLaunchSettings(settings.advancedLaunch, platform.osName)
@@ -355,7 +415,7 @@ class LauncherController(
         }
         if (settings.gameRoot != store.data.settings.gameRoot) {
             requireIdle()
-            require(store.data.instances.isEmpty()) { "已有实例时不能直接切换目录，请先导出并移除实例" }
+            require(store.data.instances.isEmpty()) { "已有实例时不能直接切换目录，请先导出并删除实例" }
         }
         require(settings.memoryMb in 512..maxOf(512, platform.totalMemoryMb - 512)) {
             "内存需在 512 MB 到物理内存减 512 MB 之间"

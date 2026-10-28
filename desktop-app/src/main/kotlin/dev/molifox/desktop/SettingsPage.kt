@@ -4,10 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -22,10 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
@@ -54,36 +50,20 @@ private class SettingBlock(
     val render: @Composable () -> Unit,
 )
 
-/** 一张设置卡片：标题行右侧在草稿与已保存值不同时出现「重置本区」。 */
+/** 一张设置卡片：改动即保存，卡片本身不持有「未保存」状态，因此没有重置本区。 */
 private class SettingCard(
     val title: String,
     val detail: String = "",
     val blocks: List<SettingBlock>,
-    val dirty: Boolean = false,
-    val onReset: (() -> Unit)? = null,
 )
 
-/** 数字类输入框的字符串草稿：切分区不重建，保存时才写回设置。 */
-private class NumberDraft(
-    val width: String,
-    val onWidth: (String) -> Unit,
-    val height: String,
-    val onHeight: (String) -> Unit,
-    val memory: String,
-    val onMemory: (String) -> Unit,
-    val initial: String,
-    val onInitial: (String) -> Unit,
-    val proxyPort: String,
-    val onProxyPort: (String) -> Unit,
-)
+/** 卡片侧写入口：把写盘失败的原因交回页面，在底部提示行如实显示。 */
+private class SettingsWriter(val actions: UiActions, private val onFailure: (String?) -> Unit) {
 
-/** 设置页顶层草稿：draft 在页面层持有，切分区只换内容，未保存输入不会丢失。 */
-private class SettingsEditor(
-    val draft: LauncherSettings,
-    val saved: LauncherSettings,
-    val numbers: NumberDraft,
-    val update: ((LauncherSettings) -> LauncherSettings) -> Unit,
-)
+    fun commit(change: (LauncherSettings) -> LauncherSettings) {
+        onFailure(applySetting(actions, change))
+    }
+}
 
 /** 行内控件：标题与说明在左，控件在右（行高 44 / 带说明 52）。 */
 private fun settingRow(title: String, detail: String = "", control: @Composable () -> Unit) =
@@ -119,18 +99,30 @@ private fun settingControl(title: String, content: @Composable () -> Unit) =
 /** 只有一行说明的条目：仍可被搜索命中。 */
 private fun settingNote(text: String) = SettingBlock(text, "") { MutedText(text) }
 
+/**
+ * 还原默认配置的取值：设置页负责的选项全部回到出厂值。
+ * 游戏目录、游戏目录语义、正版登录身份与 CurseForge Key 不属于本页，保持原样；
+ * 已导入的字体、背景图片属于文件资产，只重置它们的选项，不删除文件本身。
+ */
+private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): LauncherSettings {
+    val defaults = LauncherSettings()
+    val memory = minOf(defaults.memoryMb, maximumMemoryMb)
+    return defaults.copy(
+        gameRoot = current.gameRoot,
+        gameRootSemantics = current.gameRootSemantics,
+        microsoftClientId = current.microsoftClientId,
+        curseForgeApiKey = current.curseForgeApiKey,
+        customFonts = current.customFonts,
+        backgroundPath = current.backgroundPath,
+        backgroundRevision = current.backgroundRevision,
+        memoryMb = memory,
+        initialMemoryMb = minOf(defaults.initialMemoryMb, memory),
+    )
+}
+
 @Composable
 fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate: (Page) -> Unit) {
     val settings = state.data.settings
-    // draft 不再以 settings 为键：外观分区的即时保存不会重置这里未保存的输入（C-14）。
-    var draft by remember { mutableStateOf(settings) }
-    // 与草稿最近一次对齐过的设置快照，用来判断「用户是否还有未保存输入」。
-    var synced by remember { mutableStateOf(settings) }
-    var width by remember { mutableStateOf(settings.width.toString()) }
-    var height by remember { mutableStateOf(settings.height.toString()) }
-    var memory by remember { mutableStateOf(settings.memoryMb.toString()) }
-    var initial by remember { mutableStateOf(settings.initialMemoryMb.toString()) }
-    var proxyPort by remember { mutableStateOf(settings.proxyPort.toString()) }
     var section by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var runtimes by remember { mutableStateOf<List<JavaRuntime>>(emptyList()) }
@@ -138,54 +130,12 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
     var detectionError by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var advancedValid by remember { mutableStateOf(true) }
+    // 还原默认配置后 +1：高级参数编辑器据此丢弃内部文本，按新的已保存值重建。
     var advancedRevision by remember { mutableIntStateOf(0) }
+    // 写盘失败（多半是后台任务进行中不允许改动目录 / 隔离）时在标题下如实提示，不静默丢失。
+    var saveError by remember { mutableStateOf<String?>(null) }
     val maximum = maxOf(512, actions.controller.platform.totalMemoryMb - 512)
-    val valid =
-        advancedValid &&
-            (width.toIntOrNull() ?: 0) in 640..7680 &&
-            (height.toIntOrNull() ?: 0) in 480..4320 &&
-            (memory.toIntOrNull() ?: 0) in 512..maximum &&
-            (initial.toIntOrNull() ?: 0) in 128..(memory.toIntOrNull() ?: 0)
-    // 有未保存修改：草稿或数字文本与已保存值不一致。保存按钮只在「有改动且合法」时可点。
-    val dirty =
-        draft != settings ||
-            width != settings.width.toString() ||
-            height != settings.height.toString() ||
-            memory != settings.memoryMb.toString() ||
-            initial != settings.initialMemoryMb.toString() ||
-            proxyPort != settings.proxyPort.toString()
     val duration = if (LocalReducedMotion.current) 0 else Motion.fast
-    val restore: () -> Unit = {
-        draft = settings
-        synced = settings
-        width = settings.width.toString()
-        height = settings.height.toString()
-        memory = settings.memoryMb.toString()
-        initial = settings.initialMemoryMb.toString()
-        proxyPort = settings.proxyPort.toString()
-        advancedRevision++
-    }
-    // 外观等分区即时保存时，以最近同步的快照合并：保留未保存输入，接收未编辑字段的新值。
-    LaunchedEffect(settings) {
-        val untouched =
-            draft == synced &&
-                width == synced.width.toString() &&
-                height == synced.height.toString() &&
-                memory == synced.memoryMb.toString() &&
-                initial == synced.initialMemoryMb.toString() &&
-                proxyPort == synced.proxyPort.toString()
-        draft = mergeSettingsDraft(synced, draft, settings)
-        if (width == synced.width.toString()) width = settings.width.toString()
-        if (height == synced.height.toString()) height = settings.height.toString()
-        if (memory == synced.memoryMb.toString()) memory = settings.memoryMb.toString()
-        if (initial == synced.initialMemoryMb.toString())
-            initial = settings.initialMemoryMb.toString()
-        if (proxyPort == synced.proxyPort.toString()) proxyPort = settings.proxyPort.toString()
-        if (untouched) {
-            advancedRevision++
-        }
-        synced = settings
-    }
     LaunchedEffect(section, refresh, query.isNotBlank()) {
         // 搜索会把 Java 卡片一起展示，所以搜索时也需要检测结果。
         if (section != 1 && query.isBlank()) return@LaunchedEffect
@@ -201,30 +151,17 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
             detecting = false
         }
     }
-    val numbers =
-        NumberDraft(
-            width = width,
-            onWidth = { width = it },
-            height = height,
-            onHeight = { height = it },
-            memory = memory,
-            onMemory = { memory = it },
-            initial = initial,
-            onInitial = { initial = it },
-            proxyPort = proxyPort,
-            onProxyPort = { proxyPort = it },
-        )
-    val editor =
-        SettingsEditor(
-            draft = draft,
-            saved = settings,
-            numbers = numbers,
-            update = { change -> draft = change(draft) },
-        )
+    val writer = remember(actions) { SettingsWriter(actions) { saveError = it } }
+    // 还原默认配置：设置页负责的选项全部回到出厂值并立即写盘；高级参数编辑器随之重建。
+    val resetDefaults: () -> Unit = {
+        writer.commit { current -> defaultSettings(current, maximum) }
+        advancedRevision++
+    }
     val javaCards =
         javaSettingCards(
             actions,
-            editor,
+            writer,
+            settings,
             runtimes,
             detecting,
             detectionError,
@@ -232,12 +169,23 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
             navigate,
         )
     val gameCards =
-        gameSettingCards(state, actions, editor, maximum, { advancedValid = it }, advancedRevision)
-    val generalCards = generalSettingCards(actions, editor)
-    val downloadCards = downloadSettingCards(actions, editor)
+        gameSettingCards(
+            state,
+            actions,
+            writer,
+            settings,
+            maximum,
+            advancedRevision,
+            advancedValid,
+            { advancedValid = it },
+        )
+    val generalCards = generalSettingCards(actions, writer, settings)
+    val downloadCards = downloadSettingCards(actions, writer, settings)
     val aboutCards = aboutSettingCards()
     val searchCards = gameCards + javaCards + generalCards + downloadCards + aboutCards
-    SectionTitle("设置", "全局设置作为各个版本的默认值，改动后点右下角「保存设置」生效。") {
+    // 主标题已删除（P1）：搜索框仍在原来的右上角；右侧留出与滚动列一致的 12dp，
+    // 否则会比下面白卡的右边缘多探出一截。
+    Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
         Row(
             Modifier.width(250.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -257,6 +205,14 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
                 SmallIconButton(Icons.Outlined.Close, "清空搜索", { query = "" })
             }
         }
+    }
+    saveError?.let { message ->
+        Text(
+            "有设置未保存：" + message,
+            Modifier.padding(top = 6.dp),
+            color = MaterialTheme.colorScheme.error,
+            fontSize = 12.sp,
+        )
     }
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         // 左侧二级列表：项高 34、圆角 6、图标 16、文字 13，选中主题色容器底 + 主题色文字。
@@ -282,64 +238,42 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
             label = "settingsSection",
         ) { index ->
             when (index) {
-                0 -> ScrollColumn(Modifier.fillMaxSize()) { SettingCardFlow(gameCards, "") }
-                1 -> ScrollColumn(Modifier.fillMaxSize()) { SettingCardFlow(javaCards, "") }
-                2 -> ScrollColumn(Modifier.fillMaxSize()) { SettingCardFlow(generalCards, "") }
+                0 ->
+                    ScrollColumn(Modifier.fillMaxSize()) {
+                        SettingCardFlow(gameCards, "")
+                        SettingsResetFooter(resetDefaults)
+                    }
+                1 ->
+                    ScrollColumn(Modifier.fillMaxSize()) {
+                        SettingCardFlow(javaCards, "")
+                        SettingsResetFooter(resetDefaults)
+                    }
+                2 ->
+                    ScrollColumn(Modifier.fillMaxSize()) {
+                        SettingCardFlow(generalCards, "")
+                        SettingsResetFooter(resetDefaults)
+                    }
                 // 外观与日志由子页面提供，内部使用 weight / LazyColumn，必须放在无滚动容器中。
-                3 -> Column(Modifier.fillMaxSize()) { AppearanceSection(state, actions) }
-                4 -> ScrollColumn(Modifier.fillMaxSize()) { SettingCardFlow(downloadCards, "") }
+                3 ->
+                    Column(Modifier.fillMaxSize()) {
+                        AppearanceSection(state, actions, resetDefaults)
+                    }
+                4 ->
+                    ScrollColumn(Modifier.fillMaxSize()) {
+                        SettingCardFlow(downloadCards, "")
+                        SettingsResetFooter(resetDefaults)
+                    }
                 5 -> Column(Modifier.fillMaxSize()) { DownloadsPage(state, actions) }
                 SEARCH_RESULTS ->
                     ScrollColumn(Modifier.fillMaxSize()) {
                         SettingCardFlow(searchCards, query, onClearSearch = { query = "" })
                     }
-                else -> ScrollColumn(Modifier.fillMaxSize()) { SettingCardFlow(aboutCards, "") }
+                else ->
+                    ScrollColumn(Modifier.fillMaxSize()) {
+                        SettingCardFlow(aboutCards, "")
+                        SettingsResetFooter(resetDefaults)
+                    }
             }
-        }
-    }
-    HorizontalDivider(color = hairline())
-    Row(
-        Modifier.fillMaxWidth().padding(top = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (!valid)
-            Text(
-                "请检查窗口尺寸和内存数值。",
-                color = MaterialTheme.colorScheme.error,
-                fontSize = 12.sp,
-            )
-        Spacer(Modifier.weight(1f))
-        AnimatedVisibility(
-            dirty,
-            enter = fadeIn(tween(duration)) + expandHorizontally(tween(duration)),
-            exit = fadeOut(tween(duration)) + shrinkHorizontally(tween(duration)),
-        ) {
-            Text("有未保存修改", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-        }
-        SecondaryButton(onClick = restore, enabled = dirty) { Text("还原修改") }
-        PrimaryButton("保存设置", Icons.Outlined.Check, valid && dirty) {
-            // 数字输入单独存放，保存时合并进草稿；先让草稿与将要落盘的值一致，
-            // 否则保存后「有未保存修改」会一直亮着。
-            val next =
-                mergeSettingsDraft(
-                    synced,
-                    draft.copy(
-                        width = width.toInt(),
-                        height = height.toInt(),
-                        memoryMb = memory.toInt(),
-                        initialMemoryMb = initial.toInt(),
-                        proxyPort = proxyPort.toIntOrNull() ?: 0,
-                    ),
-                    actions.controller.store.data.settings,
-                )
-            draft = next
-            width = next.width.toString()
-            height = next.height.toString()
-            memory = next.memoryMb.toString()
-            initial = next.initialMemoryMb.toString()
-            proxyPort = next.proxyPort.toString()
-            actions.run { actions.controller.saveSettings(next) }
         }
     }
 }
@@ -380,9 +314,6 @@ private fun SettingCardFlow(
         SettingsSection(
             card.title,
             card.detail,
-            action = {
-                SectionResetAction(card.onReset != null && card.dirty) { card.onReset?.invoke() }
-            },
             // 行间改用 1dp 细分隔线：首行之前、末行之后都不画，卡片内边距与 44/52 行高不变。
             contentGap = 0.dp,
         ) {
@@ -394,32 +325,15 @@ private fun SettingCardFlow(
     }
 }
 
-/** 卡片标题行右侧的「重置本区」文字按钮：仅草稿与本区已保存值不同时淡入。 */
-@Composable
-private fun SectionResetAction(visible: Boolean, onReset: () -> Unit) {
-    val duration = if (LocalReducedMotion.current) 0 else Motion.fast
-    AnimatedVisibility(visible, enter = fadeIn(tween(duration)), exit = fadeOut(tween(duration))) {
-        Text(
-            "重置本区",
-            Modifier.pressScale()
-                .clip(RoundedCornerShape(Metrics.innerRadius))
-                .clickable(role = Role.Button, onClick = onReset)
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/** 多行输入框：用于附加 JVM 参数，圆角 4、1dp 边，聚焦时边框变主题色。 */
+/** 多行输入框：用于附加 JVM 参数；输入停手 300ms 后写入设置，非法参数就地提示原因。 */
 @Composable
 private fun SettingTextArea(
     value: String,
-    onChange: (String) -> Unit,
+    onCommit: (String) -> String?,
     label: String,
     hint: String? = null,
 ) {
+    val live = rememberLiveTextDraft(value, onCommit)
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -448,9 +362,9 @@ private fun SettingTextArea(
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
             BasicTextField(
-                value,
-                onChange,
-                Modifier.fillMaxWidth(),
+                live.text,
+                live.onChange,
+                Modifier.fillMaxWidth().semantics { contentDescription = label },
                 textStyle =
                     MaterialTheme.typography.bodyMedium.copy(
                         color = colors.onSurface,
@@ -460,7 +374,13 @@ private fun SettingTextArea(
                 interactionSource = interaction,
             )
         }
-        if (hint != null) Text(hint, color = colors.onSurfaceVariant, fontSize = 11.sp)
+        val message = live.error ?: hint
+        if (message != null)
+            Text(
+                message,
+                color = if (live.error != null) colors.error else colors.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
     }
 }
 
@@ -469,15 +389,37 @@ private fun SettingTextArea(
 private fun gameSettingCards(
     state: LauncherState,
     actions: UiActions,
-    editor: SettingsEditor,
+    writer: SettingsWriter,
+    settings: LauncherSettings,
     maximum: Int,
-    onAdvancedValid: (Boolean) -> Unit,
     advancedRevision: Int,
+    advancedValid: Boolean,
+    onAdvancedValid: (Boolean) -> Unit,
 ): List<SettingCard> {
-    val draft = editor.draft
-    val saved = editor.saved
-    val numbers = editor.numbers
     val cards = mutableListOf<SettingCard>()
+    // 高级参数草稿：编辑器每敲一个字符就回调一次，停手 300ms 再写设置；
+    // 还原默认（advancedRevision 变化）时按新的已保存值重建，编辑器内部文本一并重建。
+    var advancedDraft by remember(advancedRevision) { mutableStateOf(settings.advancedLaunch) }
+    val pendingAdvanced by rememberUpdatedState(advancedDraft)
+    val savedAdvanced by rememberUpdatedState(settings.advancedLaunch)
+    LaunchedEffect(advancedDraft) {
+        val pending = advancedDraft
+        if (pending == settings.advancedLaunch) return@LaunchedEffect
+        delay(LIVE_WRITE_DELAY)
+        writer.commit { it.copy(advancedLaunch = pending) }
+    }
+    // 「启动后最小化」也会写同一个字段：已保存值被其它入口改动时把草稿同步过来，
+    // 否则旧草稿会在下一次编辑时把它覆盖回去。
+    LaunchedEffect(settings.advancedLaunch) {
+        if (advancedDraft != settings.advancedLaunch) advancedDraft = settings.advancedLaunch
+    }
+    // 离开设置页时补写还没到 300ms 的编辑，最后敲的几个字符不会丢。
+    DisposableEffect(Unit) {
+        onDispose {
+            if (pendingAdvanced != savedAdvanced)
+                runCatching { applySetting(actions) { it.copy(advancedLaunch = pendingAdvanced) } }
+        }
+    }
     cards.add(
         SettingCard(
             "内存分配",
@@ -485,8 +427,8 @@ private fun gameSettingCards(
             listOf(
                 settingRow("自动分配内存", "启动时根据剩余物理内存重新计算，保留系统与游戏本地内存空间。") {
                     CompactSwitch(
-                        draft.autoMemory,
-                        { enabled -> editor.update { it.copy(autoMemory = enabled) } },
+                        settings.autoMemory,
+                        { enabled -> writer.commit { it.copy(autoMemory = enabled) } },
                         Modifier.semantics { contentDescription = "自动分配内存开关" },
                     )
                 },
@@ -496,7 +438,7 @@ private fun gameSettingCards(
                         actions.controller.platform.totalMemoryMb / 1024 +
                         " GB；拖动滑块按 256 MB 步进",
                 ) {
-                    if (draft.autoMemory) {
+                    if (settings.autoMemory) {
                         val estimate =
                             automaticMemoryMb(
                                 actions.controller.platform.totalMemoryMb,
@@ -504,55 +446,57 @@ private fun gameSettingCards(
                             )
                         MutedText("当前预计分配 $estimate MB；实际值在启动游戏时计算，初始内存会限制在最大值以内。")
                     }
+                    // 拖动只改本地值，停手 300ms 才写设置；初始内存跟着最大值一起收窄。
+                    val memory =
+                        rememberSliderDraft(settings.memoryMb.toFloat()) { dragged ->
+                            val value = steppedMemory(dragged, maximum)
+                            writer.commit {
+                                it.copy(
+                                    memoryMb = value,
+                                    initialMemoryMb = minOf(it.initialMemoryMb, value),
+                                )
+                            }
+                        }
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         CompactSlider(
-                            (numbers.memory.toFloatOrNull() ?: 512f).coerceIn(
-                                512f,
-                                maximum.toFloat(),
-                            ),
-                            {
-                                numbers.onMemory(
-                                    (it.toInt() / 256 * 256).coerceIn(512, maximum).toString()
-                                )
-                            },
+                            memory.floatValue,
+                            { memory.floatValue = steppedMemory(it, maximum).toFloat() },
                             Modifier.weight(1f),
                             valueRange = 512f..maximum.toFloat(),
-                            enabled = !draft.autoMemory,
+                            enabled = !settings.autoMemory,
                         )
-                        Tag("%.1f GB".format((numbers.memory.toIntOrNull() ?: 0) / 1024f))
+                        Tag("%.1f GB".format(memory.floatValue / 1024f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        NumberField(
-                            numbers.memory,
+                        LiveNumberField(
+                            settings.memoryMb,
                             "最大内存（MB）",
-                            numbers.onMemory,
+                            512..maximum,
                             Modifier.weight(1f),
-                            enabled = !draft.autoMemory,
-                        )
-                        NumberField(
-                            numbers.initial,
+                            enabled = !settings.autoMemory,
+                        ) { value ->
+                            applySetting(actions) {
+                                it.copy(
+                                    memoryMb = value,
+                                    initialMemoryMb = minOf(it.initialMemoryMb, value),
+                                )
+                            }
+                        }
+                        LiveNumberField(
+                            settings.initialMemoryMb,
                             "初始内存（MB）",
-                            numbers.onInitial,
+                            128..settings.memoryMb,
                             Modifier.weight(1f),
-                            enabled = !draft.autoMemory,
-                        )
+                            enabled = !settings.autoMemory,
+                        ) { value -> applySetting(actions) { it.copy(initialMemoryMb = value) } }
                     }
                     MutedText("原版通常从 2–4 GB 开始；大型整合包按需要调整。初始内存不能超过最大内存。")
                 },
             ),
-            dirty =
-                draft.autoMemory != saved.autoMemory ||
-                    numbers.memory != saved.memoryMb.toString() ||
-                    numbers.initial != saved.initialMemoryMb.toString(),
-            onReset = {
-                editor.update { it.copy(autoMemory = saved.autoMemory) }
-                numbers.onMemory(saved.memoryMb.toString())
-                numbers.onInitial(saved.initialMemoryMb.toString())
-            },
         )
     )
     cards.add(
@@ -562,38 +506,38 @@ private fun gameSettingCards(
             listOf(
                 settingRow("全屏启动", "关闭时使用下方的窗口分辨率") {
                     CompactSwitch(
-                        draft.fullscreen,
-                        { value -> editor.update { it.copy(fullscreen = value) } },
+                        settings.fullscreen,
+                        { value -> writer.commit { it.copy(fullscreen = value) } },
                     )
                 },
                 settingField(
                     "窗口分辨率",
-                    if (draft.fullscreen) "全屏启动时忽略这里的宽高。" else "范围 640–7680 × 480–4320 像素。",
+                    if (settings.fullscreen) "全屏启动时忽略这里的宽高。" else "范围 640–7680 × 480–4320 像素。",
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        CompactTextField(
-                            numbers.width,
-                            { numbers.onWidth(it.filter(Char::isDigit).take(5)) },
+                        LiveNumberField(
+                            settings.width,
+                            "窗口宽度（px）",
+                            640..7680,
                             Modifier.weight(1f),
-                            label = "窗口宽度（px）",
-                            enabled = !draft.fullscreen,
-                        )
-                        CompactTextField(
-                            numbers.height,
-                            { numbers.onHeight(it.filter(Char::isDigit).take(5)) },
+                            enabled = !settings.fullscreen,
+                        ) { value -> applySetting(actions) { it.copy(width = value) } }
+                        LiveNumberField(
+                            settings.height,
+                            "窗口高度（px）",
+                            480..4320,
                             Modifier.weight(1f),
-                            label = "窗口高度（px）",
-                            enabled = !draft.fullscreen,
-                        )
+                            enabled = !settings.fullscreen,
+                        ) { value -> applySetting(actions) { it.copy(height = value) } }
                     }
                 },
                 settingRow("启动后最小化", "游戏退出后恢复启动器窗口") {
                     CompactSwitch(
-                        draft.advancedLaunch.launcherVisibility.ifBlank {
-                            if (draft.minimizeOnLaunch) "minimize" else "keep"
+                        settings.advancedLaunch.launcherVisibility.ifBlank {
+                            if (settings.minimizeOnLaunch) "minimize" else "keep"
                         } == "minimize",
                         { value ->
-                            editor.update {
+                            writer.commit {
                                 it.copy(
                                     minimizeOnLaunch = value,
                                     advancedLaunch =
@@ -606,31 +550,10 @@ private fun gameSettingCards(
                     )
                 },
             ),
-            dirty =
-                draft.fullscreen != saved.fullscreen ||
-                    numbers.width != saved.width.toString() ||
-                    numbers.height != saved.height.toString() ||
-                    draft.minimizeOnLaunch != saved.minimizeOnLaunch ||
-                    draft.advancedLaunch.launcherVisibility !=
-                        saved.advancedLaunch.launcherVisibility,
-            onReset = {
-                numbers.onWidth(saved.width.toString())
-                numbers.onHeight(saved.height.toString())
-                editor.update {
-                    it.copy(
-                        fullscreen = saved.fullscreen,
-                        minimizeOnLaunch = saved.minimizeOnLaunch,
-                        advancedLaunch =
-                            it.advancedLaunch.copy(
-                                launcherVisibility = saved.advancedLaunch.launcherVisibility
-                            ),
-                    )
-                }
-            },
         )
     )
-    // 显隐读草稿而不是已保存值：勾选后立即出现，不必先保存（C-15）。
-    if (draft.pages.showAdvancedLaunchOptions)
+    // 显隐读已保存设置：勾选「显示高级参数」后立即出现（该开关本身也是即时保存）。
+    if (settings.pages.showAdvancedLaunchOptions) {
         cards.add(
             SettingCard(
                 "高级参数",
@@ -638,22 +561,28 @@ private fun gameSettingCards(
                 listOf(
                     settingControl("附加 JVM 参数") {
                         SettingTextArea(
-                            draft.extraJvmArgs,
-                            { value -> editor.update { it.copy(extraJvmArgs = value) } },
+                            settings.extraJvmArgs,
+                            { value -> applySetting(actions) { it.copy(extraJvmArgs = value) } },
                             "附加 JVM 参数",
                             "每行一个参数，留空使用启动器默认值。",
                         )
                     },
                     settingControl("启动参数编辑器") {
-                        key(saved, advancedRevision) {
+                        key(advancedRevision) {
                             AdvancedLaunchEditor(
-                                draft.advancedLaunch,
+                                advancedDraft,
                                 actions.controller.platform.osName,
-                                { value -> editor.update { it.copy(advancedLaunch = value) } },
+                                { value -> advancedDraft = value },
                                 onAdvancedValid,
-                                legacyMinimize = draft.minimizeOnLaunch,
+                                legacyMinimize = settings.minimizeOnLaunch,
                             )
                         }
+                        if (!advancedValid)
+                            Text(
+                                "启动参数里有尚未保存的无效输入，修正后会自动保存。",
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 11.sp,
+                            )
                     },
                     settingControl("启动参数预览") {
                         SecondaryButton(
@@ -669,19 +598,9 @@ private fun gameSettingCards(
                         }
                     },
                 ),
-                dirty =
-                    draft.extraJvmArgs != saved.extraJvmArgs ||
-                        draft.advancedLaunch != saved.advancedLaunch,
-                onReset = {
-                    editor.update {
-                        it.copy(
-                            extraJvmArgs = saved.extraJvmArgs,
-                            advancedLaunch = saved.advancedLaunch,
-                        )
-                    }
-                },
             )
         )
+    }
     cards.add(
         SettingCard(
             "游戏目录",
@@ -696,14 +615,12 @@ private fun gameSettingCards(
             listOf(
                 settingRow("默认启用版本隔离", "分别保存各个版本的模组、存档与配置") {
                     CompactSwitch(
-                        draft.isolateVersions,
-                        { value -> editor.update { it.copy(isolateVersions = value) } },
+                        settings.isolateVersions,
+                        { value -> writer.commit { it.copy(isolateVersions = value) } },
                     )
                 },
                 settingNote("单个版本可覆盖此选项。切换隔离规则会改变使用目录，现有文件仍在原位置。"),
             ),
-            dirty = draft.isolateVersions != saved.isolateVersions,
-            onReset = { editor.update { it.copy(isolateVersions = saved.isolateVersions) } },
         )
     )
     cards.add(
@@ -729,20 +646,23 @@ private fun gameSettingCards(
     return cards
 }
 
+/** 内存按 256 MB 步进并限制在有效范围内：滑块与数字输入共用。 */
+private fun steppedMemory(value: Float, maximum: Int): Int =
+    (value.toInt() / 256 * 256).coerceIn(512, maximum)
+
 /** Java 管理：检测结果、Java 路径与运行环境准备。 */
 @Composable
 private fun javaSettingCards(
     actions: UiActions,
-    editor: SettingsEditor,
+    writer: SettingsWriter,
+    settings: LauncherSettings,
     runtimes: List<JavaRuntime>,
     detecting: Boolean,
     detectionError: String?,
     onRefresh: () -> Unit,
     navigate: (Page) -> Unit,
-): List<SettingCard> {
-    val draft = editor.draft
-    val saved = editor.saved
-    return listOf(
+): List<SettingCard> =
+    listOf(
         SettingCard(
             "Java 运行环境",
             "自动模式会按游戏要求选择合适版本，缺少时准备对应运行环境。",
@@ -776,7 +696,7 @@ private fun javaSettingCards(
                     "留空时自动选择匹配的 Java；也可以从检测结果里挑一个。",
                 ) {
                     SimpleDropdown(
-                        draft.javaPath,
+                        settings.javaPath,
                         listOf("" to "自动选择匹配的 Java") +
                             runtimes.map {
                                 it.path to
@@ -787,19 +707,13 @@ private fun javaSettingCards(
                                         " · " +
                                         it.path)
                             },
-                        { value -> editor.update { it.copy(javaPath = value) } },
+                        { value -> writer.commit { it.copy(javaPath = value) } },
                     )
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    LiveTextField(
+                        settings.javaPath,
+                        { value -> applySetting(actions) { it.copy(javaPath = value) } },
+                        placeholder = "留空自动选择",
                     ) {
-                        CompactTextField(
-                            draft.javaPath,
-                            { value -> editor.update { it.copy(javaPath = value) } },
-                            Modifier.weight(1f),
-                            placeholder = "留空自动选择",
-                        )
                         SmallIconButton(
                             Icons.Outlined.FolderOpen,
                             "选择 Java",
@@ -820,7 +734,9 @@ private fun javaSettingCards(
                                             .firstOrNull()
                                     if (chosen != null)
                                         withContext(Dispatchers.Swing) {
-                                            editor.update { it.copy(javaPath = chosen.toString()) }
+                                            applySetting(actions) {
+                                                it.copy(javaPath = chosen.toString())
+                                            }
                                         }
                                 }
                             },
@@ -828,8 +744,6 @@ private fun javaSettingCards(
                     }
                 },
             ),
-            dirty = draft.javaPath != saved.javaPath,
-            onReset = { editor.update { it.copy(javaPath = saved.javaPath) } },
         ),
         SettingCard(
             "准备运行环境",
@@ -853,17 +767,15 @@ private fun javaSettingCards(
             ),
         ),
     )
-}
 
 /** 通用：更新检查与语言。 */
 @Composable
 private fun generalSettingCards(
     actions: UiActions,
-    editor: SettingsEditor,
-): List<SettingCard> {
-    val draft = editor.draft
-    val saved = editor.saved
-    return listOf(
+    writer: SettingsWriter,
+    settings: LauncherSettings,
+): List<SettingCard> =
+    listOf(
         SettingCard(
             "更新",
             "检查启动器新版本；更新包需手动下载安装。",
@@ -878,33 +790,22 @@ private fun generalSettingCards(
                 },
                 settingRow("启动时自动检查更新", "需要先配置下方更新清单地址") {
                     CompactSwitch(
-                        draft.autoCheckUpdates,
-                        { value -> editor.update { it.copy(autoCheckUpdates = value) } },
+                        settings.autoCheckUpdates,
+                        { value -> writer.commit { it.copy(autoCheckUpdates = value) } },
                     )
                 },
                 settingField(
                     "更新清单地址",
                     "HTTPS JSON；留空表示未配置更新源，检查更新会如实提示。",
                 ) {
-                    CompactTextField(
-                        draft.updateManifestUrl,
-                        { value -> editor.update { it.copy(updateManifestUrl = value) } },
+                    LiveTextField(
+                        settings.updateManifestUrl,
+                        { value -> applySetting(actions) { it.copy(updateManifestUrl = value) } },
                         placeholder = "https://example.com/molifox.json",
                     )
                     MutedText("清单格式：{\"version\":\"x.y.z\",\"notes\":\"更新说明\"}。")
                 },
             ),
-            dirty =
-                draft.autoCheckUpdates != saved.autoCheckUpdates ||
-                    draft.updateManifestUrl != saved.updateManifestUrl,
-            onReset = {
-                editor.update {
-                    it.copy(
-                        autoCheckUpdates = saved.autoCheckUpdates,
-                        updateManifestUrl = saved.updateManifestUrl,
-                    )
-                }
-            },
         ),
         SettingCard(
             "语言",
@@ -915,17 +816,14 @@ private fun generalSettingCards(
             ),
         ),
     )
-}
 
 /** 下载：下载源、并发数、缓存文件夹与代理。 */
 @Composable
 private fun downloadSettingCards(
     actions: UiActions,
-    editor: SettingsEditor,
+    writer: SettingsWriter,
+    settings: LauncherSettings,
 ): List<SettingCard> {
-    val draft = editor.draft
-    val saved = editor.saved
-    val numbers = editor.numbers
     val cards = mutableListOf<SettingCard>()
     cards.add(
         SettingCard(
@@ -934,24 +832,24 @@ private fun downloadSettingCards(
             listOf(
                 settingField("游戏文件下载源", "影响本体、资源与依赖的下载地址。") {
                     SimpleDropdown(
-                        draft.downloadSource,
+                        settings.downloadSource,
                         listOf(
                             "auto" to "自动（官方优先，失败切换）",
                             "official" to "官方源",
                             "bmclapi" to "BMCLAPI 镜像源",
                         ),
-                        { value -> editor.update { it.copy(downloadSource = value) } },
+                        { value -> writer.commit { it.copy(downloadSource = value) } },
                     )
                 },
                 settingField("版本列表源", "只影响版本清单的获取地址。") {
                     SimpleDropdown(
-                        draft.versionListSource,
+                        settings.versionListSource,
                         listOf(
                             "auto" to "自动（官方优先，失败切换）",
                             "official" to "官方版本列表",
                             "bmclapi" to "BMCLAPI 镜像版本列表",
                         ),
-                        { value -> editor.update { it.copy(versionListSource = value) } },
+                        { value -> writer.commit { it.copy(versionListSource = value) } },
                     )
                 },
                 settingField(
@@ -963,37 +861,22 @@ private fun downloadSettingCards(
                     SimpleDropdown(
                         "modrinth",
                         listOf("modrinth" to "Modrinth（默认）"),
-                        { editor.update { it.copy(contentDownloadSource = "modrinth") } },
+                        { writer.commit { it.copy(contentDownloadSource = "modrinth") } },
                         enabled = false,
                     )
                 },
                 settingRow("并行下载数", "同时进行的文件下载数量") {
                     SimpleDropdown(
-                        draft.maxConcurrent.toString(),
+                        settings.maxConcurrent.toString(),
                         listOf(2, 4, 8, 16, 32).map {
                             it.toString() to (it.toString() + " 个文件")
                         },
-                        { value -> editor.update { it.copy(maxConcurrent = value.toInt()) } },
+                        { value -> writer.commit { it.copy(maxConcurrent = value.toInt()) } },
                         Modifier.width(132.dp),
                     )
                 },
                 settingNote("加载器资源使用各自官方服务。下载任务可在「日志」取消。"),
             ),
-            dirty =
-                draft.downloadSource != saved.downloadSource ||
-                    draft.versionListSource != saved.versionListSource ||
-                    draft.contentDownloadSource != saved.contentDownloadSource ||
-                    draft.maxConcurrent != saved.maxConcurrent,
-            onReset = {
-                editor.update {
-                    it.copy(
-                        downloadSource = saved.downloadSource,
-                        versionListSource = saved.versionListSource,
-                        contentDownloadSource = saved.contentDownloadSource,
-                        maxConcurrent = saved.maxConcurrent,
-                    )
-                }
-            },
         )
     )
     cards.add(
@@ -1002,27 +885,23 @@ private fun downloadSettingCards(
             "版本列表与安装包的缓存位置，留空使用 MoliFox/cache。",
             listOf(
                 settingField("缓存文件夹", "绝对路径；目录不存在时会自动创建。") {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    LiveTextField(
+                        settings.downloadCachePath,
+                        { value -> applySetting(actions) { it.copy(downloadCachePath = value) } },
+                        placeholder = "留空使用默认缓存目录",
                     ) {
-                        CompactTextField(
-                            draft.downloadCachePath,
-                            { value -> editor.update { it.copy(downloadCachePath = value) } },
-                            Modifier.weight(1f),
-                            placeholder = "留空使用默认缓存目录",
-                        )
                         SmallIconButton(
                             Icons.Outlined.FolderOpen,
                             "选择缓存文件夹",
                             {
                                 actions.run {
                                     val chosen =
-                                        actions.choose("选择下载缓存文件夹", directory = true).firstOrNull()
+                                        actions
+                                            .choose("选择下载缓存文件夹", directory = true)
+                                            .firstOrNull()
                                     if (chosen != null)
                                         withContext(Dispatchers.Swing) {
-                                            editor.update {
+                                            applySetting(actions) {
                                                 it.copy(downloadCachePath = chosen.toString())
                                             }
                                         }
@@ -1032,26 +911,33 @@ private fun downloadSettingCards(
                     }
                 }
             ),
-            dirty = draft.downloadCachePath != saved.downloadCachePath,
-            onReset = { editor.update { it.copy(downloadCachePath = saved.downloadCachePath) } },
         )
     )
     cards.add(
         SettingCard(
             "代理",
-            "保存后立即作用于启动器下载、资源搜索和登录。",
+            "改动立即作用于启动器下载、资源搜索和登录。",
             listOf(
                 settingRow("连接方式") {
                     SimpleDropdown(
-                        draft.effectiveProxyMode(),
+                        settings.effectiveProxyMode(),
                         listOf(
                             "system" to "跟随系统",
                             "direct" to "直接连接",
                             "manual" to "手动代理",
                         ),
                         { value ->
-                            editor.update {
-                                it.copy(proxyMode = value, proxyEnabled = value == "manual")
+                            writer.commit {
+                                if (value != "manual") it.copy(proxyMode = value)
+                                else
+                                    it.copy(
+                                        proxyMode = "manual",
+                                        // 手动代理必须有可用地址：未填写时先给一个可编辑的本地值，
+                                        // 否则这次切换会被校验拒绝、下拉会跳回旧值。
+                                        proxyHost = it.proxyHost.ifBlank { "127.0.0.1" },
+                                        proxyPort =
+                                            it.proxyPort.takeIf { port -> port in 1..65535 } ?: 1080,
+                                    )
                             }
                         },
                         Modifier.width(150.dp),
@@ -1059,47 +945,32 @@ private fun downloadSettingCards(
                 },
                 settingField("代理类型", "仅手动代理时可用。") {
                     SimpleDropdown(
-                        draft.proxyType,
+                        settings.proxyType,
                         listOf("http" to "HTTP", "socks" to "SOCKS"),
-                        { value -> editor.update { it.copy(proxyType = value) } },
-                        enabled = draft.effectiveProxyMode() == "manual",
+                        { value -> writer.commit { it.copy(proxyType = value) } },
+                        enabled = settings.effectiveProxyMode() == "manual",
                     )
                 },
                 settingField("代理地址", "主机与端口；仅手动代理时生效。") {
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        CompactTextField(
-                            draft.proxyHost,
-                            { value -> editor.update { it.copy(proxyHost = value) } },
+                        LiveTextField(
+                            settings.proxyHost,
+                            { value -> applySetting(actions) { it.copy(proxyHost = value) } },
                             Modifier.weight(1f),
                             placeholder = "127.0.0.1",
-                            enabled = draft.effectiveProxyMode() == "manual",
+                            enabled = settings.effectiveProxyMode() == "manual",
                         )
-                        CompactTextField(
-                            numbers.proxyPort,
-                            { numbers.onProxyPort(it.filter(Char::isDigit).take(5)) },
+                        LiveNumberField(
+                            settings.proxyPort,
+                            "",
+                            0..65535,
                             Modifier.width(120.dp),
                             placeholder = "端口",
-                            enabled = draft.effectiveProxyMode() == "manual",
-                        )
+                            enabled = settings.effectiveProxyMode() == "manual",
+                        ) { value -> applySetting(actions) { it.copy(proxyPort = value) } }
                     }
                 },
             ),
-            dirty =
-                draft.effectiveProxyMode() != saved.effectiveProxyMode() ||
-                    draft.proxyType != saved.proxyType ||
-                    draft.proxyHost != saved.proxyHost ||
-                    numbers.proxyPort != saved.proxyPort.toString(),
-            onReset = {
-                numbers.onProxyPort(saved.proxyPort.toString())
-                editor.update {
-                    it.copy(
-                        proxyMode = saved.proxyMode,
-                        proxyEnabled = saved.proxyEnabled,
-                        proxyType = saved.proxyType,
-                        proxyHost = saved.proxyHost,
-                    )
-                }
-            },
         )
     )
     return cards

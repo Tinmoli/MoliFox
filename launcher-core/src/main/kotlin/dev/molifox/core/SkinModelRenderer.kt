@@ -1,11 +1,26 @@
 package dev.molifox.core
 
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.UUID
+import javax.imageio.ImageIO
 import kotlin.math.*
 
 /** A small, CPU-rendered textured model; no GPU-specific runtime or external skin service. */
 object SkinModelRenderer {
     private data class Point(val x: Float, val y: Float, val z: Float)
+
+    // 64 像素纹理坐标下的头部正面与帽子/外层正面区域；高清皮肤按 width / 64 等比放大。
+    private const val HEAD_REGION_U = 8
+    private const val HEAD_REGION_V = 8
+    private const val HAT_REGION_U = 40
+    private const val HAT_REGION_V = 8
+    private const val HEAD_TILE = 8
 
     private data class Projected(
         val x: Float,
@@ -220,5 +235,202 @@ object SkinModelRenderer {
         return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).apply {
             setRGB(0, 0, width, height, pixels, 0, width)
         }
+    }
+
+    /**
+     * 静态正面头像：把皮肤贴图的头部正面 (8,8)-(16,16) 与帽子/外层正面 (40,8)-(48,16) 合成为一张方图。
+     * 先画脸部，再按帽子层自身的 alpha 叠加，所以透明帽子区域保持脸部原样、脸外区域也保持透明（不填黑底）。
+     * 旧版 64×32 皮肤同样使用这两个坐标，所有读取都在 y < 32 之内；最后按最近邻放大到 [size]×[size]。
+     * 贴图无法解析或尺寸不受支持时返回 null，由界面回退到占位头像，绝不抛异常。
+     */
+    fun renderHeadFront(skin: ByteArray, size: Int = 64): ByteArray? =
+        runCatching {
+                require(skin.isNotEmpty()) { "皮肤数据为空" }
+                require(size in HEAD_TILE..1024) { "头像尺寸无效" }
+                val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
+                val width = image.width
+                val height = image.height
+                // 只接受 64 的整数倍宽度：64×64（含高清）或旧版 64×32；其它布局不猜位置。
+                require(width in 64..4096 && width % 64 == 0) { "皮肤宽度无效" }
+                require(height == width || height * 2 == width) { "皮肤高度无效" }
+                val scale = width / 64
+                fun faceAt(x: Int, y: Int): Int =
+                    pixelAt(image, (HEAD_REGION_U + x) * scale, (HEAD_REGION_V + y) * scale)
+                fun hatAt(x: Int, y: Int): Int =
+                    pixelAt(image, (HAT_REGION_U + x) * scale, (HAT_REGION_V + y) * scale)
+                // 正面直视的“立体皮肤层”：脸缩到 8/9、帽子层保持满幅，
+                // 帽子比脸大出一圈，看起来像贴在脸前面的凸起层；再在帽子下缘压一道
+                // 淡淡的投影，强化“浮起来”的层次。整图只做最近邻放大。
+                val faceSide = (size * 8 + 4) / 9
+                val faceOffset = (size - faceSide) / 2
+                val shadeShift = max(1, size / 48)
+                fun faceSample(x: Int, y: Int): Int =
+                    faceAt(((x - faceOffset) * HEAD_TILE / faceSide).coerceIn(0, HEAD_TILE - 1),
+                        ((y - faceOffset) * HEAD_TILE / faceSide).coerceIn(0, HEAD_TILE - 1))
+                fun hatSample(x: Int, y: Int): Int =
+                    hatAt((x * HEAD_TILE / size).coerceIn(0, HEAD_TILE - 1),
+                        (y * HEAD_TILE / size).coerceIn(0, HEAD_TILE - 1))
+                val pixels =
+                    IntArray(size * size) { index ->
+                        val x = index % size
+                        val y = index / size
+                        val inFace = x in faceOffset until faceOffset + faceSide &&
+                            y in faceOffset until faceOffset + faceSide
+                        val base = if (inFace) faceSample(x, y) else 0
+                        // 帽子层在自己的下缘投下的半透明阴影
+                        val shadowSource = if (y - shadeShift in 0 until size) hatSample(x, y - shadeShift) else 0
+                        val shadowAlpha = (shadowSource ushr 24) * 28 / 100
+                        val shaded =
+                            if (shadowAlpha > 0 && inFace) overlay((shadowAlpha shl 24) or 0x1A1014, base) else base
+                        overlay(hatSample(x, y), shaded)
+                    }
+                val output = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+                output.setRGB(0, 0, size, size, pixels, 0, size)
+                ByteArrayOutputStream().also { ImageIO.write(output, "png", it) }.toByteArray()
+            }
+            .getOrNull()
+
+    /**
+     * 头像缓存入口：同一皮肤只合成一次，写入 `<数据目录>/icons/heads/<sha256(皮肤字节+尺寸)>.png`。
+     * 目录复用 [LauncherDirectories.icons]，不硬编码路径；缓存已是普通文件时直接复用，失败一律返回 null。
+     */
+    fun cachedHeadFront(
+        skin: ByteArray,
+        directories: LauncherDirectories,
+        size: Int = 64,
+    ): Path? =
+        runCatching {
+                val key =
+                    MessageDigest.getInstance("SHA-256")
+                        .run {
+                            update(skin)
+                            update(size.toString().toByteArray())
+                            digest().joinToString("") { "%02x".format(it) }
+                        }
+                val directory = directories.icons.resolve("heads")
+                val target = directory.resolve("$key.png")
+                if (Files.isRegularFile(target) && !Files.isSymbolicLink(target))
+                    return@runCatching target
+                val png = renderHeadFront(skin, size) ?: return@runCatching null
+                createStorageDirectory(directory)
+                // 先写临时文件再改名，避免界面读到半张图。
+                val staging = target.resolveSibling("${target.fileName}.${UUID.randomUUID()}.tmp")
+                try {
+                    Files.write(staging, png)
+                    Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
+                } finally {
+                    Files.deleteIfExists(staging)
+                }
+                target
+            }
+            .getOrNull()
+
+    /** 从磁盘上的皮肤文件取缓存头像；文件不可读时返回 null，由调用方决定占位头像。 */
+    fun cachedHeadFront(
+        skinFile: Path,
+        directories: LauncherDirectories,
+        size: Int = 64,
+    ): Path? =
+        runCatching { Files.readAllBytes(skinFile) }
+            .getOrNull()
+            ?.let { cachedHeadFront(it, directories, size) }
+
+    /**
+     * 立体头像：复用 [render] 只渲染头部，正对镜头（水平不偏转，仅略微俯视露出顶面），
+     * 输出 PNG 字节；皮肤不可解析时返回 null。
+     */
+    fun renderHeadModel(
+        skin: ByteArray,
+        size: Int = 128,
+        yaw: Float = 0f,
+        pitch: Float = -20f,
+    ): ByteArray? =
+        runCatching {
+                val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
+                val width = image.width
+                val height = image.height
+                require(width in 64..4096 && width % 64 == 0) { "皮肤宽度无效" }
+                require(height == width || height * 2 == width) { "皮肤高度无效" }
+                val pixels = IntArray(width * height).also { image.getRGB(0, 0, width, height, it, 0, width) }
+                val rendered =
+                    render(
+                        width,
+                        height,
+                        pixels,
+                        SkinVariant.Classic,
+                        overlays = true,
+                        yaw = yaw,
+                        pitch = pitch,
+                        headOnly = true,
+                        width = size,
+                        height = size,
+                    )
+                ByteArrayOutputStream().also { ImageIO.write(rendered, "png", it) }.toByteArray()
+            }
+            .getOrNull()
+
+    /** 立体头像缓存：`<数据目录>/icons/heads/3d-<sha256>.png`，重复调用只读文件。 */
+    fun cachedHeadModel(
+        skin: ByteArray,
+        directories: LauncherDirectories,
+        size: Int = 128,
+    ): Path? =
+        runCatching {
+                val key =
+                    MessageDigest.getInstance("SHA-256")
+                        .run {
+                            update(skin)
+                            update("3d".toByteArray())
+                            update(size.toString().toByteArray())
+                            update("front-y0p-20".toByteArray())
+                            digest().joinToString("") { "%02x".format(it) }
+                        }
+                val directory = directories.icons.resolve("heads")
+                val target = directory.resolve("3d-$key.png")
+                if (Files.isRegularFile(target) && !Files.isSymbolicLink(target))
+                    return@runCatching target
+                val png = renderHeadModel(skin, size) ?: return@runCatching null
+                createStorageDirectory(directory)
+                val staging = target.resolveSibling("${target.fileName}.${UUID.randomUUID()}.tmp")
+                try {
+                    Files.write(staging, png)
+                    Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
+                } finally {
+                    Files.deleteIfExists(staging)
+                }
+                target
+            }
+            .getOrNull()
+
+    /** 从磁盘皮肤文件取立体头像缓存。 */
+    fun cachedHeadModel(
+        skinFile: Path,
+        directories: LauncherDirectories,
+        size: Int = 128,
+    ): Path? =
+        runCatching { Files.readAllBytes(skinFile) }
+            .getOrNull()
+            ?.let { cachedHeadModel(it, directories, size) }
+
+    private fun pixelAt(image: BufferedImage, x: Int, y: Int): Int =
+        if (x in 0 until image.width && y in 0 until image.height) image.getRGB(x, y) else 0
+
+    /** 源覆盖混合：把帽子层按自身 alpha 叠到脸部之上；帽子全透明时保留脸部（含透明度）。 */
+    private fun overlay(source: Int, destination: Int): Int {
+        val sourceAlpha = source ushr 24
+        if (sourceAlpha == 0) return destination
+        if (sourceAlpha == 255) return source
+        val destinationAlpha = destination ushr 24
+        val alpha = sourceAlpha + destinationAlpha * (255 - sourceAlpha) / 255
+        if (alpha == 0) return 0
+        fun channel(shift: Int): Int {
+            val foreground = ((source ushr shift) and 255) * sourceAlpha
+            val background = ((destination ushr shift) and 255) * destinationAlpha
+            return (foreground + background * (255 - sourceAlpha) / 255) / alpha
+        }
+        return (alpha shl 24) or
+            (channel(16) shl 16) or
+            (channel(8) shl 8) or
+            channel(0)
     }
 }

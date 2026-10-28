@@ -35,6 +35,12 @@ class DesktopNavigationState {
     var page by androidx.compose.runtime.mutableStateOf(Page.Home)
     var editing by androidx.compose.runtime.mutableStateOf<String?>(null)
     var downloadKind by androidx.compose.runtime.mutableStateOf("minecraft")
+    // 「账户列表」是开始页的子页：记住进入前的页面，返回时回到来源，而不是固定回开始页。
+    private var accountReturnTo by androidx.compose.runtime.mutableStateOf(Page.Home)
+
+    /** 顶部导航的高亮归属：账户列表属于「开始」这一支，打开时仍高亮开始。 */
+    val activeTab: Page
+        get() = if (page == Page.Accounts) Page.Home else page
 
     fun navigate(destination: Page, resources: Boolean = false) {
         editing = null
@@ -46,6 +52,18 @@ class DesktopNavigationState {
         editing = null
         downloadKind = "minecraft"
         page = Page.Discover
+    }
+
+    /** 打开账户列表：记下来源页；已经在账户列表时不覆盖来源。 */
+    fun openAccounts() {
+        editing = null
+        if (page != Page.Accounts) accountReturnTo = page
+        page = Page.Accounts
+    }
+
+    /** 返回来源页；来源本身异常地指向账户列表时兜底回开始页。 */
+    fun closeAccounts() {
+        page = if (accountReturnTo == Page.Accounts) Page.Home else accountReturnTo
     }
 }
 
@@ -117,7 +135,7 @@ fun AppHeader(
                         item ->
                         TopNavItem(
                             page = item,
-                            selected = navigation.page == item,
+                            selected = navigation.activeTab == item,
                             badge = if (item == Page.Settings && runningJobs > 0) "$runningJobs" else null,
                             onClick = { navigation.navigate(item) },
                         )

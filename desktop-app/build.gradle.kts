@@ -2,8 +2,8 @@ import groovy.json.JsonOutput
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 
 plugins {
     kotlin("jvm")
@@ -15,7 +15,7 @@ evaluationDependsOn(":launcher-bootstrap")
 
 val bootstrapProject = project(":launcher-bootstrap")
 val bootstrapSourceSets = bootstrapProject.extensions.getByType<SourceSetContainer>()
-val runtimeManifestFile = layout.buildDirectory.file("portable/molifox-runtime.json")
+val runtimeManifestFile = layout.buildDirectory.file("portable/deps.json")
 val usedIconPaths =
     fileTree("src/main/kotlin")
         .matching { include("**/*.kt") }
@@ -31,58 +31,133 @@ val extendedIcons =
     configurations.runtimeClasspath.map { configuration ->
         configuration.files.first { it.name.startsWith("material-icons-extended-desktop-") }
     }
-val portableUiArtifacts = providers.provider {
-    val embedded =
-        bootstrapProject.configurations
-            .getByName("runtimeClasspath")
-            .incoming
-            .artifacts
-            .artifacts
-            .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
-            .map { "${it.group}:${it.module}:${it.version}" }
-            .toSet()
-    configurations.runtimeClasspath.get().incoming.artifacts.artifacts.filter { artifact ->
-        val module = artifact.id.componentIdentifier as? ModuleComponentIdentifier
-        module != null &&
-            "${module.group}:${module.module}:${module.version}" !in embedded &&
-            !module.module.startsWith("material-icons-extended")
+/** 清单中的一条运行时依赖：Maven 坐标 + 文件名 + 校验值。 */
+data class RuntimeEntry(
+    val group: String,
+    val artifact: String,
+    val version: String,
+    val filename: String,
+    val sha256: String,
+    val size: Long,
+)
+
+fun sha256Of(file: File): String =
+    MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") {
+        "%02x".format(it)
     }
+
+/** 清单版本号 = 应用版本 + 依赖列表哈希；坐标或校验值一变就换新的缓存目录。 */
+fun manifestVersion(base: String, entries: List<RuntimeEntry>): String {
+    val canonical =
+        entries
+            .sortedWith(compareBy({ it.group }, { it.artifact }, { it.version }))
+            .joinToString("\n") { "${it.group}:${it.artifact}:${it.version}:${it.sha256}" }
+    val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+    return "$base-" + digest.joinToString("") { "%02x".format(it) }.take(16)
 }
 
-val preparePortableRuntime by tasks.registering {
-    dependsOn(":launcher-bootstrap:classes", tasks.classes)
-    inputs.files(configurations.runtimeClasspath)
-    outputs.file(runtimeManifestFile)
-    doLast {
-        val dependencies =
-            portableUiArtifacts
-                .get()
-                .map { artifact ->
-                    val file = artifact.file
-                    val digest =
-                        MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString(
-                            ""
-                        ) {
-                            "%02x".format(it)
-                        }
-                    mapOf("filename" to file.name, "sha256" to digest, "size" to file.length())
-                }
-                .distinctBy { it["filename"] }
-        val output = runtimeManifestFile.get().asFile
-        output.parentFile.mkdirs()
-        output.writeText(
-            JsonOutput.prettyPrint(
-                JsonOutput.toJson(
-                    mapOf("version" to project.version.toString(), "dependencies" to dependencies)
+/** 生成 /molifox-runtime.json 的正文；[platform] 只给 Linux 包区分原生库用。 */
+fun manifestJson(entries: List<RuntimeEntry>, platform: String? = null): String {
+    val dependencies =
+        entries
+            .sortedWith(compareBy({ it.group }, { it.artifact }, { it.version }))
+            .map { entry ->
+                linkedMapOf<String, Any>(
+                    "group" to entry.group,
+                    "artifact" to entry.artifact,
+                    "version" to entry.version,
+                    "filename" to entry.filename,
+                    "sha256" to entry.sha256,
+                    "size" to entry.size,
                 )
-            )
+            }
+    val json =
+        linkedMapOf<String, Any>(
+            "version" to manifestVersion(project.version.toString(), entries),
+            "dependencies" to dependencies,
         )
-    }
+    if (platform != null) json["platform"] = platform
+    return JsonOutput.prettyPrint(JsonOutput.toJson(json))
 }
+
+// 本项目的模块由 MoliFox.jar 自己携带，不进入下载清单。
+val projectModules = setOf("launcher-core", "launcher-bootstrap", "desktop-app")
+
+/**
+ * 从解析后的运行时类路径生成清单条目：
+ * - 跳过本项目模块；
+ * - 跳过 material-icons-extended（37 MB，实际只用到少数图标，jar 里已按源码引用挑出）；
+ * - skiko 原生库只保留 [skikoPlatform]，其他平台不下载。
+ */
+fun runtimeEntries(configuration: Configuration, skikoPlatform: String): List<RuntimeEntry> =
+    configuration.incoming.artifacts.artifacts
+        .mapNotNull { artifact ->
+            val module =
+                artifact.id.componentIdentifier as? ModuleComponentIdentifier
+                    ?: return@mapNotNull null
+            if (module.module in projectModules) return@mapNotNull null
+            if (module.module.startsWith("material-icons-extended")) return@mapNotNull null
+            if (
+                module.module.startsWith("skiko-awt-runtime-") &&
+                    !module.module.endsWith("-$skikoPlatform")
+            )
+                return@mapNotNull null
+            val file = artifact.file
+            RuntimeEntry(
+                group = module.group,
+                artifact = module.module,
+                version = module.version,
+                filename = file.name,
+                sha256 = sha256Of(file),
+                size = file.length(),
+            )
+        }
+        .distinctBy { it.filename }
+
+/**
+ * 只写清单，不再把运行时 jar 塞进启动器：首次启动由引导程序从 Maven 镜像下载并校验。
+ */
+val preparePortableRuntime =
+    tasks.register("preparePortableRuntime") {
+        group = "distribution"
+        description = "生成运行时依赖清单 build/portable/deps.json（依赖改为首次启动下载）"
+        inputs.files(configurations.runtimeClasspath)
+        outputs.file(runtimeManifestFile)
+        doLast {
+            val entries = runtimeEntries(configurations.runtimeClasspath.get(), "windows-x64")
+            check(entries.isNotEmpty()) { "运行时依赖清单为空" }
+            val native = entries.filter { it.filename.startsWith("skiko-awt-runtime-") }
+            check(native.size == 1 && native.single().filename.contains("-windows-x64")) {
+                "Windows 清单应只带 skiko windows-x64 原生库：$native"
+            }
+            val output = runtimeManifestFile.get().asFile
+            output.parentFile.mkdirs()
+            output.writeText(manifestJson(entries))
+        }
+    }
+
+// 引导程序在“下载依赖之前”就必须能跑：Gson 解析清单、kotlin-stdlib + 协程、launcher-core 的目录定位。
+// 其余运行期依赖（Compose、OKHttp、JNA……）改为首次启动时下载。
+val bootstrapPayloadModules =
+    setOf("launcher-core", "gson", "kotlin-stdlib", "kotlinx-coroutines-core-jvm")
+
+fun bootstrapPayloadFiles(): List<File> =
+    bootstrapProject.configurations.getByName("runtimeClasspath").incoming.artifacts.artifacts
+        .mapNotNull { artifact ->
+            val identifier = artifact.id.componentIdentifier
+            val name =
+                when (identifier) {
+                    is ModuleComponentIdentifier -> identifier.module
+                    is ProjectComponentIdentifier -> identifier.projectName
+                    else -> null
+                }
+            if (name != null && name in bootstrapPayloadModules) artifact.file else null
+        }
 
 tasks.register<Jar>("portableJar") {
     group = "distribution"
-    description = "Build a single launcher with all UI dependencies for offline first launch"
+    description =
+        "Build the launcher jar: our classes + Swing bootstrap + dependency manifest; runtime jars are downloaded on first launch"
     dependsOn(preparePortableRuntime, ":launcher-bootstrap:jar", ":launcher-core:jar")
     archiveFileName.set("MoliFox.jar")
     destinationDirectory.set(layout.buildDirectory.dir("portable"))
@@ -94,12 +169,11 @@ tasks.register<Jar>("portableJar") {
         )
     }
     from(sourceSets.main.get().output)
-    from({ portableUiArtifacts.get().map { it.file } }) { into("molifox-dependencies") }
     // Include the actual vector icons, instead of downloading every icon style on first run.
     from({ zipTree(extendedIcons.get()) }) { include(usedIconPaths) }
     from(bootstrapSourceSets.getByName("main").output)
     from({
-        bootstrapProject.configurations.getByName("runtimeClasspath").files.map {
+        bootstrapPayloadFiles().map {
             if (it.isDirectory) it else zipTree(it)
         }
     }) {
@@ -111,7 +185,8 @@ tasks.register<Jar>("portableJar") {
             "META-INF/versions/**/module-info.class",
         )
     }
-    from(runtimeManifestFile)
+    // 依赖清单固定落在 /molifox-runtime.json，引导程序按这个路径读取。
+    from(runtimeManifestFile) { rename { "molifox-runtime.json" } }
     from(listOf(rootProject.file("LICENSE"), rootProject.file("THIRD_PARTY.md"))) {
         into("META-INF/molifox")
     }
@@ -211,19 +286,20 @@ tasks.register<Exec>("portableWindows") {
     }
 }
 
+val skikoAwtVersion = providers.provider {
+    configurations.runtimeClasspath.get().incoming.artifacts.artifacts
+        .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
+        .first { it.group == "org.jetbrains.skiko" && it.module == "skiko-awt" }
+        .version
+}
 val linuxRuntimeNative =
     configurations.create("linuxRuntimeNative") {
         isCanBeConsumed = false
         isTransitive = false
         defaultDependencies {
-            val skiko =
-                portableUiArtifacts
-                    .get()
-                    .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
-                    .first { it.group == "org.jetbrains.skiko" && it.module == "skiko-awt" }
             add(
                 project.dependencies.create(
-                    "org.jetbrains.skiko:skiko-awt-runtime-linux-x64:" + skiko.version
+                    "org.jetbrains.skiko:skiko-awt-runtime-linux-x64:" + skikoAwtVersion.get()
                 )
             )
         }
@@ -236,39 +312,41 @@ val prepareLinuxRuntime =
         inputs.files(linuxRuntimeNative)
         outputs.file(linuxManifestFile)
         doLast {
+            // 复用 Windows 清单的全部条目，只把 skiko 原生库换成 linux-x64，并重新计算版本哈希。
             val host =
                 groovy.json.JsonSlurper().parse(runtimeManifestFile.get().asFile) as Map<*, *>
             val shared =
                 (host["dependencies"] as List<*>)
                     .map { it as Map<*, *> }
                     .filterNot { (it["filename"] as String).startsWith("skiko-awt-runtime-") }
+                    .map { dependency ->
+                        RuntimeEntry(
+                            group = dependency["group"] as String,
+                            artifact = dependency["artifact"] as String,
+                            version = dependency["version"] as String,
+                            filename = dependency["filename"] as String,
+                            sha256 = dependency["sha256"] as String,
+                            size = (dependency["size"] as Number).toLong(),
+                        )
+                    }
             val native =
                 linuxRuntimeNative.files.map { file ->
-                    val hash =
-                        MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString(
-                            ""
-                        ) {
-                            "%02x".format(it)
-                        }
-                    mapOf("filename" to file.name, "sha256" to hash, "size" to file.length())
+                    RuntimeEntry(
+                        group = "org.jetbrains.skiko",
+                        artifact = "skiko-awt-runtime-linux-x64",
+                        version = skikoAwtVersion.get(),
+                        filename = file.name,
+                        sha256 = sha256Of(file),
+                        size = file.length(),
+                    )
                 }
             val output = linuxManifestFile.get().asFile
             output.parentFile.mkdirs()
-            output.writeText(
-                JsonOutput.prettyPrint(
-                    JsonOutput.toJson(
-                        mapOf(
-                            "version" to project.version.toString(),
-                            "platform" to "linux-x64",
-                            "dependencies" to shared + native,
-                        )
-                    )
-                )
-            )
+            output.writeText(manifestJson(shared + native, "linux-x64"))
         }
     }
 
-// JVM UI code is shared. Replace the host Skiko native library when packaging Linux.
+// JVM UI 代码共用；Linux 包只把清单换成 linux-x64 版（原生库同样改为首次启动下载）。
 tasks.register<Jar>("portableLinuxJar") {
     group = "distribution"
     dependsOn("portableJar", prepareLinuxRuntime)
@@ -282,14 +360,9 @@ tasks.register<Jar>("portableLinuxJar") {
         )
     }
     from({ zipTree(layout.buildDirectory.file("portable/MoliFox.jar").get().asFile) }) {
-        exclude(
-            "molifox-dependencies/skiko-awt-runtime-*.jar",
-            "molifox-runtime.json",
-            "META-INF/MANIFEST.MF",
-        )
+        exclude("molifox-runtime.json", "META-INF/MANIFEST.MF")
     }
-    from(linuxRuntimeNative) { into("molifox-dependencies") }
-    from(linuxManifestFile)
+    from(linuxManifestFile) { rename { "molifox-runtime.json" } }
 }
 
 tasks.register("portableLinux") {
@@ -332,72 +405,68 @@ tasks.register("portableLinux") {
 tasks.register("verifyDesktopPackages") {
     group = "verification"
     description =
-        "Validate embedded dependency hashes and native platform binaries; does not launch Linux"
+        "Validate the dependency manifest and jar layout (no runtime jars embedded); does not launch Linux"
     dependsOn("portableWindows", "portableLinux")
     doLast {
-        for ((platform, file) in
+        val platforms =
             listOf(
                 "windows" to layout.buildDirectory.file("portable/MoliFox.jar").get().asFile,
                 "linux" to
                     layout.buildDirectory.file("portable/linux/MoliFox-linux.jar").get().asFile,
-            )) {
+            )
+        for ((platform, file) in platforms) {
             ZipFile(file).use { zip ->
-                val json =
-                    zip.getInputStream(zip.getEntry("molifox-runtime.json")).reader().use {
-                        groovy.json.JsonSlurper().parse(it) as Map<*, *>
+                // 运行时依赖不再内嵌；jar 里只留清单。
+                val embedded =
+                    zip.entries().asSequence().filter {
+                        it.name.startsWith("molifox-dependencies/")
                     }
+                check(!embedded.iterator().hasNext()) { "MoliFox.jar 仍然内嵌了运行时依赖" }
+                val json =
+                    zip.getInputStream(
+                            zip.getEntry("molifox-runtime.json")
+                                ?: error("缺少运行时清单")
+                        )
+                        .reader()
+                        .use { groovy.json.JsonSlurper().parse(it) as Map<*, *> }
                 val dependencies = (json["dependencies"] as List<*>).map { it as Map<*, *> }
+                check(dependencies.isNotEmpty()) { "运行时清单为空" }
+                check((json["version"] as String).contains("-")) { "清单版本号缺少依赖哈希" }
                 for (dependency in dependencies) {
-                    val entry =
-                        zip.getEntry("molifox-dependencies/" + dependency["filename"])
-                            ?: error("Missing embedded dependency")
-                    val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                    val digest =
-                        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
-                            "%02x".format(it)
-                        }
-                    check(digest == dependency["sha256"]) { "Dependency hash mismatch" }
+                    val filename = dependency["filename"] as String
+                    check(filename.matches(Regex("[A-Za-z0-9_.+-]+\\.jar"))) { "文件名不合法" }
+                    check((dependency["group"] as String).isNotBlank()) { "缺少 group" }
+                    check((dependency["artifact"] as String).isNotBlank()) { "缺少 artifact" }
+                    check((dependency["version"] as String).isNotBlank()) { "缺少 version" }
+                    check((dependency["sha256"] as String).matches(Regex("[0-9a-f]{64}"))) {
+                        "校验值不合法：$filename"
+                    }
+                    check((dependency["size"] as Number).toLong() > 0) { "大小不合法：$filename" }
                 }
-                val native = dependencies.single {
+                val native = dependencies.filter {
                     (it["filename"] as String).startsWith("skiko-awt-runtime-")
                 }
-                check((native["filename"] as String).contains("-" + platform + "-x64")) {
+                check(native.size == 1) { "清单应只有一个 skiko 原生库：$native" }
+                check((native.single()["filename"] as String).contains("-$platform-x64")) {
                     "Wrong platform native library"
                 }
-                val entry = zip.getEntry("molifox-dependencies/" + native["filename"])
-                val signature =
-                    zip.getInputStream(entry).use { input ->
-                        ZipInputStream(input).use { nested ->
-                            var found = false
-                            while (true) {
-                                val item = nested.nextEntry ?: break
-                                if (
-                                    item.name.endsWith(if (platform == "linux") ".so" else ".dll")
-                                ) {
-                                    val prefix = nested.readNBytes(4)
-                                    found =
-                                        if (platform == "linux")
-                                            prefix.contentEquals(
-                                                byteArrayOf(0x7f, 0x45, 0x4c, 0x46)
-                                            )
-                                        else
-                                            prefix.size >= 2 &&
-                                                prefix[0] == 0x4d.toByte() &&
-                                                prefix[1] == 0x5a.toByte()
-                                    break
-                                }
-                            }
-                            found
-                        }
-                    }
-                check(signature) { "Native library format does not match " + platform }
+                check(dependencies.any {
+                    (it["filename"] as String).startsWith("kotlin-stdlib-")
+                }) {
+                    "清单缺少 kotlin-stdlib"
+                }
                 check(zip.getEntry("dev/molifox/desktop/AppearancePageKt.class") != null)
+                check(zip.getEntry("dev/molifox/bootstrap/BootstrapMainKt.class") != null)
+                check(
+                    checkNotNull(zip.getEntry("dev/molifox/bootstrap/BootstrapMainKt.class")).size >
+                        0
+                )
             }
         }
         val report = rootProject.file("docs/validation/desktop-packages.md")
         report.parentFile.mkdirs()
         report.writeText(
-            "# Desktop package verification\n\n- Embedded UI dependency hashes: passed\n- Windows native library: PE, passed\n- Linux native library: ELF x64, passed\n- Linux desktop runtime: not executed on this Windows host\n"
+            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: not executed on this Windows host\n"
         )
     }
 }
@@ -433,8 +502,17 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
         val testDirectory =
             rootProject.layout.projectDirectory.dir(".work/tests/${project.name}-$name").asFile
         val portableJar = layout.buildDirectory.file("portable/MoliFox.jar")
-        classpath = files(File(testDirectory, "classes"), portableJar)
+        // 运行时依赖不再内嵌进 MoliFox.jar：GUI 探针直接用 Gradle 解析出的类路径，
+        // 界面类仍来自打好的 jar（排在最前，保证测的是打包产物）。
+        classpath =
+            files(
+                File(testDirectory, "classes"),
+                portableJar,
+                configurations.runtimeClasspath,
+            )
         mainClass.set(probe)
+        systemProperty("molifox.actions.report", rootProject.file("docs/validation/$name-actions.json").absolutePath)
+        systemProperty("molifox.actions.seedPublicCache", (name == "packActionsSmoke").toString())
         timeout.set(Duration.ofMinutes(3))
         systemProperty("java.net.useSystemProxies", "true")
         systemProperty("stdout.encoding", "UTF-8")
@@ -459,6 +537,17 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                     "-d",
                     classes.absolutePath,
                     rootProject.file("tools/$probe.java").absolutePath,
+                    rootProject.file("tools/UiSmoke.java").absolutePath,
+                    rootProject.file("tools/UiFunctionalChecks.java").absolutePath,
+                    rootProject.file("tools/InstanceActionChecks.java").absolutePath,
+                    rootProject.file("tools/SettingsActionChecks.java").absolutePath,
+                    rootProject.file("tools/DownloadActionChecks.java").absolutePath,
+                    rootProject.file("tools/JavaActionChecks.java").absolutePath,
+                    rootProject.file("tools/AccountActionChecks.java").absolutePath,
+                    rootProject.file("tools/PackActionChecks.java").absolutePath,
+                    rootProject.file("tools/WindowActionChecks.java").absolutePath,
+                    rootProject.file("tools/LogActionChecks.java").absolutePath,
+                    rootProject.file("tools/MicrosoftActionChecks.java").absolutePath,
                     rootProject.file("tools/TestWindowFocus.java").absolutePath,
                 ) == 0
             ) {
@@ -477,7 +566,7 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                 )
             } else {
                 setArgs(
-                    listOf(File(testDirectory, "screenshots/MoliFox-home.png").absolutePath, when (name) { "storageUiSmoke" -> "storageUi"; "reviewSmoke" -> "review"; "skinSmoke" -> "skins"; "iconSmoke" -> "icons"; "screenshotsSmoke" -> "screenshots"; "downloadDetailsSmoke" -> "downloadDetails"; else -> "flow" })
+                    listOf(File(testDirectory, "screenshots/MoliFox-home.png").absolutePath, when (name) { "microsoftActionsSmoke" -> "actionsMicrosoft"; "windowActionsSmoke" -> "actionsWindow"; "logActionsSmoke" -> "actionsLogs"; "packActionsSmoke" -> "actionsPacks"; "downloadActionsSmoke" -> "actionsDownloads"; "javaActionsSmoke" -> "actionsJava"; "accountActionsSmoke" -> "actionsAccounts"; "instanceActionsSmoke" -> "actionsInstances"; "settingsActionsSmoke" -> "actionsSettings"; "storageUiSmoke" -> "storageUi"; "reviewSmoke" -> "review"; "skinSmoke" -> "skins"; "iconSmoke" -> "icons"; "screenshotsSmoke" -> "screenshots"; "downloadDetailsSmoke" -> "downloadDetails"; else -> "flow" })
                 )
             }
         }
@@ -490,6 +579,24 @@ val storageUiSmoke = registerGuiSmoke("storageUiSmoke", "UiSmoke", false)
 val iconSmoke = registerGuiSmoke("iconSmoke", "UiSmoke", false)
 val screenshotsSmoke = registerGuiSmoke("screenshotsSmoke", "UiSmoke", false)
 val downloadDetailsSmoke = registerGuiSmoke("downloadDetailsSmoke", "UiSmoke", false)
+val instanceActionsSmoke = registerGuiSmoke("instanceActionsSmoke", "UiSmoke", false)
+val settingsActionsSmoke = registerGuiSmoke("settingsActionsSmoke", "UiSmoke", false)
+val downloadActionsSmoke = registerGuiSmoke("downloadActionsSmoke", "UiSmoke", false)
+val javaActionsSmoke = registerGuiSmoke("javaActionsSmoke", "UiSmoke", false)
+val accountActionsSmoke = registerGuiSmoke("accountActionsSmoke", "UiSmoke", false)
+val packActionsSmoke = registerGuiSmoke("packActionsSmoke", "UiSmoke", false)
+val windowActionsSmoke = registerGuiSmoke("windowActionsSmoke", "UiSmoke", false)
+val logActionsSmoke = registerGuiSmoke("logActionsSmoke", "UiSmoke", false)
+val microsoftActionsSmoke = registerGuiSmoke("microsoftActionsSmoke", "UiSmoke", false)
+microsoftActionsSmoke.configure { timeout.set(Duration.ofMinutes(20)) }
+windowActionsSmoke.configure { timeout.set(Duration.ofMinutes(5)) }
+logActionsSmoke.configure { timeout.set(Duration.ofMinutes(5)) }
+packActionsSmoke.configure { timeout.set(Duration.ofMinutes(15)) }
+downloadActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+javaActionsSmoke.configure { timeout.set(Duration.ofMinutes(20)) }
+accountActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+instanceActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
+settingsActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
 // uiSmoke 新增了存档备份/恢复/删除等真实文件步骤；3 分钟在负载高时会误杀。
 uiSmoke.configure { timeout.set(Duration.ofMinutes(6)) }
 val nativeSmoke = registerGuiSmoke("nativeSmoke", "NativeSmoke", true)

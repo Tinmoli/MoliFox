@@ -16,7 +16,11 @@ data class LaunchPlan(
     val environment: Map<String, String> = emptyMap(),
 )
 
-class LaunchPlanner(private val store: LauncherStore) {
+class LaunchPlanner(
+    private val store: LauncherStore,
+    /** 外置认证账户需要的 authlib-injector；离线与微软账户不会使用。 */
+    private val authlibInjector: AuthlibInjector? = null,
+) {
     suspend fun plan(
         instance: GameInstance,
         profile: ResolvedProfile,
@@ -154,7 +158,16 @@ class LaunchPlanner(private val store: LauncherStore) {
             val modern = profile.json.obj("arguments")
             val jvm =
                 if (modern.array("jvm").size() > 0)
-                    expandArguments(modern.array("jvm"), values, platform, features)
+                    expandArguments(modern.array("jvm"), values, platform, features).map { argument ->
+                        // Modular loaders must ignore the actual inherited JAR, even for renamed profiles.
+                        if (argument.startsWith("-DignoreList=")) {
+                            "-DignoreList=" + argument.removePrefix("-DignoreList=")
+                                .split(',')
+                                .joinToString(",") { entry ->
+                                    if (entry == "${profile.id}.jar") jar.fileName.toString() else entry
+                                }
+                        } else argument
+                    }
                 else listOf("-Djava.library.path=$natives", "-cp", classpathValue)
             val gameArguments =
                 if (profile.json.string("minecraftArguments").isNotBlank())
@@ -195,6 +208,20 @@ class LaunchPlanner(private val store: LauncherStore) {
             }
             command += jvm
             command += extras
+            // 外置认证：在生成 @argfile 与长度校验之前加入，确保长参数也被正确转义。
+            if (credentials.authlibServer.isNotBlank()) {
+                val injector =
+                    authlibInjector
+                        ?: throw AuthlibException(
+                            AuthlibError.DownloadFailed,
+                            "外置认证组件不可用，请重启启动器后重试",
+                        )
+                command +=
+                    injector.jvmArguments(
+                        store.dataDirectory.resolve("cache"),
+                        credentials.authlibServer,
+                    )
+            }
             val invocation =
                 if (
                     prepareFiles &&
@@ -295,7 +322,7 @@ class GameLauncher(
             context.checkCancelled()
             context.progress(.7f, "准备本地依赖和启动参数…")
             val plan =
-                LaunchPlanner(store)
+                LaunchPlanner(store, accounts.authlibInjector)
                     .plan(
                         instance.copy(advancedLaunch = launchSettings),
                         profile,

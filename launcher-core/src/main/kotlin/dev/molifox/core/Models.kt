@@ -18,6 +18,8 @@ enum class LoaderType(val title: String) {
 enum class AccountType {
     Offline,
     Microsoft,
+    /** 外置认证服务器账户（authlib-injector / Yggdrasil，如 LittleSkin）。 */
+    Authlib,
 }
 
 enum class VersionIsolation(val title: String) {
@@ -124,7 +126,26 @@ data class Account(
     /** Launcher-only offline preview, not a skin-server or game authentication override. */
     val localSkinId: String = "",
     val skinVariant: SkinVariant = SkinVariant.Classic,
+    /** 外置认证服务器的 API 根地址（例如 https://littleskin.cn/api/yggdrasil）；其它账户类型为空。 */
+    val authlibServer: String = "",
 )
+
+/**
+ * 用户添加过的外置认证服务器。只保存在 launcher.json，不含任何令牌或密码；
+ * [url] 是规范化后的 API 根地址，[name] 取自服务器元数据的 meta.serverName。
+ */
+data class AuthlibServer(
+    val url: String = "",
+    val name: String = "",
+    val addedAt: String = Instant.now().toString(),
+)
+
+/**
+ * 内置的默认外置认证服务器。PCL 的「使用 LittleSkin 登录」与 HMCL 的
+ * `AuthlibInjectorServerList.createDefault()` 都把 LittleSkin 作为默认项，
+ * 这里同样预置一条，用户可在账户页直接选它登录，也可以删掉或添加别的服务器。
+ */
+val DEFAULT_AUTHLIB_SERVER = AuthlibServer(url = "https://littleskin.cn/api/yggdrasil", name = "LittleSkin")
 
 data class GameInstance(
     val id: String = UUID.randomUUID().toString(),
@@ -180,6 +201,8 @@ data class LauncherData(
     val instances: List<GameInstance> = emptyList(),
     val activeAccountId: String? = null,
     val selectedInstanceId: String? = null,
+    /** 用户添加过的外置认证服务器列表（仅 URL 与显示名，令牌在凭据库中）。 */
+    val authlibServers: List<AuthlibServer> = listOf(DEFAULT_AUTHLIB_SERVER),
     val gameDirectories: List<GameDirectory> = emptyList(),
     val activeGameDirectoryId: String? = null,
 )
@@ -239,6 +262,8 @@ data class ModFile(
     val size: Long,
     val enabled: Boolean,
     val metadata: ModMetadata = ModMetadata(),
+    /** 修改时间（毫秒）：界面按「路径 + 修改时间」缓存模组图标，替换文件后自动重新读取。 */
+    val modified: Long = 0,
 )
 
 data class ContentHit(
@@ -264,6 +289,8 @@ data class GameCredentials(
     /** 档案返回的活跃皮肤纹理地址，离线凭据为空。 */
     val skinUrl: String = "",
     val skinVariant: SkinVariant = SkinVariant.Classic,
+    /** 非空表示外置认证服务器（authlib-injector）账户：启动时注入对应的 javaagent 参数。 */
+    val authlibServer: String = "",
 )
 
 interface PlatformServices {

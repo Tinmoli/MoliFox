@@ -37,7 +37,7 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     }
                 }
                 SettingDivider()
-                SettingRow("最近版本数量") {
+                SettingRow("最近版本数量", "首页最多显示 6 条，其余请到实例页查看") {
                     SimpleDropdown(
                         options.home.recentCount.toString(),
                         listOf(3, 5, 8, 12).map { it.toString() to (it.toString() + " 个版本") },

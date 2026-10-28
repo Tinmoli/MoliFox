@@ -1,7 +1,6 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,7 +22,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -373,8 +371,9 @@ private fun PathPickerDialog(spec: PickRequest, quickPlaces: List<Pair<String, P
                                             selection =
                                                 if (!spec.multiple) listOf(file)
                                                 else if (selection.any { it == file })
-                                                    selection - file
-                                                else selection + file
+                                                    selection.filterNot { it == file }
+                                                // Path is Iterable<Path>; adding it directly adds path segments.
+                                                else selection + listOf(file)
                                         },
                                         onDoubleClick = {
                                             selection = listOf(file)
@@ -505,10 +504,12 @@ private fun PickerRow(
                 shape,
             )
             .rowHoverHighlight(shape, enabled = !selected)
-            // 手势检测按名称重建，列表复用行时不会把上一行的回调留在这里。
-            .pointerInput(label) {
-                detectTapGestures(onTap = { onClick() }, onDoubleTap = { onDoubleClick() })
-            }
+            .combinedClickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+                onDoubleClick = onDoubleClick,
+            )
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

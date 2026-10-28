@@ -83,9 +83,13 @@ fun ContentProjectDialog(
             channel,
         )
             .sortedWith(newestVersionFirst)
-    val recommendation = recommendedContentVersion(versions)
-    LaunchedEffect(hit.id, gameVersion, loader, channel, details) {
-        if (versions.none { it.id == versionId }) versionId = recommendation?.id.orEmpty()
+    val target = state.data.instances.find { it.id == targetId && it.installed }
+    val recommendation = recommendedContentVersion(versions, target, hit.type)
+    LaunchedEffect(hit.id, targetId, gameVersion, loader, channel, details) {
+        val current = versions.find { it.id == versionId }
+        if (current == null || (target != null && hit.type != "modpack" && !compatibleContentVersion(current, target, hit.type))) {
+            versionId = recommendation?.id.orEmpty()
+        }
     }
     val chosen = versions.find { it.id == versionId }
     LaunchedEffect(hit.id, versionId, tab) {
@@ -107,7 +111,6 @@ fun ContentProjectDialog(
             if (isActive) changelogLoading = false
         }
     }
-    val target = state.data.instances.find { it.id == targetId && it.installed }
     val store = actions.controller.store
     val instanceRoot = target?.let { runCatching { store.instancePath(it.id) }.getOrNull() }
     // 下载目标的默认值：实例内容目录（mods / resourcepacks / shaderpacks），

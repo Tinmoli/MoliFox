@@ -61,7 +61,13 @@ fun ColumnScope.InstancesPage(
     var favorites by remember { mutableStateOf(false) }
     var sort by remember(preferences.sort) { mutableStateOf(preferences.sort) }
     val busy = actions.controller.busy
-    val all = state.data.instances.filter { it.gameDirectoryId == state.data.activeGameDirectoryId }
+    // 「有没有游戏」以 instances 为准：没有生效目录（自动发现尚未选中、目录刚被移除）
+    // 时列出全部实例，避免已经识别到版本却显示成空列表。
+    val activeDirectoryId = state.data.activeGameDirectoryId
+    val all =
+        state.data.instances.filter {
+            activeDirectoryId == null || it.gameDirectoryId == activeDirectoryId
+        }
     val filtered = all.filter {
         (!favorites || it.favorite) &&
             (it.name + " " + it.gameVersion + " " + it.loader.title + " " + it.notes).contains(
@@ -109,7 +115,8 @@ fun ColumnScope.InstancesPage(
             it.status == JobStatus.Running &&
                 (it.title.startsWith("安装") || it.title.startsWith("修复"))
         }
-    SectionTitle("游戏实例", "管理你的 Minecraft 版本、模组和存档。") {
+    // 主标题已删除（P1）：实例计数仍在右上角，位置与原来的标题行动作一致。
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Text(
             all.size.toString() + " 个实例 · " + all.count { it.installed } + " 个已安装",
             fontSize = 12.sp,
@@ -441,7 +448,7 @@ private fun InstanceListRow(
                         },
                     )
                     DropdownMenuItem(
-                        { Text("移除实例", fontSize = 13.sp) },
+                        { Text("删除实例", fontSize = 13.sp) },
                         {
                             menu = false
                             onDelete()

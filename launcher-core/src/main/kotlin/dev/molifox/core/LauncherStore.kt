@@ -69,10 +69,9 @@ class LauncherStore(
                 settings =
                     LauncherSettings(
                         // 默认游戏目录 = 启动器所在目录下的 .minecraft（数据目录默认是启动器旁的 MoliFox/）。
+                        // 数据目录本身就在 .minecraft 里、或这一层就是游戏根时直接用这一层，不再套一层。
                         gameRoot =
-                            (dataDirectory.parent ?: dataDirectory)
-                                .resolve(".minecraft")
-                                .toString(),
+                            defaultGameRoot(dataDirectory.parent ?: dataDirectory).toString(),
                         // 新建配置直接使用新目录语义，不参与旧配置迁移。
                         gameRootSemantics = 1,
                         proxyMode = "system",
@@ -259,3 +258,16 @@ class LauncherStore(
         updateState { it.copy(toast = null) }
     }
 }
+
+/**
+ * 默认游戏根：启动器目录旁的 `.minecraft`。若这一层本身就是 `.minecraft`（启动器装在游戏里），
+ * 或已经是 versions/libraries/assets 齐全的游戏根，就直接用这一层，避免再套一层不存在的目录。
+ */
+private fun defaultGameRoot(launcherDirectory: Path): Path =
+    when {
+        launcherDirectory.fileName?.toString().equals(".minecraft", ignoreCase = true) ->
+            launcherDirectory
+        listOf("versions", "libraries", "assets")
+            .all { launcherDirectory.resolve(it).isDirectory() } -> launcherDirectory
+        else -> launcherDirectory.resolve(".minecraft")
+    }

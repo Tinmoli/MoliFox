@@ -115,7 +115,7 @@ class GameDirectoryTest {
     }
 
     @Test
-    fun `removing linked versions or directories keeps the entire source game`() {
+    fun `deleting a linked version removes only its version folder and keeps the shared game`() {
         val root = temporary.resolve(".minecraft")
         val folder = version(root)
         root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("my world")
@@ -123,13 +123,20 @@ class GameDirectoryTest {
             controller.directories.add(root)
             val instance = controller.store.data.instances.single()
             assertEquals(VersionIsolation.Disabled, instance.isolation)
-            controller.deleteInstance(instance.id)
-            assertTrue(folder.resolve("fixture.jar").isRegularFile())
+            // 这里只验证删除范围，用永久删除避免把测试夹具放进用户系统回收站。
+            // 共用游戏根、存档与其它版本必须原样保留。
+            val report =
+                runBlocking { controller.deleteInstance(instance.id, permanent = true) }.getOrThrow()
+            assertEquals(listOf(folder.toRealPath()), report.removedPaths.map { Path.of(it) })
+            assertFalse(report.movedToTrash)
+            assertTrue(report.freedBytes > 0)
+            assertFalse(folder.exists())
+            assertTrue(root.resolve("versions").isDirectory())
+            assertEquals("my world", root.resolve("saves/world/level.dat").readText())
             controller.directories.refresh()
             controller.removeGameDirectory(controller.store.data.activeGameDirectoryId!!)
             assertTrue(controller.store.data.instances.isEmpty())
             assertEquals("my world", root.resolve("saves/world/level.dat").readText())
-            assertTrue(folder.resolve("fixture.json").isRegularFile())
         }
     }
 

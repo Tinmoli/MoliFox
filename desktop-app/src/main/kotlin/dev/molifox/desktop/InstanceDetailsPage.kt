@@ -21,7 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,6 +36,7 @@ import java.nio.file.Path
 import kotlin.io.path.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
+import org.jetbrains.skia.Image as SkiaImage
 
 /** 实例详情页签：与规格 §4 的 6 个二级页签一致。 */
 private data class InstanceTab(val title: String, val icon: ImageVector)
@@ -64,6 +68,7 @@ fun ColumnScope.InstanceDetailsPage(
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var draft by remember(instance.id) { mutableStateOf(instance) }
+    var syncedInstance by remember(instance.id) { mutableStateOf(instance) }
     var memory by remember(instance.id) { mutableStateOf(instance.memoryMb.toString()) }
     var initial by remember(instance.id) { mutableStateOf(instance.initialMemoryMb.toString()) }
     var width by remember(instance.id) { mutableStateOf(instance.width.toString()) }
@@ -76,13 +81,16 @@ fun ColumnScope.InstanceDetailsPage(
     var screenshotGallery by remember(instance.id) { mutableStateOf(false) }
     if (screenshotGallery) ScreenshotGallery(instance, actions) { screenshotGallery = false }
     if (editingIcon) InstanceIconDialog(instance, actions) { editingIcon = false }
-    LaunchedEffect(instance.iconStyle, instance.iconId, instance.packIconId) {
+    LaunchedEffect(instance) {
         draft =
             draft.copy(
+                name = if (draft.name == syncedInstance.name) instance.name else draft.name,
+                isolation = if (draft.isolation == syncedInstance.isolation) instance.isolation else draft.isolation,
                 iconStyle = instance.iconStyle,
                 iconId = instance.iconId,
                 packIconId = instance.packIconId,
             )
+        syncedInstance = instance
     }
     var advancedValid by remember { mutableStateOf(true) }
     val effectiveMemory =
@@ -1181,6 +1189,11 @@ private fun InstanceMods(
                 it.metadata.title.contains(query, true) ||
                 it.metadata.entries.any { entry -> entry.id.contains(query, true) }
         }
+        // 模组图标从 JAR 自带资源里取，缓存在启动器 cache/mod-icons；行内按 JAR 路径 + 修改时间复用。
+        val modsDirectory =
+            runCatching { actions.controller.store.instancePath(instance.id).resolve("mods") }
+                .getOrNull()
+        val iconCacheRoot = runCatching { actions.controller.store.cacheDirectory }.getOrNull()
         // 首次读取还没有数据时给骨架；刷新时保留旧列表，只在顶部显示一条细进度。
         if (loading && mods.isNotEmpty())
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
@@ -1213,6 +1226,8 @@ private fun InstanceMods(
                     items(filtered, key = { it.filename }) { mod ->
                         ModRow(
                             mod,
+                            jar = modsDirectory?.resolve(mod.filename),
+                            iconCacheRoot = iconCacheRoot,
                             modifier = Modifier.animateItem(),
                             busy = actions.controller.busy,
                             onDetail = { detailMod = mod },
@@ -1237,10 +1252,12 @@ private fun InstanceMods(
     }
 }
 
-/** 52dp 模组行：名称 14 + 版本/加载器/大小 12 + 来源文件名 11 + 开关与删除。 */
+/** 52dp 模组行：JAR 自带图标 28dp + 名称 14 + 版本/加载器/大小 12 + 来源文件名 11 + 开关与删除。 */
 @Composable
 private fun ModRow(
     mod: ModFile,
+    jar: Path?,
+    iconCacheRoot: Path?,
     modifier: Modifier,
     busy: Boolean,
     onDetail: () -> Unit,
@@ -1249,6 +1266,10 @@ private fun ModRow(
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val sourceName = mod.filename.removeSuffix(".disabled")
+    val icon =
+        if (jar != null && iconCacheRoot != null)
+            rememberModIcon(jar, mod.modified, iconCacheRoot)
+        else null
     Surface(
         modifier.fillMaxWidth().heightIn(min = 52.dp).pressScale(),
         shape = shape,
@@ -1262,14 +1283,30 @@ private fun ModRow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Outlined.Extension,
-                null,
-                Modifier.size(19.dp),
-                if (mod.enabled) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(10.dp))
+            // 图标小于两行文字（约 38dp），行高仍由文字与 52dp 下限决定，开关和删除按钮的位置不变。
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(
+                            alpha = if (mod.enabled) .5f else .3f
+                        )
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (icon != null)
+                    Image(icon, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                else
+                    Icon(
+                        Icons.Outlined.Extension,
+                        null,
+                        Modifier.size(15.dp),
+                        if (mod.enabled) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+            }
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     mod.metadata.title.ifBlank { sourceName },
@@ -1311,6 +1348,52 @@ private fun ModRow(
             )
         }
     }
+}
+
+/** 已解码的模组图标：按「JAR 路径 + 修改时间」键控，最多保留 256 张，列表来回滚动不重复解码。 */
+private object ModIconBitmaps {
+    private val values =
+        object : LinkedHashMap<String, ImageBitmap>(64, .75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) =
+                size > 256
+        }
+
+    @Synchronized operator fun get(key: String): ImageBitmap? = values[key]
+
+    @Synchronized fun put(key: String, value: ImageBitmap) {
+        values[key] = value
+    }
+}
+
+/**
+ * 异步读取一行模组图标：解析与解码都在 IO 线程完成（`modIcon` 只读 JAR 内的声明与图片，
+ * 结果已按 JAR 身份缓存在 cache/mod-icons），解码结果再按 JAR 路径 + 修改时间放进内存缓存。
+ * 没有可用图标时返回 null，行内退回拼图占位，不改变行高。
+ */
+@Composable
+private fun rememberModIcon(jar: Path, modified: Long, cacheRoot: Path): ImageBitmap? {
+    val key = remember(jar, modified) {
+        jar.toAbsolutePath().normalize().toString() + "|" + modified
+    }
+    val image by
+        produceState<ImageBitmap?>(ModIconBitmaps[key], key, cacheRoot) {
+            if (value != null) return@produceState
+            value =
+                try {
+                    withContext(Dispatchers.IO) {
+                        modIcon(jar, cacheRoot)?.let { file ->
+                            SkiaImage.makeFromEncoded(Files.readAllBytes(file))
+                                .toComposeImageBitmap()
+                        }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+            value?.let { ModIconBitmaps.put(key, it) }
+        }
+    return image
 }
 
 /**

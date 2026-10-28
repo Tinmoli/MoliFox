@@ -1091,7 +1091,8 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
     var cancelTarget by remember { mutableStateOf<DownloadJob?>(null) }
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    SectionTitle("任务与日志", "查看安装进度和 Minecraft 运行输出。") {
+    // 主标题已删除（P1）：导出/停止按钮仍在右上角，间距不变。
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SecondaryButton({ actions.exportLogs() }) { Text("导出日志", fontSize = 12.sp) }
             SecondaryButton({ actions.exportDiagnostics() }) { Text("导出诊断包", fontSize = 12.sp) }

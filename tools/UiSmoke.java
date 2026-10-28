@@ -25,10 +25,10 @@ import com.sun.jna.platform.win32.WinDef.HWND;
 public final class UiSmoke {
     private static Window mainWindow;
     /** 测试自己在 .work 里预置的两个内部隔离实例；存档/移动/隔离预览只操作它们。 */
-    private static final String MAIN_INSTANCE_ID = "3f6a1e40-2d38-4d6e-9c1a-5b8f7a9d0e11";
-    private static final String TARGET_INSTANCE_ID = "8c4b2f51-6a7d-4e93-b2c5-1d9e0f3a4b22";
-    private static final String MAIN_INSTANCE_NAME = "SmokeSaves";
-    private static final String TARGET_INSTANCE_NAME = "SmokeSavesTarget";
+    static final String MAIN_INSTANCE_ID = "3f6a1e40-2d38-4d6e-9c1a-5b8f7a9d0e11";
+    static final String TARGET_INSTANCE_ID = "8c4b2f51-6a7d-4e93-b2c5-1d9e0f3a4b22";
+    static final String MAIN_INSTANCE_NAME = "SmokeSaves";
+    static final String TARGET_INSTANCE_NAME = "SmokeSavesTarget";
     private static Component findRenderLayer(Component component) {
         for (Class<?> type = component.getClass(); type != null; type = type.getSuperclass())
             if (type.getName().equals("org.jetbrains.skiko.SkiaLayer")) return component;
@@ -57,7 +57,7 @@ public final class UiSmoke {
         }
     }
     /** 节点矩形（AWT 逻辑像素，和 Robot 点击同一坐标系）。 */
-    private static Rectangle componentBounds(AccessibleContext context) {
+    static Rectangle componentBounds(AccessibleContext context) {
         try {
             var component = context.getAccessibleComponent();
             if (component == null || !component.isShowing()) return null;
@@ -119,7 +119,11 @@ public final class UiSmoke {
         }
         return null;
     }
-    private static void chooseDirectory(File selection) throws Exception {
+    static void chooseDirectory(File selection) throws Exception {
+        choosePaths(List.of(selection));
+    }
+    static void choosePaths(List<File> selections) throws Exception {
+        File selection = selections.get(0);
         Path ownedRoot = Path.of(System.getProperty("molifox.test.dir")).toAbsolutePath().normalize();
         Path requested = selection.toPath().toAbsolutePath().normalize();
         if (!requested.startsWith(ownedRoot)) throw new IllegalArgumentException("Picker fixture must be inside its isolated test directory");
@@ -152,6 +156,12 @@ public final class UiSmoke {
             }
             click(robot, name);
         }
+        for (File additional : selections.subList(1, selections.size())) {
+            Path path = additional.toPath().toAbsolutePath().normalize();
+            if (!path.startsWith(ownedRoot) || !path.getParent().equals(requested.getParent()))
+                throw new IllegalArgumentException("Additional picker fixtures must share the owned directory");
+            click(robot, path.getFileName().toString());
+        }
         click(robot, "选择");
         waitUntilGone("快捷位置");
     }
@@ -177,17 +187,17 @@ public final class UiSmoke {
         }
         return owner;
     }
-    private static AccessibleContext waitFor(String name) throws Exception {
+    static AccessibleContext waitFor(String name) throws Exception {
         return waitFor(name, true);
     }
-    private static AccessibleContext waitFor(String name, boolean first) throws Exception {
+    static AccessibleContext waitFor(String name, boolean first) throws Exception {
         return waitFor(name, first, Integer.MAX_VALUE);
     }
     /**
      * 与顶部主导航同名的元素（实例详情页左侧页签的「设置」等）用 x 上限区分：
      * 主导航在标题栏里（x 远大于 300），页内二级导航贴左边。
      */
-    private static AccessibleContext waitFor(String name, boolean first, int maximumX) throws Exception {
+    static AccessibleContext waitFor(String name, boolean first, int maximumX) throws Exception {
         for (int attempt = 0; attempt < 80; attempt++) {
             AtomicReference<AccessibleContext> match = new AtomicReference<>();
             EventQueue.invokeAndWait(() -> {
@@ -253,7 +263,7 @@ public final class UiSmoke {
         }
     }
     /** 等待某个无障碍名字消失：用于「切回列表视图后网格卡片入口应当消失」这类负向断言。 */
-    private static void waitUntilGone(String name) throws Exception {
+    static void waitUntilGone(String name) throws Exception {
         for (int attempt = 0; attempt < 80; attempt++) {
             AtomicReference<Boolean> present = new AtomicReference<>(false);
             EventQueue.invokeAndWait(() -> {
@@ -266,27 +276,29 @@ public final class UiSmoke {
         }
         throw new IllegalStateException("UI control still present: " + name);
     }
-    private static void click(Robot robot, String name) throws Exception {
+    static void click(Robot robot, String name) throws Exception {
         click(robot, name, true);
     }
-    private static void click(Robot robot, String name, boolean first) throws Exception {
+    static void click(Robot robot, String name, boolean first) throws Exception {
         click(robot, name, first, Integer.MAX_VALUE);
     }
     /** 点击贴左边栏的页签（实例详情页/设置页侧栏），避开标题栏里同名的顶部导航。 */
-    private static void clickRail(Robot robot, String name) throws Exception {
-        click(robot, name, true, 300);
+    static void clickRail(Robot robot, String name) throws Exception {
+        click(robot, name, true, 200);
     }
-    private static void click(Robot robot, String name, boolean first, int maximumX) throws Exception {
+    static void click(Robot robot, String name, boolean first, int maximumX) throws Exception {
         ensureForeground();
         AccessibleContext context = waitFor(name, first, maximumX);
         activate(robot, context, name);
     }
-    private static void activate(Robot robot, AccessibleContext context, String name) throws Exception {
+    static void activate(Robot robot, AccessibleContext context, String name) throws Exception {
         AtomicReference<Point> center = new AtomicReference<>();
         AtomicReference<String> info = new AtomicReference<>("");
         EventQueue.invokeAndWait(() -> {
             Rectangle bounds = componentBounds(context);
             if (bounds == null) throw new IllegalStateException("Test control has no visible bounds: " + name);
+            if (!context.getAccessibleStateSet().contains(javax.accessibility.AccessibleState.ENABLED))
+                throw new IllegalStateException("Refusing to treat a disabled control as a completed click: " + name);
             center.set(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()));
             info.set(context.getAccessibleRole() + " enabled=" + context.getAccessibleStateSet().contains(javax.accessibility.AccessibleState.ENABLED));
         });
@@ -418,15 +430,17 @@ public final class UiSmoke {
             new Rectangle(window.getLocationOnScreen(), window.getSize()).contains(point)) return true;
         return false;
     }
-    private static void scrollUntilVisible(Robot robot, String name) throws Exception {
+    static void scrollUntilVisible(Robot robot, String name) throws Exception {
         ensureForeground();
         for (int attempt = 0; attempt < 14; attempt++) {
             AtomicReference<Boolean> visible = new AtomicReference<>(false);
+            AtomicReference<Integer> direction = new AtomicReference<>(attempt == 0 ? -100 : 3);
             EventQueue.invokeAndWait(() -> {
                 AccessibleContext context = find(mainWindow.getAccessibleContext(), name, 0);
                 if (context != null) {
                     Rectangle bounds = componentBounds(context);
                     if (bounds != null) {
+                        direction.set(bounds.getCenterY() < mainWindow.getY() + 140 ? -3 : 3);
                         visible.set(isWithinOwnedWindow(new Point((int) bounds.getCenterX(), (int) bounds.getCenterY()))
                             && bounds.getCenterY() > mainWindow.getY() + 140 && bounds.getCenterY() < mainWindow.getY() + mainWindow.getHeight() - 45);
                     }
@@ -435,11 +449,11 @@ public final class UiSmoke {
             if (visible.get()) return;
             Point point = mainWindow.getLocationOnScreen();
             robot.mouseMove(point.x + mainWindow.getWidth() * 3 / 4, point.y + mainWindow.getHeight() * 3 / 4);
-            robot.mouseWheel(3); robot.delay(220);
+            robot.mouseWheel(direction.get()); robot.delay(220);
         }
         throw new IllegalStateException("Scrollable test control not visible: " + name);
     }
-    private static void setSlider(Robot robot, String name, float fraction) throws Exception {
+    static void setSlider(Robot robot, String name, float fraction) throws Exception {
         scrollUntilVisible(robot, name);
         AccessibleContext context = waitFor(name);
         AtomicReference<Point> target = new AtomicReference<>();
@@ -472,7 +486,7 @@ public final class UiSmoke {
                         if (!hasEditableText(node)) continue;
                         editable.add(node);
                         String label = node.getAccessibleName();
-                        if (named == null && label != null && (fieldName.equals(label) || label.startsWith(fieldName + ", "))) named = node;
+                        if (label != null && (fieldName.equals(label) || label.startsWith(fieldName + ", "))) named = node;
                     }
                 }
                 if (named != null) chosen.set(named);
@@ -489,7 +503,7 @@ public final class UiSmoke {
         }
         throw new IllegalStateException("Test field has no editable accessibility node: " + fieldName);
     }
-    private static void enterText(String fieldName, String value) throws Exception {
+    static void enterText(String fieldName, String value) throws Exception {
         AccessibleContext context = waitForEditable(fieldName);
         EventQueue.invokeAndWait(() -> {
             var editor = context.getAccessibleEditableText();
@@ -498,7 +512,7 @@ public final class UiSmoke {
         });
         Thread.sleep(300);
     }
-    private static void capture(Robot robot, Window target, File output, boolean trimChrome) throws Exception {
+    static void capture(Robot robot, Window target, File output, boolean trimChrome) throws Exception {
         ensureForeground();
         Rectangle bounds = new Rectangle(target.getLocationOnScreen(), target.getSize());
         output.getParentFile().mkdirs();
@@ -530,7 +544,7 @@ public final class UiSmoke {
         System.out.println("CAPTURED " + output.getName() + " " + bounds.width + "x" + bounds.height);
     }
     /** 从落盘的 launcher.json 里取出某个版本的实例条目。 */
-    private static com.google.gson.JsonObject savedInstance(Path configuration, String versionId) throws Exception {
+    static com.google.gson.JsonObject savedInstance(Path configuration, String versionId) throws Exception {
         var instances = com.google.gson.JsonParser.parseString(Files.readString(configuration)).getAsJsonObject().getAsJsonArray("instances");
         for (var element : instances) {
             var instance = element.getAsJsonObject();
@@ -538,7 +552,7 @@ public final class UiSmoke {
         }
         throw new IllegalStateException("Instance not found in saved configuration: " + versionId);
     }
-    private static void printTree(AccessibleContext context, int depth) {
+    static void printTree(AccessibleContext context, int depth) {
         if (context == null || depth > 22) return;
         String name = context.getAccessibleName();
         if (name != null && !name.isBlank()) System.out.println("  ".repeat(depth) + context.getAccessibleRole() + " : " + name);
@@ -698,7 +712,7 @@ public final class UiSmoke {
                 .orElse("<none>");
         }
     }
-    private static void awaitFileState(
+    static void awaitFileState(
             String step, long timeoutMillis, java.util.function.BooleanSupplier condition)
             throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMillis;
@@ -708,7 +722,7 @@ public final class UiSmoke {
         }
         throw new IllegalStateException("Filesystem state not reached: " + step);
     }
-    private static boolean hasControlStartingWith(String prefix) throws Exception {
+    static boolean hasControlStartingWith(String prefix) throws Exception {
         AtomicReference<Boolean> present = new AtomicReference<>(false);
         EventQueue.invokeAndWait(() -> {
             for (Window window : Window.getWindows()) if (window.isShowing() && belongsToApp(window)) {
@@ -726,7 +740,7 @@ public final class UiSmoke {
         return present.get();
     }
     /** 同名按钮可能同时出现在存档行与备份行，按屏幕纵坐标取最上面的那个。 */
-    private static void clickTopButton(Robot robot, String name) throws Exception {
+    static void clickTopButton(Robot robot, String name) throws Exception {
         ensureForeground();
         for (int attempt = 0; attempt < 80; attempt++) {
             AtomicReference<AccessibleContext> best = new AtomicReference<>();
@@ -1032,7 +1046,7 @@ public final class UiSmoke {
         System.out.println("DOWNLOAD_DETAILS_FLOW_OK recommendation, internal project versions, clipboard, exact-version install plan, background fit and alignment");
     }
 
-    private static void dragSkinModel(Robot robot) throws Exception {
+    static void dragSkinModel(Robot robot) throws Exception {
         ensureForeground();
         Rectangle bounds = null;
         for (int i = 0; i < 60 && bounds == null; i++) {
@@ -1185,8 +1199,11 @@ public final class UiSmoke {
         click(robot, "全部日期"); click(robot, java.time.LocalDate.now().minusDays(1).toString()); waitUntilGone("today.png"); waitFor("yesterday.png");
         click(robot, "选择当前结果"); click(robot, "移入回收站"); waitFor("确认移除截图"); click(robot, "取消");
         if (!Files.isRegularFile(source.resolve("today.png")) || !Files.isRegularFile(source.resolve("yesterday.png"))) throw new IllegalStateException("Cancelled screenshot delete changed original files");
+        click(robot, "移入回收站"); waitFor("确认移除截图"); clickTopButton(robot, "确认移除截图");
+        awaitFileState("selected screenshot recycled", 10000, () -> !Files.exists(source.resolve("yesterday.png")));
+        if (!Files.isRegularFile(source.resolve("today.png"))) throw new IllegalStateException("Deleting the filtered screenshot also removed an unselected screenshot");
         click(robot, "完成");
-        System.out.println("SCREENSHOTS_FLOW_OK gallery, export byte equality, image clipboard, background, date filter and deletion cancellation");
+        System.out.println("SCREENSHOTS_FLOW_OK gallery, export byte equality, image clipboard, background, date filter, cancellation and actual selected recycling");
     }
 
     public static void main(String[] args) throws Exception {
@@ -1207,7 +1224,7 @@ public final class UiSmoke {
         Files.createDirectories(version);
         Path lifecycleClasses = testRoot.resolve("lifecycle-classes"); Files.createDirectories(lifecycleClasses);
         Path lifecycleSource = testRoot.resolve("UiLifecycleFixture.java");
-        Files.writeString(lifecycleSource, "import java.nio.file.*; public class UiLifecycleFixture { public static void main(String[] args) throws Exception { Path marker=Path.of(System.getenv(\"MOLIFOX_UI_MARKER\")); Files.writeString(marker,\"running\"); Thread.sleep(3000); Files.writeString(marker,\"finished\"); System.out.println(\"UI_FIXTURE_DONE\"); } }");
+        Files.writeString(lifecycleSource, "import java.nio.file.*; public class UiLifecycleFixture { public static void main(String[] args) throws Exception { Path marker=Path.of(System.getenv(\"MOLIFOX_UI_MARKER\")); Files.writeString(marker,\"running\"); var observed=new java.util.Properties(); observed.setProperty(\"jvm\",java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments().toString()); observed.setProperty(\"property\",System.getProperty(\"molifox.ui.check\",\"\")); observed.setProperty(\"cwd\",System.getProperty(\"user.dir\")); observed.setProperty(\"gameArgs\",String.join(\"|\",args)); observed.setProperty(\"environment\",System.getenv().getOrDefault(\"MOLIFOX_UI\",\"\")); try(var stream=Files.newOutputStream(marker.resolveSibling(\"observed-launch.properties\"))) { observed.store(stream,\"disposable UI launch observation\"); } Thread.sleep(3000); Files.writeString(marker,\"finished\"); System.out.println(\"UI_FIXTURE_DONE\"); } }");
         if (javax.tools.ToolProvider.getSystemJavaCompiler().run(null,null,null,"--release","17","-d",lifecycleClasses.toString(),lifecycleSource.toString()) != 0) throw new IllegalStateException("Lifecycle fixture compilation failed");
         Files.writeString(version.resolve("1.20.1.json"), new com.google.gson.Gson().toJson(java.util.Map.of("id","1.20.1","mainClass","UiLifecycleFixture","type","release","javaVersion",java.util.Map.of("majorVersion",Runtime.version().feature()),"libraries",java.util.List.of(),"arguments",java.util.Map.of("game",java.util.List.of(),"jvm",java.util.List.of()))));
         // A controlled Java program tests launcher lifecycle; it is not a real Minecraft verdict.
@@ -1241,6 +1258,7 @@ public final class UiSmoke {
         // 预置两个内部隔离实例，让存档/移动/隔离预览能操作真实文件而不是只读的外部实例。
         seedInternalInstances(testRoot);
         if (args.length > 1 && (args[1].equals("review") || args[1].equals("skins") || args[1].equals("icons") || args[1].equals("screenshots") || args[1].equals("downloadDetails") || args[1].equals("storageUi"))) seedReview(testRoot);
+        if (args.length > 1 && args[1].startsWith("actions")) UiFunctionalChecks.seed(testRoot, fixture);
         if (args.length > 1 && args[1].equals("storageUi")) {
             Path config = testRoot.resolve(".minecraft/instances/" + MAIN_INSTANCE_ID + "/config/ui-fixture.cfg");
             Files.createDirectories(config.getParent()); Files.writeString(config, "independent-ui-export=true");
@@ -1493,11 +1511,15 @@ public final class UiSmoke {
             downloadDetailsFlow(robot, target, output, testRoot);
         } else if (args.length > 1 && args[1].equals("storageUi")) {
             storageUiFlow(robot, target, output, testRoot);
+        } else if (args.length > 1 && args[1].startsWith("actions")) {
+            UiFunctionalChecks.run(args[1], robot, target, output, testRoot);
         } else EventQueue.invokeAndWait(() -> printTree(ownWindow.getAccessibleContext(), 0));
         System.out.println("UI_SMOKE_OK");
         smokeFinished.set(true);
-        EventQueue.invokeAndWait(() -> ownWindow.dispatchEvent(new WindowEvent(ownWindow, WindowEvent.WINDOW_CLOSING)));
+        if (args.length > 1 && args[1].equals("actionsWindow")) click(robot, "关闭");
+        else EventQueue.invokeAndWait(() -> ownWindow.dispatchEvent(new WindowEvent(ownWindow, WindowEvent.WINDOW_CLOSING)));
         app.join(10000);
+        if (app.isAlive()) throw new IllegalStateException("The test window did not shut down normally");
         if (error.get() != null) throw new IllegalStateException(error.get());
         System.out.println("UI_SMOKE_OK");
         System.exit(0);

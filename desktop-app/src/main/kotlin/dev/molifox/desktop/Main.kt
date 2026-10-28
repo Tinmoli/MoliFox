@@ -38,6 +38,9 @@ enum class Page(val title: String, val subtitle: String, val icon: ImageVector) 
     Discover("下载", "安装游戏与发现资源", Icons.Outlined.Explore),
     Settings("设置", "游戏、外观、下载与日志", Icons.Outlined.Tune),
     Downloads("日志", "查看下载进度与运行输出", Icons.Outlined.CloudDownload),
+
+    /** 账户列表是开始页的子页，不在顶部导航里显示，打开时顶部仍高亮「开始」。 */
+    Accounts("账户列表", "添加、切换与删除游戏账户", Icons.Outlined.ManageAccounts),
 }
 
 class UiActions(val controller: LauncherController, val window: ComposeWindow) {
@@ -133,7 +136,12 @@ fun main() {
                 "skiko.data.path",
                 nativeDirectory.toString(),
             )
-            LauncherController(platform, storage)
+            // 启动即按启动器自身位置发现旁边/内部的现有 .minecraft 或游戏根并发起登记；
+            // 扫描失败只写日志，不阻止启动。
+            val created = LauncherController(platform, storage)
+            runCatching { created.discoverStartupGameDirectories() }
+                .onFailure { created.store.log("自动识别游戏目录失败：${it.message}", true) }
+            created
         } catch (error: Exception) {
             error.printStackTrace()
             System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
@@ -340,7 +348,20 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             // Box 作用域，因此这里显式标注接收者，动画分支补一层 Column 提供真实作用域。
             val pageContent: @Composable ColumnScope.(Page) -> Unit = { page ->
                 when (page) {
-                    Page.Home -> HomePage(state, actions, install, navigate, manage)
+                    Page.Home ->
+                        HomePage(
+                            state,
+                            actions,
+                            install,
+                            navigate,
+                            manage,
+                            { navigation.openAccounts() },
+                        )
+                    // 认证服务器入口直接在页面内打开 AuthlibLoginDialog，添加成功后随 store 刷新列表。
+                    Page.Accounts ->
+                        AccountListPage(state, actions) {
+                            navigation.closeAccounts()
+                        }
                     Page.Instances ->
                         InstancesPage(
                             state,
@@ -490,25 +511,15 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
         }
     }
     deleting?.let { instance ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text("移除「" + instance.name + "」？") },
-            text = {
-                Text(
-                    if (instance.gameDirectoryId != null) "移除 MoliFox 中的版本记录，原目录的游戏文件保留。"
-                    else "独立实例文件将移至回收站或 MoliFox/trash。共用目录中的存档和模组保留。"
-                )
+        // 删除实例会移除版本文件与隔离游戏目录，统一走带路径说明的二次确认。
+        DeleteInstanceDialog(
+            instance,
+            actions,
+            onDismiss = { deleting = null },
+            onDeleted = {
+                deleting = null
+                navigation.editing = null
             },
-            confirmButton = {
-                TextButton({
-                    actions.run { actions.controller.deleteInstance(instance.id) }
-                    deleting = null
-                    navigation.editing = null
-                }) {
-                    Text("移除实例", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton({ deleting = null }) { Text("取消") } },
         )
     }
     actions.pendingPack?.let { preview ->

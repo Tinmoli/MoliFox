@@ -1,14 +1,9 @@
 package dev.molifox.desktop
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -103,25 +98,16 @@ fun LauncherBackdrop(settings: LauncherSettings) {
 
 /** 设置 → 外观板块：保留主题与效果 / 字体与缩放 / 页面布局三个子分类； 页面标题由设置页统一提供。右上角是只读的实时预览块。 */
 @Composable
-fun ColumnScope.AppearanceSection(state: LauncherState, actions: UiActions) {
+fun ColumnScope.AppearanceSection(
+    state: LauncherState,
+    actions: UiActions,
+    onResetDefaults: () -> Unit,
+) {
     var section by remember { mutableIntStateOf(0) }
-    var savedPulse by remember { mutableIntStateOf(0) }
-    var savedVisible by remember { mutableStateOf(false) }
     val settings = state.data.settings
-    // 外观分区沿用即时保存：改动立刻作用到窗口，预览才会真的「实时」。
-    // 因此这里不存在「未保存修改」，底部条显示的是「刚保存」的状态提示。
-    val apply: AppearanceChange = { change ->
-        actions.run {
-            actions.controller.saveSettings(change(actions.controller.store.data.settings))
-        }
-        savedPulse++
-    }
-    LaunchedEffect(savedPulse) {
-        if (savedPulse == 0) return@LaunchedEffect
-        savedVisible = true
-        delay(1600)
-        savedVisible = false
-    }
+    // 外观与其它分区一致：改动当场写入 store，MoliTheme / LauncherBackdrop 随之重绘，
+    // 所以预览和窗口效果都是真的「实时」，不存在未保存状态。
+    val apply: AppearanceChange = { change -> applySetting(actions, change) }
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(Modifier.width(168.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             SettingsGroupTitle("外观", topPadding = 2.dp)
@@ -170,53 +156,10 @@ fun ColumnScope.AppearanceSection(state: LauncherState, actions: UiActions) {
                         else -> PageLayoutPreferences(state.data.settings, apply)
                     }
                     Spacer(Modifier.height(6.dp))
+                    SettingsResetFooter(onResetDefaults)
                 }
             }
         }
-    }
-    HorizontalDivider(color = hairline())
-    Row(
-        Modifier.fillMaxWidth().padding(top = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            "外观改动会立即生效并保存，不需要再点保存。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-        )
-        Spacer(Modifier.weight(1f))
-        AnimatedVisibility(
-            savedVisible,
-            enter =
-                fadeIn(tween(if (LocalReducedMotion.current) 0 else Motion.fast)) +
-                    expandHorizontally(tween(if (LocalReducedMotion.current) 0 else Motion.fast)),
-            exit =
-                fadeOut(tween(if (LocalReducedMotion.current) 0 else Motion.fast)) +
-                    shrinkHorizontally(tween(if (LocalReducedMotion.current) 0 else Motion.fast)),
-        ) {
-            Text("已保存", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-        }
-        SecondaryButton({ resetAppearance(apply) }) { Text("恢复默认外观") }
-    }
-}
-
-/** 恢复外观默认值：只动外观相关字段，背景图与字体文件保持不动。 */
-private fun resetAppearance(apply: AppearanceChange) {
-    apply {
-        it.copy(
-            accentColor = "sakura",
-            themeMode = "",
-            darkTheme = false,
-            glassEnabled = true,
-            surfaceOpacity = .9f,
-            backgroundBlur = 16f,
-            backgroundFit = "crop",
-            backgroundAlignment = "center",
-            titlebarTransparent = false,
-            windowTransparent = false,
-            animationsEnabled = true,
-        )
     }
 }
 
@@ -499,12 +442,12 @@ private fun ThemePreferences(
                                 actions.controller.store.dataDirectory,
                                 source,
                             )
-                        actions.controller.saveSettings(
-                            actions.controller.store.data.settings.copy(
+                        applySetting(actions) {
+                            it.copy(
                                 backgroundPath = imported.toString(),
                                 backgroundRevision = System.currentTimeMillis(),
                             )
-                        )
+                        }
                     }
                 }
             }) {
@@ -570,9 +513,7 @@ private fun ThemePreferences(
                 confirmText = "移除背景",
                 onConfirm = {
                     actions.run {
-                        actions.controller.saveSettings(
-                            actions.controller.store.data.settings.copy(backgroundPath = "")
-                        )
+                        applySetting(actions) { it.copy(backgroundPath = "") }
                         Files.deleteIfExists(
                             actions.controller.store.directories.backgrounds.resolve(
                                 "background.img"
@@ -779,7 +720,7 @@ private fun fontLabel(settings: LauncherSettings): String =
         else -> settings.fontChoice.removePrefix("system:")
     }
 
-/** 紧凑滑块行：标题 + 右侧数值 Tag，下方轨道 4dp / 滑块 14dp。 拖动时先更新本地值，停手 160ms 后再落盘，避免拖动过程中反复写设置。 */
+/** 紧凑滑块行：标题 + 右侧数值 Tag，下方轨道 4dp / 滑块 14dp。 拖动时只改本地值保证跟手，停手 300ms 后写入设置。 */
 @Composable
 fun PreferenceSlider(
     title: String,
@@ -789,18 +730,12 @@ fun PreferenceSlider(
     enabled: Boolean = true,
     onApply: (Float) -> Unit,
 ) {
-    var draft by remember(value) { mutableFloatStateOf(value) }
-    LaunchedEffect(draft) {
-        if (draft != value) {
-            delay(160)
-            onApply(draft)
-        }
-    }
+    val draft = rememberSliderDraft(value) { committed -> onApply(committed) }
     Column {
-        SettingRow(title) { Tag(format(draft)) }
+        SettingRow(title) { Tag(format(draft.floatValue)) }
         CompactSlider(
-            draft,
-            { draft = it },
+            draft.floatValue,
+            { draft.floatValue = it },
             Modifier.fillMaxWidth().semantics { contentDescription = title + "滑块" },
             valueRange = range,
             enabled = enabled,

@@ -51,14 +51,13 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
                     if (source != null) {
                         val imported =
                             importAppearanceFont(actions.controller.store.dataDirectory, source)
-                        val current = actions.controller.store.data.settings
-                        actions.controller.saveSettings(
-                            current.copy(
+                        apply {
+                            it.copy(
                                 fontChoice = "file:" + imported.path,
                                 customFonts =
-                                    (current.customFonts + imported).distinctBy { it.path },
+                                    (it.customFonts + imported).distinctBy { entry -> entry.path },
                             )
-                        )
+                        }
                     }
                 }
             }) {
@@ -104,17 +103,18 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
                         "移除字体 " + font.name,
                         {
                             actions.run {
-                                val current = actions.controller.store.data.settings
-                                actions.controller.saveSettings(
-                                    current.copy(
+                                apply {
+                                    it.copy(
                                         customFonts =
-                                            current.customFonts.filter { it.path != font.path },
+                                            it.customFonts.filter { candidate ->
+                                                candidate.path != font.path
+                                            },
                                         fontChoice =
-                                            current.fontChoice.takeUnless {
-                                                it == "file:" + font.path
+                                            it.fontChoice.takeUnless { choice ->
+                                                choice == "file:" + font.path
                                             } ?: "",
                                     )
-                                )
+                                }
                                 removeAppearanceFont(actions.controller.store.dataDirectory, font)
                             }
                         },

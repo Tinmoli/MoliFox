@@ -184,6 +184,19 @@ class ContentBrowsingTest {
     }
 
     @Test
+    fun `recommendation follows installation target without falling back to incompatible files`() {
+        val stable = ContentVersion("compatible", "", "", "release", "2026-01-01", "")
+            .copy(gameVersions = listOf("1.20.1"), loaders = listOf("fabric"))
+        val featured = stable.copy(id = "featured-other-game", featured = true, gameVersions = listOf("1.21"))
+        val wrongLoader = stable.copy(id = "wrong-loader", featured = true, loaders = listOf("neoforge"))
+        val target = GameInstance(name = "Target", gameVersion = "1.20.1", loader = LoaderType.Fabric, installed = true)
+        assertEquals("compatible", recommendedContentVersion(listOf(featured, wrongLoader, stable), target)?.id)
+        assertNull(recommendedContentVersion(listOf(featured, wrongLoader), target))
+        assertEquals("featured-other-game", recommendedContentVersion(listOf(featured, stable), target, "modpack")?.id)
+        assertEquals("featured-other-game", recommendedContentVersion(listOf(featured, stable))?.id)
+    }
+
+    @Test
     fun `explicit browsing filter overrides selected instance and can clear it`() = fixture {
         service.search(
             "test",

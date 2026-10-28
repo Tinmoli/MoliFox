@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -28,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -41,10 +44,212 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.LauncherSettings
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+// ---------- 即时保存 ----------
+
+/** 连续控件（滑块 / 文本输入）停手 300ms 后写盘：拖动与逐字输入不拆成几十次落盘。 */
+internal const val LIVE_WRITE_DELAY = 300L
+
+/**
+ * 设置页唯一的写入口：把改动合并到最新已保存设置后立即写入 store。
+ *
+ * 写入发生在用户操作的那一刻，不再有草稿与「保存设置」按钮。store 的 StateFlow 更新会驱动
+ * `MoliTheme` / `LauncherBackdrop` 重新渲染，所以主题、字体、缩放、背景与透明效果当场生效。
+ * 返回 null 表示已保存；否则返回校验失败的原因——非法输入不落盘，由控件或页面就地提示。
+ */
+internal fun applySetting(
+    actions: UiActions,
+    change: (LauncherSettings) -> LauncherSettings,
+): String? {
+    val store = actions.controller.store
+    val current = store.data.settings
+    val next = change(current)
+    if (next == current) return null
+    val failure = runCatching { actions.controller.saveSettings(next) }.exceptionOrNull()
+    // 即时保存不再弹「设置已保存」：连续调整滑块或输入时提示会一直挂着，反而盖住真正的失败原因。
+    if (actions.controller.state.value.toast == "设置已保存")
+        actions.controller.store.dismissNotification()
+    return failure?.message
+}
+
+/**
+ * 滑块本地值：拖动时只改这份本地状态以保证跟手，停手 300ms 后写入设置。
+ * 控件被销毁（切分区 / 离开页面）时补写还没到 300ms 的值，拖动结果不会丢。
+ */
+@Composable
+internal fun rememberSliderDraft(value: Float, onCommit: (Float) -> Unit): MutableFloatState {
+    val draft = remember { mutableFloatStateOf(value) }
+    val commit by rememberUpdatedState(onCommit)
+    val saved by rememberUpdatedState(value)
+    LaunchedEffect(value) { if (draft.floatValue != value) draft.floatValue = value }
+    LaunchedEffect(draft.floatValue) {
+        if (draft.floatValue == saved) return@LaunchedEffect
+        delay(LIVE_WRITE_DELAY)
+        commit(draft.floatValue)
+    }
+    DisposableEffect(Unit) {
+        onDispose { if (draft.floatValue != saved) runCatching { commit(draft.floatValue) } }
+    }
+    return draft
+}
+
+/** 文本输入的本地草稿：当前文本、输入回调与写盘失败原因。 */
+internal class LiveTextDraft(val text: String, val onChange: (String) -> Unit, val error: String?)
+
+/**
+ * 文本本地草稿：输入时只改本地文本，停手 300ms 后写入设置；控件销毁时补写未落盘的输入。
+ * [onCommit] 返回 null 表示已保存，否则是失败原因。
+ */
+@Composable
+internal fun rememberLiveTextDraft(value: String, onCommit: (String) -> String?): LiveTextDraft {
+    var text by remember { mutableStateOf(value) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val commit by rememberUpdatedState(onCommit)
+    val saved by rememberUpdatedState(value)
+    LaunchedEffect(value) { if (text != value) text = value }
+    LaunchedEffect(text) {
+        if (text == saved) return@LaunchedEffect
+        delay(LIVE_WRITE_DELAY)
+        error = commit(text)
+    }
+    DisposableEffect(Unit) {
+        onDispose { if (text != saved) runCatching { commit(text) } }
+    }
+    return LiveTextDraft(text, { next -> text = next; error = null }, error)
+}
+
+/** 单行文本设置：输入框 + 可选的尾部按钮；写盘失败或需要提示时就地显示一行说明。 */
+@Composable
+internal fun LiveTextField(
+    value: String,
+    onCommit: (String) -> String?,
+    modifier: Modifier = Modifier,
+    label: String = "",
+    placeholder: String = "",
+    hint: String? = null,
+    enabled: Boolean = true,
+    trailing: @Composable (() -> Unit)? = null,
+) {
+    val live = rememberLiveTextDraft(value, onCommit)
+    Column(modifier) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CompactTextField(
+                live.text,
+                live.onChange,
+                Modifier.weight(1f),
+                label = label,
+                placeholder = placeholder,
+                enabled = enabled,
+            )
+            trailing?.invoke()
+        }
+        val message = live.error ?: hint
+        if (message != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                message,
+                color =
+                    if (live.error != null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+/** 数值设置：只接受数字，非法值就地提示范围；合法值停手 300ms 后写入设置。 */
+@Composable
+internal fun LiveNumberField(
+    value: Int,
+    label: String,
+    range: IntRange,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    enabled: Boolean = true,
+    onCommit: (Int) -> String?,
+) {
+    val live =
+        rememberLiveTextDraft(value.toString()) { text ->
+            val parsed = text.toIntOrNull()
+            if (parsed == null || parsed !in range) null else onCommit(parsed)
+        }
+    Column(modifier) {
+        CompactTextField(
+            live.text,
+            { text -> live.onChange(text.filter(Char::isDigit).take(5)) },
+            label = label,
+            placeholder = placeholder,
+            enabled = enabled,
+        )
+        val parsed = live.text.toIntOrNull()
+        val message =
+            when {
+                parsed == null || parsed !in range -> "范围 " + range.first + "–" + range.last
+                else -> live.error
+            }
+        if (message != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+        }
+    }
+}
+
+/**
+ * 设置页滚动内容末尾的「还原默认配置」：上方一条分隔线，中间 12sp 次级色文字按钮。
+ * 需要下拉才能看到，不与常用开关抢注意力；点击后先弹确认，再交给调用方把全部选项写回默认值。
+ */
+@Composable
+internal fun SettingsResetFooter(onReset: () -> Unit) {
+    var confirming by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider(color = hairline())
+        Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+            Text(
+                "还原默认配置",
+                Modifier.pressScale()
+                    .clip(RoundedCornerShape(Metrics.innerRadius))
+                    .hoverHighlight()
+                    .clickable(role = Role.Button) { confirming = true }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+        }
+    }
+    if (confirming)
+        Modal(
+            "还原默认配置？",
+            "下面这些选项会回到出厂值，并立即生效。",
+            460.dp,
+            { confirming = false },
+        ) {
+            MutedText(
+                "内存、游戏窗口、Java 路径、更新、下载与代理、外观、字体与页面布局都会恢复默认；" +
+                    "游戏目录、账户、已导入的字体与背景图片文件保持不动。"
+            )
+            DialogActions(
+                confirmText = "还原默认配置",
+                onConfirm = {
+                    onReset()
+                    confirming = false
+                },
+                cancelText = "取消",
+                onCancel = { confirming = false },
+            )
+        }
+}
 
 /** 分组小标题：11sp `onSurfaceVariant`，默认上间距 18dp，供设置页分组使用。 */
 @Composable
@@ -60,7 +265,7 @@ fun SettingsGroupTitle(title: String, topPadding: Dp = 18.dp) {
 
 /**
  * 设置卡片：白底、圆角 6、1dp `outlineVariant@.5` 边、无阴影、内边距 16。 标题行 14sp SemiBold（可带 12sp 说明）+ 1dp
- * 分隔线；不再有整块色带与左侧竖条。 `action` 是标题行右侧插槽（例如「重置本区」文字按钮），垂直居中。
+ * 分隔线；不再有整块色带与左侧竖条。 `action` 是标题行右侧插槽（例如外观页的「已启用」标记），垂直居中。
  */
 @Composable
 fun SettingsSection(
@@ -204,6 +409,9 @@ fun CompactTextField(
     hint: String? = null,
     placeholder: String = "",
     enabled: Boolean = true,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    // 可选的外部聚焦入口：例如「添加认证服务器」入口打开对话框后直接落焦在地址框上。
+    focusRequester: FocusRequester? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
@@ -256,8 +464,13 @@ fun CompactTextField(
                 enabled = enabled,
                 cursorBrush = SolidColor(colors.primary),
                 interactionSource = interaction,
+                visualTransformation = visualTransformation,
                 modifier =
                     Modifier.fillMaxWidth()
+                        .then(
+                            if (focusRequester == null) Modifier
+                            else Modifier.focusRequester(focusRequester)
+                        )
                         .then(
                             if (label.isBlank()) Modifier
                             else Modifier.semantics { contentDescription = label }

@@ -120,7 +120,7 @@ fun Modal(
     }
 }
 
-/** 弹窗底部按钮行：右对齐，取消为次按钮、确认为主按钮，危险操作使用错误色主按钮。 只做视觉与排版，点击语义仍由调用方传入。 */
+/** 弹窗底部按钮行：右对齐，取消为次按钮、确认为主按钮，危险操作使用错误色主按钮。 只做视觉与排版，点击语义仍由调用方传入。 [busy] 为真时确认按钮禁用并显示小号进度圈。 */
 @Composable
 fun DialogActions(
     confirmText: String,
@@ -130,6 +130,7 @@ fun DialogActions(
     enabled: Boolean = true,
     danger: Boolean = false,
     hint: String = "",
+    busy: Boolean = false,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(top = 2.dp),
@@ -144,11 +145,11 @@ fun DialogActions(
                 fontSize = 11.sp,
             )
         else Spacer(Modifier.weight(1f))
-        if (onCancel != null) SecondaryButton(onCancel) { Text(cancelText) }
+        if (onCancel != null) SecondaryButton(onCancel, enabled = !busy) { Text(cancelText) }
         Button(
             onClick = onConfirm,
             modifier = Modifier.pressScale().height(Metrics.controlHeight),
-            enabled = enabled,
+            enabled = enabled && !busy,
             shape = RoundedCornerShape(Metrics.innerRadius),
             colors =
                 if (danger)
@@ -159,6 +160,14 @@ fun DialogActions(
                 else ButtonDefaults.buttonColors(),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = LocalContentColor.current,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             Text(confirmText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         }
     }

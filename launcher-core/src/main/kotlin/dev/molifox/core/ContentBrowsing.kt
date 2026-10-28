@@ -44,8 +44,14 @@ fun filteredContentVersions(
         .sortedByDescending { it.published }
 
 /** Prefer the publisher's featured stable file; never label a prerelease as stable. */
-fun recommendedContentVersion(versions: List<ContentVersion>): ContentVersion? {
-    val newest = versions.sortedByDescending { it.published }
+fun recommendedContentVersion(
+    versions: List<ContentVersion>,
+    target: GameInstance? = null,
+    kind: String = "mod",
+): ContentVersion? {
+    val newest = versions
+        .filter { target == null || kind == "modpack" || compatibleContentVersion(it, target, kind) }
+        .sortedByDescending { it.published }
     return newest.firstOrNull { it.featured && it.channel == "release" }
         ?: newest.firstOrNull { it.channel == "release" }
         ?: newest.firstOrNull()

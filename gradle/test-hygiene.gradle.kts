@@ -9,7 +9,7 @@ import org.gradle.api.tasks.testing.Test
 // These directories belong to checks only. Application data is never a cleanup target.
 val workspaceRoot = rootProject.projectDir.toPath().toAbsolutePath().normalize()
 val managedRoot = workspaceRoot.resolve(".work/tests")
-val smokeNames = setOf("onlineSmoke", "contentSmoke", "mrpackSmoke", "reportedIssuesSmoke", "accountSmoke", "uiSmoke", "reviewSmoke", "skinSmoke", "storageUiSmoke", "iconSmoke", "screenshotsSmoke", "downloadDetailsSmoke", "nativeSmoke", "gameSmoke")
+val smokeNames = setOf("onlineSmoke", "contentSmoke", "mrpackSmoke", "reportedIssuesSmoke", "accountSmoke", "uiSmoke", "reviewSmoke", "skinSmoke", "storageUiSmoke", "iconSmoke", "screenshotsSmoke", "downloadDetailsSmoke", "instanceActionsSmoke", "settingsActionsSmoke", "downloadActionsSmoke", "javaActionsSmoke", "accountActionsSmoke", "packActionsSmoke", "windowActionsSmoke", "logActionsSmoke", "microsoftActionsSmoke", "nativeSmoke", "gameSmoke")
 
 fun deleteOwnedTestDirectory(directory: Path) {
     val target = directory.toAbsolutePath().normalize()
@@ -21,8 +21,28 @@ fun deleteOwnedTestDirectory(directory: Path) {
     }
     if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
         // walk does not follow links: a link inside a fixture is removed, its target is preserved.
+        val failures = mutableListOf<Exception>()
         Files.walk(target).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+            for (path in paths.sorted(Comparator.reverseOrder()).toList()) {
+                var attempt = 0
+                while (true) {
+                    try {
+                        Files.deleteIfExists(path)
+                        break
+                    } catch (failure: java.nio.file.FileSystemException) {
+                        if (++attempt < 4) Thread.sleep(150L * attempt)
+                        else {
+                            failures.add(failure)
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) {
+            throw java.io.IOException("Some test files are still in use; all other test data was removed").apply {
+                failures.forEach(::addSuppressed)
+            }
         }
     }
 }

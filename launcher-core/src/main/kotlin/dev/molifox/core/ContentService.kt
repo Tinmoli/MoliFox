@@ -282,6 +282,7 @@ class ContentService(
                     it.fileSize(),
                     !it.name.endsWith(".disabled", true),
                     metadataReader.read(it),
+                    it.getLastModifiedTime().toMillis(),
                 )
             }
             .sortedBy { it.filename.lowercase() }
