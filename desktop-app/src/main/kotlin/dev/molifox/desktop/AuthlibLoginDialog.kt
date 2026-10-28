@@ -36,8 +36,8 @@ private enum class AuthlibLoginStep {
 }
 
 /**
- * 账户页的两个认证服务器入口：[Server] 直接进入某台已保存服务器的用户名与密码步骤（不经过服务器列表、
- * 不需要「下一步」、也不显示地址框），[NewServer] 打开即把光标放进地址框，添加并保存新服务器。
+ * 账户页的两个认证服务器入口：[Server] 直接进入某台已保存服务器的用户名与密码步骤（不经过服务器列表、 不需要「下一步」、也不显示地址框），[NewServer]
+ * 打开即把光标放进地址框，添加并保存新服务器。
  */
 sealed interface AuthlibEntry {
     /** 已保存服务器各占账户页一行：点哪台就登录哪台。 */
@@ -52,10 +52,9 @@ sealed interface AuthlibEntry {
  *
  * - [AuthlibEntry.NewServer] 从第 1 步开始：把焦点放在地址框上，校验通过后 `addAuthlibServer`
  *   会先保存再用它登录；已保存的服务器也在这里列一次，方便在行尾移除（不影响已添加账户）；
- * - [AuthlibEntry.Server] 直接落在第 2 步：账户页上每台已保存服务器各有一行，点开就是这台服务器的
- *   用户名与密码，没有服务器列表、没有「下一步」、没有地址框；
- * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框，
- *   成功后关闭由账户列表的 store 变更自动刷新（与离线账户、微软账户同一路径）。
+ * - [AuthlibEntry.Server] 直接落在第 2 步：账户页上每台已保存服务器各有一行，点开就是这台服务器的 用户名与密码，没有服务器列表、没有「下一步」、没有地址框；
+ * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框， 成功后关闭由账户列表的 store
+ *   变更自动刷新（与离线账户、微软账户同一路径）。
  *
  * 请求期间按钮置灰并显示 14dp 转圈，界面线程不做阻塞等待；Esc 关闭，Enter 执行当前一步。
  */
@@ -244,7 +243,8 @@ fun AuthlibLoginDialog(
                             val label = server.name.ifBlank { server.url }
                             // 内置默认服务器（核心 DEFAULT_AUTHLIB_SERVER，LittleSkin）不给删除入口：
                             // 行尾换成灰掉的锁，点了就地提示，而不是静默忽略。
-                            val builtin = actions.controller.accounts.isBuiltinAuthlibServer(server.url)
+                            val builtin =
+                                actions.controller.accounts.isBuiltinAuthlibServer(server.url)
                             DialogListRow(
                                 title = label,
                                 detail = server.url,

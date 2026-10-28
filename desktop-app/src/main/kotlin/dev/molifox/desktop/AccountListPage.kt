@@ -50,15 +50,14 @@ import kotlinx.coroutines.withContext
  * - 顶栏固定：返回箭头 + 「账户列表」标题；
  * - 左栏入口逐行铺满宽度：微软账户 / 离线账户 / 每台已保存的认证服务器各一行（行名是服务器名）/ 添加认证服务器， 行高 40dp、图标 + 文字、悬停淡入行底色，与全站列表行同一节奏；
  *   点服务器行直接进该服务器的用户名与密码；没有已保存服务器时才显示灰掉的「认证服务器」行与提示， 添加认证服务器入口则始终在最后，打开同一个对话框并把焦点放在地址框上；
- * - 右栏保持原样：单选圆点、40dp 头像、名字 + 类型、悬停才出现的删除；
+ * - 右栏是账户卡片：单选圆点、40dp 头像、名字 + 类型、悬停才出现的删除；
  * - 列表为空时右栏居中显示史蒂夫头像 + 「没有游戏账户」+ 一行「从左侧添加账户」提示。
  *
- * 认证服务器行打开 [AuthlibLoginDialog] 的 [AuthlibEntry.Server] 入口，直接落在用户名与密码；
- * [AuthlibEntry.NewServer] 入口先校验并保存 Yggdrasil 服务器。对话框保存账户后会写入同一个 store，本页直接随
- * [LauncherState] 重新组合，无需回调刷新。
+ * 认证服务器行打开 [AuthlibLoginDialog] 的 [AuthlibEntry.Server] 入口，直接落在用户名与密码； [AuthlibEntry.NewServer]
+ * 入口先校验并保存 Yggdrasil 服务器。对话框保存账户后会写入同一个 store，本页直接随 [LauncherState] 重新组合，无需回调刷新。
  *
  * 切换与删除直接复用核心的 AccountService：[AccountService.select] 切换当前账户， [AccountService.remove]
- * 在删除当前账户时自动落到剩下的第一个账户上（列表空了就是无账户态）。 皮肤概览与刷新由开始页账户卡提供，此页提供删除入口。 视觉沿用本项目樱花粉：白卡片、1dp 细边、圆角
+ * 在删除当前账户时自动落到剩下的第一个账户上（列表空了就是无账户态）。 皮肤概览与刷新由开始页账户卡提供，此页只有删除入口。 视觉沿用本项目樱花粉：白卡片、1dp 细边、圆角
  * 6，当前账户只多一圈主题色描边与实心圆点。
  */
 @Composable
@@ -109,7 +108,7 @@ fun ColumnScope.AccountListPage(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         SmallIconButton(Icons.Outlined.ArrowBack, "返回上一页", onBack)
         Spacer(Modifier.width(8.dp))
-        // 这是唯一保留标题的页面：独立子页需要标题说明「从哪里返回」，18sp SemiBold 与实例详情页头一致。
+        // 独立子页保留标题：18sp SemiBold 说明当前所在位置，与实例详情页头一致。
         Text(
             "账户列表",
             Modifier.weight(1f),

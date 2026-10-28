@@ -11,7 +11,7 @@ data class AdvancedLaunchSettings(
     val preLaunchCommand: String = "",
     val postExitCommand: String = "",
     val commandTimeoutSeconds: Int = 60,
-    /** Empty preserves the old minimizeOnLaunch switch. */
+    /** Empty falls back to [LauncherSettings.minimizeOnLaunch]. */
     val launcherVisibility: String = "",
     val closeLauncherAfterGameExit: Boolean = false,
     val verifyFileHashes: Boolean = true,

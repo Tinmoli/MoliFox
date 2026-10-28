@@ -76,18 +76,18 @@ private const val RECENT_PLAY_ROWS = 8
 /**
  * 开始页右栏下半：「最近游玩的存档或服务器」。
  *
- * 标题行的分段开关决定正文只渲染**一类**内容——「存档」或「服务器」，不再把两类混排：
- * 存档来自 `saves/`（[SaveManager.listSaves]），服务器来自游戏目录的 `servers.dat`（[listServers]），
- * 各自按最近使用时间倒序取前 [RECENT_PLAY_ROWS] 条。 条目优先使用本启动器记录的 [RecentUsage.lastUsed]，世界没有记录时退回目录修改时间。
- * 每次加载/刷新在读完磁盘后调用 [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录 清掉；读取与清理全部在 `Dispatchers.IO`
- * 上完成，刷新按钮只是递增 [refreshToken] 重新读一遍磁盘。
+ * 标题行的分段开关决定正文只渲染**一类**内容——「存档」或「服务器」： 存档来自 `saves/`（[SaveManager.listSaves]），服务器来自游戏目录的
+ * `servers.dat`（[listServers]）， 各自按最近使用时间倒序取前 [RECENT_PLAY_ROWS] 条。 条目优先使用本启动器记录的
+ * [RecentUsage.lastUsed]，世界没有记录时退回目录修改时间。 每次加载/刷新在读完磁盘后调用 [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录
+ * 清掉；读取与清理全部在 `Dispatchers.IO` 上完成，刷新按钮只是递增 [refreshToken] 重新读一遍磁盘。
  *
  * 「开始游戏」走调用方传入的 [onLaunch]——开始页的主「启动游戏」按钮用的就是同一条 [LauncherController.launch] 路径；本面板只负责先记一次
  * [RecentUsage.record]。 「查看全部」在面板内打开「存档与服务器」浮层（Esc 或关闭按钮退出）。 [instance] 为 null（未选择版本）时整块不渲染。
  *
  * 面板可折叠：标题行的箭头 180° 旋转（180ms）+ 内容区高度动画，折叠后只剩约 44dp 的标题行。展开状态与选中的类别都由调用方读写页面偏好
- * [HomePagePreferences.recentPlayExpanded] / [HomePagePreferences.recentPlayKind]，因此重启后保持上次的选择。折叠不会中断启动——
- * 「开始游戏」的协程挂在面板自身的作用域上， 折叠只是把内容区移出组合；标题行的刷新与「查看全部」在折叠时仍然可用。
+ * [HomePagePreferences.recentPlayExpanded] /
+ * [HomePagePreferences.recentPlayKind]，因此重启后保持上次的选择。折叠不会中断启动—— 「开始游戏」的协程挂在面板自身的作用域上，
+ * 折叠只是把内容区移出组合；标题行的刷新与「查看全部」在折叠时仍然可用。
  */
 @Composable
 fun RecentPlayPanel(
@@ -358,8 +358,8 @@ fun RecentPlayPanel(
 }
 
 /**
- * 存档行：32dp 世界图标（游戏写入的 `<saves>/<世界>/icon.png`，缺失或读不出时用草方块）、
- * 目录名、「单人存档 · 游玩时间」，随后紧跟文字操作「开始游戏 / 打开文件夹 / 删除」。
+ * 存档行：32dp 世界图标（游戏写入的 `<saves>/<世界>/icon.png`，缺失或读不出时用草方块）、 目录名、「单人存档 · 游玩时间」，随后紧跟文字操作「开始游戏 / 打开文件夹
+ * / 删除」。
  */
 @Composable
 private fun WorldPlayRow(
@@ -389,10 +389,7 @@ private fun WorldPlayRow(
     )
 }
 
-/**
- * 世界图标：优先用世界目录（或 `.zip`）里的 `icon.png`，读不出就退回草方块。
- * 图标按「路径 + 修改时间」缓存，滚动或切页回来不会重复解码。
- */
+/** 世界图标：优先用世界目录（或 `.zip`）里的 `icon.png`，读不出就退回草方块。 图标按「路径 + 修改时间」缓存，滚动或切页回来不会重复解码。 */
 @Composable
 private fun WorldPlayIcon(entry: RecentPlayItem) {
     val save = entry.save
@@ -410,8 +407,7 @@ private fun WorldPlayIcon(entry: RecentPlayItem) {
 }
 
 /**
- * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名，
- * 副标题是「MOTD（或地址） · 玩家数/离线 · 游玩时间」；MOTD 用带颜色的分段渲染，
+ * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名， 副标题是「MOTD（或地址） · 玩家数/离线 · 游玩时间」；MOTD 用带颜色的分段渲染，
  * 悬停显示 `servers.dat` 里的完整地址。随后紧跟文字操作「开始游戏 / 复制地址 / 删除记录」。
  *
  * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个「离线」标签，开始游戏不受影响。
@@ -475,8 +471,7 @@ private fun ServerPlayRow(
 /**
  * 两类行共用的骨架：32dp 图标 + 标题/副标题 + 紧随其后的文字操作，行高 52、悬停淡入。
  *
- * 文字列用 `weight(1f, fill = false)`：按内容宽度收窄但最多占满剩余空间，
- * 因此操作紧跟在标题/副标题之后，而不是贴到行尾；行里多出来的空白留在操作右侧。
+ * 文字列用 `weight(1f, fill = false)`：按内容宽度收窄但最多占满剩余空间， 因此操作紧跟在标题/副标题之后，而不是贴到行尾；行里多出来的空白留在操作右侧。
  */
 @Composable
 private fun PlayRowFrame(
@@ -529,10 +524,7 @@ private fun PlaySubtitle(text: AnnotatedString, subtitleSize: TextUnit = 12.sp) 
     )
 }
 
-/**
- * 行内文字操作：12sp 纯文字、无底色、无胶囊，悬停时淡出一层主题色背景。
- * 只有「开始游戏」用主题色，「删除」用错误色，其余是次要文字色；禁用时整体降到 38% 透明度。
- */
+/** 行内文字操作：12sp 纯文字、无底色、无胶囊，悬停时淡出一层主题色背景。 只有「开始游戏」用主题色，「删除」用错误色，其余是次要文字色；禁用时整体降到 38% 透明度。 */
 @Composable
 private fun PlayRowAction(text: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
@@ -555,10 +547,7 @@ private fun PlayRowAction(text: String, color: Color, enabled: Boolean, onClick:
     )
 }
 
-/**
- * 标题行的分段开关：「存档」/「服务器」二选一，正文只渲染选中的一类。
- * 选中项用主题色浅底 + 主题色文字，未选中项是次要色文字，未选中项悬停有反馈。
- */
+/** 标题行的分段开关：「存档」/「服务器」二选一，正文只渲染选中的一类。 选中项用主题色浅底 + 主题色文字，未选中项是次要色文字，未选中项悬停有反馈。 */
 @Composable
 private fun KindSwitch(kind: EntryKind, onKindChange: (EntryKind) -> Unit) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
@@ -973,8 +962,7 @@ private fun decodeServerIcon(bytes: ByteArray?): ImageBitmap? = bytes?.let { dat
 /**
  * 相对时间：「刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 上个月 / N 个月前 / N 年前」。
  *
- * 应用里原本没有相对时间工具——实例页用的是 「MM-dd HH:mm」绝对时间，不能直接复用；
- * 这里保留全应用唯一一份相对时间格式化，不再另写第二份。
+ * 全应用只有这一份相对时间格式化；实例页仍用 「MM-dd HH:mm」绝对时间，两者不共用。
  */
 private fun relativeTimeLabel(time: Instant?, now: Instant = Instant.now()): String {
     if (time == null) return ""

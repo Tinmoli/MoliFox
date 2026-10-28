@@ -35,7 +35,7 @@ import kotlinx.coroutines.swing.Swing
 
 /**
  * 顶部导航显示 Navigation.kt 里的 TopNavPages：开始、下载、联机、设置。
- * 日志（Downloads）与账户列表（Accounts）是子页；实例页已移出导航但保留，仍可从开始页进入。
+ * 日志（Downloads）与账户列表（Accounts）是子页；实例页不在顶部导航里，可从开始页进入。
  */
 enum class Page(val title: String, val subtitle: String, val icon: ImageVector) {
     Home("开始", "账户与游戏启动", Icons.Outlined.Home),

@@ -12,10 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/**
- * 联机页：功能尚未实现。
- * 服务器列表、局域网与联机大厅都还没有接入，因此这里只显示空态，不做假按钮、也不放假服务器列表。
- */
+/** 联机页：功能尚未实现。 服务器列表、局域网与联机大厅都还没有接入，因此这里只显示空态，不做假按钮、也不放假服务器列表。 */
 @Composable
 fun ColumnScope.MultiplayerPage() {
     Text("联机", Modifier.padding(bottom = 10.dp), style = MaterialTheme.typography.titleLarge)

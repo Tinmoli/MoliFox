@@ -1347,7 +1347,7 @@ private fun DialogCheckRow(
 
 /** 计划里的冲突计数：有冲突时用错误色，提醒必须先手动处理。 */
 @Composable
-private fun conflictCountText(count: Int) {
+private fun ConflictCountText(count: Int) {
     Text(
         "$count 个",
         fontSize = 13.sp,
@@ -1461,7 +1461,7 @@ fun IsolationChangeDialog(
                             Text("${prepared.moveCount} 个", fontSize = 13.sp)
                         }
                         SettingRow("冲突", "目标已有不同内容或不可覆盖，必须手动处理") {
-                            conflictCountText(prepared.conflictCount)
+                            ConflictCountText(prepared.conflictCount)
                         }
                     }
                     SettingsSection("选项", "两个选项都对应真实的迁移参数，改动后会重新预览。") {
@@ -1660,7 +1660,7 @@ fun InstanceMoveDialog(
                             Text(reportBytes(prepared.copyBytes), fontSize = 13.sp)
                         }
                         SettingRow("冲突", "目标已有同名文件或文件夹") {
-                            conflictCountText(prepared.conflictCount)
+                            ConflictCountText(prepared.conflictCount)
                         }
                     }
                     Text(

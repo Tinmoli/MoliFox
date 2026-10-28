@@ -108,8 +108,8 @@ class LauncherStore(
                 )
             else loaded
         if (config.exists() && loaded.settings.gameRootSemantics == 0) {
-            // 旧配置的 gameRoot 之下还有一层 minecraft/；根目录语义已改为直接使用 gameRoot，
-            // 统一下移一级并写入标记，保持各实例实际使用的目录不变，且只迁移一次。
+            // 旧配置的 gameRoot 之下还有一层 minecraft/；当前语义是直接使用 gameRoot，
+            // 因此统一下移一级并写入标记，保持各实例实际使用的目录不变，且只迁移一次。
             migrated =
                 migrated.copy(
                     settings =
@@ -163,7 +163,8 @@ class LauncherStore(
         value.instances.forEach { require(runCatching { UUID.fromString(it.id) }.isSuccess) }
         // 旧配置里 authlibServers 可能被序列化成空数组，导致界面上「认证服务器」一直是灰的。
         // 空列表视为「还没配置过」，补上内置的 LittleSkin（与 HMCL/PCL 的默认项一致）。
-        if (value.authlibServers.isEmpty()) return value.copy(authlibServers = listOf(DEFAULT_AUTHLIB_SERVER))
+        if (value.authlibServers.isEmpty())
+            return value.copy(authlibServers = listOf(DEFAULT_AUTHLIB_SERVER))
         return value
     }
 

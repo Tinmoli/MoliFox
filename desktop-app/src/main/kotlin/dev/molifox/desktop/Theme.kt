@@ -115,7 +115,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
     val cornerRadius = settings.cornerRadiusDp.coerceIn(0, 24)
     val font = remember(settings.fontChoice) { launcherFontFamily(settings.fontChoice) }
     val surfaceAlpha = if (settings.glassEnabled) settings.surfaceOpacity.coerceIn(.6f, 1f) else 1f
-    // 背景与卡片改为平面色，主题色只出现在选中态、主按钮、开关、滑块与进度上。
+    // 背景与卡片使用平面色，主题色只出现在选中态、主按钮、开关、滑块与进度上。
     val colors =
         if (dark)
             darkColorScheme(
@@ -345,7 +345,7 @@ fun controlBorderColor(focused: Boolean = false): Color {
 fun controlBorder(focused: Boolean = false): BorderStroke =
     BorderStroke(1.dp, controlBorderColor(focused))
 
-/** 列表行悬停底色：主题色 7%（浅）/ 12%（深），比旧的 5% 更容易看见。 */
+/** 列表行悬停底色：主题色 7%（浅）/ 12%（深）。 */
 @Composable
 fun rowHoverColor(): Color =
     MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) .12f else .07f)

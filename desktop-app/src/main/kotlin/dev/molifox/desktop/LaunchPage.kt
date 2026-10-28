@@ -37,10 +37,7 @@ import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * 开始页：左栏是账户摘要与撑满列高的「当前游戏」卡（信息在上、启动按钮与「实例管理 / 版本设置」贴底），
- * 右栏是可折叠的世界 / 服务器面板。
- */
+/** 开始页：左栏是账户摘要与撑满列高的「当前游戏」卡（信息在上、启动按钮与「实例管理 / 版本设置」贴底）， 右栏是可折叠的世界 / 服务器面板。 */
 @Composable
 fun ColumnScope.HomePage(
     state: LauncherState,
@@ -68,8 +65,7 @@ fun ColumnScope.HomePage(
                 ?: return@LaunchedEffect
         withContext(Dispatchers.IO) { runCatching { actions.controller.selectInstance(target.id) } }
     }
-    // 版本配置与客户端 jar 是否还在：只在选中项变化时于 IO 线程检查一次，缺失时如实说明，
-    // 不再把用户直接甩到下载页却不解释原因。
+    // 版本配置与客户端 jar 是否还在：只在选中项变化时于 IO 线程检查一次，缺失时如实说明原因。
     val filesPresent by
         produceState(true, selected?.id, selected?.versionId) {
             val instance = selected
@@ -107,8 +103,7 @@ fun ColumnScope.HomePage(
                 launchCard.clear()
         }
     }
-    // 开始页的启动路径：先把选中实例写回状态，再把任务交给控制器；进度、取消与失败原因
-    // 全部落在浮窗里，不再把用户带去日志页。
+    // 开始页的启动路径：先把选中实例写回状态，再把任务交给控制器；进度、取消与失败原因都落在浮窗里。
     fun beginLaunch(instance: GameInstance) {
         launchCard.begin(instance)
         actions.run { actions.controller.selectInstance(instance.id) }
@@ -201,8 +196,7 @@ fun ColumnScope.HomePage(
                                     if (selected != null) {
                                         Spacer(Modifier.width(6.dp))
                                         Tag(
-                                            if (actions.controller.store.isolated(selected))
-                                                "版本隔离"
+                                            if (actions.controller.store.isolated(selected)) "版本隔离"
                                             else "共用目录"
                                         )
                                     }
@@ -251,27 +245,20 @@ fun ColumnScope.HomePage(
                             // 进度、取消与失败原因都留在开始页的启动浮窗里，只有确实没有可用的游戏时才跳安装页。
                             when {
                                 selected == null -> {
-                                    actions.controller.store.notify(
-                                        "还没有可启动的游戏，已打开安装页"
-                                    )
+                                    actions.controller.store.notify("还没有可启动的游戏，已打开安装页")
                                     onNew()
                                 }
                                 !selected.installed -> {
-                                    // 修复任务仍在后台推进；这里不再把用户带去日志页，进度可从左侧「日志」入口查看。
+                                    // 修复任务在后台推进，进度可从左侧「日志」入口查看。
                                     actions.controller.store.notify(
-                                        "「" +
-                                            selected.name +
-                                            "」尚未安装完成，已开始修复，可在日志中查看进度"
+                                        "「" + selected.name + "」尚未安装完成，已开始修复，可在日志中查看进度"
                                     )
                                     actions.run { actions.controller.repair(selected.id) }
                                 }
                                 // 外部目录的版本文件被移走或删掉时无法自动补全，直接启动只会报错。
                                 selected.externalProfile && !filesPresent -> {
                                     actions.controller.store.notify(
-                                        "找不到「" +
-                                            selected.name +
-                                            "」的版本文件，已打开安装页；" +
-                                            "可重新选择目录或修复原版本"
+                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" + "可重新选择目录或修复原版本"
                                     )
                                     onNew()
                                 }
@@ -288,18 +275,17 @@ fun ColumnScope.HomePage(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            // 「实例管理」进实例列表页：顶部导航移除「实例」后，它是那一页唯一的入口。
+                            // 「实例管理」进实例列表页：顶部导航不含「实例」，这里是进入实例列表的入口。
                             InstanceManageButton(
                                 modifier = Modifier.weight(1f),
                                 onClick = { navigate(Page.Instances) },
                             )
-                            // 「版本设置」进入该实例的详情 / 设置页，替代原来卡内的「管理」。
+                            // 「版本设置」进入该实例的详情 / 设置页。
                             SecondaryButton(
                                 onClick = { selected?.let { onManage(it.id) } },
                                 modifier = Modifier.weight(1f),
                                 enabled = selected != null && !busy,
-                                contentPadding =
-                                    PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             ) {
                                 Icon(Icons.Outlined.Settings, null, Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
@@ -314,7 +300,7 @@ fun ColumnScope.HomePage(
                     Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
                 ) {
-                    // 右栏只剩世界 / 服务器这一块：折叠后只有标题行，「查看全部」从标题行打开。
+                    // 右栏的世界 / 服务器面板：折叠后只有标题行，「查看全部」从标题行打开。
                     if (selected != null)
                         RecentPlayPanel(
                             instance = selected,
@@ -328,9 +314,7 @@ fun ColumnScope.HomePage(
                                         pages =
                                             it.pages.copy(
                                                 home =
-                                                    it.pages.home.copy(
-                                                        recentPlayExpanded = value
-                                                    )
+                                                    it.pages.home.copy(recentPlayExpanded = value)
                                             )
                                     )
                                 }
@@ -355,7 +339,7 @@ fun ColumnScope.HomePage(
                                     )
                                 }
                             },
-                            // fill = false：折叠后卡片按标题行高度收起，不再撑满整列。
+                            // fill = false：折叠后卡片按标题行高度收起。
                             modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         )
                 }
@@ -383,8 +367,8 @@ fun ColumnScope.HomePage(
 
 /**
  * 白卡片：与 Panel 同一套尺寸（圆角 6、1dp 细边、无阴影、内边距 16）。 单独实现是因为开始页的卡片需要自己掌控内容内边距，Panel 的内容列是固定 16。 [title]
- * 留空时不渲染标题行与分隔线。 [fillContent] 为 true 时内容列吃掉标题行以下的剩余高度，「当前游戏」卡靠它把启动按钮与版本入口贴到卡片底部；
- * 右栏的 [RecentPlayPanel] 复用同一张卡片并传 0 内边距（标题行与内容区各自留白），因此这里是 internal 而不是 private。
+ * 留空时不渲染标题行与分隔线。 [fillContent] 为 true 时内容列吃掉标题行以下的剩余高度，「当前游戏」卡靠它把启动按钮与版本入口贴到卡片底部； 右栏的
+ * [RecentPlayPanel] 复用同一张卡片并传 0 内边距（标题行与内容区各自留白），因此这里是 internal 而不是 private。
  */
 @Composable
 internal fun HomeCard(
@@ -427,8 +411,7 @@ internal fun HomeCard(
 
 /**
  * 「实例管理」入口：外观沿用 [SimpleDropdown] 那一套控件样式（34dp、圆角、实色填充 + 1dp 细边、悬停提亮），
- * 但点开不是菜单，而是进入实例列表页——顶部导航移除「实例」后，那里是唯一的实例 / 版本入口。
- * 文字固定为「实例管理」，不显示实例名，也不带次要文字；箭头表示这是一次页面跳转。
+ * 但点开不是菜单，而是进入实例列表页——顶部导航不含「实例」，这里是进入实例列表的入口。 文字固定为「实例管理」，不显示实例名，也不带次要文字；箭头表示这是一次页面跳转。
  */
 @Composable
 private fun InstanceManageButton(
@@ -520,7 +503,7 @@ private fun LaunchActionButton(
         shape = RoundedCornerShape(Metrics.innerRadius),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
     ) {
-        // 只有「正在启动」才出现进度环：它是任务进度，不是被删掉的播放图标。
+        // 只有「正在启动」才出现进度环：它是任务进度。
         if (progress != null) {
             CircularProgressIndicator(
                 Modifier.size(14.dp),

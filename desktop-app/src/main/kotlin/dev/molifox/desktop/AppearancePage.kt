@@ -44,7 +44,7 @@ private val previewLightLine = Color(0xFFE7DEE3)
 private val previewDarkSurface = Color(0xFF262028)
 private val previewDarkLine = Color(0xFF3A343A)
 
-/** 窗口背景：无背景图时铺平面底色（规格要求去掉渐变装饰），有图时按浓度叠加。 */
+/** 窗口背景：无背景图时铺平面底色，有图时按浓度叠加。 */
 @Composable
 fun LauncherBackdrop(settings: LauncherSettings) {
     var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -98,7 +98,7 @@ fun LauncherBackdrop(settings: LauncherSettings) {
     }
 }
 
-/** 设置 → 外观板块：子页（主题与效果 / 字体与缩放 / 页面布局）由设置页左栏在「外观」下面展开选择， 这里只渲染当前子页的设置卡片：没有页面标题、没有说明行、也没有自己的标签行。 */
+/** 设置 → 外观板块：子页（主题与效果 / 字体与缩放 / 页面布局）由设置页左栏在「外观」下面展开选择， 这里渲染当前子页：顶部一个实时预览，下面是该子页的设置卡片。 */
 @Composable
 fun ColumnScope.AppearanceSection(
     state: LauncherState,
@@ -463,7 +463,7 @@ private fun ThemePreferences(
         if (!backgroundOn) MutedText("可以先设置图片适配和位置，选择背景图片后生效。", Modifier.padding(top = 4.dp))
         if (settings.backgroundFit == "stretch") MutedText("拉伸铺满时没有空白或裁切区域；切换为填满或完整显示后可调整位置。")
     }
-    // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行（C-11）。
+    // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行。
     if (removing)
         Modal(
             "移除背景？",

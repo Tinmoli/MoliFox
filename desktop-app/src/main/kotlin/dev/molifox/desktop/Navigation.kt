@@ -33,15 +33,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 
-/**
- * 顶部导航条目，列表顺序就是显示顺序：开始、下载、联机、设置。
- * 「实例」已从导航移除（页面与 [Page] 枚举保留，仍可从开始页与实例详情进入）。
- */
+/** 顶部导航条目，列表顺序就是显示顺序：开始、下载、联机、设置。 「实例」已从导航移除（页面与 [Page] 枚举保留，仍可从开始页与实例详情进入）。 */
 val TopNavPages: List<Page> = listOf(Page.Home, Page.Discover, Page.Multiplayer, Page.Settings)
 
 /**
- * 旧版本存下的顶部标签名 → 可显示的导航页。
- * 名字可能存英文枚举名或中文标题；「实例」已不在导航里，日志、账户列表等子页同样不在，
+ * 旧版本存下的顶部标签名 → 可显示的导航页。 名字可能存英文枚举名或中文标题；「实例」已不在导航里，日志、账户列表等子页同样不在，
  * 因此这些旧值和任何无法识别的值都回落到开始页，枚举增删不会让旧配置崩溃。
  */
 fun topNavPageOf(stored: String?): Page {
@@ -59,10 +55,7 @@ class DesktopNavigationState(initialTab: String? = null) {
     // 实例详情同属子页：开始页「版本设置」进详情后返回开始，从实例列表进来则返回列表。
     private var detailReturnTo by androidx.compose.runtime.mutableStateOf(Page.Instances)
 
-    /**
-     * 顶部导航的高亮归属：只有导航里的页高亮自己。
-     * 账户列表、实例与日志都是「开始」这一支的子页，打开时仍高亮开始。
-     */
+    /** 顶部导航的高亮归属：只有导航里的页高亮自己。 账户列表、实例与日志都是「开始」这一支的子页，打开时仍高亮开始。 */
     val activeTab: Page
         get() = if (page in TopNavPages) page else Page.Home
 
@@ -90,10 +83,7 @@ class DesktopNavigationState(initialTab: String? = null) {
         page = if (accountReturnTo == Page.Accounts) Page.Home else accountReturnTo
     }
 
-    /**
-     * 打开实例详情：记下打开时可见的那一页。
-     * 开始页的「版本设置」传 Page.Home，实例列表里的「设置」传 Page.Instances。
-     */
+    /** 打开实例详情：记下打开时可见的那一页。 开始页的「版本设置」传 Page.Home，实例列表里的「设置」传 Page.Instances。 */
     fun openInstance(id: String, from: Page) {
         editing = id
         detailReturnTo = if (from == Page.Home) Page.Home else Page.Instances
@@ -113,9 +103,8 @@ private fun <T> stateSpec(): AnimationSpec<T> =
     if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.fast)
 
 /**
- * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。
- * 导航仍在顶部（顶部导航布局），只做视觉收紧；「设置」右侧的测试提示占用剩余空间，
- * 窗口宽度不足 1100dp 时整条隐藏，不挤压导航和窗口按钮。
+ * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧；「设置」右侧的测试提示占用剩余空间， 窗口宽度不足 1100dp
+ * 时整条隐藏，不挤压导航和窗口按钮。
  */
 @Composable
 fun AppHeader(
@@ -172,7 +161,7 @@ fun AppHeader(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // 顶部导航固定四项（开始 / 下载 / 联机 / 设置），顺序由 TopNavPages 决定；
-                        // 实例已移出导航，日志与个性化从设置页进入。
+                        // 实例不在顶部导航里，日志与个性化从设置页进入。
                         TopNavPages.forEach { item ->
                             TopNavItem(
                                 page = item,

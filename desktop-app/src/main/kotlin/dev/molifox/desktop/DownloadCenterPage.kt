@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 import kotlinx.coroutines.*
 
-/** 下载分类：左侧二级列表的条目定义，顺序与规格 §4 一致。 */
+/** 下载分类：左侧二级列表的条目定义与顺序。 */
 private data class DownloadKind(val id: String, val title: String, val icon: ImageVector)
 
 private val downloadKinds =
@@ -57,8 +57,7 @@ fun ColumnScope.DownloadCenterPage(
     // 分类竖排在左侧，页面不显示“下载中心”标题，节省纵向空间。
     // 右侧内容随分类淡入切换（150ms），避免整块内容硬切。
     Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 分类左栏与右侧内容区都套磨砂面板：只换背景，宽度、内边距与点击行为不变。
-        // 两栏都撑满行高；左栏留 8dp 上下内边距，与右栏卡片的内缩对齐成一块。
+        // 分类左栏与右侧内容区都套磨砂面板，两栏撑满行高；左栏留 8dp 上下内边距，与右栏卡片的内缩对齐成一块。
         FrostedPanel(
             Modifier.width(158.dp).fillMaxHeight(),
             contentPadding = PaddingValues(vertical = 8.dp),

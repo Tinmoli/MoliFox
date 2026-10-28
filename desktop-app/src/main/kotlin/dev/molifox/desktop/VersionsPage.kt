@@ -44,12 +44,12 @@ import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 实例行高：文字按钮比原来 52dp 的行更高，留出 64dp 给「开始游戏」主按钮与 12sp 文字操作。 */
+/** 实例行高：64dp，容纳「开始游戏」主按钮与 12sp 文字操作。 */
 private val InstanceRowHeight = 64.dp
 
 /**
- * 实例页：顶部工具行（目录 + 新建 / 导入）、搜索行（搜索 / 收藏 / 排序 / 列表-网格）， 列表行 64dp 为默认视图，网格卡仅在切换到网格时出现。行内操作全部是
- * 带文字按钮（开始游戏 / 收藏 / 设置 / 删除），不再有图标按钮和三点菜单；删除的二次确认仍在 Main.kt。
+ * 实例页：顶部工具行（目录 + 新建 / 导入）、搜索行（搜索 / 收藏 / 排序 / 列表-网格）， 列表行 64dp 为默认视图，网格卡仅在切换到网格时出现。行内操作都是文字按钮（开始游戏 /
+ * 收藏 / 设置 / 删除），删除的二次确认在 Main.kt。
  */
 @Composable
 fun ColumnScope.InstancesPage(
@@ -308,7 +308,7 @@ private fun CompactToggleButton(
     }
 }
 
-/** 行内文字按钮：12sp、触区高 28dp，悬停淡入；实例列表不再使用纯图标入口。 */
+/** 行内文字按钮：12sp、触区高 28dp，悬停淡入。 */
 @Composable
 private fun InstanceTextAction(
     label: String,

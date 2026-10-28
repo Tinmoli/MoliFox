@@ -366,13 +366,11 @@ fun SettingRow(title: String, detail: String = "", content: @Composable () -> Un
 /**
  * 卡片内相邻设置行之间的细分隔线：1dp、`outlineVariant@.65`，上下各留 5dp（`Metrics.rowGap/2`）。
  *
- * 旧实现用 `outlineVariant@.45` 画在 16dp 卡片内边距里，浅色主题下 `#E7DEE3` 叠到白卡上约等于 `#F4F0F2`，几乎看不见，而且线比文字窄
- * 32dp，看起来像没画。现在改为：
- * - 颜色提到 65%，与白卡的明度差足够，深色主题同样可见；
+ * - 颜色取 65%，与白卡的明度差足够，深色主题同样可见；
  * - 线本身不占用水平内边距，绘制时左右各溢出 `Metrics.cardPadding`，因此是整卡宽度的通栏细线， 溢出部分由卡片圆角裁掉，不会盖到卡片外；
  * - 只放在两行之间——首行之前、末行之后都不画；卡片标题下方已有 `SettingsSection` 自己的分隔线。
  *
- * 配合 `SettingsSection(contentGap = 0.dp)` 使用，行高仍是 44 / 52，卡片内边距不变。
+ * 配合 `SettingsSection(contentGap = 0.dp)` 使用，行高 44 / 52，卡片内边距保持 16dp。
  */
 @Composable
 fun SettingDivider(modifier: Modifier = Modifier) {

@@ -42,7 +42,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
 import org.jetbrains.skia.Image as SkiaImage
 
-/** 实例详情页签：与规格 §4 的 6 个二级页签一致。 */
+/** 实例详情页签：左侧二级列表的 5 个页签。 */
 private data class InstanceTab(val title: String, val icon: ImageVector)
 
 private val instanceTabs =
@@ -54,7 +54,7 @@ private val instanceTabs =
         InstanceTab("原理图", Icons.Outlined.Architecture),
     )
 
-/** 实例管理的设置、组件、内容与存档页签。 */
+/** 实例详情：页头 + 左侧页签栏与右侧内容区，页签为设置 / 模组 / 资源包 / 存档 / 原理图。 */
 @Composable
 fun ColumnScope.InstanceDetailsPage(
     instance: GameInstance,
@@ -121,7 +121,7 @@ fun ColumnScope.InstanceDetailsPage(
             width != instance.width.toString() ||
             height != instance.height.toString()
     val launchEnabled = instance.installed && !actions.controller.isInstanceBusy(instance.id)
-    // 实例工具与 整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
+    // 实例工具与整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
     val isolated = actions.controller.store.isolated(instance)
     val canCopyInstance =
         isolated && !instance.externalProfile && !actions.controller.isInstanceBusy(instance.id)
@@ -822,6 +822,7 @@ private fun packSourceOf(instance: GameInstance): String =
         else -> "启动器安装"
     }
 
+/** 设置页签的「当前安装」与「更换加载器」卡片：展示当前组件，并提交更换 / 回退请求。 */
 @Composable
 private fun ColumnScope.InstanceInstallSections(
     instance: GameInstance,
@@ -1063,7 +1064,7 @@ private fun InstanceMods(
             refresh++
         }
     detailMod?.let { mod -> ModDetailsDialog(mod) { detailMod = null } }
-    // 删除模组会从 mods 目录移入回收站，先确认，再调用原有删除回调（回调本身不改）。
+    // 删除模组会从 mods 目录移入回收站，先确认再执行。
     deletingMod?.let { mod ->
         AlertDialog(
             onDismissRequest = { deletingMod = null },
@@ -1361,7 +1362,7 @@ private fun rememberModIcon(jar: Path, modified: Long, cacheRoot: Path): ImageBi
  * 存档页签：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、 「可能不是有效世界」提示），行尾「备份」「复制到…」「删除」；下方「备份」卡片列出可恢复的备份。
  *
  * 列表在 IO 线程读取（备份列举会现算 SHA1，不能放在 Compose 线程）；首次加载给骨架、读取失败可
- * 重试、没有存档给空态。任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端中文 消息显示在工具行下方，不静默吞掉。
+ * 重试、没有存档给空态。任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端的中文消息显示在工具行下方，不静默吞掉。
  */
 @Composable
 private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifier: Modifier) {
@@ -1794,7 +1795,7 @@ private fun formatSaveSize(bytes: Long): String =
         else -> bytes.toString() + " B"
     }
 
-/** 内容文件夹浏览：资源包/原理图共用；原理图支持导入，目录可逐级进入。 文件大小与修改时间来自文件系统（不是模型字段），保证显示的都是真实数据。 */
+/** 目录项：路径、是否为目录、字节大小与「yyyy-MM-dd HH:mm」格式的修改时间。 */
 private data class FolderEntry(
     val path: Path,
     val isDirectory: Boolean,
@@ -1802,6 +1803,7 @@ private data class FolderEntry(
     val modified: String,
 )
 
+/** 内容文件夹浏览：资源包 / 原理图共用；原理图支持导入，目录可逐级进入。 文件大小与修改时间来自文件系统，显示的都是真实数据。 */
 @Composable
 private fun InstanceFolderBrowser(
     instance: GameInstance,
@@ -1846,7 +1848,7 @@ private fun InstanceFolderBrowser(
             loading = false
         }
     }
-    // 原理图删除会移入回收站，这里仍先确认，再调用原有删除回调（回调本身不改）。
+    // 原理图删除会移入回收站，这里先确认再执行。
     deletingFile?.let { file ->
         AlertDialog(
             onDismissRequest = { deletingFile = null },
@@ -1907,7 +1909,7 @@ private fun InstanceFolderBrowser(
                     Text(importLabel.ifBlank { "导入" }, fontSize = 12.sp)
                 }
             else
-            // 资源包没有导入后端：保留可见的禁用按钮 + 说明，不伪造功能。
+            // 资源包没有导入后端：保留可见的禁用按钮与说明。
             SecondaryButton({}, enabled = false) {
                     Icon(Icons.Outlined.FileDownload, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(5.dp))
