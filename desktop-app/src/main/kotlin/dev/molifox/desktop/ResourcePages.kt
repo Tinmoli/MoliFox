@@ -199,9 +199,6 @@ internal fun contentSourceHome(value: String?): String? =
     }
 
 /** 除当前源之外可选的另一内容源；用于「下载源」状态行，不提供点了没反应的切换。 */
-private fun otherContentSource(value: String): String =
-    if (contentSourceName(value) == "CurseForge") "modrinth" else "curseforge"
-
 /**
  * 分类多选控件：按钮显示「分类」/「分类 · N」，弹出复选列表并可一键清除。 单选下拉是 [SimpleDropdown]，无法表达集合，所以这里用 DropdownMenu 自己维护选中集合。
  */
@@ -726,70 +723,6 @@ private fun contentHint(kind: String, target: GameInstance?): String =
                 (if (kind == "mod") " / " + target.loader.title else "") +
                 " 筛选，下载时会补全必需的前置资源。"
     }
-
-/** 只读信息胶囊：表达「这一项由别处决定」，不可点击也不假装成下拉。 */
-@Composable
-private fun ReadonlyPill(label: String, value: String) {
-    Row(
-        Modifier.height(26.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(6.dp))
-        Text(value, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-    }
-}
-
-/** 下载源状态：选中项用主题色，未选中项按 [note] 如实标注（例如「待 API Key」）。 */
-@Composable
-private fun SourceBadge(title: String, selected: Boolean, note: String = "") {
-    if (selected)
-        Row(
-            Modifier.height(26.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(selectedRowBackground())
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Outlined.CheckCircle,
-                null,
-                Modifier.size(13.dp),
-                MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Spacer(Modifier.width(5.dp))
-            Text(
-                title,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
-    else
-        Row(
-            Modifier.height(26.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant,
-                    RoundedCornerShape(4.dp),
-                )
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                title,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (note.isNotBlank()) {
-                Spacer(Modifier.width(5.dp))
-                Tag(note, MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-}
 
 @Composable
 private fun ViewToggle(listView: Boolean, onChange: (Boolean) -> Unit) {
