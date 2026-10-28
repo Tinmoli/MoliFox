@@ -544,7 +544,7 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                     "-encoding",
                     "UTF-8",
                     "-cp",
-                    portableJar.get().asFile.absolutePath,
+                    files(portableJar, configurations.runtimeClasspath).asPath,
                     "-d",
                     classes.absolutePath,
                     rootProject.file("tools/$probe.java").absolutePath,
@@ -572,7 +572,9 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                     listOf(
                         testDirectory.absolutePath,
                         File(testDirectory, "screenshots/MoliFox-native.png").absolutePath,
-                        providers.gradleProperty("nativeSmokeMode").getOrElse("offline"),
+                        providers
+                            .gradleProperty("nativeSmokeMode")
+                            .getOrElse("online-then-offline"),
                     )
                 )
             } else {
@@ -642,5 +644,13 @@ settingsActionsSmoke.configure { timeout.set(Duration.ofMinutes(10)) }
 uiSmoke.configure { timeout.set(Duration.ofMinutes(6)) }
 
 val nativeSmoke = registerGuiSmoke("nativeSmoke", "NativeSmoke", true)
+
+nativeSmoke.configure {
+    timeout.set(Duration.ofMinutes(8))
+    systemProperty(
+        "molifox.native.report",
+        rootProject.file("docs/validation/native-startup.json").absolutePath,
+    )
+}
 
 nativeSmoke.configure { mustRunAfter(uiSmoke) }

@@ -21,6 +21,67 @@ import javax.imageio.ImageIO;
 /** Windows package check; only inspects the newly started, isolated process. */
 public final class NativeSmoke {
     public static void main(String[] args) throws Exception {
+        boolean roundTrip = args.length > 2 && args[2].equals("online-then-offline");
+        String[] first = args.clone();
+        if (roundTrip) first[2] = "online";
+        runPackage(first);
+        if (roundTrip) {
+            int dependencies = verifyRuntimeCache(Path.of(args[0]));
+            String[] second = args.clone();
+            second[2] = "offline";
+            runPackage(second);
+            var result = new com.google.gson.JsonObject();
+            result.addProperty("platform", "Windows");
+            result.addProperty("firstOnlineStart", "passed");
+            result.addProperty("cachedOfflineStart", "passed");
+            result.addProperty("verifiedDependencyHashes", dependencies);
+            result.addProperty("normalExitAndTemporaryCleanup", "passed");
+            result.addProperty("updated", java.time.Instant.now().toString());
+            Files.writeString(
+                    Path.of(System.getProperty("molifox.native.report")), result.toString());
+            System.out.println("NATIVE_ROUND_TRIP_OK downloaded, verified and reopened offline");
+        }
+    }
+
+    private static int verifyRuntimeCache(Path root) throws Exception {
+        Path payload;
+        try (var paths = Files.list(root.resolve("MoliFox/dependencies/launcher"))) {
+            payload =
+                    paths.filter(path -> path.toString().endsWith(".jar"))
+                            .findFirst()
+                            .orElseThrow();
+        }
+        try (var jar = new java.util.zip.ZipFile(payload.toFile())) {
+            var manifest =
+                    com.google.gson.JsonParser.parseReader(
+                                    new java.io.InputStreamReader(
+                                            jar.getInputStream(
+                                                    jar.getEntry("molifox-runtime.json")),
+                                            java.nio.charset.StandardCharsets.UTF_8))
+                            .getAsJsonObject();
+            Path cache =
+                    root.resolve("MoliFox/runtime").resolve(manifest.get("version").getAsString());
+            if (!Files.isRegularFile(cache.resolve("ready.marker")))
+                throw new IllegalStateException("Runtime ready marker missing");
+            var dependencies = manifest.getAsJsonArray("dependencies");
+            for (var item : dependencies) {
+                var dependency = item.getAsJsonObject();
+                Path file = cache.resolve(dependency.get("filename").getAsString());
+                if (Files.size(file) != dependency.get("size").getAsLong())
+                    throw new IllegalStateException("Runtime dependency size mismatch");
+                String hash =
+                        java.util.HexFormat.of()
+                                .formatHex(
+                                        java.security.MessageDigest.getInstance("SHA-256")
+                                                .digest(Files.readAllBytes(file)));
+                if (!hash.equals(dependency.get("sha256").getAsString()))
+                    throw new IllegalStateException("Runtime dependency checksum mismatch");
+            }
+            return dependencies.size();
+        }
+    }
+
+    private static void runPackage(String[] args) throws Exception {
         Path root = Path.of(System.getProperty("molifox.test.dir")).toAbsolutePath().normalize();
         if (!root.equals(Path.of(args[0]).toAbsolutePath().normalize()))
             throw new IllegalArgumentException(
@@ -51,7 +112,7 @@ public final class NativeSmoke {
         try {
             AtomicReference<HWND> target = new AtomicReference<>();
             AtomicReference<String> startupError = new AtomicReference<>();
-            for (int attempt = 0; attempt < 240 && target.get() == null; attempt++) {
+            for (int attempt = 0; attempt < 720 && target.get() == null; attempt++) {
                 if (!process.isAlive())
                     throw new IllegalStateException(
                             "Packaged app exited with " + process.exitValue());
