@@ -206,12 +206,6 @@ class LauncherStore(
             ),
         )
 
-    /** 返回版本隔离目录；删除前仍须检查其他实例的继承与共享引用。 */
-    fun ownedInstancePath(id: String): Path {
-        require(runCatching { UUID.fromString(id) }.isSuccess) { "实例标识无效" }
-        return versionGamePath(instance(id))
-    }
-
     @Synchronized
     fun log(message: String, error: Boolean = false, game: Boolean = false) {
         val line =

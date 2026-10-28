@@ -37,7 +37,6 @@ data class PackFileChange(
 /** 升级策略；桌面端预览与执行使用同一套策略，避免两边判断不一致。 */
 data class PackUpgradePolicy(
     val protectUserModified: Boolean = true,
-    val protectUserAdded: Boolean = true,
     val restoreUserDeleted: Boolean = false,
     val removeObsoleteFiles: Boolean = true,
 )

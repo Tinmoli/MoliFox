@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 
-val FoxOrange = Color(0xFFE67D4A)
 val MutedGreen = Color(0xFF398571)
 
 /** 关闭动画时页面切换与提示直接呈现，不做过渡。 */

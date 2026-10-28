@@ -16,7 +16,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.apache.commons:commons-compress:1.28.0")
-    implementation("org.tukaani:xz:1.10")
     implementation("org.tomlj:tomlj:1.1.1")
     implementation("net.java.dev.jna:jna-platform:5.17.0")
     testImplementation(kotlin("test"))

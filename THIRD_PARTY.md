@@ -12,7 +12,6 @@ the upstream notices. Downloaded Java runtime notices remain in runtimes/*/legal
 | Gson | Apache-2.0 · https://github.com/google/gson |
 | OkHttp / Okio | Apache-2.0 · https://github.com/square/okhttp |
 | Apache Commons Compress, IO, Lang, Codec | Apache-2.0 · https://commons.apache.org/ |
-| XZ for Java | 0BSD · https://tukaani.org/xz/java.html |
 | TomlJ 1.1.1 / ANTLR runtime | Apache-2.0 / BSD-3-Clause · https://github.com/tomlj/tomlj/tree/1.1.1 · https://github.com/antlr/antlr4 |
 | JNA | Apache-2.0 OR LGPL-2.1-or-later · https://github.com/java-native-access/jna |
 | Gradle wrapper | Apache-2.0 · https://github.com/gradle/gradle |

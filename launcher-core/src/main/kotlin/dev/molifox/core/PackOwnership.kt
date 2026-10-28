@@ -18,7 +18,6 @@ internal const val PACK_OWNERSHIP_FILE = ".molifox-pack-ownership.json"
 internal enum class PackFileOrigin {
     Download,
     Override,
-    Manual,
 }
 
 internal data class PackOwnedFile(

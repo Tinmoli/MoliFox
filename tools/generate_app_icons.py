@@ -217,7 +217,7 @@ def verify(target: Path, master: Image.Image) -> None:
         alpha = np.asarray(ico.convert("RGBA"))[..., 3]
         if alpha.min() != 0 or alpha.max() != 255:
             raise SystemExit(f"icon.ico 的 {size} 帧缺少透明/不透明像素：{alpha.min()}~{alpha.max()}")
-    for name, size in (("icon.png", 256), ("icon-32.png", 32), ("icon-512.png", 512)):
+    for name, size in (("icon.png", 256),):
         with Image.open(target / name) as image:
             if image.size != (size, size):
                 raise SystemExit(f"{name} 应为 {size}×{size}，实为 {image.size}")
@@ -255,13 +255,10 @@ def main() -> int:
     if not check_only:
         output.mkdir(parents=True, exist_ok=True)
         images = {size: resize_master(master, size) for size in SIZES}
-        images[512] = resize_master(master, 512)
-        images[512].save(output / "icon-512.png", "PNG", optimize=True)
         images[256].save(output / "icon.png", "PNG", optimize=True)
-        images[32].save(output / "icon-32.png", "PNG", optimize=True)
         write_ico(images, output / "icon.ico")
     verify(output, master)
-    for name in ("icon.png", "icon-32.png", "icon-512.png", "icon.ico"):
+    for name in ("icon.png", "icon.ico"):
         print(f"{output / name}  {(output / name).stat().st_size} bytes")
     print("校验通过：尺寸、透明通道与母版一致")
     return 0

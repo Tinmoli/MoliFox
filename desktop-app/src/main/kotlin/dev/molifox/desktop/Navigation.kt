@@ -357,58 +357,6 @@ fun NavigationEntry(
     }
 }
 
-/** 紧凑侧栏条目：实例管理与下载页的条目多、窗口高度有限， 用固定小高度保证整栏在 720 高度窗口内完整可见。 */
-@Composable
-fun RailEntry(
-    title: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = MaterialTheme.colorScheme
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val focused by interaction.collectIsFocusedAsState()
-    val spec = stateSpec<Color>()
-    val color by
-        animateColorAsState(
-            targetValue = if (selected) colors.primary else colors.onSurfaceVariant,
-            animationSpec = spec,
-            label = "railContent",
-        )
-    val background by
-        animateColorAsState(
-            targetValue =
-                when {
-                    selected -> colors.primaryContainer
-                    hovered -> colors.primary.copy(alpha = .05f)
-                    else -> Color.Transparent
-                },
-            animationSpec = spec,
-            label = "railBackground",
-        )
-    Row(
-        Modifier.fillMaxWidth()
-            .height(Metrics.controlHeight)
-            .focusRing(focused, cornerRadius = Metrics.cardRadius)
-            .clip(RoundedCornerShape(Metrics.cardRadius))
-            .background(background)
-            .selectable(
-                selected,
-                interaction,
-                LocalIndication.current,
-                role = Role.Tab,
-                onClick = onClick,
-            )
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, Modifier.size(16.dp), color)
-        Spacer(Modifier.width(8.dp))
-        Text(title, Modifier.weight(1f), color = color, fontSize = 13.sp, maxLines = 1)
-    }
-}
-
 /** 紧凑侧栏的缩进子条目（游戏文件夹/管理子菜单等）。 */
 @Composable
 fun RailSubEntry(title: String, onClick: () -> Unit) {

@@ -759,29 +759,6 @@ class LauncherController(
         return saves.deleteSave(instanceId, saveName)
     }
 
-    /** 预览切换隔离方式要搬运的文件；只读，不修改磁盘。 */
-    fun planIsolationChange(
-        instanceId: String,
-        isolate: Boolean,
-        copySaves: Boolean = true,
-        moveSource: Boolean = false,
-    ): IsolationPlan = migration.planIsolation(instanceId, isolate, copySaves, moveSource)
-
-    /** 在后台任务里切换隔离方式；冲突会直接拒绝，失败或取消时回滚文件与实例记录。 */
-    fun changeIsolation(
-        instanceId: String,
-        isolate: Boolean,
-        copySaves: Boolean = true,
-        moveSource: Boolean = false,
-    ): String {
-        requireIdle()
-        val plan = migration.planIsolation(instanceId, isolate, copySaves, moveSource)
-        require(plan.blockers.isEmpty()) { plan.blockers.first() }
-        return jobs.enqueue("切换隔离 ${store.instance(instanceId).name}") {
-            migration.changeIsolation(instanceId, isolate, copySaves, moveSource, this)
-        }
-    }
-
     /** 预览把实例整体移动到另一个游戏目录；只读。 */
     fun planInstanceMove(instanceId: String, destinationGameDirectory: Path): IsolationPlan =
         migration.planInstanceMove(instanceId, destinationGameDirectory)
