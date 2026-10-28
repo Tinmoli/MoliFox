@@ -11,8 +11,6 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridLayout
-import java.awt.event.WindowAdapter
-import java.awt.event.WindowEvent
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
