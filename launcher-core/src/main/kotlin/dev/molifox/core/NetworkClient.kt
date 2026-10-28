@@ -5,6 +5,7 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.IOException
+import java.net.ConnectException
 import java.net.Proxy
 import java.net.ProxySelector
 import java.net.SocketAddress
@@ -14,8 +15,11 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
+import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.*
 import kotlinx.coroutines.*
@@ -61,6 +65,11 @@ class NetworkClient(
 ) : AutoCloseable {
     internal val client =
         OkHttpClient.Builder()
+            .apply {
+                windowsTlsConfiguration()?.let { (factory, manager) ->
+                    sslSocketFactory(factory, manager)
+                }
+            }
             .dispatcher(
                 Dispatcher().apply {
                     maxRequests = 64
@@ -71,6 +80,15 @@ class NetworkClient(
             .readTimeout(45, TimeUnit.SECONDS)
             .callTimeout(5, TimeUnit.MINUTES)
             .followRedirects(true)
+            .connectionSpecs(
+                listOf(
+                    ConnectionSpec.MODERN_TLS,
+                    ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                        .tlsVersions(TlsVersion.TLS_1_2)
+                        .build(),
+                    ConnectionSpec.CLEARTEXT,
+                )
+            )
             .proxySelector(
                 object : ProxySelector() {
                     override fun select(uri: URI?): List<Proxy> {
@@ -97,7 +115,43 @@ class NetworkClient(
     /** 按目标路径分片的下载锁，避免同一文件被并发写入同一份 `.part`。 */
     private val downloadLocks = List(16) { Mutex() }
 
-    private suspend fun execute(request: Request, redirects: Boolean = true): Response =
+    private suspend fun execute(
+        request: Request,
+        redirects: Boolean = true,
+        attempts: Int = 3,
+    ): Response {
+        for (attempt in 1..attempts) {
+            try {
+                return executeOnce(request, redirects)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: IOException) {
+                if (attempt == attempts || !canRetryRequest(request.method, failure)) {
+                    val causes = generateSequence<Throwable>(failure) { it.cause }.take(16).toList()
+                    val reason =
+                        when {
+                            causes.any {
+                                it is CertificateException || it is SSLPeerUnverifiedException
+                            } -> "证书校验失败"
+                            failure is SSLHandshakeException -> "TLS 握手失败"
+                            else -> "网络连接失败"
+                        }
+                    val proxy = proxyProvider()
+                    val route =
+                        if (proxy != null) "手动 ${proxy.type()} 代理"
+                        else if (systemProxyEnabled()) "系统代理" else "直接连接"
+                    throw IOException(
+                        "连接 ${request.url.host} 时$reason（$route，尝试 $attempt 次）：${failure.javaClass.simpleName}；请检查网络或代理后重试",
+                        failure,
+                    )
+                }
+                delay(250L * attempt)
+            }
+        }
+        error("Network retry state exhausted")
+    }
+
+    private suspend fun executeOnce(request: Request, redirects: Boolean): Response =
         suspendCancellableCoroutine { continuation ->
             val call = (if (redirects) client else noRedirectClient).newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
@@ -155,6 +209,29 @@ class NetworkClient(
 
     suspend fun json(url: String, sourceOverride: String? = null): com.google.gson.JsonElement =
         JsonParser.parseString(text(url, sourceOverride))
+
+    internal suspend fun githubJson(url: String): com.google.gson.JsonElement =
+        withContext(Dispatchers.IO) {
+            val uri = URI(url)
+            require(
+                (uri.scheme == "https" && uri.host == "api.github.com") ||
+                    (uri.scheme == "http" && uri.host == "127.0.0.1")
+            ) {
+                "无效的 GitHub API 地址"
+            }
+            execute(builder(url).header("Accept", "application/vnd.github+json").build()).use {
+                response ->
+                check(response.isSuccessful) {
+                    when (response.code) {
+                        404 -> "无法读取项目发布页；仓库尚未公开或尚无可读取的发布版本"
+                        403,
+                        429 -> "GitHub 请求次数受限，请稍后重试"
+                        else -> "GitHub 更新检查失败（HTTP ${response.code}）"
+                    }
+                }
+                JsonParser.parseString(response.body?.string() ?: error("GitHub 返回了空响应"))
+            }
+        }
 
     /** Never attach a project API key to CDN requests, mirrors, or redirect targets. */
     internal suspend fun curseForgeJson(
@@ -407,7 +484,7 @@ class NetworkClient(
             val request = builder(url)
             if (offset > 0) request.header("Range", "bytes=$offset-")
             var restart = true
-            execute(request.build()).use { response ->
+            execute(request.build(), attempts = 1).use { response ->
                 restart = receive(artifact, partial, offset, response, progress)
             }
             if (!restart) return
@@ -548,16 +625,21 @@ class NetworkClient(
     ) = coroutineScope {
         val semaphore = Semaphore(concurrency.coerceIn(1, 32))
         val finished = AtomicInteger()
-        artifacts
-            .distinctBy { it.target }
+        val unique = artifacts.distinctBy { it.target }
+        context.beginTransfers(unique.size)
+        unique
             .map { artifact ->
                 async(Dispatchers.IO) {
                     semaphore.withPermit {
-                        download(artifact)
+                        download(artifact) { bytes, total ->
+                            context.transfer(artifact.target.toString(), bytes, total)
+                        }
+                        val size = artifact.target.fileSize()
+                        context.transfer(artifact.target.toString(), size, size, completed = true)
                         val count = finished.incrementAndGet()
                         context.progress(
-                            from + (to - from) * count / maxOf(artifacts.size, 1),
-                            "$label $count/${artifacts.size}",
+                            from + (to - from) * count / maxOf(unique.size, 1),
+                            "$label $count/${unique.size}",
                         )
                     }
                 }
@@ -577,6 +659,13 @@ class NetworkClient(
         /** 默认总尝试次数（含首次）：首次 + 2 次重试；重试沿用已有 `.part`。 */
         const val DEFAULT_DOWNLOAD_ATTEMPTS = 3
     }
+}
+
+/** 认证写请求仅在连接/握手阶段重试；证书与主机名验证失败不做重试。 */
+internal fun canRetryRequest(method: String, failure: IOException): Boolean {
+    val causes = generateSequence<Throwable>(failure) { it.cause }.take(16).toList()
+    if (causes.any { it is CertificateException || it is SSLPeerUnverifiedException }) return false
+    return method == "GET" || failure is SSLHandshakeException || failure is ConnectException
 }
 
 fun mirrorUrl(url: String, source: String): String {

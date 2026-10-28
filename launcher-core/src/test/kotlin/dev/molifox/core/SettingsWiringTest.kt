@@ -101,29 +101,50 @@ class SettingsWiringTest {
     }
 
     @Test
-    fun `update check compares the configured manifest version`() = runBlocking {
+    fun `update check reads GitHub Releases regardless of legacy manifest setting`() = runBlocking {
         MockWebServer().use { server ->
             // 绑定字面量 127.0.0.1：本机 DNS 会把 localhost 解析成无关域名。
             server.start(InetAddress.getByName("127.0.0.1"), 0)
-            server.enqueue(MockResponse().setBody("""{"version":"9.9.9","notes":"测试更新"}"""))
-            val manifestUrl = "http://127.0.0.1:" + server.port + "/manifest.json"
-            LauncherController(dataDirectory = directory.resolve("moli-update")).use { controller ->
-                // 更新清单允许本地 http 仅限测试注入；正式保存设置仍强制 HTTPS。
-                controller.store.mutate {
-                    it.copy(settings = it.settings.copy(updateManifestUrl = manifestUrl))
+            server.enqueue(
+                MockResponse()
+                    .setBody(
+                        """[{"tag_name":"v9.9.9","name":"MoliFox 9.9.9","body":"测试更新","html_url":"https://github.com/Tinmoli/MoliFox/releases/tag/v9.9.9","draft":false,"prerelease":false,"assets":[]}]"""
+                    )
+            )
+            val api = "http://127.0.0.1:" + server.port + "/repos/Tinmoli/MoliFox"
+            LauncherController(
+                    dataDirectory = directory.resolve("moli-update"),
+                    updateApiBase = api,
+                )
+                .use { controller ->
+                    controller.store.mutate {
+                        it.copy(
+                            settings =
+                                it.settings.copy(
+                                    updateManifestUrl = "https://example.test/obsolete.json"
+                                )
+                        )
+                    }
+                    controller.checkForUpdates(true)
+                    awaitToast(controller, "9.9.9")
                 }
-                controller.checkForUpdates(true)
-                awaitToast(controller, "9.9.9")
-            }
-            assertEquals("/manifest.json", server.takeRequest().path)
+            assertEquals("/repos/Tinmoli/MoliFox/releases?per_page=100", server.takeRequest().path)
         }
     }
 
     @Test
-    fun `update check without a manifest reports honestly`() = runBlocking {
-        LauncherController(dataDirectory = directory.resolve("moli-nomanifest")).use { controller ->
-            controller.checkForUpdates(true)
-            awaitToast(controller, "未配置更新清单地址")
+    fun `empty GitHub Releases reports honestly without a custom manifest`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start(InetAddress.getByName("127.0.0.1"), 0)
+            server.enqueue(MockResponse().setBody("[]"))
+            LauncherController(
+                    dataDirectory = directory.resolve("moli-nomanifest"),
+                    updateApiBase = "http://127.0.0.1:${server.port}/repos/Tinmoli/MoliFox",
+                )
+                .use { controller ->
+                    controller.checkForUpdates(true)
+                    awaitToast(controller, "尚未发布正式版本")
+                }
         }
     }
 }

@@ -54,14 +54,19 @@ class DesktopPlatform : PlatformServices {
                 .toInt()
 
     override fun openFolder(directory: Path) {
-        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN))
-            Desktop.getDesktop().open(directory.toFile())
-        else
-            ProcessBuilder(
-                    if (osName == "windows") listOf("explorer.exe", directory.toString())
-                    else listOf("xdg-open", directory.toString())
+        val target = directory.toAbsolutePath().normalize()
+        require(
+            java.nio.file.Files.readAttributes(
+                    target,
+                    java.nio.file.attribute.BasicFileAttributes::class.java,
                 )
-                .start()
+                .isDirectory
+        ) {
+            "目标不是文件夹：$target"
+        }
+        // Shell handles existing folders directly; AWT's extra access probe can reject readable
+        // Windows directories.
+        ProcessBuilder(folderOpenCommand(osName, target)).start()
     }
 
     override fun openUrl(url: String) {
@@ -93,3 +98,8 @@ class DesktopPlatform : PlatformServices {
         )
     }
 }
+
+internal fun folderOpenCommand(osName: String, directory: Path): List<String> =
+    if (osName == "windows")
+        listOf("explorer.exe", directory.toAbsolutePath().normalize().toString())
+    else listOf("xdg-open", directory.toAbsolutePath().normalize().toString())

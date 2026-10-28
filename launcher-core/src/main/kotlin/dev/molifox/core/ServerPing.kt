@@ -403,7 +403,7 @@ private fun parseColor(value: String): Int? {
 /** 追加一段可能带 `§` 代码的文字：代码切换样式并切断当前片段，`§r` 复位， 未知代码按普通字符保留。连续同样式的小段会合并，最终得到「每个样式一段」。 */
 private fun appendStyled(text: String, style: MotdStyle, out: MutableList<MotdSegment>) {
     if (text.isEmpty()) return
-    val normalized = text.replace('\r', ' ').replace('\n', ' ')
+    val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
     if (normalized.indexOf('§') < 0) {
         appendRun(normalized, style, out)
         return

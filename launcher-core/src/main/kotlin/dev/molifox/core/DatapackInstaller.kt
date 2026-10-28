@@ -76,14 +76,15 @@ internal class DatapackInstaller(
             store.temporaryDirectory.resolve("datapack-staging").apply { createDirectories() }
         val download = cache.resolve("${UUID.randomUUID()}.zip")
         try {
-            network.download(
+            network.downloadTracked(
+                context,
                 DownloadArtifact(
                     contentFileUrl(api, file.string("url")),
                     download,
                     hash512.ifBlank { hash1 },
                     size,
                     if (hash512.isNotBlank()) "SHA-512" else "SHA-1",
-                )
+                ),
             ) { bytes, total ->
                 context.progress(
                     if (total > 0) bytes.toFloat() / total else 0f,

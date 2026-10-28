@@ -11,6 +11,57 @@ import kotlinx.coroutines.sync.withLock
 
 class JobContext internal constructor(private val store: LauncherStore, val id: String) {
     private var lastUpdate = 0L
+    private val transfers = mutableMapOf<String, Triple<Long, Long, Boolean>>()
+    private var transferCount = 0
+    private var sampleTime = System.nanoTime()
+    private var sampleBytes = 0L
+    private var transferSpeed = 0L
+
+    @Synchronized
+    fun beginTransfers(count: Int) {
+        transfers.clear()
+        transferCount = count
+        sampleTime = System.nanoTime()
+        sampleBytes = 0
+        transferSpeed = 0
+        publishTransfers()
+    }
+
+    /** 读取实际下载回调；首个偏移是已有断点，不计入本次网络速度。 */
+    @Synchronized
+    fun transfer(key: String, bytes: Long, total: Long, completed: Boolean = false) {
+        val previous = transfers[key]
+        if (previous != null) sampleBytes += (bytes - previous.first).coerceAtLeast(0)
+        transfers[key] = Triple(bytes.coerceAtLeast(0), total.coerceAtLeast(0), completed)
+        val elapsed = System.nanoTime() - sampleTime
+        if (elapsed >= 250_000_000L || completed) {
+            if (elapsed > 0) transferSpeed = (sampleBytes * 1_000_000_000.0 / elapsed).toLong()
+            sampleBytes = 0
+            sampleTime = System.nanoTime()
+            publishTransfers()
+        }
+    }
+
+    private fun publishTransfers() {
+        val completed = transfers.values.count { it.third }
+        store.updateState { state ->
+            state.copy(
+                jobs =
+                    state.jobs.map { job ->
+                        if (job.id != id) job
+                        else
+                            job.copy(
+                                downloadedBytes = transfers.values.sumOf { it.first },
+                                totalBytes = transfers.values.sumOf { it.second },
+                                completedFiles = completed,
+                                totalFiles = transferCount,
+                                bytesPerSecond =
+                                    if (completed == transferCount) 0 else transferSpeed,
+                            )
+                    }
+            )
+        }
+    }
 
     suspend fun checkCancelled() {
         coroutineContext.ensureActive()
@@ -85,6 +136,7 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                                 detail = detail,
                                 error = error,
                                 progress = if (status == JobStatus.Completed) 1f else it.progress,
+                                bytesPerSecond = 0,
                             )
                         else it
                     }

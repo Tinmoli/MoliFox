@@ -21,10 +21,14 @@ internal fun isLoopbackHost(host: String): Boolean =
 internal class SystemProxyResolver(
     private val native: ProxySelector? = ProxySelector.getDefault(),
     private val environment: (String) -> String? = System::getenv,
+    private val preferNative: Boolean = System.getProperty("os.name").startsWith("Windows", true),
 ) : ProxySelector() {
     override fun select(uri: URI?): List<Proxy> {
         if (uri == null || uri.host == null || isLoopbackHost(uri.host))
             return listOf(Proxy.NO_PROXY)
+        val nativeSelection = runCatching { native?.select(uri) }.getOrNull().orEmpty()
+        if (preferNative && nativeSelection.any { it.type() != Proxy.Type.DIRECT })
+            return nativeSelection
         val bypass = environment("no_proxy") ?: environment("NO_PROXY")
         if (
             bypass?.split(',')?.any { entry ->
@@ -33,7 +37,8 @@ internal class SystemProxyResolver(
                 candidate == "*" ||
                     uri.host.equals(hostname, true) ||
                     uri.host.endsWith(".$hostname", true) ||
-                    "${uri.host}:${uri.port}".equals(candidate, true)
+                    "${uri.host}:${if (uri.port > 0) uri.port else if (uri.scheme == "https") 443 else 80}"
+                        .equals(candidate, true)
             } == true
         )
             return listOf(Proxy.NO_PROXY)
@@ -52,7 +57,8 @@ internal class SystemProxyResolver(
                             when (address.scheme.lowercase()) {
                                 "http" -> Proxy.Type.HTTP
                                 "socks",
-                                "socks5" -> Proxy.Type.SOCKS
+                                "socks5",
+                                "socks5h" -> Proxy.Type.SOCKS
                                 else -> return@runCatching null
                             }
                         if (address.host.isNullOrBlank()) return@runCatching null
@@ -64,8 +70,7 @@ internal class SystemProxyResolver(
                         .getOrNull()
                 }
         if (proxy != null) return listOf(proxy)
-        return runCatching { native?.select(uri) }.getOrNull()?.takeIf { it.isNotEmpty() }
-            ?: listOf(Proxy.NO_PROXY)
+        return nativeSelection.takeIf { it.isNotEmpty() } ?: listOf(Proxy.NO_PROXY)
     }
 
     override fun connectFailed(uri: URI?, sa: SocketAddress?, error: IOException?) {

@@ -81,6 +81,7 @@ data class LauncherSettings(
     val glassEnabled: Boolean = true,
     val surfaceOpacity: Float = .9f,
     val backgroundBlur: Float = 16f,
+    val cornerRadiusDp: Int = 6,
     val fontChoice: String = "",
     val fontScale: Float = 1f,
     val customFonts: List<LauncherFont> = emptyList(),
@@ -96,9 +97,9 @@ data class LauncherSettings(
     val windowTransparent: Boolean = false,
     /** 界面语言，当前仅提供 zh-CN。 */
     val language: String = "zh-CN",
-    /** 启动器更新清单地址；为空表示未配置更新源，检查更新按钮会如实提示。 */
+    /** 兼容旧配置；更新服务固定使用项目的 GitHub Releases。 */
     val updateManifestUrl: String = "",
-    /** 启动时自动检查更新（需要已配置更新清单）。 */
+    /** 启动时检查 GitHub 上已发布的正式版本。 */
     val autoCheckUpdates: Boolean = false,
     /** 版本列表源：official / bmclapi，独立于游戏文件下载源。 */
     val versionListSource: String = "auto",
@@ -216,6 +217,11 @@ data class DownloadJob(
     val progress: Float = 0f,
     val detail: String = "等待开始",
     val error: String? = null,
+    val downloadedBytes: Long = 0,
+    val totalBytes: Long = 0,
+    val completedFiles: Int = 0,
+    val totalFiles: Int = 0,
+    val bytesPerSecond: Long = 0,
 )
 
 data class LogLine(
@@ -230,9 +236,12 @@ data class LauncherState(
     val jobs: List<DownloadJob> = emptyList(),
     val logs: List<LogLine> = emptyList(),
     val runningInstanceId: String? = null,
+    val runningGames: List<GameRunEvent> = emptyList(),
     val toast: String? = null,
     val launchIssue: LaunchIssue? = null,
     val gameRun: GameRunEvent? = null,
+    val recentUsageRevision: Long = 0,
+    val update: LauncherUpdateState = LauncherUpdateState(),
 )
 
 data class ReleaseVersion(

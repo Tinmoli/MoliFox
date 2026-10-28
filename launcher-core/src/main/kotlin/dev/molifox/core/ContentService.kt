@@ -199,13 +199,14 @@ class ContentService(
                     "packs/curseforge-${curseForgeProjectId(hit.id)}/${safeFilename(file.string("filename"))}",
                 )
             require(archive.name.endsWith(".zip", true)) { "CurseForge 整合包必须为 ZIP" }
-            network.download(
+            network.downloadTracked(
+                context,
                 DownloadArtifact(
                     contentFileUrl(curseForge.api, file.string("url")),
                     archive,
                     file.obj("hashes").string("sha1"),
                     file.get("size").asLong,
-                )
+                ),
             ) { bytes, total ->
                 context.progress(
                     if (total > 0) bytes.toFloat() / total else 0f,
@@ -251,14 +252,15 @@ class ContentService(
         ) {
             "整合包下载缺少有效校验信息"
         }
-        network.download(
+        network.downloadTracked(
+            context,
             DownloadArtifact(
                 contentFileUrl(api, file.string("url")),
                 archive,
                 sha512.ifBlank { sha1 },
                 file.get("size")?.asLong ?: 0,
                 if (sha512.isNotBlank()) "SHA-512" else "SHA-1",
-            )
+            ),
         ) { bytes, total ->
             context.progress(
                 if (total > 0) bytes.toFloat() / total else 0f,

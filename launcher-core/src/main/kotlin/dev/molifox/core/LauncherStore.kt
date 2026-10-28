@@ -17,6 +17,7 @@ class LauncherStore(
     val dataDirectory: Path = platform.defaultDataDirectory,
 ) {
     val directories = LauncherDirectories(dataDirectory)
+    val recentUsage: RecentUsage by lazy { RecentUsage(this) }
     private val config = directories.configuration
     private val mutableState: MutableStateFlow<LauncherState>
     val state: StateFlow<LauncherState>

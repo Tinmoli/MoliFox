@@ -32,7 +32,7 @@ data class DownloadPagePreferences(
 )
 
 data class LogsPagePreferences(
-    val defaultTab: String = "tasks",
+    val defaultTab: String = "logs",
     val fontSize: Int = 12,
     val autoScroll: Boolean = true,
 )

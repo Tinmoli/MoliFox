@@ -403,7 +403,7 @@ class MinecraftInstaller(
         context.progress(.1f, "下载 ${instance.loader.title} 安装程序…")
         val installerHash = network.text("$url.sha1").trim().substringBefore(' ').trim()
         require(installerHash.matches(Regex("[a-fA-F0-9]{40}"))) { "加载器安装程序缺少有效校验信息" }
-        network.download(DownloadArtifact(url, archive, installerHash))
+        network.downloadTracked(context, DownloadArtifact(url, archive, installerHash))
         val runtime =
             java.resolve(
                 base.requiredJava,

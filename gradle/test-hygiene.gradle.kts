@@ -35,6 +35,9 @@ val smokeNames =
         "logActionsSmoke",
         "microsoftActionsSmoke",
         "nativeSmoke",
+        "nativePickerSmoke",
+        "networkDiagnosticsSmoke",
+        "refinementSmoke",
         "gameSmoke",
     )
 

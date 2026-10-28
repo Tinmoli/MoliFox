@@ -22,10 +22,20 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test { useJUnitPlatform() }
+
+tasks.register<JavaExec>("networkDiagnosticsSmoke") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.molifox.core.NetworkDiagnosticsSmokeKt")
+    systemProperty("java.net.useSystemProxies", "true")
+    args(rootProject.file("docs/validation/network-diagnostics.json").absolutePath)
+    timeout.set(Duration.ofMinutes(2))
+}
 
 tasks.register("writeGameSmokeClasspath") {
     group = "verification"

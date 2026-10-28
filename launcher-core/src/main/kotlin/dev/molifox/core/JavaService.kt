@@ -217,6 +217,7 @@ class JavaService(private val store: LauncherStore, private val network: Network
                 store.downloadDirectory.resolve(
                     "java/java-$major-${arch}.${if (isZip) "zip" else "tar.gz"}"
                 )
+            context.beginTransfers(1)
             network.download(
                 DownloadArtifact(
                     artifact.url,
@@ -225,11 +226,14 @@ class JavaService(private val store: LauncherStore, private val network: Network
                     hashAlgorithm = "SHA-256",
                 )
             ) { bytes, total ->
+                context.transfer(archive.toString(), bytes, total)
                 context.progress(
                     if (total > 0) bytes.toFloat() / total * .85f else 0f,
                     "下载 Java $major · ${bytes / 1024 / 1024} MB",
                 )
             }
+            val downloadedSize = archive.fileSize()
+            context.transfer(archive.toString(), downloadedSize, downloadedSize, completed = true)
             val runtimes = store.dataDirectory.resolve("runtimes").apply { createDirectories() }
             val unpacking =
                 runtimes.resolve(".unpacking-${UUID.randomUUID()}").apply { createDirectories() }

@@ -7,6 +7,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 import kotlin.io.path.*
 import kotlinx.coroutines.*
@@ -29,6 +30,7 @@ class LaunchPlanner(
         runtime: JavaRuntime,
         credentials: GameCredentials,
         prepareFiles: Boolean = true,
+        runtimeDirectory: Path? = null,
     ): LaunchPlan =
         withContext(Dispatchers.IO) {
             val platform = store.platform
@@ -37,7 +39,10 @@ class LaunchPlanner(
                 store.instancePath(instance.id).apply { if (prepareFiles) createDirectories() }
             val resolver = VersionResolver(root, platform)
             val libraries = resolver.libraries(profile)
-            val natives = game.resolve("natives").apply { if (prepareFiles) createDirectories() }
+            val natives =
+                (runtimeDirectory ?: game).resolve("natives").apply {
+                    if (prepareFiles) createDirectories()
+                }
             for (library in if (prepareFiles) libraries else emptyList()) {
                 val excluded =
                     library.obj("extract").array("exclude").map { it.asString } + "META-INF/"
@@ -237,7 +242,7 @@ class LaunchPlanner(
                     require(runtime.majorVersion >= 9) {
                         "启动参数超过 Java 8 的 Windows 长度限制，请将游戏目录改为更短的路径"
                     }
-                    val argumentFile = game.resolve(".molifox-jvm.args")
+                    val argumentFile = (runtimeDirectory ?: game).resolve(".molifox-jvm.args")
                     // The native Java launcher parses @files before file.encoding takes effect.
                     val charset =
                         java.nio.charset.Charset.forName(
@@ -286,13 +291,19 @@ class GameLauncher(
     private val accounts: AccountService,
     private val scope: CoroutineScope,
 ) {
-    @Volatile private var gameProcess: Process? = null
-    private val commands = LaunchCommandRunner(store)
+    private val processes = ConcurrentHashMap<String, Pair<String, Process>>()
+    private val runners = ConcurrentHashMap<String, LaunchCommandRunner>()
+    private val runtimes = GameRuntimeDirectories(store).also { it.prune() }
     val isRunning: Boolean
-        get() = gameProcess != null
+        get() = store.state.value.runningGames.isNotEmpty()
+
+    fun isRunning(instanceId: String): Boolean =
+        store.state.value.runningGames.any { it.instanceId == instanceId }
 
     suspend fun launch(instanceId: String, context: JobContext) {
-        check(!isRunning) { "已有游戏正在运行" }
+        val runId = UUID.randomUUID().toString()
+        val runtimeDirectory = store.temporaryDirectory.resolve("games").resolve(runId)
+        val commands = LaunchCommandRunner(store)
         val instance = store.instance(instanceId)
         val launchSettings =
             effectiveLaunchSettings(store.data.settings, instance).let {
@@ -307,7 +318,9 @@ class GameLauncher(
         store.updateState { it.copy(launchIssue = null) }
         val session = LaunchSession(store, instance)
         try {
+            session.stage("解析游戏版本")
             val profile = installer.resolveForLaunch(instance, context)
+            session.stage("检查和补全游戏文件")
             context.progress(.01f, "检查并补全游戏文件…")
             installer.installDependencies(
                 profile,
@@ -317,6 +330,7 @@ class GameLauncher(
                 .35f,
             )
             context.progress(.36f, "选择 Java ${profile.requiredJava}…")
+            session.stage("选择 Java")
             val runtime =
                 java.resolve(
                     profile,
@@ -324,9 +338,12 @@ class GameLauncher(
                     context,
                 )
             context.progress(.4f, "验证账户…")
+            session.stage("验证和刷新账户")
             val credentials = accounts.credentials()
             context.checkCancelled()
             context.progress(.7f, "准备本地依赖和启动参数…")
+            session.stage("组装启动参数")
+            runtimes.create(runId)
             val plan =
                 LaunchPlanner(store, accounts.authlibInjector)
                     .plan(
@@ -334,6 +351,7 @@ class GameLauncher(
                         profile,
                         runtime,
                         credentials,
+                        runtimeDirectory = runtimeDirectory,
                     )
             session.prepared(plan, credentials)
             context.progress(.85f, "执行启动前命令…")
@@ -365,7 +383,10 @@ class GameLauncher(
                         environment().putAll(plan.environment)
                     }
                     .start()
-            gameProcess = process
+            processes[runId] = instanceId to process
+            runners[runId] = commands
+            runCatching { runtimes.attach(runtimeDirectory, process) }
+                .onFailure { store.log("游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}", true) }
             val started = System.currentTimeMillis()
             val visibility =
                 launchSettings.launcherVisibility.ifBlank {
@@ -373,15 +394,23 @@ class GameLauncher(
                 }
             val runEvent =
                 GameRunEvent(
-                    UUID.randomUUID().toString(),
+                    runId,
                     instanceId,
                     visibility,
                     launchSettings.closeLauncherAfterGameExit,
+                    processId = process.pid(),
                 )
-            store.updateState { it.copy(runningInstanceId = instanceId, gameRun = runEvent) }
+            store.updateState {
+                it.copy(
+                    runningInstanceId = instanceId,
+                    gameRun = runEvent,
+                    runningGames = it.runningGames + runEvent,
+                )
+            }
             store.updateInstance(instanceId) { it.copy(lastPlayed = Instant.now().toString()) }
             store.log("游戏已启动：${instance.name} · Java ${runtime.majorVersion}")
             scope.launch(Dispatchers.IO) {
+                val activity = GameActivityTracker(store, instance)
                 val decoder = GameLogDecoder { entry ->
                     store.log(entry.message, error = entry.error, game = true)
                 }
@@ -392,6 +421,7 @@ class GameLauncher(
                         lines.forEach { line ->
                             val cleaned = session.clean(line)
                             session.append(cleaned)
+                            activity.accept(cleaned)
                             decoder.accept(cleaned)
                         }
                     }
@@ -422,10 +452,14 @@ class GameLauncher(
                     session.finish(failure = error)
                 } finally {
                     decoder.flush()
-                    gameProcess = null
+                    processes.remove(runId)
+                    runners.remove(runId)
+                    if (!process.isAlive) runCatching { runtimes.release(runtimeDirectory) }
                     store.updateState {
+                        val remaining = it.runningGames.filterNot { run -> run.id == runId }
                         it.copy(
-                            runningInstanceId = null,
+                            runningInstanceId = remaining.lastOrNull()?.instanceId,
+                            runningGames = remaining,
                             gameRun =
                                 runEvent.copy(
                                     finished = true,
@@ -444,15 +478,21 @@ class GameLauncher(
             }
         } catch (cancelled: CancellationException) {
             session.append("启动已取消")
+            if (!processes.containsKey(runId)) runCatching { runtimes.release(runtimeDirectory) }
             throw cancelled
         } catch (error: Exception) {
             session.finish(failure = error)
+            if (!processes.containsKey(runId)) runCatching { runtimes.release(runtimeDirectory) }
             throw error
         }
     }
 
-    fun stop() {
-        gameProcess?.destroy()
-        commands.stop()
+    fun stop(instanceId: String? = null) {
+        processes.forEach { (id, entry) ->
+            if (instanceId == null || entry.first == instanceId) {
+                entry.second.destroy()
+                runners[id]?.stop()
+            }
+        }
     }
 }

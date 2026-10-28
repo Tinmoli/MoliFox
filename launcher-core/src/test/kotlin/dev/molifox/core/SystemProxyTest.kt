@@ -32,7 +32,7 @@ class SystemProxyTest {
                 { "official" },
                 { manual },
                 { system },
-                SystemProxyResolver(nativeProxy()) { null },
+                SystemProxyResolver(nativeProxy(), { null }),
             )
             .use { network ->
                 val selector = network.client.proxySelector

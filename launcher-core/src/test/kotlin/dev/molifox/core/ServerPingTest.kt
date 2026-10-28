@@ -23,6 +23,18 @@ import org.junit.jupiter.api.Test
  * 服务器都是测试线程里启动的本地 [ServerSocket]，不访问外网，也不写入任何文件。
  */
 class ServerPingTest {
+    @Test
+    fun `MOTD keeps line breaks and formatting across both lines`() {
+        val motd =
+            parseMotd(
+                JsonParser.parseString(
+                    """{"text":"First line\r\n","color":"red","extra":[{"text":"Second line","color":"green"}]}"""
+                )
+            )
+        assertEquals("First line\nSecond line", motd.joinToString("") { it.text })
+        assertEquals(2, motd.size)
+        assertNotEquals(motd.first().color, motd.last().color)
+    }
 
     @Test
     fun `address parsing defaults to 25565 and rejects invalid input`() {

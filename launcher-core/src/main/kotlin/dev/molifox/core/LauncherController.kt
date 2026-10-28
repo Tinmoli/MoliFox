@@ -7,8 +7,11 @@ import java.net.Proxy
 import java.net.URI
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import kotlin.io.path.*
 import kotlinx.coroutines.*
@@ -16,6 +19,7 @@ import kotlinx.coroutines.*
 class LauncherController(
     val platform: PlatformServices = DesktopPlatform(),
     dataDirectory: Path = platform.defaultDataDirectory,
+    updateApiBase: String = "https://api.github.com/repos/Tinmoli/MoliFox",
 ) : AutoCloseable {
     private val lockChannel =
         FileChannel.open(
@@ -65,6 +69,7 @@ class LauncherController(
             { store.data.settings.effectiveProxyMode() == "system" },
         )
     val jobs = JobQueue(store, scope)
+    val updater = GitHubUpdater(store, network, updateApiBase)
     val java = JavaService(store, network)
     val accounts = AccountService(store, network, scope)
     val skins = SkinService(store, network, accounts::credentials)
@@ -79,17 +84,12 @@ class LauncherController(
     private val migration = IsolationMigration(store)
     val game = GameLauncher(store, installer, java, accounts, scope)
     val busy: Boolean
-        get() = jobs.busy || game.isRunning
+        get() = jobs.busy
 
     init {
         directories.refreshVersionMetadata()
         store.log("欢迎使用 MoliFox · ${platform.osName} / ${platform.architecture}")
-        // 启动时自动检查更新；仅在用户同时开启开关并配置清单地址时执行。
-        if (
-            store.data.settings.autoCheckUpdates &&
-                store.data.settings.updateManifestUrl.isNotBlank()
-        )
-            checkForUpdates(false)
+        if (store.data.settings.autoCheckUpdates) checkForUpdates(false)
     }
 
     /** 界面在窗口尺寸变化时上报当前窗口大小，供「与启动器一样大」的游戏窗口模式使用。 */
@@ -97,42 +97,13 @@ class LauncherController(
         if (widthPx > 0 && heightPx > 0) store.launcherWindowSize = widthPx to heightPx
     }
 
-    /**
-     * 检查启动器更新：读取更新清单（HTTPS JSON，含 version/notes 字段）并与当前版本比较。
-     * 未配置清单地址时如实提示，不伪造检查结果；手动检查始终弹出提示，自动检查仅在新版本时提示。
-     */
     fun checkForUpdates(manual: Boolean) {
-        scope.launch {
-            val url = store.data.settings.updateManifestUrl
-            if (url.isBlank()) {
-                val message = "未配置更新清单地址，无法检查更新"
-                store.log(message)
-                if (manual) store.notify(message)
-                return@launch
-            }
-            try {
-                val manifest = network.json(url).asJsonObject
-                val latest = manifest.string("version")
-                val notes = manifest.string("notes")
-                val message =
-                    when {
-                        latest.isBlank() -> "更新清单缺少 version 字段"
-                        latest == LAUNCHER_VERSION -> "已是最新版本 $LAUNCHER_VERSION"
-                        else ->
-                            "发现新版本 $latest（当前 $LAUNCHER_VERSION）" +
-                                if (notes.isBlank()) "" else "：$notes"
-                    }
-                store.log(message)
-                if (manual || (latest.isNotBlank() && latest != LAUNCHER_VERSION))
-                    store.notify(message)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                val message = "检查更新失败：" + (error.message ?: "网络错误")
-                store.log(message, true)
-                if (manual) store.notify(message)
-            }
-        }
+        scope.launch { updater.check(manual) }
+    }
+
+    fun downloadUpdate(): String {
+        val release = requireNotNull(state.value.update.release) { "请先检查更新" }
+        return jobs.enqueue("更新 MoliFox ${release.version}") { updater.download(release, this) }
     }
 
     fun perform(action: suspend () -> Unit): Job = scope.launch {
@@ -145,14 +116,13 @@ class LauncherController(
     }
 
     fun requireIdle() {
-        check(!busy) { "请等待游戏或下载任务结束后再操作" }
+        check(!jobs.busy && !game.isRunning) { "此操作会修改现有实例，请等待游戏或后台任务结束后再操作" }
     }
 
     fun install(
         request: InstallRequest,
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
     ): String {
-        requireIdle()
         val instance = installer.createInstance(request, gameDirectoryId)
         return jobs.enqueue("安装 ${instance.name}") { installer.install(instance.id, this) }
     }
@@ -168,7 +138,6 @@ class LauncherController(
     }
 
     fun launch(id: String): String {
-        requireIdle()
         require(store.instance(id).installed) { "此实例尚未安装完成，请先修复" }
         require(store.data.activeAccountId != null) { "请先添加并选择游戏账户" }
         return jobs.enqueue("启动 ${store.instance(id).name}") { game.launch(id, this) }
@@ -424,6 +393,7 @@ class LauncherController(
         require(settings.initialMemoryMb in 128..settings.memoryMb) { "初始内存需在 128 MB 到最大内存之间" }
         require(settings.themeMode in listOf("", "light", "dark", "system")) { "主题模式无效" }
         require(settings.backgroundFit in listOf("crop", "fit", "stretch")) { "背景适配模式无效" }
+        require(settings.cornerRadiusDp in 0..24) { "界面圆角需在 0–24 dp 之间" }
         require(
             settings.backgroundAlignment in
                 listOf(
@@ -545,9 +515,20 @@ class LauncherController(
                     "shaderpacks",
                     "screenshots",
                     "config",
+                    "schematics",
+                    "crash-reports",
+                    "datapacks",
                 )
         )
-        platform.openFolder(store.instancePath(id).resolve(subfolder).apply { createDirectories() })
+        val target = store.instancePath(id).resolve(subfolder)
+        try {
+            require(Files.readAttributes(target, BasicFileAttributes::class.java).isDirectory) {
+                "目标不是文件夹：$target"
+            }
+        } catch (_: NoSuchFileException) {
+            target.createDirectories()
+        }
+        platform.openFolder(target)
     }
 
     fun installJava(major: Int): String =

@@ -28,6 +28,14 @@ internal fun isGameError(line: String): Boolean =
 internal fun diagnoseGameFailure(text: String, directory: Path): LaunchIssue {
     val patterns =
         listOf(
+            Triple(
+                Regex(
+                    "SSLHandshakeException|Remote host terminated the handshake|TLS 握手|证书校验失败|SSL peer shut down",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "启动准备时安全网络连接失败",
+                "检查网络、代理与系统时间后重试；游戏下载可使用自动源。此错误不表示游戏主类或模组缺失，无需先删除实例或关闭证书校验。",
+            ),
             Triple(Regex("启动前命令"), "启动前命令执行失败", "检查命令路径、参数、退出码及命令日志；启动前命令成功后才会运行游戏。"),
             Triple(
                 Regex(
@@ -111,6 +119,12 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
         )
     private var secret = ""
     private var extraSecrets: List<String> = emptyList()
+
+    fun stage(name: String) {
+        metadata["stage"] = name
+        writeJson(directory.resolve("session.json"), metadata)
+        store.log("启动准备：$name")
+    }
 
     fun clean(text: String): String =
         redactSecrets(

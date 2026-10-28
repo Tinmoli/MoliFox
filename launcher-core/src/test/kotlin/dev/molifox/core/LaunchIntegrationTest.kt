@@ -38,7 +38,7 @@ class LaunchIntegrationTest {
                 temporary.resolve("中文 launcher with spaces").apply { createDirectories() }
             val source = temporary.resolve("FixtureMinecraft.java")
             source.writeText(
-                """public class FixtureMinecraft { public static void main(String[] args) { System.out.println("MOLIFOX_GAME_STARTED"); System.out.println("PLAYER_ARGS=" + String.join("|", args)); System.out.println("LOG_CONFIG=" + System.getProperty("fixture.config")); System.out.println("REAL_CLASSPATH=" + System.getProperty("java.class.path")); System.out.println("JVM_FLAGS=" + java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()); System.out.println("LAUNCH_OPTION=" + System.getProperty("fixture.option")); System.out.println("GAME_TMP=" + System.getenv("TMP")); System.out.println("GAME_CWD=" + System.getProperty("user.dir")); } }"""
+                """public class FixtureMinecraft { public static void main(String[] args) throws Exception { System.out.println("MOLIFOX_GAME_STARTED"); System.out.println("PLAYER_ARGS=" + String.join("|", args)); System.out.println("LOG_CONFIG=" + System.getProperty("fixture.config")); System.out.println("REAL_CLASSPATH=" + System.getProperty("java.class.path")); System.out.println("JVM_FLAGS=" + java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()); System.out.println("LAUNCH_OPTION=" + System.getProperty("fixture.option")); System.out.println("GAME_TMP=" + System.getenv("TMP")); System.out.println("NATIVE_FIXTURE=" + java.nio.file.Files.readString(java.nio.file.Path.of(System.getProperty("java.library.path"), "fixture-native.bin"))); System.out.println("GAME_CWD=" + System.getProperty("user.dir")); } }"""
             )
             val compiler = ToolProvider.getSystemJavaCompiler()
             assertNotNull(compiler, "This integration test needs a JDK")
@@ -320,12 +320,14 @@ class LaunchIntegrationTest {
                             it.message.contains("LOG_CONFIG=") && it.message.contains("fixture.xml")
                         }
                     )
-                    assertEquals(
-                        "native fixture",
+                    assertTrue(
+                        store.state.value.logs.any { it.message == "NATIVE_FIXTURE=native fixture" }
+                    )
+                    assertFalse(
                         store
                             .instancePath(instance.id)
                             .resolve("natives/fixture-native.bin")
-                            .readText(),
+                            .exists()
                     )
                     assertEquals(
                         "sound fixture",

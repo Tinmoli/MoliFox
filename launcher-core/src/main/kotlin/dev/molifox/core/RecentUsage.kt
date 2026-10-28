@@ -159,6 +159,7 @@ class RecentUsage(
                 )
             }
         writeJson(file, json)
+        store.updateState { it.copy(recentUsageRevision = it.recentUsageRevision + 1) }
     }
 
     /** 每个实例只留最新的 [MAX_ENTRIES_PER_INSTANCE] 条；列表已按新到旧排列。 */

@@ -137,6 +137,7 @@ data class GameRunEvent(
     val finished: Boolean = false,
     val exitCode: Int? = null,
     val postCommandFailed: Boolean = false,
+    val processId: Long? = null,
 )
 
 enum class LauncherWindowAction {
