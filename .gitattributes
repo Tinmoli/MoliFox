@@ -1,0 +1,16 @@
+# Keep source line endings consistent across Windows and Linux checkouts.
+.gitattributes text eol=lf
+*.kt text eol=lf
+*.kts text eol=lf
+*.java text eol=lf
+*.cpp text eol=lf
+*.ps1 text eol=lf
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+
+*.png binary
+*.ico binary
+*.jar binary
+*.exe binary
+*.run binary
