@@ -18,6 +18,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -35,28 +36,33 @@ private enum class AuthlibLoginStep {
 }
 
 /**
- * 账户页的两个认证服务器入口：[SavedServers] 打开即列出已保存的服务器（默认含核心内置的 LittleSkin），[NewServer] 打开即把光标放进地址框，直接添加新服务器。
+ * 账户页的两个认证服务器入口：[Server] 直接进入某台已保存服务器的用户名与密码步骤（不经过服务器列表、
+ * 不需要「下一步」、也不显示地址框），[NewServer] 打开即把光标放进地址框，添加并保存新服务器。
  */
-enum class AuthlibEntry {
-    SavedServers,
-    NewServer,
+sealed interface AuthlibEntry {
+    /** 已保存服务器各占账户页一行：点哪台就登录哪台。 */
+    data class Server(val server: AuthlibServer) : AuthlibEntry
+
+    /** 「添加认证服务器」入口：先填地址、校验保存，再输入用户名与密码。 */
+    data object NewServer : AuthlibEntry
 }
 
 /**
  * 添加外置认证（authlib-injector / Yggdrasil）账户的两步对话框。
  *
- * - 第 1 步是服务器选择：已保存的服务器（[AuthlibEntry.SavedServers] 入口的主体）点一下就直接 进入第 2
- *   步，不需要先点「下一步」；[AuthlibEntry.NewServer] 入口把焦点放在地址框上， 校验通过后 `addAuthlibServer`
- *   会先保存再用它登录。已保存行可在行尾移除（不影响已添加账户）；
- * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框， 成功后关闭由账户列表的 store
- *   变更自动刷新（与离线账户、微软账户同一路径）。
+ * - [AuthlibEntry.NewServer] 从第 1 步开始：把焦点放在地址框上，校验通过后 `addAuthlibServer`
+ *   会先保存再用它登录；已保存的服务器也在这里列一次，方便在行尾移除（不影响已添加账户）；
+ * - [AuthlibEntry.Server] 直接落在第 2 步：账户页上每台已保存服务器各有一行，点开就是这台服务器的
+ *   用户名与密码，没有服务器列表、没有「下一步」、没有地址框；
+ * - 第 2 步用 `addAuthlibAccount` 登录：失败时按 [AuthlibError] 折算中文提示且不关闭对话框，
+ *   成功后关闭由账户列表的 store 变更自动刷新（与离线账户、微软账户同一路径）。
  *
  * 请求期间按钮置灰并显示 14dp 转圈，界面线程不做阻塞等待；Esc 关闭，Enter 执行当前一步。
  */
 @Composable
 fun AuthlibLoginDialog(
     actions: UiActions,
-    entry: AuthlibEntry = AuthlibEntry.SavedServers,
+    entry: AuthlibEntry = AuthlibEntry.NewServer,
     onDismiss: () -> Unit,
 ) {
     val state by actions.controller.state.collectAsState()
@@ -65,14 +71,16 @@ fun AuthlibLoginDialog(
         remember(state.data.authlibServers) {
             actions.controller.accounts.authlibServers()
         }
-    var step by remember { mutableStateOf(AuthlibLoginStep.Server) }
-    var address by remember { mutableStateOf("") }
-    var selectedUrl by remember { mutableStateOf("") }
-    var resolved by remember { mutableStateOf<AuthlibServer?>(null) }
-    // 已保存列表是「认证服务器」入口的主体；只有「添加认证服务器」入口或列表为空时才直接展开地址框。
-    var showAddress by remember {
-        mutableStateOf(entry == AuthlibEntry.NewServer || servers.isEmpty())
+    // 从账户页的服务器行进来时直接是第 2 步，服务器已经确定。
+    val preset = (entry as? AuthlibEntry.Server)?.server
+    var step by remember {
+        mutableStateOf(
+            if (preset != null) AuthlibLoginStep.Credentials else AuthlibLoginStep.Server
+        )
     }
+    var address by remember { mutableStateOf(preset?.url.orEmpty()) }
+    var selectedUrl by remember { mutableStateOf(preset?.url.orEmpty()) }
+    var resolved by remember { mutableStateOf(preset) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -81,7 +89,6 @@ fun AuthlibLoginDialog(
     val focus = remember { FocusRequester() }
     val addressFocus = remember { FocusRequester() }
 
-    val addressVisible = showAddress || servers.isEmpty()
     val canValidate = !busy && address.trim().isNotEmpty()
     val canLogin = !busy && username.isNotBlank() && password.isNotEmpty()
 
@@ -123,7 +130,9 @@ fun AuthlibLoginDialog(
         step = AuthlibLoginStep.Credentials
     }
 
-    fun signIn() {
+    // 登录的唯一提交路径：登录按钮、Enter、密码框的 IME「完成」都调这里；
+    // busy 期间直接返回，避免回车与点击叠成两次请求。
+    fun submitLogin() {
         if (busy) return
         val server = resolved ?: return
         val name = username.trim()
@@ -169,10 +178,11 @@ fun AuthlibLoginDialog(
         }
     }
 
+    val presetLabel = preset?.let { it.name.ifBlank { it.url } }
     Modal(
-        if (entry == AuthlibEntry.NewServer) "添加认证服务器" else "认证服务器",
-        if (entry == AuthlibEntry.NewServer) "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
-        else "选择一个已保存的认证服务器，输入用户名与密码即可登录；也可以添加新的服务器。",
+        if (presetLabel != null) "登录 " + presetLabel else "添加认证服务器",
+        if (presetLabel != null) "输入该服务器上的用户名与密码，登录后账户会出现在列表里。"
+        else "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。",
         width = 480.dp,
         onDismiss = onDismiss,
     ) {
@@ -190,13 +200,15 @@ fun AuthlibLoginDialog(
                         Key.NumPadEnter ->
                             when (step) {
                                 AuthlibLoginStep.Server ->
-                                    if (addressVisible && canValidate) {
+                                    if (canValidate) {
                                         validateServer()
                                         true
                                     } else false
                                 AuthlibLoginStep.Credentials ->
-                                    if (canLogin) {
-                                        signIn()
+                                    // 密码已填时，用户在用户名或密码任一框里按 Enter 都直接提交登录；
+                                    // 密码还空着则让给输入框自己处理，不提前弹「请输入用户名和密码」。
+                                    if (password.isNotEmpty()) {
+                                        submitLogin()
                                         true
                                     } else false
                             }
@@ -207,8 +219,11 @@ fun AuthlibLoginDialog(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             AuthlibStepLabel(
-                if (step == AuthlibLoginStep.Server) "第 1 步 / 共 2 步 · 认证服务器"
-                else "第 2 步 / 共 2 步 · 用户名与密码"
+                when {
+                    preset != null -> "用户名与密码"
+                    step == AuthlibLoginStep.Server -> "第 1 步 / 共 2 步 · 认证服务器"
+                    else -> "第 2 步 / 共 2 步 · 用户名与密码"
+                }
             )
             if (step == AuthlibLoginStep.Server) {
                 if (servers.isEmpty()) {
@@ -227,44 +242,52 @@ fun AuthlibLoginDialog(
                     ) {
                         servers.forEach { server ->
                             val label = server.name.ifBlank { server.url }
+                            // 内置默认服务器（核心 DEFAULT_AUTHLIB_SERVER，LittleSkin）不给删除入口：
+                            // 行尾换成灰掉的锁，点了就地提示，而不是静默忽略。
+                            val builtin = actions.controller.accounts.isBuiltinAuthlibServer(server.url)
                             DialogListRow(
                                 title = label,
                                 detail = server.url,
                                 selected = server.url == selectedUrl,
                                 onClick = { chooseSaved(server) },
                                 trailing = {
-                                    SmallIconButton(
-                                        Icons.Outlined.DeleteOutline,
-                                        "移除服务器「" + label + "」",
-                                        onClick = { if (!busy) removing = server },
-                                        tint = MaterialTheme.colorScheme.error,
-                                        enabled = !busy,
-                                    )
+                                    if (builtin)
+                                        SmallIconButton(
+                                            Icons.Outlined.Lock,
+                                            "内置服务器不可删除",
+                                            onClick = { if (!busy) error = "内置服务器不可删除" },
+                                            tint =
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                                    alpha = .5f
+                                                ),
+                                            enabled = !busy,
+                                        )
+                                    else
+                                        SmallIconButton(
+                                            Icons.Outlined.DeleteOutline,
+                                            "移除服务器「" + label + "」",
+                                            onClick = { if (!busy) removing = server },
+                                            tint = MaterialTheme.colorScheme.error,
+                                            enabled = !busy,
+                                        )
                                 },
                             )
                         }
                     }
                 }
-                if (addressVisible) {
-                    CompactTextField(
-                        address,
-                        {
-                            address = it
-                            if (it != selectedUrl) selectedUrl = ""
-                            error = null
-                        },
-                        Modifier.fillMaxWidth(),
-                        label = if (servers.isEmpty()) "认证服务器" else "添加新的认证服务器",
-                        placeholder = "认证服务器地址，例如 https://example.com",
-                        enabled = !busy,
-                        focusRequester = addressFocus,
-                    )
-                } else {
-                    // 列表优先时不铺开表单，需要新服务器再展开，避免抢走「点一个就走」的主流程。
-                    TextButton({ showAddress = true }, enabled = !busy) {
-                        Text("添加新的认证服务器", fontSize = 12.sp)
-                    }
-                }
+                CompactTextField(
+                    address,
+                    {
+                        address = it
+                        if (it != selectedUrl) selectedUrl = ""
+                        error = null
+                    },
+                    Modifier.fillMaxWidth(),
+                    label = if (servers.isEmpty()) "认证服务器" else "添加新的认证服务器",
+                    placeholder = "认证服务器地址，例如 https://example.com",
+                    enabled = !busy,
+                    focusRequester = addressFocus,
+                )
             } else {
                 resolved?.let { server ->
                     Surface(
@@ -293,7 +316,7 @@ fun AuthlibLoginDialog(
                                 verticalArrangement = Arrangement.spacedBy(1.dp),
                             ) {
                                 Text(
-                                    server.name,
+                                    server.name.ifBlank { server.url },
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1,
@@ -307,7 +330,7 @@ fun AuthlibLoginDialog(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Tag("已验证")
+                            Tag("已保存")
                         }
                     }
                 }
@@ -333,6 +356,9 @@ fun AuthlibLoginDialog(
                     placeholder = "输入密码",
                     enabled = !busy,
                     visualTransformation = PasswordVisualTransformation(),
+                    // 软键盘「完成」与登录按钮走同一条提交路径；回车另由外层 onPreviewKeyEvent 兜住。
+                    imeAction = ImeAction.Done,
+                    onImeAction = { submitLogin() },
                 )
                 MutedText("密码只用于本次登录，不会写入启动器配置；登录成功后账户会自动保存并切换。")
             }
@@ -353,30 +379,31 @@ fun AuthlibLoginDialog(
                 Spacer(Modifier.weight(1f))
                 if (step == AuthlibLoginStep.Server) {
                     SecondaryButton(onDismiss, enabled = !busy) { Text("取消", fontSize = 13.sp) }
-                    if (addressVisible)
-                        PrimaryButton(
-                            when {
-                                busy -> "正在校验…"
-                                servers.isEmpty() -> "下一步"
-                                else -> "保存并登录"
-                            },
-                            enabled = canValidate,
-                            onClick = { validateServer() },
-                        )
-                } else {
-                    SecondaryButton(
-                        onClick = {
-                            step = AuthlibLoginStep.Server
-                            error = null
+                    PrimaryButton(
+                        when {
+                            busy -> "正在校验…"
+                            servers.isEmpty() -> "下一步"
+                            else -> "保存并登录"
                         },
-                        enabled = !busy,
-                    ) {
-                        Text("上一步", fontSize = 13.sp)
-                    }
+                        enabled = canValidate,
+                        onClick = { validateServer() },
+                    )
+                } else {
+                    // 从账户页的服务器行进来时没有第 1 步可回，不显示「上一步」。
+                    if (preset == null)
+                        SecondaryButton(
+                            onClick = {
+                                step = AuthlibLoginStep.Server
+                                error = null
+                            },
+                            enabled = !busy,
+                        ) {
+                            Text("上一步", fontSize = 13.sp)
+                        }
                     PrimaryButton(
                         if (busy) "正在登录…" else "登录",
                         enabled = canLogin,
-                        onClick = { signIn() },
+                        onClick = { submitLogin() },
                     )
                 }
             }
@@ -393,11 +420,15 @@ fun AuthlibLoginDialog(
             },
             confirmButton = {
                 TextButton({
-                    actions.controller.accounts.removeAuthlibServer(server.url)
-                    if (server.url == selectedUrl) selectedUrl = ""
-                    if (resolved?.url == server.url) resolved = null
                     removing = null
-                    actions.controller.store.notify("已移除认证服务器「" + label + "」")
+                    // 核心对内置服务器也会拒绝删除（返回 false），这里按结果给提示，不谎报已移除。
+                    if (actions.controller.accounts.removeAuthlibServer(server.url)) {
+                        if (server.url == selectedUrl) selectedUrl = ""
+                        if (resolved?.url == server.url) resolved = null
+                        actions.controller.store.notify("已移除认证服务器「" + label + "」")
+                    } else {
+                        error = "内置服务器不可删除"
+                    }
                 }) {
                     Text("移除服务器", color = MaterialTheme.colorScheme.error)
                 }

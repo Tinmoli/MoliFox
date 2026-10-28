@@ -161,6 +161,9 @@ class LauncherStore(
         val value = gson.fromJson(json, LauncherData::class.java)
         require(value.settings.gameRoot.isNotBlank() && Path.of(value.settings.gameRoot).isAbsolute)
         value.instances.forEach { require(runCatching { UUID.fromString(it.id) }.isSuccess) }
+        // 旧配置里 authlibServers 可能被序列化成空数组，导致界面上「认证服务器」一直是灰的。
+        // 空列表视为「还没配置过」，补上内置的 LittleSkin（与 HMCL/PCL 的默认项一致）。
+        if (value.authlibServers.isEmpty()) return value.copy(authlibServers = listOf(DEFAULT_AUTHLIB_SERVER))
         return value
     }
 

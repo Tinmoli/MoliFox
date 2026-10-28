@@ -2,12 +2,20 @@
 
 package dev.molifox.desktop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,13 +24,14 @@ import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -43,7 +52,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -68,19 +76,32 @@ private const val RECENT_PLAY_ROWS = 8
 /**
  * 开始页右栏下半：「最近游玩的存档或服务器」。
  *
- * 混合列出当前实例 `saves/` 下的世界（[SaveManager.listSaves]）与游戏目录 `servers.dat` 的服务器（[listServers]），按时间倒序取前
- * [RECENT_PLAY_ROWS] 条： 条目优先使用本启动器记录的 [RecentUsage.lastUsed]，无使用记录时按当前列表规则排序。 每次加载/刷新在读完磁盘后调用
- * [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录 清掉；读取与清理全部在 `Dispatchers.IO` 上完成，刷新按钮只是递增
- * [refreshToken] 重新读一遍磁盘。
+ * 标题行的分段开关决定正文只渲染**一类**内容——「存档」或「服务器」，不再把两类混排：
+ * 存档来自 `saves/`（[SaveManager.listSaves]），服务器来自游戏目录的 `servers.dat`（[listServers]），
+ * 各自按最近使用时间倒序取前 [RECENT_PLAY_ROWS] 条。 条目优先使用本启动器记录的 [RecentUsage.lastUsed]，世界没有记录时退回目录修改时间。
+ * 每次加载/刷新在读完磁盘后调用 [RecentUsage.pruneMissing]，把已经消失的世界或服务器记录 清掉；读取与清理全部在 `Dispatchers.IO`
+ * 上完成，刷新按钮只是递增 [refreshToken] 重新读一遍磁盘。
  *
  * 「开始游戏」走调用方传入的 [onLaunch]——开始页的主「启动游戏」按钮用的就是同一条 [LauncherController.launch] 路径；本面板只负责先记一次
  * [RecentUsage.record]。 「查看全部」在面板内打开「存档与服务器」浮层（Esc 或关闭按钮退出）。 [instance] 为 null（未选择版本）时整块不渲染。
+ *
+ * 面板可折叠：标题行的箭头 180° 旋转（180ms）+ 内容区高度动画，折叠后只剩约 44dp 的标题行。展开状态与选中的类别都由调用方读写页面偏好
+ * [HomePagePreferences.recentPlayExpanded] / [HomePagePreferences.recentPlayKind]，因此重启后保持上次的选择。折叠不会中断启动——
+ * 「开始游戏」的协程挂在面板自身的作用域上， 折叠只是把内容区移出组合；标题行的刷新与「查看全部」在折叠时仍然可用。
  */
 @Composable
 fun RecentPlayPanel(
     instance: GameInstance?,
     actions: UiActions,
     busy: Boolean,
+    /** 内容区是否展开；由调用方从页面偏好读出。 */
+    expanded: Boolean,
+    /** 点折叠箭头时回写页面偏好。 */
+    onExpandedChange: (Boolean) -> Unit,
+    /** 正文显示哪一类：存档或服务器；由调用方从页面偏好读出。 */
+    kind: EntryKind,
+    /** 点分段开关时回写页面偏好。 */
+    onKindChange: (EntryKind) -> Unit,
     onLaunch: (GameInstance) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -106,6 +127,10 @@ fun RecentPlayPanel(
                         .getOrElse { RecentPlayData(instanceId = instance.id, loading = false) }
                 }
         }
+    // 正文只渲染选中的一类；「查看全部」与空提示都按这一类的数量判断。
+    val itemsOfKind = remember(data.all, kind) { data.all.filter { it.kind == kind } }
+    val shownItems = itemsOfKind.take(RECENT_PLAY_ROWS)
+    val hasMore = itemsOfKind.size > shownItems.size
     // 点「开始游戏」：先写最近使用记录，再走与主启动按钮相同的入口。记录的写入放到 IO 线程，
     // 启动本身仍是调用方那条同步路径，进度与失败原因继续留在开始页的启动浮窗。
     fun beginPlay(kind: EntryKind, key: String) {
@@ -157,14 +182,34 @@ fun RecentPlayPanel(
         val copied = runCatching { clipboard.setText(AnnotatedString(item.key)) }.isSuccess
         controller.store.notify(if (copied) "已复制服务器地址：" + item.key else "复制失败，请手动复制：" + item.key)
     }
-    HomeCard(modifier = modifier, fillContent = true) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // 关闭动画或开启「减少动态效果」时直接跳变：箭头与内容区都不播放过渡。
+    val motionMillis = if (LocalAnimationsEnabled.current && !LocalReducedMotion.current) 180 else 0
+    HomeCard(modifier = modifier, contentPadding = PaddingValues(0.dp)) {
+        // 标题行固定 44dp：折叠后整张卡片就只有这一行。
+        Row(
+            Modifier.fillMaxWidth().height(44.dp).padding(horizontal = Metrics.cardPadding),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 "最近游玩的存档或服务器",
+                Modifier.weight(1f),
                 fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.weight(1f))
+            // 折叠后内容区不在组合里，「查看全部」改由标题行提供，浮层照样打得开。
+            if (!expanded && hasMore)
+                TextButton(
+                    { showAll = true },
+                    Modifier.height(Metrics.controlHeight),
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) {
+                    Text("查看全部", fontSize = 12.sp)
+                }
+            // 分段开关：只切换正文显示哪一类，两类数据仍然一次读盘、共用缓存。
+            KindSwitch(kind, onKindChange)
+            Spacer(Modifier.width(6.dp))
             SmallIconButton(
                 Icons.Outlined.Refresh,
                 "刷新存档与服务器",
@@ -174,82 +219,109 @@ fun RecentPlayPanel(
                     refreshToken += 1
                 },
             )
-        }
-        Spacer(Modifier.height(2.dp))
-        when {
-            data.loading && data.items.isEmpty() -> Spacer(Modifier.weight(1f))
-            data.items.isEmpty() ->
-                Text(
-                    "当前实例还没有存档或服务器",
-                    Modifier.padding(top = 4.dp, bottom = 2.dp),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // 折叠箭头：展开时转 180° 朝上，折叠时朝下。
+            val angle by
+                animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    animationSpec = tween(motionMillis),
+                    label = "recentPlayChevron",
                 )
-            else -> {
-                // 一次组合共用一个「现在」，同一屏内各行的时间基准一致。
-                val now = Instant.now()
-                val listState = rememberLazyListState()
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    LazyColumn(
-                        Modifier.fillMaxSize(),
-                        state = listState,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(data.items, key = { it.kind.name + ":" + it.key }) { item ->
-                            when (item.kind) {
-                                EntryKind.World ->
-                                    WorldPlayRow(
-                                        instance = instance,
-                                        actions = actions,
-                                        entry = item,
-                                        timeLabel = relativeTimeLabel(item.usedAt, now),
-                                        enabled = !busy,
-                                        onPlay = { beginPlay(EntryKind.World, item.key) },
-                                        onOpenFolder = {
-                                            item.save?.let { openSaveFolder(it) }
-                                        },
-                                        onDelete = { item.save?.let { deleting = it } },
-                                    )
-                                EntryKind.Server -> {
-                                    // 只有进入组合（可见）的行才 ping；缓存 60 秒，滚动回来不重发。
-                                    val ping = rememberServerPing(item.key, refreshToken)
-                                    ServerPlayRow(
-                                        entry = item,
-                                        timeLabel =
-                                            if (item.usedAt == null) "尚未游玩"
-                                            else relativeTimeLabel(item.usedAt, now),
-                                        status = ping?.status,
-                                        pinged = ping != null,
-                                        enabled = !busy,
-                                        onPlay = { beginPlay(EntryKind.Server, item.key) },
-                                        onCopyAddress = { copyAddress(item) },
-                                        onForget = { forgetServer(item) },
-                                    )
+            Box(Modifier.rotate(angle)) {
+                SmallIconButton(
+                    Icons.Outlined.ExpandMore,
+                    if (expanded) "折叠最近游玩的存档或服务器" else "展开最近游玩的存档或服务器",
+                    onClick = { onExpandedChange(!expanded) },
+                )
+            }
+        }
+        // 内容区高度动画：AnimatedVisibility 默认裁剪，折叠时高度收到 0，卡片跟着变矮。
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(motionMillis)),
+            exit = shrinkVertically(tween(motionMillis)),
+        ) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .fillMaxHeight()
+                    .padding(
+                        start = Metrics.cardPadding,
+                        end = Metrics.cardPadding,
+                        bottom = Metrics.cardPadding,
+                    )
+            ) {
+                Spacer(Modifier.height(2.dp))
+                when {
+                    data.loading && data.all.isEmpty() -> Spacer(Modifier.weight(1f))
+                    shownItems.isEmpty() ->
+                        Text(
+                            if (kind == EntryKind.World) "当前实例还没有存档" else "当前实例还没有服务器",
+                            Modifier.padding(top = 4.dp, bottom = 2.dp),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    else -> {
+                        // 一次组合共用一个「现在」，同一屏内各行的时间基准一致。
+                        val now = Instant.now()
+                        val listState = rememberLazyListState()
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            LazyColumn(
+                                Modifier.fillMaxSize(),
+                                state = listState,
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                items(shownItems, key = { it.kind.name + ":" + it.key }) { item ->
+                                    when (item.kind) {
+                                        EntryKind.World ->
+                                            WorldPlayRow(
+                                                entry = item,
+                                                timeLabel = relativeTimeLabel(item.usedAt, now),
+                                                enabled = !busy,
+                                                onPlay = { beginPlay(EntryKind.World, item.key) },
+                                                onOpenFolder = {
+                                                    item.save?.let { openSaveFolder(it) }
+                                                },
+                                                onDelete = { item.save?.let { deleting = it } },
+                                            )
+                                        EntryKind.Server -> {
+                                            // 只有进入组合（可见）的行才 ping；缓存 60 秒，滚动回来不重发。
+                                            val ping = rememberServerPing(item.key, refreshToken)
+                                            ServerPlayRow(
+                                                entry = item,
+                                                timeLabel =
+                                                    if (item.usedAt == null) "尚未游玩"
+                                                    else relativeTimeLabel(item.usedAt, now),
+                                                status = ping?.status,
+                                                pinged = ping != null,
+                                                enabled = !busy,
+                                                onPlay = { beginPlay(EntryKind.Server, item.key) },
+                                                onCopyAddress = { copyAddress(item) },
+                                                onForget = { forgetServer(item) },
+                                            )
+                                        }
+                                    }
                                 }
                             }
+                            VerticalScrollbar(
+                                rememberScrollbarAdapter(listState),
+                                Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                            )
                         }
+                        if (hasMore)
+                            TextButton(
+                                { showAll = true },
+                                Modifier.align(Alignment.End),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Text("查看全部", fontSize = 12.sp)
+                            }
                     }
-                    VerticalScrollbar(
-                        rememberScrollbarAdapter(listState),
-                        Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                    )
                 }
-                if (data.total > data.items.size)
-                    TextButton(
-                        { showAll = true },
-                        Modifier.align(Alignment.End),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                    ) {
-                        Text("查看全部", fontSize = 12.sp)
-                    }
             }
         }
     }
     // 浮层列出全部存档与服务器（不受面板 8 行上限约束），行样式与面板一致。
     if (showAll)
         AllRecentPlayDialog(
-            instance = instance,
-            actions = actions,
             data = data,
             busy = busy,
             refreshToken = refreshToken,
@@ -285,11 +357,12 @@ fun RecentPlayPanel(
     }
 }
 
-/** 存档行：32dp 实例图标（没有自定义图标时就是草方块）、目录名、「单人存档」、 相对时间 + 主题色「开始游戏」+ 三点菜单（打开存档文件夹 / 删除）。 */
+/**
+ * 存档行：32dp 世界图标（游戏写入的 `<saves>/<世界>/icon.png`，缺失或读不出时用草方块）、
+ * 目录名、「单人存档 · 游玩时间」，随后紧跟文字操作「开始游戏 / 打开文件夹 / 删除」。
+ */
 @Composable
 private fun WorldPlayRow(
-    instance: GameInstance,
-    actions: UiActions,
     entry: RecentPlayItem,
     timeLabel: String,
     enabled: Boolean,
@@ -297,27 +370,51 @@ private fun WorldPlayRow(
     onOpenFolder: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val time = timeLabel.trim()
     PlayRowFrame(
-        leading = { InstanceArtwork(instance, actions, Modifier.size(32.dp)) },
+        leading = { WorldPlayIcon(entry) },
         title = entry.title,
-        subtitle = { PlaySubtitle(AnnotatedString(entry.subtitle)) },
-        timeLabel = timeLabel,
-    ) {
-        PrimaryButton("开始游戏", enabled = enabled, onClick = onPlay)
-        PlayRowMenu(
-            firstLabel = "打开存档文件夹",
-            onFirst = onOpenFolder,
-            secondLabel = "删除",
-            onSecond = onDelete,
-        )
-    }
+        subtitle = {
+            PlaySubtitle(
+                AnnotatedString(
+                    if (time.isEmpty()) entry.subtitle else entry.subtitle + "  ·  " + time
+                )
+            )
+        },
+        actions = {
+            PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay)
+            PlayRowAction("打开文件夹", MaterialTheme.colorScheme.onSurface, enabled, onOpenFolder)
+            PlayRowAction("删除", MaterialTheme.colorScheme.error, enabled, onDelete)
+        },
+    )
 }
 
 /**
- * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名、 查询到 MOTD 时用带颜色的 MOTD 取代地址（悬停显示完整地址），否则显示地址；
- * 行尾是玩家数或「离线」、游玩时间 + 主题色「开始游戏」+ 三点菜单（复制地址 / 删除记录）。
+ * 世界图标：优先用世界目录（或 `.zip`）里的 `icon.png`，读不出就退回草方块。
+ * 图标按「路径 + 修改时间」缓存，滚动或切页回来不会重复解码。
+ */
+@Composable
+private fun WorldPlayIcon(entry: RecentPlayItem) {
+    val save = entry.save
+    if (save == null) {
+        GrassBlockIcon(size = 32.dp)
+        return
+    }
+    LocalContentThumbnail(
+        path = save.path,
+        world = true,
+        modifier = Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
+        modified = save.lastModified?.toEpochMilli(),
+        fallback = { GrassBlockIcon(size = 32.dp) },
+    )
+}
+
+/**
+ * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名，
+ * 副标题是「MOTD（或地址） · 玩家数/离线 · 游玩时间」；MOTD 用带颜色的分段渲染，
+ * 悬停显示 `servers.dat` 里的完整地址。随后紧跟文字操作「开始游戏 / 复制地址 / 删除记录」。
  *
- * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个次要色「离线」 标签，开始游戏不受影响。
+ * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个「离线」标签，开始游戏不受影响。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -331,99 +428,62 @@ private fun ServerPlayRow(
     onCopyAddress: () -> Unit,
     onForget: () -> Unit,
 ) {
-    val motd = status?.motd.orEmpty().filter { it.text.isNotEmpty() }
+    val motd = status?.motd.orEmpty().filter { it.text.isNotBlank() }
     val motdText = if (motd.isEmpty()) null else rememberMotdText(motd)
-    Row(
-        Modifier.fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .hoverHighlight(RoundedCornerShape(Metrics.innerRadius))
-            .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (entry.icon != null)
-            Image(
-                requireNotNull(entry.icon),
-                entry.title + " 图标",
-                Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
-                filterQuality = FilterQuality.None,
-            )
-        else GrassBlockIcon(size = 32.dp)
-        Text(
-            entry.title,
-            Modifier.weight(.6f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Box(Modifier.weight(1.4f), contentAlignment = Alignment.Center) {
+    val statusLabel =
+        when {
+            status != null -> status.players.toString() + "/" + status.maxPlayers
+            pinged -> "离线"
+            else -> null
+        }
+    // 状态与游玩时间并进副标题：操作要紧跟在文字后面，行尾不再留第二组标签。
+    val meta = listOfNotNull(statusLabel, timeLabel.trim().ifEmpty { null }).joinToString("  ·  ")
+    val subtitle =
+        remember(motdText, entry.subtitle, meta) {
+            buildAnnotatedString {
+                append(motdText ?: AnnotatedString(entry.subtitle))
+                if (meta.isNotEmpty()) append("  ·  " + meta)
+            }
+        }
+    PlayRowFrame(
+        leading = {
+            if (entry.icon != null)
+                Image(
+                    requireNotNull(entry.icon),
+                    entry.title + " 图标",
+                    Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
+                    filterQuality = FilterQuality.None,
+                )
+            else GrassBlockIcon(size = 32.dp)
+        },
+        title = entry.title,
+        subtitle = {
             if (motdText != null)
-                TooltipArea(
-                    tooltip = { AddressTooltip(entry.subtitle) },
-                    delayMillis = 400,
-                ) {
-                    Text(
-                        motdText,
-                        Modifier.fillMaxWidth(),
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        minLines = 2,
-                        maxLines = 2,
-                        textAlign = TextAlign.Center,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                TooltipArea(tooltip = { AddressTooltip(entry.subtitle) }, delayMillis = 400) {
+                    PlaySubtitle(subtitle, subtitleSize = 11.sp)
                 }
-            else
-                Text(
-                    entry.subtitle,
-                    Modifier.fillMaxWidth(),
-                    fontSize = 11.sp,
-                    maxLines = 2,
-                    textAlign = TextAlign.Center,
-                    overflow = TextOverflow.Ellipsis,
-                )
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            val statusLabel =
-                when {
-                    status != null -> status.players.toString() + "/" + status.maxPlayers
-                    pinged -> "离线"
-                    else -> null
-                }
-            if (statusLabel != null)
-                Text(
-                    statusLabel,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            if (timeLabel.isNotBlank())
-                Text(
-                    timeLabel,
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-        }
-        PrimaryButton("开始游戏", enabled = enabled, onClick = onPlay)
-        PlayRowMenu(
-            firstLabel = "复制地址",
-            onFirst = onCopyAddress,
-            secondLabel = "删除记录",
-            onSecond = onForget,
-        )
-    }
+            else PlaySubtitle(subtitle)
+        },
+        actions = {
+            PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay)
+            PlayRowAction("复制地址", MaterialTheme.colorScheme.onSurface, enabled, onCopyAddress)
+            PlayRowAction("删除记录", MaterialTheme.colorScheme.error, enabled, onForget)
+        },
+    )
 }
 
-/** 两类行共用的骨架：32dp 图标 + 标题/副标题 + 行尾状态、时间与操作，行高 52、悬停淡入。 */
+/**
+ * 两类行共用的骨架：32dp 图标 + 标题/副标题 + 紧随其后的文字操作，行高 52、悬停淡入。
+ *
+ * 文字列用 `weight(1f, fill = false)`：按内容宽度收窄但最多占满剩余空间，
+ * 因此操作紧跟在标题/副标题之后，而不是贴到行尾；行里多出来的空白留在操作右侧。
+ */
 @Composable
 private fun PlayRowFrame(
     leading: @Composable () -> Unit,
     title: String,
     subtitle: @Composable () -> Unit,
-    timeLabel: String,
-    statusLabel: String? = null,
-    trailing: @Composable RowScope.() -> Unit,
+    actions: @Composable RowScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Row(
@@ -435,7 +495,10 @@ private fun PlayRowFrame(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { leading() }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Column(
+            Modifier.weight(1f, fill = false),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
             Text(
                 title,
                 fontSize = 13.sp,
@@ -445,21 +508,12 @@ private fun PlayRowFrame(
             )
             subtitle()
         }
-        if (statusLabel != null)
-            Text(
-                statusLabel,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        if (timeLabel.isNotEmpty())
-            Text(
-                timeLabel,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        trailing()
+        Row(
+            Modifier.padding(start = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = actions,
+        )
     }
 }
 
@@ -475,34 +529,77 @@ private fun PlaySubtitle(text: AnnotatedString, subtitleSize: TextUnit = 12.sp) 
     )
 }
 
-/** 三点菜单：固定两项，第二项是破坏性操作（删除），用错误色区分。 */
+/**
+ * 行内文字操作：12sp 纯文字、无底色、无胶囊，悬停时淡出一层主题色背景。
+ * 只有「开始游戏」用主题色，「删除」用错误色，其余是次要文字色；禁用时整体降到 38% 透明度。
+ */
 @Composable
-private fun PlayRowMenu(
-    firstLabel: String,
-    onFirst: () -> Unit,
-    secondLabel: String,
-    onSecond: () -> Unit,
-) {
-    var menu by remember { mutableStateOf(false) }
-    Box {
-        SmallIconButton(Icons.Outlined.MoreHoriz, "更多操作", onClick = { menu = true })
-        DropdownMenu(menu, { menu = false }) {
-            DropdownMenuItem(
-                { Text(firstLabel, fontSize = 13.sp) },
-                {
-                    menu = false
-                    onFirst()
-                },
+private fun PlayRowAction(text: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    Text(
+        text,
+        Modifier.clip(shape)
+            .hoverHighlight(shape, enabled = enabled)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
             )
-            DropdownMenuItem(
-                { Text(secondLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.error) },
-                {
-                    menu = false
-                    onSecond()
-                },
-            )
-        }
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = if (enabled) color else color.copy(alpha = .38f),
+        maxLines = 1,
+    )
+}
+
+/**
+ * 标题行的分段开关：「存档」/「服务器」二选一，正文只渲染选中的一类。
+ * 选中项用主题色浅底 + 主题色文字，未选中项是次要色文字，未选中项悬停有反馈。
+ */
+@Composable
+private fun KindSwitch(kind: EntryKind, onKindChange: (EntryKind) -> Unit) {
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    Row(
+        Modifier.clip(shape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .04f))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        KindSwitchItem("存档", kind == EntryKind.World) { onKindChange(EntryKind.World) }
+        KindSwitchItem("服务器", kind == EntryKind.Server) { onKindChange(EntryKind.Server) }
     }
+}
+
+/** 分段开关的一段；已选中时不再响应点击，避免重复写偏好。 */
+@Composable
+private fun KindSwitchItem(text: String, selected: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    Text(
+        text,
+        Modifier.clip(shape)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .14f)
+                else Color.Transparent
+            )
+            .hoverHighlight(shape, enabled = !selected)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = !selected,
+                onClick = onClick,
+            )
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        fontSize = 11.sp,
+        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+        color =
+            if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
 }
 
 /**
@@ -513,8 +610,6 @@ private fun PlayRowMenu(
  */
 @Composable
 private fun AllRecentPlayDialog(
-    instance: GameInstance,
-    actions: UiActions,
     data: RecentPlayData,
     busy: Boolean,
     refreshToken: Int,
@@ -567,8 +662,6 @@ private fun AllRecentPlayDialog(
                 }
                 HorizontalDivider(color = hairline())
                 AllRecentPlayList(
-                    instance = instance,
-                    actions = actions,
                     items = data.all,
                     busy = busy,
                     refreshToken = refreshToken,
@@ -587,8 +680,6 @@ private fun AllRecentPlayDialog(
 /** 浮层内容：分组的全部行；列表本身在 [listMaxHeight] 内滚动。 */
 @Composable
 private fun AllRecentPlayList(
-    instance: GameInstance,
-    actions: UiActions,
     items: List<RecentPlayItem>,
     busy: Boolean,
     refreshToken: Int,
@@ -621,8 +712,6 @@ private fun AllRecentPlayList(
             item(key = "section-worlds") { RecentSectionLabel("存档") }
             items(worlds, key = { "world:" + it.key }) { item ->
                 WorldPlayRow(
-                    instance = instance,
-                    actions = actions,
                     entry = item,
                     timeLabel = relativeTimeLabel(item.usedAt, now),
                     enabled = !busy,
@@ -768,11 +857,8 @@ private fun rememberServerPing(address: String, refreshToken: Int): ServerPingSn
 /** 面板的读取结果：`loading` 与「空」分开，加载中不显示空提示。 */
 private data class RecentPlayData(
     val instanceId: String = "",
-    /** 面板卡片里显示的前 [RECENT_PLAY_ROWS] 行。 */
-    val items: List<RecentPlayItem> = emptyList(),
-    /** 全部行（不截断），「查看全部」浮层用它列出所有存档与服务器。 */
+    /** 全部行（不截断，两类都有）；面板按选中的类别取前 [RECENT_PLAY_ROWS] 行，「查看全部」浮层列出全部。 */
     val all: List<RecentPlayItem> = emptyList(),
-    val total: Int = 0,
     val loading: Boolean = true,
 )
 
@@ -856,9 +942,7 @@ private fun loadRecentPlays(
     val merged = mergeByTime(worlds, serverItems)
     return RecentPlayData(
         instanceId = instance.id,
-        items = merged.take(RECENT_PLAY_ROWS),
         all = merged,
-        total = merged.size,
         loading = false,
     )
 }
@@ -889,8 +973,8 @@ private fun decodeServerIcon(bytes: ByteArray?): ImageBitmap? = bytes?.let { dat
 /**
  * 相对时间：「刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 上个月 / N 个月前 / N 年前」。
  *
- * 应用里原本没有相对时间工具——实例列表（[LaunchPage] 的 `playedAtLabel`）用的是 「MM-dd
- * HH:mm」绝对时间，不能直接复用；这里保留全应用唯一一份相对时间格式化， 不再另写第二份。
+ * 应用里原本没有相对时间工具——实例页用的是 「MM-dd HH:mm」绝对时间，不能直接复用；
+ * 这里保留全应用唯一一份相对时间格式化，不再另写第二份。
  */
 private fun relativeTimeLabel(time: Instant?, now: Instant = Instant.now()): String {
     if (time == null) return ""

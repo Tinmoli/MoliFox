@@ -194,23 +194,23 @@ final class SettingsActionChecks {
 
     private static void downloadSources(Robot robot, Path root) throws Exception {
         UiSmoke.clickRail(robot, "下载");
-        pick(robot, "自动（官方优先，失败切换）", "官方源");
+        pick(robot, "自动", "官方源");
         save(robot);
         expect(root, "downloadSource", "official");
         pick(robot, "官方源", "BMCLAPI 镜像源");
         save(robot);
         expect(root, "downloadSource", "bmclapi");
-        pick(robot, "BMCLAPI 镜像源", "自动（官方优先，失败切换）");
+        pick(robot, "BMCLAPI 镜像源", "自动");
         save(robot);
         expect(root, "downloadSource", "auto");
-        UiSmoke.click(robot, "自动（官方优先，失败切换）", false);
+        UiSmoke.click(robot, "自动", false);
         UiSmoke.click(robot, "官方版本列表");
         save(robot);
         expect(root, "versionListSource", "official");
         pick(robot, "官方版本列表", "BMCLAPI 镜像版本列表");
         save(robot);
         expect(root, "versionListSource", "bmclapi");
-        pick(robot, "BMCLAPI 镜像版本列表", "自动（官方优先，失败切换）");
+        pick(robot, "BMCLAPI 镜像版本列表", "自动");
         save(robot);
         expect(root, "versionListSource", "auto");
         pick(robot, "8 个文件", "4 个文件");

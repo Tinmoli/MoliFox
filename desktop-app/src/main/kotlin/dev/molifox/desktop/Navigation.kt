@@ -27,20 +27,44 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 
-class DesktopNavigationState {
-    var page by androidx.compose.runtime.mutableStateOf(Page.Home)
+/**
+ * 顶部导航条目，列表顺序就是显示顺序：开始、下载、联机、设置。
+ * 「实例」已从导航移除（页面与 [Page] 枚举保留，仍可从开始页与实例详情进入）。
+ */
+val TopNavPages: List<Page> = listOf(Page.Home, Page.Discover, Page.Multiplayer, Page.Settings)
+
+/**
+ * 旧版本存下的顶部标签名 → 可显示的导航页。
+ * 名字可能存英文枚举名或中文标题；「实例」已不在导航里，日志、账户列表等子页同样不在，
+ * 因此这些旧值和任何无法识别的值都回落到开始页，枚举增删不会让旧配置崩溃。
+ */
+fun topNavPageOf(stored: String?): Page {
+    val key = stored?.trim().orEmpty()
+    if (key.isEmpty()) return Page.Home
+    return TopNavPages.firstOrNull { it.name.equals(key, true) || it.title == key } ?: Page.Home
+}
+
+class DesktopNavigationState(initialTab: String? = null) {
+    var page by androidx.compose.runtime.mutableStateOf(topNavPageOf(initialTab))
     var editing by androidx.compose.runtime.mutableStateOf<String?>(null)
     var downloadKind by androidx.compose.runtime.mutableStateOf("minecraft")
     // 「账户列表」是开始页的子页：记住进入前的页面，返回时回到来源，而不是固定回开始页。
     private var accountReturnTo by androidx.compose.runtime.mutableStateOf(Page.Home)
+    // 实例详情同属子页：开始页「版本设置」进详情后返回开始，从实例列表进来则返回列表。
+    private var detailReturnTo by androidx.compose.runtime.mutableStateOf(Page.Instances)
 
-    /** 顶部导航的高亮归属：账户列表属于「开始」这一支，打开时仍高亮开始。 */
+    /**
+     * 顶部导航的高亮归属：只有导航里的页高亮自己。
+     * 账户列表、实例与日志都是「开始」这一支的子页，打开时仍高亮开始。
+     */
     val activeTab: Page
-        get() = if (page == Page.Accounts) Page.Home else page
+        get() = if (page in TopNavPages) page else Page.Home
 
     fun navigate(destination: Page, resources: Boolean = false) {
         editing = null
@@ -65,6 +89,22 @@ class DesktopNavigationState {
     fun closeAccounts() {
         page = if (accountReturnTo == Page.Accounts) Page.Home else accountReturnTo
     }
+
+    /**
+     * 打开实例详情：记下打开时可见的那一页。
+     * 开始页的「版本设置」传 Page.Home，实例列表里的「设置」传 Page.Instances。
+     */
+    fun openInstance(id: String, from: Page) {
+        editing = id
+        detailReturnTo = if (from == Page.Home) Page.Home else Page.Instances
+        page = Page.Instances
+    }
+
+    /** 关闭实例详情：回到打开它的那一页；从开始页进来就直接回开始，不再先落到实例列表。 */
+    fun closeInstance() {
+        editing = null
+        page = detailReturnTo
+    }
 }
 
 /** 选中/悬停/文字颜色共用的过渡曲线；关闭动画时直接跳到终值。 */
@@ -72,7 +112,11 @@ class DesktopNavigationState {
 private fun <T> stateSpec(): AnimationSpec<T> =
     if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.fast)
 
-/** 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧。 */
+/**
+ * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。
+ * 导航仍在顶部（顶部导航布局），只做视觉收紧；「设置」右侧的测试提示占用剩余空间，
+ * 窗口宽度不足 1100dp 时整条隐藏，不挤压导航和窗口按钮。
+ */
 @Composable
 fun AppHeader(
     navigation: DesktopNavigationState,
@@ -86,62 +130,91 @@ fun AppHeader(
         if (state.data.settings.titlebarTransparent) colors.surface.copy(alpha = 0f)
         else colors.surface
     Column(Modifier.fillMaxWidth().background(headerColor)) {
-        Row(
-            Modifier.fillMaxWidth()
-                .height(Metrics.titlebarHeight)
-                .padding(start = 16.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 品牌 + 导航：这一整片是窗口拖拽区的可视部分，双击切换最大化。
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // 窄窗口下提示会让位：整条隐藏，避免文字挤进窗口三键。
+            val showBetaNotice = maxWidth >= 1100.dp
             Row(
-                Modifier.weight(1f)
-                    .fillMaxHeight()
-                    .then(
-                        if (onTitlebarDoubleClick != null)
-                            Modifier.titlebarDoubleClick(onTitlebarDoubleClick)
-                        else Modifier
-                    ),
+                Modifier.fillMaxWidth()
+                    .height(Metrics.titlebarHeight)
+                    .padding(start = 16.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FoxMark(Modifier.size(22.dp))
-                Spacer(Modifier.width(8.dp))
-                Column {
-                    Text(
-                        "MoliFox",
-                        fontSize = 14.sp,
-                        lineHeight = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.onSurface,
-                    )
-                    Text(
-                        "v" + LAUNCHER_VERSION,
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
-                        color = colors.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.width(18.dp))
+                // 品牌 + 导航：这一整片是窗口拖拽区的可视部分，双击切换最大化。
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    Modifier.fillMaxHeight()
+                        .then(
+                            if (onTitlebarDoubleClick != null)
+                                Modifier.titlebarDoubleClick(onTitlebarDoubleClick)
+                            else Modifier
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // 主导航固定四个板块；日志与个性化从设置页进入。
-                    listOf(Page.Home, Page.Instances, Page.Discover, Page.Settings).forEach { item
-                        ->
-                        TopNavItem(
-                            page = item,
-                            selected = navigation.activeTab == item,
-                            badge = null,
-                            onClick = { navigation.navigate(item) },
+                    FoxMark(Modifier.size(22.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            "MoliFox",
+                            fontSize = 14.sp,
+                            lineHeight = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.onSurface,
+                        )
+                        Text(
+                            "v" + LAUNCHER_VERSION,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            color = colors.onSurfaceVariant,
                         )
                     }
+                    Spacer(Modifier.width(18.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // 顶部导航固定四项（开始 / 下载 / 联机 / 设置），顺序由 TopNavPages 决定；
+                        // 实例已移出导航，日志与个性化从设置页进入。
+                        TopNavPages.forEach { item ->
+                            TopNavItem(
+                                page = item,
+                                selected = navigation.activeTab == item,
+                                badge = null,
+                                onClick = { navigation.navigate(item) },
+                            )
+                        }
+                    }
                 }
+                // 品牌与导航宽度固定，剩余空间全给提示；窗口三键始终贴右，位置不随提示变化。
+                Box(
+                    Modifier.weight(1f)
+                        .fillMaxHeight()
+                        .then(
+                            if (onTitlebarDoubleClick != null)
+                                Modifier.titlebarDoubleClick(onTitlebarDoubleClick)
+                            else Modifier
+                        )
+                        .padding(end = 12.dp),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    if (showBetaNotice)
+                        Text(
+                            BETA_NOTICE,
+                            modifier = Modifier.fillMaxWidth(),
+                            color = colors.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.End,
+                        )
+                }
+                controls()
             }
-            controls()
         }
         HorizontalDivider(color = hairline())
     }
 }
+
+/** 顶部测试阶段提示；窗口过窄时整条不渲染。 */
+private const val BETA_NOTICE = "当前启动器为测试阶段，BUG 较多，请及时反馈"
 
 /** 顶部导航项：32dp 高、圆角 6、图标 17、文字 13，选中与悬停都用 120ms 颜色过渡。 */
 @Composable

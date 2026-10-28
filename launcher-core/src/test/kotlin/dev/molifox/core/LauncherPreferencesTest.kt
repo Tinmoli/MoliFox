@@ -45,7 +45,7 @@ class LauncherPreferencesTest {
         assertEquals("", restored.fontChoice)
         assertEquals(1f, restored.fontScale)
         assertTrue(restored.glassEnabled)
-        assertTrue(restored.pages.home.showRecent)
+        assertFalse(restored.pages.home.recentPlayExpanded)
     }
 
     @Test

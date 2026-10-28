@@ -53,6 +53,9 @@ val LocalAnimationsEnabled = staticCompositionLocalOf { true }
 val LocalReducedMotion = staticCompositionLocalOf { false }
 val LocalCornerRadius = staticCompositionLocalOf { 6.dp }
 
+/** 当前启动器设置：磨砂面板要读背景图路径、浓度与适配方式，避免每个调用点都传一遍。 */
+val LocalLauncherSettings = compositionLocalOf { LauncherSettings() }
+
 /** 统一过渡时长（毫秒）。页面与通用件复用同一组令牌，避免各处写 120/180/260。 */
 object Motion {
     const val fast = 120
@@ -285,6 +288,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
             LocalAnimationsEnabled provides settings.animationsEnabled,
             LocalReducedMotion provides !settings.animationsEnabled,
             LocalCornerRadius provides settings.cornerRadiusDp.coerceIn(0, 24).dp,
+            LocalLauncherSettings provides settings,
             LocalDensity provides
                 Density(
                     density.density * settings.uiScale.coerceIn(.85f, 1.2f),

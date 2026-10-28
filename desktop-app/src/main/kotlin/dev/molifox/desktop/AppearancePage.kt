@@ -98,72 +98,48 @@ fun LauncherBackdrop(settings: LauncherSettings) {
     }
 }
 
-/** 设置 → 外观板块：保留主题与效果 / 字体与缩放 / 页面布局三个子分类； 页面标题由设置页统一提供。右上角是只读的实时预览块。 */
+/** 设置 → 外观板块：子页（主题与效果 / 字体与缩放 / 页面布局）由设置页左栏在「外观」下面展开选择， 这里只渲染当前子页的设置卡片：没有页面标题、没有说明行、也没有自己的标签行。 */
 @Composable
 fun ColumnScope.AppearanceSection(
     state: LauncherState,
     actions: UiActions,
     onResetDefaults: () -> Unit,
+    subSection: Int,
+    onOpenFont: () -> Unit,
 ) {
-    var section by remember { mutableIntStateOf(0) }
     val settings = state.data.settings
     // 外观与其它分区一致：改动当场写入 store，MoliTheme / LauncherBackdrop 随之重绘，
     // 所以预览和窗口效果都是真的「实时」，不存在未保存状态。
     val apply: AppearanceChange = { change -> applySetting(actions, change) }
-    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-        Column(Modifier.width(168.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            SettingsGroupTitle("外观", topPadding = 2.dp)
-            listOf(
-                    "主题与效果" to Icons.Outlined.Palette,
-                    "字体与缩放" to Icons.Outlined.TextFields,
-                    "页面布局" to Icons.Outlined.DashboardCustomize,
-                )
-                .forEachIndexed { index, (title, icon) ->
-                    NavigationEntry(title, icon, section == index, onClick = { section = index })
-                }
+    Column(Modifier.weight(1f).fillMaxWidth()) {
+        // 只留实时预览，靠右对齐：随主题 / 强调色 / 字体 / 缩放即时变化，只读、无业务回调。
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            AppearanceLivePreview()
         }
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            // 右上角实时预览：随主题 / 强调色 / 字体 / 缩放即时变化，只读、无业务回调。
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("外观预览", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "只读预览；随主题、强调色、字体与缩放即时变化。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                    )
+        Crossfade(
+            subSection,
+            Modifier.weight(1f).fillMaxWidth(),
+            animationSpec = tween(if (LocalReducedMotion.current) 0 else 150),
+            label = "appearanceSection",
+        ) { index ->
+            ScrollColumn(Modifier.fillMaxSize()) {
+                when (index) {
+                    0 -> ThemePreferences(settings, actions, apply, onOpenFont = onOpenFont)
+                    1 -> FontPreferences(settings, actions, apply)
+                    else -> PageLayoutPreferences(settings, apply)
                 }
-                AppearanceLivePreview()
-            }
-            Crossfade(
-                section,
-                Modifier.weight(1f).fillMaxWidth(),
-                animationSpec = tween(if (LocalReducedMotion.current) 0 else 150),
-                label = "appearanceSection",
-            ) { index ->
-                ScrollColumn(Modifier.fillMaxSize()) {
-                    when (index) {
-                        0 ->
-                            ThemePreferences(
-                                state.data.settings,
-                                actions,
-                                apply,
-                                onOpenFont = { section = 1 },
-                            )
-                        1 -> FontPreferences(state.data.settings, actions, apply)
-                        else -> PageLayoutPreferences(state.data.settings, apply)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    SettingsResetFooter(onResetDefaults)
-                }
+                Spacer(Modifier.height(6.dp))
+                SettingsResetFooter(onResetDefaults)
             }
         }
     }
 }
+
+/** 外观子页标题：顺序与设置页左栏「外观」下面展开的子条目一致。 */
+internal val appearanceSubSections = listOf("主题与效果", "字体与缩放", "页面布局")
 
 /** 120×80 实时预览块：一张卡片 + 一行列表 + 一枚主按钮，全部读当前主题与字体。 */
 @Composable

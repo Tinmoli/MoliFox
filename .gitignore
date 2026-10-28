@@ -17,3 +17,6 @@ release/
 .DS_Store
 # Local-only launcher references; never publish third-party screenshots or cached source.
 docs/ui-reference/
+
+__pycache__/
+*.pyc

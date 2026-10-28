@@ -473,8 +473,7 @@ class LauncherController(
         }
         require(settings.fontChoice.length <= 2048 && settings.customFonts.size <= 12) { "字体设置无效" }
         require(
-            settings.pages.home.recentCount in 1..12 &&
-                settings.pages.versions.view in listOf("list", "grid") &&
+            settings.pages.versions.view in listOf("list", "grid") &&
                 settings.pages.versions.sort in listOf("recent", "name", "created") &&
                 settings.pages.logs.defaultTab in listOf("tasks", "logs") &&
                 settings.pages.logs.fontSize in 10..18
@@ -534,6 +533,9 @@ class LauncherController(
         validateExtraJvmArguments(settings.extraJvmArgs)
         if (settings.downloadCachePath != store.data.settings.downloadCachePath)
             store.directories.cache(settings.downloadCachePath).initialize()
+        // 自动下载源会缓存测速结果；换源（包括换回自动）后要重新挑最快的，不能用旧结果。
+        if (settings.downloadSource != store.data.settings.downloadSource)
+            network.resetAutoMirrorOrder()
         store.mutate {
             it.copy(
                 settings = settings.copy(proxyEnabled = settings.effectiveProxyMode() == "manual")

@@ -154,7 +154,8 @@ fun ColumnScope.InstanceDetailsPage(
     }
     // ---------------- 页头 ----------------
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        HeaderIconButton(Icons.Outlined.ArrowBack, "返回实例列表", onClick = onBack)
+        // 返回目标由导航状态决定（实例列表或开始页的版本设置），所以标签保持中性。
+        HeaderIconButton(Icons.Outlined.ArrowBack, "返回", onClick = onBack)
         Spacer(Modifier.width(10.dp))
         // 实例页头也显示图标：默认草方块，自定义图片或加载器图标会替换它。
         IconButton(
@@ -357,68 +358,74 @@ fun ColumnScope.InstanceDetailsPage(
     }
     // ---------------- 左侧页签 + 右侧内容 ----------------
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        ScrollColumn(Modifier.width(158.dp).fillMaxHeight(), gap = 3.dp) {
-            instanceTabs.forEachIndexed { index, item ->
-                InstanceRailItem(item.title, item.icon, tab == index) { tab = index }
-            }
-            Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
-            Spacer(Modifier.height(6.dp))
-            InstanceRailItem(
-                "游戏文件夹",
-                Icons.Outlined.FolderOpen,
-                foldersOpen,
-                onClick = {
-                    foldersOpen = !foldersOpen
-                    if (foldersOpen) manageOpen = false
-                },
-            )
-            if (foldersOpen)
-                listOf(
-                        "实例文件夹" to "",
-                        "模组文件夹" to "mods",
-                        "资源包文件夹" to "resourcepacks",
-                        "光影包文件夹" to "shaderpacks",
-                        "存档文件夹" to "saves",
-                        "原理图文件夹" to "schematics",
-                        "配置文件夹" to "config",
-                        "日志文件夹" to "logs",
-                        "崩溃报告文件夹" to "crash-reports",
-                        "截图文件夹" to "screenshots",
-                    )
-                    .filter { (_, subfolder) ->
-                        runCatching {
-                                java.nio.file.Files.readAttributes(
-                                        actions.controller.store
-                                            .instancePath(instance.id)
-                                            .resolve(subfolder),
-                                        java.nio.file.attribute.BasicFileAttributes::class.java,
-                                    )
-                                    .isDirectory
-                            }
-                            .getOrDefault(false)
-                    }
-                    .forEach { (title, subfolder) ->
-                        RailSubEntry(title) {
-                            actions.run {
-                                if (subfolder.isBlank()) actions.controller.openFolder(instance.id)
-                                else actions.controller.openFolder(instance.id, subfolder)
+        // 左侧页签整栏套磨砂面板：宽度、条目尺寸与点击行为都不变。
+        FrostedPanel(Modifier.width(158.dp).fillMaxHeight()) {
+            ScrollColumn(Modifier.fillMaxSize(), gap = 3.dp) {
+                instanceTabs.forEachIndexed { index, item ->
+                    InstanceRailItem(item.title, item.icon, tab == index) { tab = index }
+                }
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)
+                )
+                Spacer(Modifier.height(6.dp))
+                InstanceRailItem(
+                    "游戏文件夹",
+                    Icons.Outlined.FolderOpen,
+                    foldersOpen,
+                    onClick = {
+                        foldersOpen = !foldersOpen
+                        if (foldersOpen) manageOpen = false
+                    },
+                )
+                if (foldersOpen)
+                    listOf(
+                            "实例文件夹" to "",
+                            "模组文件夹" to "mods",
+                            "资源包文件夹" to "resourcepacks",
+                            "光影包文件夹" to "shaderpacks",
+                            "存档文件夹" to "saves",
+                            "原理图文件夹" to "schematics",
+                            "配置文件夹" to "config",
+                            "日志文件夹" to "logs",
+                            "崩溃报告文件夹" to "crash-reports",
+                            "截图文件夹" to "screenshots",
+                        )
+                        .filter { (_, subfolder) ->
+                            runCatching {
+                                    java.nio.file.Files.readAttributes(
+                                            actions.controller.store
+                                                .instancePath(instance.id)
+                                                .resolve(subfolder),
+                                            java.nio.file.attribute.BasicFileAttributes::class.java,
+                                        )
+                                        .isDirectory
+                                }
+                                .getOrDefault(false)
+                        }
+                        .forEach { (title, subfolder) ->
+                            RailSubEntry(title) {
+                                actions.run {
+                                    if (subfolder.isBlank())
+                                        actions.controller.openFolder(instance.id)
+                                    else actions.controller.openFolder(instance.id, subfolder)
+                                }
                             }
                         }
-                    }
-            InstanceRailItem(
-                "管理",
-                Icons.Outlined.MoreHoriz,
-                manageOpen,
-                onClick = {
-                    manageOpen = !manageOpen
-                    if (manageOpen) foldersOpen = false
-                },
-            )
-            if (manageOpen) {
-                RailSubEntry("重命名实例") { renaming = true }
-                RailSubEntry("删除实例") { onDelete() }
-                RailSubEntry("导出整合包") { exportingMrpack = true }
+                InstanceRailItem(
+                    "管理",
+                    Icons.Outlined.MoreHoriz,
+                    manageOpen,
+                    onClick = {
+                        manageOpen = !manageOpen
+                        if (manageOpen) foldersOpen = false
+                    },
+                )
+                if (manageOpen) {
+                    RailSubEntry("重命名实例") { renaming = true }
+                    RailSubEntry("删除实例") { onDelete() }
+                    RailSubEntry("导出整合包") { exportingMrpack = true }
+                }
             }
         }
         Box(Modifier.weight(1f).fillMaxHeight()) {

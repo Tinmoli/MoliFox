@@ -23,6 +23,8 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,6 +48,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -419,6 +422,9 @@ fun CompactTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     // 可选的外部聚焦入口：例如「添加认证服务器」入口打开对话框后直接落焦在地址框上。
     focusRequester: FocusRequester? = null,
+    // 可选的 IME 动作：例如认证服务器登录框的密码栏用 Done，让软键盘「完成」与回车都走同一个提交函数。
+    imeAction: ImeAction = ImeAction.Default,
+    onImeAction: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
@@ -472,6 +478,22 @@ fun CompactTextField(
                 cursorBrush = SolidColor(colors.primary),
                 interactionSource = interaction,
                 visualTransformation = visualTransformation,
+                keyboardOptions =
+                    if (imeAction == ImeAction.Default) KeyboardOptions.Default
+                    else KeyboardOptions(imeAction = imeAction),
+                // IME 的「完成 / 前往 / 发送」统一落到调用方给的同一个提交函数；没有给就保持默认行为。
+                keyboardActions =
+                    if (onImeAction == null) KeyboardActions.Default
+                    else {
+                        val action = onImeAction
+                        KeyboardActions(
+                            onDone = { action?.invoke() },
+                            onGo = { action?.invoke() },
+                            onSend = { action?.invoke() },
+                            onSearch = { action?.invoke() },
+                            onNext = { action?.invoke() },
+                        )
+                    },
                 modifier =
                     Modifier.fillMaxWidth()
                         .then(

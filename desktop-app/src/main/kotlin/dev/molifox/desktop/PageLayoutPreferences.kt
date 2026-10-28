@@ -31,30 +31,17 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     }
                 }
                 SettingDivider()
-                PreferenceSwitch("最近游玩", "在首页列出最近使用的版本", options.home.showRecent) { value ->
+                PreferenceSwitch(
+                    "展开最近游玩",
+                    "首页「最近游玩的存档或服务器」是否展开；在卡片标题行折叠后这里同步变化",
+                    options.home.recentPlayExpanded,
+                ) { value ->
                     apply {
                         it.copy(
-                            pages = it.pages.copy(home = it.pages.home.copy(showRecent = value))
+                            pages =
+                                it.pages.copy(home = it.pages.home.copy(recentPlayExpanded = value))
                         )
                     }
-                }
-                SettingDivider()
-                SettingRow("最近版本数量", "首页最多显示 6 条，其余请到实例页查看") {
-                    SimpleDropdown(
-                        options.home.recentCount.toString(),
-                        listOf(3, 5, 8, 12).map { it.toString() to (it.toString() + " 个版本") },
-                        { value ->
-                            apply {
-                                it.copy(
-                                    pages =
-                                        it.pages.copy(
-                                            home = it.pages.home.copy(recentCount = value.toInt())
-                                        )
-                                )
-                            }
-                        },
-                        Modifier.width(170.dp),
-                    )
                 }
             }
         1 ->

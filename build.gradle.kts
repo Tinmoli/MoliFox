@@ -8,7 +8,7 @@ plugins {
 
 allprojects {
     group = "dev.molifox"
-    version = "0.3.0"
+    version = "0.4.0-beta"
 }
 
 apply(from = "gradle/test-hygiene.gradle.kts")

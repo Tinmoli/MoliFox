@@ -48,12 +48,13 @@ import kotlinx.coroutines.withContext
  * 账户列表页：左侧常驻 220dp 添加入口栏 + 右侧账户卡片栏。
  *
  * - 顶栏固定：返回箭头 + 「账户列表」标题；
- * - 左栏四条入口逐行铺满宽度：微软账户 / 离线账户 / 认证服务器 / 添加认证服务器， 行高 40dp、图标 + 文字、悬停淡入行底色，与全站列表行同一节奏；
- *   认证服务器入口直接列出已保存的服务器（默认含核心内置的 LittleSkin）， 添加认证服务器入口打开同一个对话框并把焦点放在地址框上；
+ * - 左栏入口逐行铺满宽度：微软账户 / 离线账户 / 每台已保存的认证服务器各一行（行名是服务器名）/ 添加认证服务器， 行高 40dp、图标 + 文字、悬停淡入行底色，与全站列表行同一节奏；
+ *   点服务器行直接进该服务器的用户名与密码；没有已保存服务器时才显示灰掉的「认证服务器」行与提示， 添加认证服务器入口则始终在最后，打开同一个对话框并把焦点放在地址框上；
  * - 右栏保持原样：单选圆点、40dp 头像、名字 + 类型、悬停才出现的删除；
  * - 列表为空时右栏居中显示史蒂夫头像 + 「没有游戏账户」+ 一行「从左侧添加账户」提示。
  *
- * 认证服务器入口打开 [AuthlibLoginDialog]：先校验并保存 Yggdrasil 服务器，再用用户名与密码登录； 对话框保存账户后会写入同一个 store，本页直接随
+ * 认证服务器行打开 [AuthlibLoginDialog] 的 [AuthlibEntry.Server] 入口，直接落在用户名与密码；
+ * [AuthlibEntry.NewServer] 入口先校验并保存 Yggdrasil 服务器。对话框保存账户后会写入同一个 store，本页直接随
  * [LauncherState] 重新组合，无需回调刷新。
  *
  * 切换与删除直接复用核心的 AccountService：[AccountService.select] 切换当前账户， [AccountService.remove]
@@ -123,29 +124,36 @@ fun ColumnScope.AccountListPage(
         horizontalArrangement = Arrangement.spacedBy(Metrics.cardGap),
     ) {
         // 左栏：添加入口逐行铺满 220dp，行高 / 圆角 / 悬停行底色与全站列表行一致。
+        // 已保存的认证服务器每台一行，服务器多了这一栏要能滚动，不能顶出可视区。
         Column(
-            Modifier.width(220.dp).fillMaxHeight(),
+            Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             AddAccountRow(Icons.Outlined.AccountCircle, "微软账户", enabled = !signingIn) {
                 beginMicrosoftLogin()
             }
             AddAccountRow(Icons.Outlined.PersonOutline, "离线账户") { offlineDialog = true }
-            // 核心的 LauncherData 默认带 LittleSkin；只有用户把服务器全部删掉后这一行才不可用。
-            val hasSavedServers = state.data.authlibServers.isNotEmpty()
-            AddAccountRow(Icons.Outlined.Dns, "认证服务器", enabled = hasSavedServers) {
-                authlibEntry = AuthlibEntry.SavedServers
-            }
-            AddAccountRow(Icons.Outlined.AddCircleOutline, "添加认证服务器") {
-                authlibEntry = AuthlibEntry.NewServer
-            }
-            if (!hasSavedServers)
+            // 已保存的认证服务器每台各占一行，行名就是服务器名：点开直接是这台服务器的用户名与密码，
+            // 不经过服务器列表、不需要「下一步」、也不显示地址框。核心默认带 LittleSkin，开箱即有一行。
+            val savedServers = state.data.authlibServers
+            if (savedServers.isEmpty()) {
+                AddAccountRow(Icons.Outlined.Dns, "认证服务器", enabled = false) {}
                 Text(
                     "还没有已保存的认证服务器",
                     Modifier.padding(start = 10.dp, top = 2.dp),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else {
+                savedServers.forEach { server ->
+                    AddAccountRow(Icons.Outlined.Dns, server.name.ifBlank { server.url }) {
+                        authlibEntry = AuthlibEntry.Server(server)
+                    }
+                }
+            }
+            AddAccountRow(Icons.Outlined.AddCircleOutline, "添加认证服务器") {
+                authlibEntry = AuthlibEntry.NewServer
+            }
         }
         // 右栏：账户卡片列表或空态，始终占满剩余宽度，空态也在这栏里居中。
         Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -362,6 +370,8 @@ private fun AddAccountRow(
             fontWeight = FontWeight.Medium,
             color = tint,
             maxLines = 1,
+            // 服务器名可能很长（或直接退回地址），行宽固定 220dp，超出省略而不是撑开或截断到半个字。
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

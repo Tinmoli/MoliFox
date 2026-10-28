@@ -115,6 +115,25 @@ class NetworkClient(
         client.newBuilder().followRedirects(false).followSslRedirects(false).build()
     }
 
+    /**
+     * 自动源测速专用：连接、读取与整次调用都压在同一段短超时内（与启动器的镜像探测一致），
+     * 复用同一连接池与调度器，不额外占线程。
+     */
+    private val probeClient by lazy {
+        client
+            .newBuilder()
+            .connectTimeout(AUTO_PROBE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .readTimeout(AUTO_PROBE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .callTimeout(AUTO_PROBE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    /** 「自动」源的测速结果缓存：顺序、产生它的设置值与时间戳；设置一变就失效。 */
+    private val autoProbeLock = Mutex()
+    @Volatile private var autoProbeOrder: List<String>? = null
+    @Volatile private var autoProbeSetting: String? = null
+    @Volatile private var autoProbeAt = 0L
+
     /** 按目标路径分片的下载锁，避免同一文件被并发写入同一份 `.part`。 */
     private val downloadLocks = List(16) { Mutex() }
     private val downloadJournals =
@@ -218,10 +237,79 @@ class NetworkClient(
         else listOf(mirrorUrl(url, selection))
     }
 
+    /**
+     * 实际请求用的地址顺序：自动模式按测速结果（最快优先），其余模式与 [downloadCandidates] 一致。
+     * 官方与镜像地址相同的主机（本地测试服务器、非镜像仓库）不测速，也不会多发探测请求。
+     */
+    internal suspend fun orderedCandidates(
+        url: String,
+        selection: String = source(),
+    ): List<String> {
+        val plain = downloadCandidates(url, selection)
+        if (selection != "auto" || plain.size < 2) return plain
+        return autoMirrorOrder().map { mirrorUrl(url, it) }.distinct()
+    }
+
+    /**
+     * 自动模式的真实含义：官方与 BMCLAPI 并发测速（短超时），按耗时升序决定优先顺序；
+     * 探测失败的源排到最后，仍保留作下载失败时的回退。结果缓存，下载源设置一变就清空。
+     */
+    private suspend fun autoMirrorOrder(): List<String> =
+        autoProbeLock.withLock {
+            val cached = autoProbeOrder
+            if (
+                cached != null &&
+                    autoProbeSetting == source() &&
+                    System.currentTimeMillis() - autoProbeAt < AUTO_PROBE_CACHE_MILLIS
+            )
+                return@withLock cached
+            val order = coroutineScope {
+                val measured =
+                    AUTO_PROBE_SOURCES
+                        .map { mirror -> async(Dispatchers.IO) { mirror to measureSource(mirror) } }
+                        .awaitAll()
+                measured.filter { it.second != null }.sortedBy { it.second }.map { it.first } +
+                    measured.filter { it.second == null }.map { it.first }
+            }
+            autoProbeOrder = order
+            autoProbeSetting = source()
+            autoProbeAt = System.currentTimeMillis()
+            order
+        }
+
+    /** 单源测速：取版本清单开头的一小段确认真的能取到内容，返回毫秒；不可达返回 null。 */
+    private suspend fun measureSource(source: String): Long? {
+        val url = mirrorUrl(AUTO_PROBE_URL, source)
+        return withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            try {
+                probeClient
+                    .newCall(builder(url).header("Range", "bytes=0-255").build())
+                    .execute()
+                    .use { response ->
+                        if (!response.isSuccessful) return@withContext null
+                        response.body?.byteStream()?.read(ByteArray(48))
+                        (System.nanoTime() - started) / 1_000_000
+                    }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** 下载源设置变更时调用：丢弃测速结果，下一次自动下载重新挑最快的源。 */
+    fun resetAutoMirrorOrder() {
+        autoProbeOrder = null
+        autoProbeSetting = null
+        autoProbeAt = 0L
+    }
+
     suspend fun text(url: String, sourceOverride: String? = null): String =
         withContext(Dispatchers.IO) {
             var lastError: Exception? = null
-            for (candidate in downloadCandidates(url, sourceOverride ?: source())) {
+            for (candidate in orderedCandidates(url, sourceOverride ?: source())) {
                 try {
                     execute(builder(candidate).build()).use { response ->
                         check(response.isSuccessful) {
@@ -500,7 +588,7 @@ class NetworkClient(
                     discardPartial(target)
                     return@withTargetLock
                 }
-                val candidates = downloadCandidates(artifact.url)
+                val candidates = orderedCandidates(artifact.url)
                 val tries = attempts.coerceIn(1, 8)
                 try {
                     for (attempt in 1..tries) {
@@ -734,6 +822,19 @@ class NetworkClient(
     companion object {
         /** 默认总尝试次数（含首次）：首次 + 2 次重试；重试沿用已有 `.part`。 */
         const val DEFAULT_DOWNLOAD_ATTEMPTS = 3
+
+        /** 自动源只在官方与 BMCLAPI 之间挑，和设置里的两个手动源一一对应。 */
+        private val AUTO_PROBE_SOURCES = listOf("official", "bmclapi")
+
+        /** 探测用的短超时：慢就当作不可用，不能拖住真正的下载。 */
+        const val AUTO_PROBE_TIMEOUT_MILLIS = 1_500L
+
+        /** 测速结果缓存时长；设置变更时另有主动清空。 */
+        const val AUTO_PROBE_CACHE_MILLIS = 5 * 60_000L
+
+        /** 探测目标：两个源都提供同一份版本清单，只读开头 256 字节确认可达。 */
+        private const val AUTO_PROBE_URL =
+            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
     }
 }
 

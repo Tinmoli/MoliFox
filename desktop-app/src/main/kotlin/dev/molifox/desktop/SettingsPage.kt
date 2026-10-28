@@ -6,12 +6,15 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -23,9 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
@@ -46,6 +52,9 @@ private val settingsIndex =
 
 // 搜索结果为独立状态：目标 -1 表示正在显示跨分区搜索结果。
 private const val SEARCH_RESULTS = -1
+
+// 「外观」是唯一带子页的分区：子条目在左栏「外观」下面展开，索引与 settingsIndex / when 分支一致。
+private const val APPEARANCE_SECTION = 3
 
 /** 设置卡片里的一行或一组控件：标题与说明参与搜索匹配。 */
 private class SettingBlock(
@@ -127,6 +136,8 @@ private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): La
 fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate: (Page) -> Unit) {
     val settings = state.data.settings
     var section by remember { mutableIntStateOf(0) }
+    // 外观子页（主题与效果 / 字体与缩放 / 页面布局）：选择器在左栏，「外观」下面的子条目里。
+    var appearanceSub by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var runtimes by remember { mutableStateOf<List<JavaRuntime>>(emptyList()) }
     var detecting by remember { mutableStateOf(false) }
@@ -219,18 +230,42 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
     }
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         // 左侧二级列表：项高 34、圆角 6、图标 16、文字 13，选中主题色容器底 + 主题色文字。
-        Column(
-            Modifier.width(168.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            SettingsGroupTitle("设置", topPadding = 2.dp)
-            settingsIndex.forEachIndexed { index, (title, icon) ->
-                NavigationEntry(
-                    title,
-                    icon,
-                    section == index && query.isBlank(),
-                    onClick = { section = index },
-                )
+        // 整栏套磨砂面板（宽度与条目尺寸不变，只换背景）；高度撑满，与右侧内容列同高。
+        FrostedPanel(Modifier.width(168.dp).fillMaxHeight()) {
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                SettingsGroupTitle("设置", topPadding = 2.dp)
+                settingsIndex.forEachIndexed { index, (title, icon) ->
+                    NavigationEntry(
+                        title,
+                        icon,
+                        section == index && query.isBlank(),
+                        onClick = { section = index },
+                    )
+                    // 外观的子页在「外观」下面向下展开；切到别的分区时收起（子页选择保留）。
+                    if (index == APPEARANCE_SECTION) {
+                        AnimatedVisibility(
+                            section == APPEARANCE_SECTION,
+                            enter = fadeIn(tween(duration)) + expandVertically(tween(duration)),
+                            exit = fadeOut(tween(duration)) + shrinkVertically(tween(duration)),
+                        ) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(top = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(1.dp),
+                            ) {
+                                appearanceSubSections.forEachIndexed { subIndex, subTitle ->
+                                    SettingSubEntry(
+                                        subTitle,
+                                        appearanceSub == subIndex,
+                                        onClick = { appearanceSub = subIndex },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         val target = if (query.isNotBlank()) SEARCH_RESULTS else section
@@ -259,7 +294,13 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
                 // 外观与日志由子页面提供，内部使用 weight / LazyColumn，必须放在无滚动容器中。
                 3 ->
                     Column(Modifier.fillMaxSize()) {
-                        AppearanceSection(state, actions, resetDefaults)
+                        AppearanceSection(
+                            state,
+                            actions,
+                            resetDefaults,
+                            subSection = appearanceSub,
+                            onOpenFont = { appearanceSub = 1 },
+                        )
                     }
                 4 ->
                     ScrollColumn(Modifier.fillMaxSize()) {
@@ -800,7 +841,7 @@ private fun downloadSettingCards(
                     SimpleDropdown(
                         settings.downloadSource,
                         listOf(
-                            "auto" to "自动（官方优先，失败切换）",
+                            "auto" to "自动",
                             "official" to "官方源",
                             "bmclapi" to "BMCLAPI 镜像源",
                         ),
@@ -811,7 +852,7 @@ private fun downloadSettingCards(
                     SimpleDropdown(
                         settings.versionListSource,
                         listOf(
-                            "auto" to "自动（官方优先，失败切换）",
+                            "auto" to "自动",
                             "official" to "官方版本列表",
                             "bmclapi" to "BMCLAPI 镜像版本列表",
                         ),
@@ -996,3 +1037,37 @@ private fun aboutSettingCards(actions: UiActions): List<SettingCard> =
             blocks = listOf(settingControl("MoliFox") { LauncherAboutPanel(actions) }),
         )
     )
+
+/** 外观子页条目：缩进在「外观」下面，高 28、圆角 6、文字 12；选中用主题色文字 + 主题色容器底。 */
+@Composable
+private fun SettingSubEntry(title: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    Row(
+        Modifier.fillMaxWidth()
+            .height(28.dp)
+            .focusRing(focused, cornerRadius = Metrics.innerRadius)
+            .clip(shape)
+            .background(if (selected) colors.primaryContainer else Color.Transparent)
+            .hoverHighlight(shape, interactionSource = interaction)
+            .selectable(
+                selected,
+                interaction,
+                LocalIndication.current,
+                role = Role.Tab,
+                onClick = onClick,
+            )
+            .padding(start = 26.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            color = if (selected) colors.primary else colors.onSurfaceVariant,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+        )
+    }
+}

@@ -57,24 +57,45 @@ fun ColumnScope.DownloadCenterPage(
     // 分类竖排在左侧，页面不显示“下载中心”标题，节省纵向空间。
     // 右侧内容随分类淡入切换（150ms），避免整块内容硬切。
     Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Column(Modifier.width(158.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            downloadKinds.forEach { item ->
-                DownloadKindItem(item.title, item.icon, kind == item.id) { onKindChange(item.id) }
-            }
-            Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
-        }
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            if (LocalAnimationsEnabled.current)
-                Crossfade(kind, animationSpec = tween(150), label = "download-kind") { current ->
-                    DownloadKindContent(current, state, actions, navigate, onKindChange) {
-                        actions.taskQueued()
+        // 分类左栏与右侧内容区都套磨砂面板：只换背景，宽度、内边距与点击行为不变。
+        // 两栏都撑满行高；左栏留 8dp 上下内边距，与右栏卡片的内缩对齐成一块。
+        FrostedPanel(
+            Modifier.width(158.dp).fillMaxHeight(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                downloadKinds.forEach { item ->
+                    DownloadKindItem(item.title, item.icon, kind == item.id) {
+                        onKindChange(item.id)
                     }
                 }
-            else
-                DownloadKindContent(kind, state, actions, navigate, onKindChange) {
-                    actions.taskQueued()
-                }
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)
+                )
+            }
+        }
+        // 内容区磨砂在卡片背后：卡片自身的白底不变，只在卡片之间的空隙里透出磨砂。
+        FrostedPanel(
+            Modifier.weight(1f).fillMaxHeight(),
+            contentPadding = PaddingValues(8.dp),
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                if (LocalAnimationsEnabled.current)
+                    Crossfade(
+                        kind,
+                        animationSpec = tween(150),
+                        label = "download-kind",
+                    ) { current ->
+                        DownloadKindContent(current, state, actions, navigate, onKindChange) {
+                            actions.taskQueued()
+                        }
+                    }
+                else
+                    DownloadKindContent(kind, state, actions, navigate, onKindChange) {
+                        actions.taskQueued()
+                    }
+            }
         }
     }
 }

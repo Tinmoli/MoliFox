@@ -4,7 +4,7 @@
 
 茉狐以游戏实例、内容管理和启动配置为核心，采用统一的樱花粉界面，支持字体、背景、透明度与磨砂效果设置。布局与操作参考 PCL、HMCL、SJMCL、Prism Launcher 和 Modrinth App，代码与视觉素材独立实现。
 
-**当前版本：0.3.0 Preview。** 项目仍在开发中；macOS、Android 及其他 CPU 架构暂不交付。本文状态核对日期为 **2026-10-28**，详细实测边界见 [验证记录](docs/VALIDATION.md)。
+**当前版本：0.4.0-beta（测试版）。** 项目仍在开发中；macOS、Android 及其他 CPU 架构暂不交付。本文状态核对日期为 **2026-10-29**，详细实测边界见 [验证记录](docs/VALIDATION.md)。
 
 ## 快速开始
 

@@ -219,7 +219,8 @@ val windowsResource =
         doLast {
             val output = nativeBuildDirectory.get().file("molifox.rc").asFile
             output.parentFile.mkdirs()
-            val icon = file("src/main/resources/icons/molifox.ico").absolutePath.replace('\\', '/')
+            val icon =
+                file("src/main/resources/icons/app/icon.ico").absolutePath.replace('\\', '/')
             val payload =
                 layout.buildDirectory
                     .file("portable/MoliFox.jar")
@@ -236,7 +237,7 @@ val compileWindowsResource =
         dependsOn(windowsResource)
         inputs.files(
             layout.buildDirectory.file("portable/MoliFox.jar"),
-            file("src/main/resources/icons/molifox.ico"),
+            file("src/main/resources/icons/app/icon.ico"),
         )
         outputs.file(nativeBuildDirectory.map { it.file("resource.o") })
         commandLine(

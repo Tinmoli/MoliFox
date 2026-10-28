@@ -44,9 +44,12 @@ import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** 实例行高：文字按钮比原来 52dp 的行更高，留出 64dp 给「开始游戏」主按钮与 12sp 文字操作。 */
+private val InstanceRowHeight = 64.dp
+
 /**
- * 实例页：顶部工具行（目录 + 新建 / 导入）、搜索行（搜索 / 收藏 / 排序 / 列表-网格）， 列表行 52dp 为默认视图，网格卡仅在切换到网格时出现。删除的二次确认仍在
- * Main.kt。
+ * 实例页：顶部工具行（目录 + 新建 / 导入）、搜索行（搜索 / 收藏 / 排序 / 列表-网格）， 列表行 64dp 为默认视图，网格卡仅在切换到网格时出现。行内操作全部是
+ * 带文字按钮（开始游戏 / 收藏 / 设置 / 删除），不再有图标按钮和三点菜单；删除的二次确认仍在 Main.kt。
  */
 @Composable
 fun ColumnScope.InstancesPage(
@@ -217,7 +220,12 @@ fun ColumnScope.InstancesPage(
                         state.data.selectedInstanceId,
                         busy,
                         preferences.showNotes,
-                        onSelect = { actions.run { actions.controller.selectInstance(it.id) } },
+                        // 开始页的「版本选择」把这里当作挑选页：选中后立刻回开始页，
+                        // 「当前游戏」卡与按钮文字跟着切到新实例。
+                        onSelect = {
+                            actions.run { actions.controller.selectInstance(it.id) }
+                            navigate(Page.Home)
+                        },
                         onManage = { onManage(it) },
                         onLaunch = { launch(it) },
                         onDelete = { onDelete(it) },
@@ -232,9 +240,14 @@ fun ColumnScope.InstancesPage(
                         actions,
                         state.data.selectedInstanceId,
                         busy,
-                        onSelect = { actions.run { actions.controller.selectInstance(it.id) } },
+                        // 网格视图与列表同一套挑选语义：选中后回到开始页。
+                        onSelect = {
+                            actions.run { actions.controller.selectInstance(it.id) }
+                            navigate(Page.Home)
+                        },
                         onManage = { onManage(it) },
                         onLaunch = { launch(it) },
+                        onDelete = { onDelete(it) },
                         onFavorite = {
                             actions.run { actions.controller.toggleFavorite(it) }
                         },
@@ -295,35 +308,33 @@ private fun CompactToggleButton(
     }
 }
 
-/** 图标按钮：30dp 触区、16dp 图标，悬停淡入，可带一层主题色底（启动按钮用）。 */
+/** 行内文字按钮：12sp、触区高 28dp，悬停淡入；实例列表不再使用纯图标入口。 */
 @Composable
-private fun CompactIconButton(
-    icon: ImageVector,
+private fun InstanceTextAction(
     label: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    container: Color? = null,
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Box(
-        Modifier.size(Metrics.iconButton)
+        Modifier.height(28.dp)
             .clip(shape)
-            .background(container ?: Color.Transparent, shape)
-            .hoverHighlight(shape, enabled = enabled && container == null)
-            .clickable(enabled = enabled, onClick = onClick),
+            .hoverHighlight(shape, enabled = enabled)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            icon,
+        Text(
             label,
-            Modifier.size(16.dp),
-            tint = if (enabled) tint else tint.copy(alpha = .38f),
+            fontSize = 12.sp,
+            color = if (enabled) tint else tint.copy(alpha = .38f),
+            maxLines = 1,
         )
     }
 }
 
-/** 列表视图：行高 52dp、圆角 6、悬停淡入，行尾只有启动 / 收藏 / 更多三个入口。 */
+/** 列表视图：行高 64dp、圆角 6、悬停淡入；行尾是「开始游戏 / 收藏 / 设置 / 删除」一排同款 12sp 文字按钮。 */
 @Composable
 private fun InstanceListBody(
     versions: List<GameInstance>,
@@ -381,9 +392,8 @@ private fun InstanceListRow(
     onFavorite: () -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
-    var menu by remember { mutableStateOf(false) }
     Surface(
-        Modifier.fillMaxWidth().height(Metrics.rowHeightWithDetail).clickable(onClick = onSelect),
+        Modifier.fillMaxWidth().height(InstanceRowHeight).clickable(onClick = onSelect),
         shape = shape,
         color = MaterialTheme.colorScheme.surface,
         border =
@@ -395,9 +405,9 @@ private fun InstanceListRow(
         Row(
             Modifier.fillMaxSize().hoverHighlight(shape).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             InstanceArtwork(instance, actions, Modifier.size(28.dp))
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -422,47 +432,29 @@ private fun InstanceListRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            CompactIconButton(
-                Icons.Outlined.PlayArrow,
-                "启动 " + instance.name,
+            InstanceTextAction(
+                "开始游戏",
                 onLaunch,
                 enabled = !busy,
                 tint = MaterialTheme.colorScheme.primary,
-                container = MaterialTheme.colorScheme.primaryContainer,
             )
-            CompactIconButton(
-                if (instance.favorite) Icons.Outlined.Star else Icons.Outlined.StarOutline,
-                "收藏 " + instance.name,
+            InstanceTextAction(
+                if (instance.favorite) "已收藏" else "收藏",
                 onFavorite,
                 tint =
                     if (instance.favorite) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Box {
-                CompactIconButton(Icons.Outlined.MoreHoriz, "更多操作", { menu = true })
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(
-                        { Text("管理实例", fontSize = 13.sp) },
-                        {
-                            menu = false
-                            onManage()
-                        },
-                    )
-                    DropdownMenuItem(
-                        { Text("删除实例", fontSize = 13.sp) },
-                        {
-                            menu = false
-                            onDelete()
-                        },
-                    )
-                }
-            }
+            InstanceTextAction("设置", onManage)
+            InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
         }
     }
 }
 
-/** 网格视图：最小高 168，悬停 1dp 主题色边 + 轻微底色。 */
+/** 网格卡固定高度：图标行 + 单行名称 + 单行副标题 + 底部操作行，最长内容也不裁切（内容约 138dp，余量留给弹性间隔）。 */
+private val InstanceCardHeight = 176.dp
+
+/** 网格视图：卡片固定高 176dp、悬停 1dp 主题色边 + 轻微底色；操作行贴底，所有卡片按钮对齐。 */
 @Composable
 private fun InstanceGridBody(
     versions: List<GameInstance>,
@@ -472,10 +464,12 @@ private fun InstanceGridBody(
     onSelect: (GameInstance) -> Unit,
     onManage: (String) -> Unit,
     onLaunch: (GameInstance) -> Unit,
+    onDelete: (GameInstance) -> Unit,
     onFavorite: (String) -> Unit,
 ) {
     LazyVerticalGrid(
-        GridCells.Adaptive(220.dp),
+        // 列宽下限 248dp：卡片内 220dp 才放得下「开始游戏 / 收藏 / 设置 / 删除」四个 12sp 文字按钮。
+        GridCells.Adaptive(248.dp),
         Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -490,6 +484,7 @@ private fun InstanceGridBody(
                 onSelect = { onSelect(instance) },
                 onManage = { onManage(instance.id) },
                 onLaunch = { onLaunch(instance) },
+                onDelete = { onDelete(instance) },
                 onFavorite = { onFavorite(instance.id) },
             )
         }
@@ -505,6 +500,7 @@ private fun InstanceGridCard(
     onSelect: () -> Unit,
     onManage: () -> Unit,
     onLaunch: () -> Unit,
+    onDelete: () -> Unit,
     onFavorite: () -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
@@ -512,7 +508,7 @@ private fun InstanceGridCard(
     val hovered by hoverSource.collectIsHoveredAsState()
     Surface(
         Modifier.fillMaxWidth()
-            .heightIn(min = 168.dp)
+            .height(InstanceCardHeight)
             .hoverable(hoverSource)
             .clickable(onClick = onSelect),
         shape = shape,
@@ -530,25 +526,14 @@ private fun InstanceGridCard(
                 },
             ),
     ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                InstanceArtwork(instance, actions, Modifier.size(32.dp))
-                Spacer(Modifier.weight(1f))
-                CompactIconButton(
-                    if (instance.favorite) Icons.Outlined.Star else Icons.Outlined.StarOutline,
-                    "收藏 " + instance.name,
-                    onFavorite,
-                    tint =
-                        if (instance.favorite) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Column(Modifier.fillMaxSize().padding(14.dp)) {
+            InstanceArtwork(instance, actions, Modifier.size(32.dp))
             Spacer(Modifier.height(10.dp))
             Text(
                 instance.name,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(4.dp))
@@ -559,20 +544,27 @@ private fun InstanceGridCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onManage, contentPadding = PaddingValues(horizontal = 2.dp)) {
-                    Text("管理", fontSize = 12.sp)
-                }
-                Spacer(Modifier.weight(1f))
-                CompactIconButton(
-                    Icons.Outlined.PlayArrow,
-                    "启动 " + instance.name,
+            // 弹性间隔吃掉剩余高度：无论名称长短，操作行都贴在卡片底部，跨卡片对齐。
+            Spacer(Modifier.weight(1f))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InstanceTextAction(
+                    "开始游戏",
                     onLaunch,
                     enabled = !busy,
                     tint = MaterialTheme.colorScheme.primary,
-                    container = MaterialTheme.colorScheme.primaryContainer,
                 )
+                InstanceTextAction(
+                    if (instance.favorite) "已收藏" else "收藏",
+                    onFavorite,
+                    tint =
+                        if (instance.favorite) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                InstanceTextAction("设置", onManage)
+                InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
             }
         }
     }

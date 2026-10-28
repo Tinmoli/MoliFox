@@ -162,7 +162,7 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring route(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength) route.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    HttpHandle session{WinHttpOpen(L"MoliFox/0.3.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.0-beta", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     check(session.handle != nullptr, "Open network connection");
     WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
     HttpHandle connection{WinHttpConnect(session, host.c_str(), components.nPort, 0)};
@@ -358,7 +358,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.3.0.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox-0.4.0-beta.jar";
         auto pending = temporary.path / L"launcher-payload.part";
         { std::ofstream output(pending, std::ios::binary | std::ios::trunc); output.write((const char*)bytes, size); check(output.good(), "Extract launcher payload"); }
         if (fs::exists(jar) && sha256(jar) == sha256(pending)) fs::remove(pending);

@@ -7,7 +7,7 @@ import java.time.Instant
 import java.util.UUID
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
-const val LAUNCHER_VERSION = "0.3.0"
+const val LAUNCHER_VERSION = "0.4.0-beta"
 
 enum class LoaderType(val title: String) {
     Vanilla("原版"),

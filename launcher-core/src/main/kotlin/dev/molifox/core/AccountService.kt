@@ -77,8 +77,24 @@ class AccountService(
             ?: runCatching { java.net.URI(normalized).host }.getOrNull().orEmpty()
     }
 
-    /** 删除已保存的服务器；账户本身保留，仍可用已存的令牌继续登录。 */
+    /**
+     * 是否为内置默认服务器（[DEFAULT_AUTHLIB_SERVER]，当前是 LittleSkin）。
+     *
+     * 内置项由 [LauncherData] 默认值播种、不可删除；比对走 [matchesAuthlibServer]，因此站点根地址、
+     * `/api/yggdrasil` 形式与末尾多一个 `/` 的写法都算同一台。界面用它隐藏 / 禁用删除入口，
+     * [removeAuthlibServer] 再用它兜底拒绝一次。
+     */
+    fun isBuiltinAuthlibServer(serverUrl: String): Boolean {
+        val normalized = normalizeAuthlibServerUrl(serverUrl) ?: return false
+        return matchesAuthlibServer(DEFAULT_AUTHLIB_SERVER.url, normalized)
+    }
+
+    /**
+     * 删除已保存的服务器；账户本身保留，仍可用已存的令牌继续登录。
+     * 内置默认服务器（LittleSkin）不可删除，返回 false 且不改动任何数据。
+     */
     fun removeAuthlibServer(serverUrl: String): Boolean {
+        if (isBuiltinAuthlibServer(serverUrl)) return false
         val normalized = normalizeAuthlibServerUrl(serverUrl) ?: serverUrl.trim()
         val target =
             store.data.authlibServers.find { matchesAuthlibServer(it.url, normalized) }

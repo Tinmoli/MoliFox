@@ -33,11 +33,17 @@ import javax.swing.JOptionPane
 import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
 
-/** 主导航只展示 entries 的前四项；Downloads（日志）与个性化外观都在设置页内。 */
+/**
+ * 顶部导航显示 Navigation.kt 里的 TopNavPages：开始、下载、联机、设置。
+ * 日志（Downloads）与账户列表（Accounts）是子页；实例页已移出导航但保留，仍可从开始页进入。
+ */
 enum class Page(val title: String, val subtitle: String, val icon: ImageVector) {
     Home("开始", "账户与游戏启动", Icons.Outlined.Home),
     Instances("实例", "管理版本与游戏内容", Icons.Outlined.Widgets),
     Discover("下载", "安装游戏与发现资源", Icons.Outlined.Explore),
+
+    /** 联机目前只有占位页：服务器列表、局域网与联机大厅都还没有实现。 */
+    Multiplayer("联机", "服务器列表、局域网与联机大厅", Icons.Outlined.Groups),
     Settings("设置", "游戏、外观、下载与日志", Icons.Outlined.Tune),
     Downloads("日志", "运行输出与启动诊断", Icons.Outlined.Description),
 
@@ -234,7 +240,7 @@ fun main() {
             }
             if (!windowVisible && traySupported)
                 Tray(
-                    painterResource("icons/molifox.png"),
+                    painterResource("icons/app/icon.png"),
                     tooltip = "MoliFox · 游戏运行中",
                     onAction = {
                         windowVisible = true
@@ -269,7 +275,7 @@ fun main() {
                 state = windowState,
                 visible = windowVisible,
                 title = "MoliFox",
-                icon = painterResource("icons/molifox.png"),
+                icon = painterResource("icons/app/icon.png"),
                 undecorated = true,
                 transparent = windowTransparent,
                 resizable = true,
@@ -373,10 +379,10 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     }
     val navigate: (Page) -> Unit = { navigation.navigate(it, resources = true) }
     val install: () -> Unit = { navigation.install() }
-    val manage: (String) -> Unit = {
-        navigation.editing = it
-        navigation.page = Page.Instances
-    }
+    // 两个入口都进同一个实例详情页，但返回目标不同：
+    // 开始页的「版本设置」返回开始，实例列表里的「设置」返回列表。
+    val manageFromHome: (String) -> Unit = { navigation.openInstance(it, Page.Home) }
+    val manageInList: (String) -> Unit = { navigation.openInstance(it, Page.Instances) }
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize()
@@ -395,7 +401,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                             actions,
                             install,
                             navigate,
-                            manage,
+                            manageFromHome,
                             { navigation.openAccounts() },
                         )
                     // 认证服务器入口直接在页面内打开 AuthlibLoginDialog，添加成功后随 store 刷新列表。
@@ -408,7 +414,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                             state,
                             actions,
                             install,
-                            manage,
+                            manageInList,
                             { deleting = it },
                             navigate,
                         )
@@ -421,6 +427,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                             navigate,
                         )
                     Page.Downloads -> DownloadsPage(state, actions)
+                    Page.Multiplayer -> MultiplayerPage()
                     Page.Settings -> SettingsPage(state, actions, navigate)
                 }
             }
@@ -438,7 +445,8 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                                 instance,
                                 state,
                                 actions,
-                                { navigation.editing = null },
+                                // 返回目标由打开详情的那一页决定：开始页进来回开始，列表进来回列表。
+                                { navigation.closeInstance() },
                                 { deleting = instance },
                                 navigate,
                                 onCopyInstance = { target -> copyingInstance = target },
@@ -558,7 +566,9 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             onDismiss = { deleting = null },
             onDeleted = {
                 deleting = null
-                navigation.editing = null
+                // 删除的正是当前详情页时按来源返回；在列表里删除则留在列表。
+                if (navigation.editing == instance.id) navigation.closeInstance()
+                else navigation.editing = null
             },
         )
     }

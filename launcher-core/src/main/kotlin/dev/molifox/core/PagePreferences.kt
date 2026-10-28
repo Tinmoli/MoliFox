@@ -14,8 +14,14 @@ data class PagePreferences(
 
 data class HomePagePreferences(
     val showStatistics: Boolean = true,
-    val showRecent: Boolean = true,
-    val recentCount: Int = 5,
+    /** 开始页「最近游玩的存档或服务器」是否展开：默认折叠，展开 / 折叠都写入配置，重启后保持。 */
+    val recentPlayExpanded: Boolean = false,
+    /**
+     * 最近游玩面板显示哪一类：「world」= 存档（默认），「server」= 服务器。
+     *
+     * 两类内容不再混排，标题行的分段开关切换后立即写入配置，重启后仍停在用户上次选的那一类。
+     */
+    val recentPlayKind: String = "world",
 )
 
 data class VersionsPagePreferences(

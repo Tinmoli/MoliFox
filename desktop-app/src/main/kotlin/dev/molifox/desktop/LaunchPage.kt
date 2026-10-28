@@ -4,17 +4,19 @@ package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -22,20 +24,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
 import java.nio.file.Files
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 开始页展示账户摘要、最近实例、当前游戏及世界与服务器入口。 */
+/**
+ * 开始页：左栏是账户摘要与撑满列高的「当前游戏」卡（信息在上、启动按钮与「实例管理 / 版本设置」贴底），
+ * 右栏是可折叠的世界 / 服务器面板。
+ */
 @Composable
 fun ColumnScope.HomePage(
     state: LauncherState,
@@ -123,6 +128,15 @@ fun ColumnScope.HomePage(
         launchCard.clear()
     }
     val visible = rememberEntranceOnce()
+    // 「当前游戏」简介里的安装状态；与启动按钮的分支共用同一套判断，避免两处说法不一致。
+    val installState =
+        when {
+            selected == null -> "未选择版本"
+            !selected.installed -> "未安装完成"
+            selected.externalProfile && !filesPresent -> "版本文件缺失"
+            !filesPresent -> "启动时补全文件"
+            else -> "已安装"
+        }
     // 右上角显示当前实例和游戏目录统计。
     if (preferences.showStatistics)
         Row(
@@ -152,6 +166,7 @@ fun ColumnScope.HomePage(
             Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.spacedBy(Metrics.cardGap),
         ) {
+            // 左栏：账户摘要 + 撑满剩余高度的「当前游戏」卡（窗口最小 1000×640，内容不会被截断）。
             Entrance(visible, Modifier.width(296.dp).fillMaxHeight()) {
                 Column(
                     Modifier.fillMaxSize(),
@@ -159,77 +174,12 @@ fun ColumnScope.HomePage(
                 ) {
                     // 账户摘要卡提供头像、名字和账户列表入口。
                     HomeCard("游戏账户") { HomeAccountSummary(state, actions, onOpenAccounts) }
-                    if (preferences.showRecent)
-                        HomeCard(
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            fillContent = true,
-                        ) {
-                            // 账户卡下方最多显示六个最近实例，其余从实例页查看。
-                            val all =
-                                state.data.instances.sortedByDescending {
-                                    it.lastPlayed ?: it.createdAt
-                                }
-                            val recent = all.take(minOf(preferences.recentCount, 6))
-                            Text(
-                                "最近游玩的游戏实例",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            if (recent.isEmpty())
-                                EmptyState(
-                                    "还没有游戏版本",
-                                    "添加后可从这里选择并启动",
-                                    Icons.Outlined.Widgets,
-                                )
-                            else {
-                                val listState = rememberLazyListState()
-                                Box(Modifier.weight(1f).fillMaxWidth()) {
-                                    LazyColumn(
-                                        Modifier.fillMaxSize(),
-                                        state = listState,
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                                    ) {
-                                        items(recent, key = { it.id }) { instance ->
-                                            RecentRow(
-                                                actions = actions,
-                                                instance = instance,
-                                                current = instance.id == selected?.id,
-                                                onClick = {
-                                                    actions.run {
-                                                        actions.controller.selectInstance(
-                                                            instance.id
-                                                        )
-                                                    }
-                                                },
-                                            )
-                                        }
-                                    }
-                                    VerticalScrollbar(
-                                        rememberScrollbarAdapter(listState),
-                                        Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                                    )
-                                }
-                            }
-                            // 超出 6 条时不截断内容，只把「其余」指向实例页。
-                            if (all.size > recent.size)
-                                TextButton(
-                                    { navigate(Page.Instances) },
-                                    Modifier.align(Alignment.End),
-                                    contentPadding = PaddingValues(horizontal = 8.dp),
-                                ) {
-                                    Text("查看全部", fontSize = 12.sp)
-                                }
-                        }
-                    else Spacer(Modifier.weight(1f))
-                }
-            }
-            Entrance(visible, Modifier.weight(1f).fillMaxHeight()) {
-                Column(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
-                ) {
-                    HomeCard("当前游戏") {
+                    // 「当前游戏」撑到左栏底部：信息在上、中间弹性留白、启动与版本入口贴底。
+                    HomeCard(
+                        title = "当前游戏",
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        fillContent = true,
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (selected != null)
                                 InstanceArtwork(selected, actions, Modifier.size(40.dp))
@@ -239,29 +189,36 @@ fun ColumnScope.HomePage(
                                 Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(3.dp),
                             ) {
-                                Text(
-                                    selected?.name ?: "尚未选择版本",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (selected != null)
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Text(
-                                            selected.gameVersion + " · " + selected.loader.title,
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                                // 名称行右侧是隔离标签；简介行整宽留给「版本 · 加载器 · 安装状态」。
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        selected?.name ?: "未选择版本",
+                                        Modifier.weight(1f),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (selected != null) {
+                                        Spacer(Modifier.width(6.dp))
                                         Tag(
-                                            if (actions.controller.store.isolated(selected)) "版本隔离"
+                                            if (actions.controller.store.isolated(selected))
+                                                "版本隔离"
                                             else "共用目录"
                                         )
                                     }
+                                }
+                                if (selected != null)
+                                    Text(
+                                        selected.gameVersion +
+                                            " · " +
+                                            selected.loader.title +
+                                            " · " +
+                                            installState,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 else
                                     Text(
                                         "安装 Minecraft，或选择已有的游戏目录。",
@@ -272,47 +229,21 @@ fun ColumnScope.HomePage(
                                     )
                             }
                         }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(8.dp))
                         Text(
                             selected?.let { actions.controller.store.gamePath(it).toString() }
                                 ?: actions.controller.store.minecraftRoot.toString(),
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Spacer(Modifier.height(12.dp))
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            if (selected != null)
-                                SecondaryButton(
-                                    { onManage(selected.id) },
-                                    enabled = !busy,
-                                    contentPadding =
-                                        PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) {
-                                    Text("管理", fontSize = 13.sp)
-                                }
-                            Spacer(Modifier.weight(1f))
-                            PrimaryButton("安装版本", Icons.Outlined.Add, onClick = onNew)
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        // 当前游戏区域提供安装与启动操作。
+                        // 中间弹性留白：窗口变矮时先吃掉这里，不挤压按钮、不截断文字。
+                        Spacer(Modifier.weight(1f))
+                        // 整行「启动游戏」按钮；再往下是贴底的版本入口。
                         LaunchActionButton(
                             progress = launchJob?.progress,
                             running = running,
-                            subtitle =
-                                when {
-                                    selected == null -> "未选择版本"
-                                    !selected.installed -> selected.name + " · 未安装完成"
-                                    selected.externalProfile && !filesPresent ->
-                                        selected.name + " · 版本文件缺失"
-                                    !filesPresent -> selected.name + " · 启动时补全文件"
-                                    else -> selected.name
-                                },
                             // 没有实例时也让按钮可点：点击后给出原因并去安装页，而不是留下一个没有解释的灰按钮。
                             enabled = !busy,
                         ) {
@@ -320,20 +251,27 @@ fun ColumnScope.HomePage(
                             // 进度、取消与失败原因都留在开始页的启动浮窗里，只有确实没有可用的游戏时才跳安装页。
                             when {
                                 selected == null -> {
-                                    actions.controller.store.notify("还没有可启动的游戏，已打开安装页")
+                                    actions.controller.store.notify(
+                                        "还没有可启动的游戏，已打开安装页"
+                                    )
                                     onNew()
                                 }
                                 !selected.installed -> {
                                     // 修复任务仍在后台推进；这里不再把用户带去日志页，进度可从左侧「日志」入口查看。
                                     actions.controller.store.notify(
-                                        "「" + selected.name + "」尚未安装完成，已开始修复，可在日志中查看进度"
+                                        "「" +
+                                            selected.name +
+                                            "」尚未安装完成，已开始修复，可在日志中查看进度"
                                     )
                                     actions.run { actions.controller.repair(selected.id) }
                                 }
                                 // 外部目录的版本文件被移走或删掉时无法自动补全，直接启动只会报错。
                                 selected.externalProfile && !filesPresent -> {
                                     actions.controller.store.notify(
-                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" + "可重新选择目录或修复原版本"
+                                        "找不到「" +
+                                            selected.name +
+                                            "」的版本文件，已打开安装页；" +
+                                            "可重新选择目录或修复原版本"
                                     )
                                     onNew()
                                 }
@@ -344,22 +282,86 @@ fun ColumnScope.HomePage(
                                 else -> beginLaunch(selected)
                             }
                         }
+                        Spacer(Modifier.height(12.dp))
+                        // 底部一行两个等宽入口：实例管理（进实例列表）与版本设置（进实例详情）。
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            // 「实例管理」进实例列表页：顶部导航移除「实例」后，它是那一页唯一的入口。
+                            InstanceManageButton(
+                                modifier = Modifier.weight(1f),
+                                onClick = { navigate(Page.Instances) },
+                            )
+                            // 「版本设置」进入该实例的详情 / 设置页，替代原来卡内的「管理」。
+                            SecondaryButton(
+                                onClick = { selected?.let { onManage(it.id) } },
+                                modifier = Modifier.weight(1f),
+                                enabled = selected != null && !busy,
+                                contentPadding =
+                                    PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            ) {
+                                Icon(Icons.Outlined.Settings, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("版本设置", fontSize = 13.sp)
+                            }
+                        }
                     }
-                    // 世界与服务器区域只列当前选中实例；没有选中实例时
-                    // 整页已经是「未选择版本」空态，这里不再画第二个空块。「查看全部」在面板内开浮层。
+                }
+            }
+            Entrance(visible, Modifier.weight(1f).fillMaxHeight()) {
+                Column(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
+                ) {
+                    // 右栏只剩世界 / 服务器这一块：折叠后只有标题行，「查看全部」从标题行打开。
                     if (selected != null)
                         RecentPlayPanel(
                             instance = selected,
                             actions = actions,
                             busy = busy,
+                            expanded = preferences.recentPlayExpanded,
+                            onExpandedChange = { value ->
+                                // 折叠状态写进开始页偏好：与设置页同一条保存路径，重启后按记住的值渲染。
+                                applySetting(actions) {
+                                    it.copy(
+                                        pages =
+                                            it.pages.copy(
+                                                home =
+                                                    it.pages.home.copy(
+                                                        recentPlayExpanded = value
+                                                    )
+                                            )
+                                    )
+                                }
+                            },
                             onLaunch = { beginLaunch(it) },
-                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            // 正文只显示一类：存档或服务器，选择同样写入开始页偏好。
+                            kind =
+                                if (preferences.recentPlayKind == "server") EntryKind.Server
+                                else EntryKind.World,
+                            onKindChange = { value ->
+                                applySetting(actions) {
+                                    it.copy(
+                                        pages =
+                                            it.pages.copy(
+                                                home =
+                                                    it.pages.home.copy(
+                                                        recentPlayKind =
+                                                            if (value == EntryKind.Server) "server"
+                                                            else "world"
+                                                    )
+                                            )
+                                    )
+                                }
+                            },
+                            // fill = false：折叠后卡片按标题行高度收起，不再撑满整列。
+                            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         )
-                    else Spacer(Modifier.weight(1f))
                 }
             }
         }
-        // 启动浮窗固定在右下角：不遮挡左下的「启动游戏」按钮，点击页面其他区域也不会关闭它。
+        // 启动浮窗固定在右下角：不遮挡左栏的「启动游戏」按钮，点击页面其他区域也不会关闭它。
         if (launchCard.visible)
             LaunchProgressCard(
                 instanceName = launchCard.instanceName,
@@ -380,15 +382,16 @@ fun ColumnScope.HomePage(
 }
 
 /**
- * 白卡片：与 Panel 同一套尺寸（圆角 6、1dp 细边、无阴影、内边距 16）。 单独实现是因为账户与最近游玩卡需要内容列撑满剩余高度，Panel 的内容列是包内容的。 [title]
- * 留空时不渲染标题行与分隔线：左栏「最近游玩的游戏实例」用的就是无标题卡片 + 12sp 小标题。 右栏的 [RecentPlayPanel] 复用同一张卡片，因此这里是 internal 而不是
- * private。
+ * 白卡片：与 Panel 同一套尺寸（圆角 6、1dp 细边、无阴影、内边距 16）。 单独实现是因为开始页的卡片需要自己掌控内容内边距，Panel 的内容列是固定 16。 [title]
+ * 留空时不渲染标题行与分隔线。 [fillContent] 为 true 时内容列吃掉标题行以下的剩余高度，「当前游戏」卡靠它把启动按钮与版本入口贴到卡片底部；
+ * 右栏的 [RecentPlayPanel] 复用同一张卡片并传 0 内边距（标题行与内容区各自留白），因此这里是 internal 而不是 private。
  */
 @Composable
 internal fun HomeCard(
     title: String = "",
     modifier: Modifier = Modifier,
     fillContent: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(Metrics.cardPadding),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -414,11 +417,62 @@ internal fun HomeCard(
                 HorizontalDivider(color = hairline())
             }
             Column(
-                Modifier.padding(Metrics.cardPadding)
+                Modifier.padding(contentPadding)
                     .then(if (fillContent) Modifier.weight(1f) else Modifier),
                 content = content,
             )
         }
+    }
+}
+
+/**
+ * 「实例管理」入口：外观沿用 [SimpleDropdown] 那一套控件样式（34dp、圆角、实色填充 + 1dp 细边、悬停提亮），
+ * 但点开不是菜单，而是进入实例列表页——顶部导航移除「实例」后，那里是唯一的实例 / 版本入口。
+ * 文字固定为「实例管理」，不显示实例名，也不带次要文字；箭头表示这是一次页面跳转。
+ */
+@Composable
+private fun InstanceManageButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    val animation: androidx.compose.animation.core.AnimationSpec<Color> =
+        if (LocalReducedMotion.current) snap<Color>() else tween<Color>(Motion.fast)
+    val fill by
+        animateColorAsState(
+            controlBackground(hovered = hovered),
+            animation,
+            label = "instancesEntryFill",
+        )
+    val borderColor by
+        animateColorAsState(controlBorderColor(), animation, label = "instancesEntryBorder")
+    Row(
+        modifier
+            .height(Metrics.controlHeight)
+            .clip(shape)
+            .background(fill, shape)
+            .border(1.dp, borderColor, shape)
+            .hoverable(interaction)
+            .clickable(role = Role.Button, onClickLabel = "打开实例列表", onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "实例管理",
+            Modifier.weight(1f),
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            Icons.Outlined.ChevronRight,
+            null,
+            Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -451,100 +505,43 @@ private fun Entrance(
     }
 }
 
-/** 最近游玩行：44dp、悬停淡入，行尾箭头表示进入该版本。 */
-@Composable
-private fun RecentRow(
-    instance: GameInstance,
-    current: Boolean,
-    actions: UiActions,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(Metrics.innerRadius)
-    Row(
-        Modifier.fillMaxWidth()
-            .height(Metrics.rowHeight)
-            .hoverHighlight(shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        InstanceArtwork(instance, actions, Modifier.size(28.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(
-                instance.name,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                instance.gameVersion + " · " + playedAtLabel(instance),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (current) Tag("当前")
-        Spacer(Modifier.width(4.dp))
-        Icon(
-            Icons.Outlined.ChevronRight,
-            null,
-            Modifier.size(16.dp),
-            MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/** 启动主按钮：全宽、40dp、圆角 4，双行文字；有真实启动任务时在左侧显示进度环与百分比。 */
+/** 启动主按钮：整行铺满、44dp，圆角沿用 [Metrics.innerRadius]，15sp 单行文字；真正排队 / 启动时在左侧显示进度环与百分比。 */
 @Composable
 private fun LaunchActionButton(
     progress: Float?,
     running: Boolean,
-    subtitle: String,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
     Button(
         onClick,
-        Modifier.fillMaxWidth().height(40.dp).pressScale(),
+        Modifier.fillMaxWidth().height(44.dp).pressScale(),
         enabled = enabled,
         shape = RoundedCornerShape(Metrics.innerRadius),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
     ) {
-        if (progress != null)
+        // 只有「正在启动」才出现进度环：它是任务进度，不是被删掉的播放图标。
+        if (progress != null) {
             CircularProgressIndicator(
                 Modifier.size(14.dp),
                 strokeWidth = 2.dp,
                 color = LocalContentColor.current,
             )
-        else Icon(Icons.Outlined.PlayArrow, null, Modifier.size(17.dp))
-        Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.Start) {
-            Text(
-                when {
-                    progress != null -> "正在启动 " + (progress * 100).toInt() + "%"
-                    running -> "再次启动"
-                    else -> "启动游戏"
-                },
-                fontSize = 14.sp,
-                lineHeight = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                subtitle,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
-                color = LocalContentColor.current.copy(alpha = .8f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Spacer(Modifier.width(8.dp))
         }
+        Text(
+            when {
+                progress != null -> "正在启动 " + (progress * 100).toInt() + "%"
+                running -> "再次启动"
+                else -> "启动游戏"
+            },
+            fontSize = 15.sp,
+            lineHeight = 19.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
-
-private val playedAtFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
 
 /**
  * 版本文件是否仍在磁盘上：`versions/<id>/<id>.json` 能解析，且客户端 jar 存在。
@@ -562,12 +559,3 @@ private fun instanceFilesPresent(
     )
 }
     .getOrDefault(false)
-
-/** 最近游玩时间：ISO 时间戳转本地「月-日 时:分」，解析失败时退回原始日期部分。 */
-private fun playedAtLabel(instance: GameInstance): String {
-    val raw = instance.lastPlayed ?: instance.createdAt
-    return runCatching {
-        Instant.parse(raw).atZone(ZoneId.systemDefault()).format(playedAtFormatter)
-    }
-        .getOrNull() ?: raw.take(10)
-}
