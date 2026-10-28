@@ -1,3 +1,5 @@
+// 负责验证存档列表、备份、恢复、复制和回收的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -119,7 +121,12 @@ class SaveManagerTest {
         assertTrue(byName.getValue("Exported.zip").hasLevelDat)
         assertTrue(byName.getValue("Screenshots.zip").hasLevelDat.not())
         assertTrue(entries.none { it.backup })
-        assertTrue(entries.all { it.path.parent.toAbsolutePath().normalize() == root.resolve("saves").toAbsolutePath().normalize() })
+        assertTrue(
+            entries.all {
+                it.path.parent.toAbsolutePath().normalize() ==
+                    root.resolve("saves").toAbsolutePath().normalize()
+            }
+        )
     }
 
     /** 先试符号链接，失败再退到目录联接（Windows 普通账户可用）；都不行时返回 false。 */
@@ -258,27 +265,25 @@ class SaveManagerTest {
         val backups = backupDirectory(store, fixture)
         val job = Job()
         val cancelled = AtomicBoolean(false)
-        val watcher =
-            Thread {
-                    val deadline = System.nanoTime() + 15_000_000_000L
-                    while (System.nanoTime() < deadline) {
-                        val running =
-                            runCatching {
-                                    backups.listDirectoryEntries("*.part").isNotEmpty()
-                                }
-                                .getOrDefault(false)
-                        if (running) {
-                            job.cancel()
-                            cancelled.set(true)
-                            return@Thread
-                        }
-                        Thread.yield()
-                    }
+        val watcher = Thread {
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline) {
+                val running = runCatching {
+                    backups.listDirectoryEntries("*.part").isNotEmpty()
                 }
-                .apply {
-                    isDaemon = true
-                    start()
+                    .getOrDefault(false)
+                if (running) {
+                    job.cancel()
+                    cancelled.set(true)
+                    return@Thread
                 }
+                Thread.yield()
+            }
+        }
+            .apply {
+                isDaemon = true
+                start()
+            }
         try {
             assertFailsWith<CancellationException> {
                 withContext(job) {
@@ -332,7 +337,10 @@ class SaveManagerTest {
 
         val restored = manager.restoreSave(fixture.id, info.id, overwrite = true)
 
-        assertEquals(root.resolve("saves/World").toAbsolutePath().normalize(), restored.toAbsolutePath().normalize())
+        assertEquals(
+            root.resolve("saves/World").toAbsolutePath().normalize(),
+            restored.toAbsolutePath().normalize(),
+        )
         assertEquals("level", restored.resolve("level.dat").readText())
         assertEquals("level-region", restored.resolve("region/r.0.0.mca").readText())
         assertFalse(restored.resolve("extra.txt").exists(), "恢复后不应残留被替换的内容")
@@ -428,7 +436,10 @@ class SaveManagerTest {
         val manager = SaveManager(store)
         val fixture = instance(store)
         val root = store.instancePath(fixture.id)
-        writeZip(root.resolve("saves/Legacy.zip"), listOf("level.dat" to "legacy", "region/r.0.0.mca" to "r"))
+        writeZip(
+            root.resolve("saves/Legacy.zip"),
+            listOf("level.dat" to "legacy", "region/r.0.0.mca" to "r"),
+        )
         val info = manager.backupSave(fixture.id, "Legacy.zip")
 
         val restored = manager.restoreSave(fixture.id, info.id)
@@ -458,7 +469,10 @@ class SaveManagerTest {
             )
 
         val targetSaves = store.instancePath(target.id).resolve("saves")
-        assertEquals(targetSaves.resolve("World").toAbsolutePath().normalize(), copied.toAbsolutePath().normalize())
+        assertEquals(
+            targetSaves.resolve("World").toAbsolutePath().normalize(),
+            copied.toAbsolutePath().normalize(),
+        )
         assertEquals("level", copied.resolve("level.dat").readText())
         assertEquals("level-region", copied.resolve("region/r.0.0.mca").readText())
         assertEquals("level-player", copied.resolve("playerdata/player.dat").readText())

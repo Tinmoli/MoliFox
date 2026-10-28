@@ -1,3 +1,5 @@
+// 负责CurseForge 模组文件指纹计算。
+
 package dev.molifox.core
 
 import java.nio.file.Files

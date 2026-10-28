@@ -1,3 +1,5 @@
+// 负责验证游戏及加载器与 Java 版本的兼容判断的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser

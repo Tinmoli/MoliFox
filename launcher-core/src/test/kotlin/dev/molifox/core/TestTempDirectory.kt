@@ -1,3 +1,5 @@
+// 负责创建并回收测试专用临时目录。
+
 package dev.molifox.core
 
 import java.nio.file.Files

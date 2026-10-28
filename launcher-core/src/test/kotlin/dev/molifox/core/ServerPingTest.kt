@@ -1,3 +1,5 @@
+// 负责验证服务器地址解析、状态查询和 MOTD 转换的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser
@@ -87,22 +89,23 @@ class ServerPingTest {
             """{"version":{"name":"1.20.6","protocol":766},"players":{"max":20,"online":3},""" +
                 """"description":{"text":"","extra":[{"text":"Moli","color":"aqua"},""" +
                 """{"text":"Fox","bold":true}]}}"""
-        FakeServer { socket -> serveStatus(socket, json) }.use { server ->
-            val status = ping("127.0.0.1", server.port, 3_000)
-            assertNotNull(status)
-            assertTrue(status.online)
-            assertEquals(3, status.players)
-            assertEquals(20, status.maxPlayers)
-            assertEquals("1.20.6", status.version)
-            assertEquals(
-                listOf(
-                    MotdSegment("Moli", 0x55FFFF, false, false, false, false),
-                    MotdSegment("Fox", null, true, false, false, false),
-                ),
-                status.motd,
-            )
-            assertTrue(status.ping >= 0)
-        }
+        FakeServer { socket -> serveStatus(socket, json) }
+            .use { server ->
+                val status = ping("127.0.0.1", server.port, 3_000)
+                assertNotNull(status)
+                assertTrue(status.online)
+                assertEquals(3, status.players)
+                assertEquals(20, status.maxPlayers)
+                assertEquals("1.20.6", status.version)
+                assertEquals(
+                    listOf(
+                        MotdSegment("Moli", 0x55FFFF, false, false, false, false),
+                        MotdSegment("Fox", null, true, false, false, false),
+                    ),
+                    status.motd,
+                )
+                assertTrue(status.ping >= 0)
+            }
     }
 
     @Test
@@ -115,20 +118,21 @@ class ServerPingTest {
             } else {
                 serveLegacy(socket, "1.5.2", "§6Moli§r Fox", 4, 12)
             }
-        }.use { server ->
-            val status = ping("127.0.0.1", server.port, 2_000)
-            assertNotNull(status)
-            assertEquals(4, status.players)
-            assertEquals(12, status.maxPlayers)
-            assertEquals("1.5.2", status.version)
-            assertEquals(
-                listOf(
-                    MotdSegment("Moli", 0xFFAA00, false, false, false, false),
-                    MotdSegment(" Fox", null, false, false, false, false),
-                ),
-                status.motd,
-            )
         }
+            .use { server ->
+                val status = ping("127.0.0.1", server.port, 2_000)
+                assertNotNull(status)
+                assertEquals(4, status.players)
+                assertEquals(12, status.maxPlayers)
+                assertEquals("1.5.2", status.version)
+                assertEquals(
+                    listOf(
+                        MotdSegment("Moli", 0xFFAA00, false, false, false, false),
+                        MotdSegment(" Fox", null, false, false, false, false),
+                    ),
+                    status.motd,
+                )
+            }
     }
 
     @Test
@@ -145,18 +149,19 @@ class ServerPingTest {
     private class FakeServer(private val handler: (Socket) -> Unit) : Closeable {
         private val server = ServerSocket(0, 5, InetAddress.getByName("127.0.0.1"))
         val port: Int = server.localPort
-        private val worker = thread(isDaemon = true, name = "fake-mc-server") {
-            while (!server.isClosed) {
-                val socket = runCatching { server.accept() }.getOrNull() ?: break
-                try {
-                    handler(socket)
-                } catch (_: Exception) {
-                    // 让客户端按失败处理，测试断言会给出原因。
-                } finally {
-                    runCatching { socket.close() }
+        private val worker =
+            thread(isDaemon = true, name = "fake-mc-server") {
+                while (!server.isClosed) {
+                    val socket = runCatching { server.accept() }.getOrNull() ?: break
+                    try {
+                        handler(socket)
+                    } catch (_: Exception) {
+                        // 让客户端按失败处理，测试断言会给出原因。
+                    } finally {
+                        runCatching { socket.close() }
+                    }
                 }
             }
-        }
 
         override fun close() {
             runCatching { server.close() }
@@ -184,8 +189,17 @@ class ServerPingTest {
         val input = DataInputStream(socket.getInputStream())
         assertEquals(0xFE, input.readUnsignedByte())
         assertEquals(0x01, input.readUnsignedByte())
-        val text = "§1\u0000" + "127" + "\u0000" + version + "\u0000" + motd + "\u0000" + online +
-            "\u0000" + max
+        val text =
+            "§1\u0000" +
+                "127" +
+                "\u0000" +
+                version +
+                "\u0000" +
+                motd +
+                "\u0000" +
+                online +
+                "\u0000" +
+                max
         val output = DataOutputStream(socket.getOutputStream())
         output.writeByte(0xFF)
         val chars = text.length

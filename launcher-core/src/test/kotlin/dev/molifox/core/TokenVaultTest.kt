@@ -1,3 +1,5 @@
+// 负责验证账户凭据的本地加密保存与读取的行为与边界。
+
 package dev.molifox.core
 
 import com.sun.jna.platform.win32.Crypt32Util

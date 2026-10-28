@@ -1,3 +1,5 @@
+// 负责游戏及加载器与 Java 版本的兼容判断。
+
 package dev.molifox.core
 
 internal fun normalizedJavaArchitecture(value: String): String =

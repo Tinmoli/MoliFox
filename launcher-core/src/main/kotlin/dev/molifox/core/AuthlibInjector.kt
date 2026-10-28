@@ -1,3 +1,5 @@
+// 负责外置认证注入器的下载缓存与启动参数。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser
@@ -54,8 +56,9 @@ class AuthlibInjector(
 
     /** 生成外置认证启动所需的两个 JVM 参数；拿不到 jar 或元数据时抛出可操作错误。 */
     suspend fun jvmArguments(cacheDir: Path, serverUrl: String): List<String> {
-        val server = normalizeAuthlibServerUrl(serverUrl)
-            ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+        val server =
+            normalizeAuthlibServerUrl(serverUrl)
+                ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
         val jar =
             ensureJar(cacheDir)
                 ?: throw AuthlibException(
@@ -71,8 +74,9 @@ class AuthlibInjector(
 
     /** 服务器元数据的 Base64（authlib-injector 的 yggdrasil.prefetched 参数）。 */
     suspend fun prefetchedMetadata(cacheDir: Path, serverUrl: String): String {
-        val server = normalizeAuthlibServerUrl(serverUrl)
-            ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+        val server =
+            normalizeAuthlibServerUrl(serverUrl)
+                ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
         val folder = injectorFolder(cacheDir).resolve("metadata")
         val file = folder.resolve("${sha256(server)}.json")
         val cached = readCachedMetadata(file)
@@ -97,14 +101,13 @@ class AuthlibInjector(
     private fun injectorFolder(cacheDir: Path): Path =
         cacheDir.toAbsolutePath().normalize().resolve("authlib-injector")
 
-    private fun isUsableJar(path: Path): Boolean =
-        runCatching {
-                path.isRegularFile() &&
-                    !Files.isSymbolicLink(path) &&
-                    path.fileSize() > 100L * 1024 &&
-                    looksLikeJar(path)
-            }
-            .getOrDefault(false)
+    private fun isUsableJar(path: Path): Boolean = runCatching {
+        path.isRegularFile() &&
+            !Files.isSymbolicLink(path) &&
+            path.fileSize() > 100L * 1024 &&
+            looksLikeJar(path)
+    }
+        .getOrDefault(false)
 
     private fun looksLikeJar(path: Path): Boolean =
         Files.newInputStream(path).use { input ->
@@ -127,11 +130,8 @@ class AuthlibInjector(
                     continue
                 }
             val json =
-                runCatching { JsonParser.parseString(text).asJsonObject }
-                    .getOrNull()
-                    ?: continue
-            val raw =
-                json.string("download_url").ifBlank { json.string("downloadUrl") }.trim()
+                runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull() ?: continue
+            val raw = json.string("download_url").ifBlank { json.string("downloadUrl") }.trim()
             if (raw.isBlank()) continue
             val url = runCatching { URI(mirror).resolve(raw).toString() }.getOrNull() ?: continue
             if (!url.startsWith("https://") && !url.startsWith("http://")) continue
@@ -139,24 +139,22 @@ class AuthlibInjector(
         }
     }
 
-    private fun readCachedMetadata(file: Path): String? =
-        runCatching {
-                if (!file.isRegularFile() || Files.isSymbolicLink(file)) return@runCatching null
-                if (file.fileSize() !in 1..(1024L * 1024)) return@runCatching null
-                val text = file.readText(Charsets.UTF_8)
-                if (text.isBlank()) return@runCatching null
-                if (runCatching { JsonParser.parseString(text).asJsonObject }.isFailure)
-                    return@runCatching null
-                text
-            }
-            .getOrNull()
+    private fun readCachedMetadata(file: Path): String? = runCatching {
+        if (!file.isRegularFile() || Files.isSymbolicLink(file)) return@runCatching null
+        if (file.fileSize() !in 1..(1024L * 1024)) return@runCatching null
+        val text = file.readText(Charsets.UTF_8)
+        if (text.isBlank()) return@runCatching null
+        if (runCatching { JsonParser.parseString(text).asJsonObject }.isFailure)
+            return@runCatching null
+        text
+    }
+        .getOrNull()
 
-    private fun isExpired(file: Path): Boolean =
-        runCatching {
-                System.currentTimeMillis() - Files.getLastModifiedTime(file).toMillis() >
-                    metadataTtlMillis
-            }
-            .getOrDefault(true)
+    private fun isExpired(file: Path): Boolean = runCatching {
+        System.currentTimeMillis() - Files.getLastModifiedTime(file).toMillis() >
+            METADATA_TTL_MILLIS
+    }
+        .getOrDefault(true)
 
     private fun writeAtomically(file: Path, text: String) {
         val temporary = file.resolveSibling(".${file.name}-${UUID.randomUUID()}.tmp")
@@ -192,6 +190,6 @@ class AuthlibInjector(
                 "https://bmclapi2.bangbang93.com/mirrors/authlib-injector/artifact/latest.json",
                 "https://authlib-injector.yushi.moe/artifact/latest.json",
             )
-        const val metadataTtlMillis = 24L * 60 * 60 * 1000
+        const val METADATA_TTL_MILLIS = 24L * 60 * 60 * 1000
     }
 }

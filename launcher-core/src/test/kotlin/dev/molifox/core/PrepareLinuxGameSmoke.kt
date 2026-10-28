@@ -1,3 +1,5 @@
+// 负责准备 Linux 真实游戏验收所需目录和启动信息。
+
 package dev.molifox.core
 
 import java.nio.file.Files

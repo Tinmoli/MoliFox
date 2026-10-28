@@ -1,3 +1,5 @@
+// 负责账户、实例、配置和任务的公共数据模型。
+
 package dev.molifox.core
 
 import java.nio.file.Path
@@ -83,7 +85,7 @@ data class LauncherSettings(
     val fontScale: Float = 1f,
     val customFonts: List<LauncherFont> = emptyList(),
     val pages: PagePreferences = PagePreferences(),
-    // ---- 界面重构（0.4）新增字段，全部带默认值以兼容旧配置 ----
+    // 页面与外观偏好均提供默认值，兼容缺少这些字段的配置。
     /** 主题颜色：预设键（sakura/ocean/mint/amber/lavender/graphite）或 #RRGGBB 自定义。 */
     val accentColor: String = "sakura",
     /** 关闭后页面切换与提示不使用过渡动画。 */
@@ -131,8 +133,8 @@ data class Account(
 )
 
 /**
- * 用户添加过的外置认证服务器。只保存在 launcher.json，不含任何令牌或密码；
- * [url] 是规范化后的 API 根地址，[name] 取自服务器元数据的 meta.serverName。
+ * 用户添加过的外置认证服务器。只保存在 launcher.json，不含任何令牌或密码； [url] 是规范化后的 API 根地址，[name] 取自服务器元数据的
+ * meta.serverName。
  */
 data class AuthlibServer(
     val url: String = "",
@@ -141,11 +143,11 @@ data class AuthlibServer(
 )
 
 /**
- * 内置的默认外置认证服务器。PCL 的「使用 LittleSkin 登录」与 HMCL 的
- * `AuthlibInjectorServerList.createDefault()` 都把 LittleSkin 作为默认项，
- * 这里同样预置一条，用户可在账户页直接选它登录，也可以删掉或添加别的服务器。
+ * 内置的默认外置认证服务器。PCL 的「使用 LittleSkin 登录」与 HMCL 的 `AuthlibInjectorServerList.createDefault()` 都把
+ * LittleSkin 作为默认项， 这里同样预置一条，用户可在账户页直接选它登录，也可以删掉或添加别的服务器。
  */
-val DEFAULT_AUTHLIB_SERVER = AuthlibServer(url = "https://littleskin.cn/api/yggdrasil", name = "LittleSkin")
+val DEFAULT_AUTHLIB_SERVER =
+    AuthlibServer(url = "https://littleskin.cn/api/yggdrasil", name = "LittleSkin")
 
 data class GameInstance(
     val id: String = UUID.randomUUID().toString(),

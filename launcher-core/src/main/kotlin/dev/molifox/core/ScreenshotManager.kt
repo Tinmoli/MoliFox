@@ -1,3 +1,5 @@
+// 负责游戏截图的筛选、导出和回收。
+
 package dev.molifox.core
 
 import java.io.ByteArrayOutputStream

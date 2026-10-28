@@ -1,3 +1,5 @@
+// 负责CurseForge 整合包清单解析与安装。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

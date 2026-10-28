@@ -1,3 +1,5 @@
+// 负责启动器版本、品牌和认证应用标识。
+
 package dev.molifox.core
 
 /** Public OAuth application identity; this is not a client secret. */

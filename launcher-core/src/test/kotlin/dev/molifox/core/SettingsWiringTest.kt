@@ -1,3 +1,5 @@
+// 负责验证设置项与运行行为的接线的行为与边界。
+
 package dev.molifox.core
 
 import java.net.InetAddress
@@ -89,8 +91,12 @@ class SettingsWiringTest {
             delay(50)
         }
         throw AssertionError(
-            "toast 未包含「" + contains + "」，当前 toast=" + controller.state.value.toast +
-                "，日志末尾=" + controller.state.value.logs.takeLast(4).map { it.message }
+            "toast 未包含「" +
+                contains +
+                "」，当前 toast=" +
+                controller.state.value.toast +
+                "，日志末尾=" +
+                controller.state.value.logs.takeLast(4).map { it.message }
         )
     }
 
@@ -104,9 +110,7 @@ class SettingsWiringTest {
             LauncherController(dataDirectory = directory.resolve("moli-update")).use { controller ->
                 // 更新清单允许本地 http 仅限测试注入；正式保存设置仍强制 HTTPS。
                 controller.store.mutate {
-                    it.copy(
-                        settings = it.settings.copy(updateManifestUrl = manifestUrl)
-                    )
+                    it.copy(settings = it.settings.copy(updateManifestUrl = manifestUrl))
                 }
                 controller.checkForUpdates(true)
                 awaitToast(controller, "9.9.9")

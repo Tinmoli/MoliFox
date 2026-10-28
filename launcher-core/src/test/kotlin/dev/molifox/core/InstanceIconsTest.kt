@@ -1,3 +1,5 @@
+// 负责验证实例图标导入、优先级解析和共享资源回收的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

@@ -1,3 +1,5 @@
+// 负责验证游戏与启动器窗口的生命周期的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files

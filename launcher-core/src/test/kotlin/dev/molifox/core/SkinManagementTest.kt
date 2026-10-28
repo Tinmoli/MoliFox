@@ -1,3 +1,5 @@
+// 负责验证皮肤库与正版皮肤管理的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

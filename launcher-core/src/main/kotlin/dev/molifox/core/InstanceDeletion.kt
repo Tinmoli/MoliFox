@@ -1,3 +1,5 @@
+// 负责实例删除范围、确认信息和文件删除执行。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -40,18 +42,16 @@ data class InstanceDeletionWorld(val name: String, val modified: Instant?)
  * - `<游戏根>/instances/<实例 id>/`：实例的独立游戏目录（含 `mods/`、`config/`、`saves/`、
  *   `resourcepacks/`、`shaderpacks/`、`logs/` 等全部内容）。
  *
- * 共用游戏根、`libraries/`、`assets/` 与非隔离实例的 `saves/` 仍不在删除范围内：它们不属于任何单个实例。
- * 默认按系统回收站处理（[delete] 的 `permanent = false`），用户按住 Shift 确认时永久删除；回收站不可用时回退为
- * 永久删除并在结果中注明。永久删除用 `Files.walkFileTree` 递归进行，不跟随符号链接（遇到符号链接只解除链接本身），
- * 缺失文件视为已删除，权限不足等失败会带中文路径报错并停止。
+ * 共用游戏根、`libraries/`、`assets/` 与非隔离实例的 `saves/` 仍不在删除范围内：它们不属于任何单个实例。 默认按系统回收站处理（[delete] 的
+ * `permanent = false`），用户按住 Shift 确认时永久删除；回收站不可用时回退为 永久删除并在结果中注明。永久删除用 `Files.walkFileTree`
+ * 递归进行，不跟随符号链接（遇到符号链接只解除链接本身）， 缺失文件视为已删除，权限不足等失败会带中文路径报错并停止。
  */
 class InstanceDeletionService(private val store: LauncherStore) {
 
     /**
      * 计算 [instanceId] 的删除计划；不修改磁盘。
      *
-     * 无法解析实例的游戏目录、实例路径是符号链接，或目标落在共享目录上时抛出带中文说明的异常，
-     * 让调用方拒绝删除而不是猜测。
+     * 无法解析实例的游戏目录、实例路径是符号链接，或目标落在共享目录上时抛出带中文说明的异常， 让调用方拒绝删除而不是猜测。
      */
     fun plan(instanceId: String): InstanceDeletionPlan {
         val instance = store.instance(instanceId)
@@ -80,8 +80,7 @@ class InstanceDeletionService(private val store: LauncherStore) {
             else {
                 val folder = ownedTarget(root, root.resolve("versions").resolve(name))
                 if (folder != null) {
-                    if (sharesVersion(instance, root, name))
-                        preserved += "$folder（另一个实例仍在使用同一版本目录）"
+                    if (sharesVersion(instance, root, name)) preserved += "$folder（另一个实例仍在使用同一版本目录）"
                     else targets.add(folder)
                 }
             }
@@ -124,8 +123,7 @@ class InstanceDeletionService(private val store: LauncherStore) {
             removed += target.toString()
             store.log(
                 if (movedToTrash) "实例文件已移入回收站：$target"
-                else if (permanent) "实例文件已永久删除：$target"
-                else "实例文件已改为永久删除：$target"
+                else if (permanent) "实例文件已永久删除：$target" else "实例文件已改为永久删除：$target"
             )
         }
         return InstanceDeletionReport(removed, freed, movedToTrash)
@@ -177,20 +175,15 @@ class InstanceDeletionService(private val store: LauncherStore) {
      */
     private fun ownedTarget(root: Path, candidate: Path): Path? {
         if (!candidate.exists(LinkOption.NOFOLLOW_LINKS)) return null
-        if (Files.isSymbolicLink(candidate))
-            throw IOException("实例路径是符号链接，不能删除：$candidate")
+        if (Files.isSymbolicLink(candidate)) throw IOException("实例路径是符号链接，不能删除：$candidate")
         if (!Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)) return null
         val normalized = candidate.toAbsolutePath().normalize()
-        if (!normalized.startsWith(root))
-            throw IOException("拒绝删除游戏目录以外的路径：$normalized")
+        if (!normalized.startsWith(root)) throw IOException("拒绝删除游戏目录以外的路径：$normalized")
         val real = normalized.toRealPath()
-        if (!real.startsWith(root) || real == root)
-            throw IOException("拒绝删除游戏目录本身：$real")
-        if (real.nameCount != root.nameCount + 2)
-            throw IOException("拒绝删除共享目录：$real")
+        if (!real.startsWith(root) || real == root) throw IOException("拒绝删除游戏目录本身：$real")
+        if (real.nameCount != root.nameCount + 2) throw IOException("拒绝删除共享目录：$real")
         val parent = real.parent?.fileName?.toString()
-        if (parent != "versions" && parent != "instances")
-            throw IOException("拒绝删除共享目录：$real")
+        if (parent != "versions" && parent != "instances") throw IOException("拒绝删除共享目录：$real")
         return real
     }
 

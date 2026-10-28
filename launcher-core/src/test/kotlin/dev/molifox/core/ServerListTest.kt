@@ -1,3 +1,5 @@
+// 负责验证游戏服务器列表和图标的读取的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

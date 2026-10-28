@@ -1,3 +1,5 @@
+// 负责游戏服务器列表和图标的读取。
+
 package dev.molifox.core
 
 import java.io.ByteArrayInputStream
@@ -11,8 +13,8 @@ import kotlin.io.path.*
 /**
  * 一个多人服务器条目。
  *
- * [icon] 是 `servers.dat` 里 base64 `icon` 字段解出的原始 PNG 字节；base64 解不开、
- * 超过 256 KB 或 ImageIO 认不出图片时为 null（坏图标不影响整行）。
+ * [icon] 是 `servers.dat` 里 base64 `icon` 字段解出的原始 PNG 字节；base64 解不开、 超过 256 KB 或 ImageIO 认不出图片时为
+ * null（坏图标不影响整行）。
  */
 data class ServerEntry(val name: String, val ip: String, val icon: ByteArray?)
 
@@ -22,19 +24,17 @@ private const val MAX_SERVER_ICON_BYTES = 256 * 1024
 /**
  * 读取游戏目录下的 `servers.dat`，返回服务器列表。
  *
- * 布局：根复合标签里名为 `servers` 的复合标签列表，每项至少有 `name` 与 `ip`，可选
- * `icon`（base64 图片）；较早的布局只有 `name` 与 `ip`，此时 [ServerEntry.icon] 为 null。
- * 文件缺失、空文件、不是 NBT、没有 `servers` 列表都返回空列表，从不抛异常，也不修改文件。
+ * 布局：根复合标签里名为 `servers` 的复合标签列表，每项至少有 `name` 与 `ip`，可选 `icon`（base64 图片）；较早的布局只有 `name` 与 `ip`，此时
+ * [ServerEntry.icon] 为 null。 文件缺失、空文件、不是 NBT、没有 `servers` 列表都返回空列表，从不抛异常，也不修改文件。
  */
-fun listServers(gameDirectory: Path): List<ServerEntry> =
-    runCatching {
-            val file = gameDirectory.resolve(SERVERS_FILE)
-            if (!file.isRegularFile(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file))
-                return@runCatching emptyList<ServerEntry>()
-            val root = readCompound(file) ?: return@runCatching emptyList<ServerEntry>()
-            root.list("servers")?.compounds().orEmpty().mapNotNull(::serverEntry)
-        }
-        .getOrElse { emptyList() }
+fun listServers(gameDirectory: Path): List<ServerEntry> = runCatching {
+    val file = gameDirectory.resolve(SERVERS_FILE)
+    if (!file.isRegularFile(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file))
+        return@runCatching emptyList<ServerEntry>()
+    val root = readCompound(file) ?: return@runCatching emptyList<ServerEntry>()
+    root.list("servers")?.compounds().orEmpty().mapNotNull(::serverEntry)
+}
+    .getOrElse { emptyList() }
 
 /** 单个服务器条目；缺少地址的项直接跳过，名称留空时回退成地址。 */
 private fun serverEntry(tag: NbtCompound): ServerEntry? {
@@ -49,7 +49,9 @@ private fun decodeServerIcon(encoded: String?): ByteArray? {
     val text = encoded?.filterNot { it.isWhitespace() }?.takeIf { it.isNotEmpty() } ?: return null
     val bytes = runCatching { Base64.getDecoder().decode(text) }.getOrNull() ?: return null
     if (bytes.isEmpty() || bytes.size > MAX_SERVER_ICON_BYTES) return null
-    val readable = runCatching { ImageIO.read(ByteArrayInputStream(bytes)) != null }
+    val readable = runCatching {
+        ImageIO.read(ByteArrayInputStream(bytes)) != null
+    }
         .getOrDefault(false)
     return if (readable) bytes else null
 }

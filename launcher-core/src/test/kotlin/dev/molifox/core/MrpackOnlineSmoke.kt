@@ -1,3 +1,5 @@
+// 负责验证真实整合包导出与 HMCL 清单读取。
+
 package dev.molifox.core
 
 import java.net.URLClassLoader

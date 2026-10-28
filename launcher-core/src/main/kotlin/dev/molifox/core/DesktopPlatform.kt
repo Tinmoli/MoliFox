@@ -1,3 +1,5 @@
+// 负责桌面平台的内存查询、文件打开和回收站操作。
+
 package dev.molifox.core
 
 import com.sun.management.OperatingSystemMXBean
@@ -33,9 +35,8 @@ class DesktopPlatform : PlatformServices {
                 .toInt()
 
     /**
-     * 默认数据目录：仍优先使用显式指定的 molifox.data.dir / MOLIFOX_DATA_DIR，否则放在启动器
-     * 自身所在目录的 MoliFox/ 下。这里不能用 user.dir：它只是进程工作目录，可能是任意 shell
-     * 的位置，会让数据和默认 .minecraft 落到启动器之外。
+     * 默认数据目录：仍优先使用显式指定的 molifox.data.dir / MOLIFOX_DATA_DIR，否则放在启动器 自身所在目录的 MoliFox/ 下。这里不能用
+     * user.dir：它只是进程工作目录，可能是任意 shell 的位置，会让数据和默认 .minecraft 落到启动器之外。
      */
     override val defaultDataDirectory: Path
         get() =

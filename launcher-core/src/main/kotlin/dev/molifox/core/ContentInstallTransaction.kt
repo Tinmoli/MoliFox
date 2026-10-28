@@ -1,3 +1,5 @@
+// 负责内容安装文件的事务写入与回滚。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

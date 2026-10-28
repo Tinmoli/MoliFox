@@ -1,3 +1,5 @@
+// 负责整合包压缩文件的安全读取和展开。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

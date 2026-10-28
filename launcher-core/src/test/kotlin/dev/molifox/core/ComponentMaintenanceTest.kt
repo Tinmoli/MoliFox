@@ -1,3 +1,5 @@
+// 负责验证模组加载器更换与回退的行为与边界。
+
 package dev.molifox.core
 
 import java.io.ByteArrayOutputStream

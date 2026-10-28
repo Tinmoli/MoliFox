@@ -1,3 +1,5 @@
+// 负责验证下载源与版本清单源的选择规则的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Path

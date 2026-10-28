@@ -1,3 +1,5 @@
+// 负责CurseForge 内容搜索、文件查询和下载信息转换。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

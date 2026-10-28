@@ -1,3 +1,5 @@
+// 负责验证外部实例版本搜索和官方皮肤 CDN。
+
 package dev.molifox.core
 
 import java.nio.file.Path

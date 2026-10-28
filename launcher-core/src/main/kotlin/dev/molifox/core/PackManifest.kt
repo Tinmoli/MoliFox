@@ -1,3 +1,5 @@
+// 负责整合包格式识别与清单数据。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

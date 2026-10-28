@@ -1,3 +1,5 @@
+// 负责本机 Java 检测和运行时安装。
+
 package dev.molifox.core
 
 import java.nio.file.Files

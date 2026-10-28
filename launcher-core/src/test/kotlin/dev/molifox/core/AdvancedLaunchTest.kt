@@ -1,3 +1,5 @@
+// 负责验证高级启动配置的继承与实际参数的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -107,7 +109,9 @@ class AdvancedLaunchTest {
                 fun snapshot() =
                     Files.walk(temporary).use { paths ->
                         paths
-                            .filter { it.isRegularFile() && it.fileName.toString() != "instance.lock" }
+                            .filter {
+                                it.isRegularFile() && it.fileName.toString() != "instance.lock"
+                            }
                             .map { it.toString() to digest(it) }
                             .toList()
                             .toMap()

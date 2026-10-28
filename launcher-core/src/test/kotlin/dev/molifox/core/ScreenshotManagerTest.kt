@@ -1,3 +1,5 @@
+// 负责验证游戏截图的筛选、导出和回收的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

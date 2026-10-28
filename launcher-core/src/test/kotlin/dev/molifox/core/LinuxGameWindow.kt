@@ -1,3 +1,5 @@
+// 负责定位并操作 Linux 测试游戏窗口。
+
 package dev.molifox.core
 
 import com.sun.jna.NativeLong
@@ -14,7 +16,8 @@ internal object LinuxGameWindow {
         val display = checkNotNull(x11.XOpenDisplay(null)) { "Cannot open the test X11 display" }
         try {
             val target = X11.Window(window.id.toLong())
-            // JNA true maps to -1, which is invalid for X11's wire Bool; false also works for existing atoms.
+            // JNA true maps to -1, which is invalid for X11's wire Bool; false also works for
+            // existing atoms.
             val pidProperty = x11.XInternAtom(display, "_NET_WM_PID", false)
             val value = PointerByReference()
             val type = X11.AtomByReference()

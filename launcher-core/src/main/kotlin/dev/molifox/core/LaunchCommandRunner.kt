@@ -1,3 +1,5 @@
+// 负责启动前后命令的执行与环境准备。
+
 package dev.molifox.core
 
 import java.io.IOException

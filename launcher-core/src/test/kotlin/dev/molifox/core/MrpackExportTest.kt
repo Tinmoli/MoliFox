@@ -1,3 +1,5 @@
+// 负责验证Modrinth 标准整合包的导出与文件识别的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

@@ -1,3 +1,5 @@
+// 负责游戏目录登记、扫描和现有实例识别。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -46,8 +48,7 @@ class GameDirectoryService(private val store: LauncherStore) {
     }
 
     /**
-     * 启动时自动识别：把启动器自身目录旁/内发现的现有游戏登记进来，复用 [add] 的扫描与实例物化，
-     * 因此版本会直接出现在实例列表里，不需要手动「导入」。
+     * 启动时自动识别：把启动器自身目录旁/内发现的现有游戏登记进来，复用 [add] 的扫描与实例物化， 因此版本会直接出现在实例列表里，不需要手动「导入」。
      *
      * 只读扫描，不写用户的 `.minecraft`；已登记的目录不会重复添加，也不改动用户已有的目录与实例
      * 选择（只有本次新登记的目录才会被设为当前目录，等价于手动导入一次）。没有发现时保持安静。
@@ -59,9 +60,7 @@ class GameDirectoryService(private val store: LauncherStore) {
             // 同一目录的版本已作为「MoliFox 默认目录」的受管实例存在时不再登记成外部目录，
             // 否则同一个版本会多出一条实例记录，并把原来的实例挤出当前目录的列表。
             if (existing == null && defaultRootHasInstances(root.path)) {
-                store.log(
-                    "启动时识别游戏目录 ${root.path}：${root.versions} 个版本（默认目录已登记，跳过）"
-                )
+                store.log("启动时识别游戏目录 ${root.path}：${root.versions} 个版本（默认目录已登记，跳过）")
                 continue
             }
             val instances = register(root.path, activate = false)

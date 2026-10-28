@@ -1,3 +1,5 @@
+// 负责服务器地址解析、状态查询和 MOTD 转换。
+
 package dev.molifox.core
 
 import com.google.gson.JsonElement
@@ -18,8 +20,8 @@ import kotlinx.coroutines.withContext
 /**
  * MOTD 的一段文字与它最终生效的样式。
  *
- * [color] 是 `0xRRGGBB`（不含 alpha）；null 表示沿用界面默认文字色。
- * [bold] / [italic] / [underlined] / [struck] 是「这一段是否开启」，不是增量。
+ * [color] 是 `0xRRGGBB`（不含 alpha）；null 表示沿用界面默认文字色。 [bold] / [italic] / [underlined] / [struck]
+ * 是「这一段是否开启」，不是增量。
  */
 data class MotdSegment(
     val text: String,
@@ -33,9 +35,8 @@ data class MotdSegment(
 /**
  * 一次服务器列表查询的结果。
  *
- * [ping] 是握手到状态响应读完的毫秒数（不含 DNS 解析）。查询失败时不会构造本对象，
- * 而是返回 null；因此 [online] 目前对任何非 null 结果都是 true，保留该字段是让缓存与
- * 将来的协议降级仍能读到完整的在线状态。
+ * [ping] 是握手到状态响应读完的毫秒数（不含 DNS 解析）。查询失败时不会构造本对象， 而是返回 null；因此 [online] 目前对任何非 null 结果都是
+ * true；该字段描述缓存及协议降级后的在线状态。
  */
 data class ServerStatus(
     val online: Boolean,
@@ -68,9 +69,8 @@ private const val MIN_TIMEOUT_MILLIS = 250
 /**
  * 解析服务器地址：`example.com` / `example.com:25566` / `[::1]:25565`。
  *
- * 只做字符串解析，**不查询 SRV 记录**：`_minecraft._tcp` 的 SRV 查询属于本轮范围之外，
- * 直接使用用户填写的端口（缺省 [DEFAULT_SERVER_PORT]）。空串、含空白或控制字符、
- * 端口越界、括号不成对都返回 null，从不抛异常。
+ * 只做字符串解析，**不查询 SRV 记录**：`_minecraft._tcp` 的 SRV 查询未在此实现， 直接使用用户填写的端口（缺省
+ * [DEFAULT_SERVER_PORT]）。空串、含空白或控制字符、 端口越界、括号不成对都返回 null，从不抛异常。
  */
 fun parseServerAddress(address: String): ServerAddress? {
     val raw = address.trim()
@@ -103,9 +103,8 @@ fun parseServerAddress(address: String): ServerAddress? {
 /**
  * 查询一个 Minecraft 服务器的状态，失败返回 null（从不抛异常）。
  *
- * 先走现代 Server List Ping（握手 next state = 1 + status 请求），失败时退回旧版
- * `0xFE 0x01` 查询；整段在 [Dispatchers.IO] 上执行，连接与读取共用 [timeoutMillis]
- * （会被限制在 250 ms–30 s）。DNS 解析不受 socket 超时约束，可能额外多花一点时间。
+ * 先走现代 Server List Ping（握手 next state = 1 + status 请求），失败时退回旧版 `0xFE 0x01` 查询；整段在 [Dispatchers.IO]
+ * 上执行，连接与读取共用 [timeoutMillis] （会被限制在 250 ms–30 s）。DNS 解析不受 socket 超时约束，可能额外多花一点时间。
  */
 suspend fun ping(
     host: String,
@@ -118,7 +117,9 @@ suspend fun ping(
     return withContext(Dispatchers.IO) {
         try {
             val startedAt = System.nanoTime()
-            modernPing(target, port, timeout)?.let { return@withContext it }
+            modernPing(target, port, timeout)?.let {
+                return@withContext it
+            }
             // 旧版兜底共用同一份总预算，避免两次 4 秒超时把一次查询拖到 8 秒以上。
             val used = ((System.nanoTime() - startedAt) / 1_000_000L).toInt()
             val remaining = timeout - used
@@ -180,8 +181,8 @@ private fun modernPing(host: String, port: Int, timeoutMillis: Int): ServerStatu
 }
 
 /**
- * 旧版（1.4–1.6 及更早）查询：`0xFE 0x01`，响应是 `0xFF` + 长度 + UTF-16BE 字符串。
- * 字段用 `\u0000` 分隔：`§1`、协议号、版本名、MOTD、在线人数、上限（更早的版本没有后两项）。
+ * 旧版（1.4–1.6 及更早）查询：`0xFE 0x01`，响应是 `0xFF` + 长度 + UTF-16BE 字符串。 字段用 `\u0000`
+ * 分隔：`§1`、协议号、版本名、MOTD、在线人数、上限（更早的版本没有后两项）。
  */
 private fun legacyPing(host: String, port: Int, timeoutMillis: Int): ServerStatus? {
     val socket = Socket()
@@ -244,10 +245,11 @@ private fun statusFromLegacy(text: String, latency: Int): ServerStatus {
 private fun JsonObject.intValue(key: String): Int =
     runCatching { get(key)?.takeIf { it.isJsonPrimitive }?.asInt }.getOrNull() ?: 0
 
-private fun JsonObject.stringValue(key: String): String =
-    runCatching { get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString }
-        .getOrNull()
-        .orEmpty()
+private fun JsonObject.stringValue(key: String): String = runCatching {
+    get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+}
+    .getOrNull()
+    .orEmpty()
 
 // ---------------------------------------------------------------- MOTD 解析
 
@@ -309,9 +311,8 @@ private val legacyColorCodes: List<Int> =
  * 把状态 JSON 的 `description` 解析成扁平的样式片段。
  *
  * 支持纯字符串（其中可以带 `§` 代码）、组件对象（`text` + `extra` + `color` +
- * `bold/italic/underlined/strikethrough`）与组件数组；子组件继承父组件样式，
- * 显式写了 `false` 的开关会覆盖父级。没有可显示文字、或结构无法识别时返回空列表；
- * 本函数从不抛异常。
+ * `bold/italic/underlined/strikethrough`）与组件数组；子组件继承父组件样式， 显式写了 `false`
+ * 的开关会覆盖父级。没有可显示文字、或结构无法识别时返回空列表； 本函数从不抛异常。
  */
 fun parseMotd(description: JsonElement?): List<MotdSegment> {
     val segments = ArrayList<MotdSegment>()
@@ -399,10 +400,7 @@ private fun parseColor(value: String): Int? {
     return hex.toIntOrNull(16)
 }
 
-/**
- * 追加一段可能带 `§` 代码的文字：代码切换样式并切断当前片段，`§r` 复位，
- * 未知代码按普通字符保留。连续同样式的小段会合并，最终得到「每个样式一段」。
- */
+/** 追加一段可能带 `§` 代码的文字：代码切换样式并切断当前片段，`§r` 复位， 未知代码按普通字符保留。连续同样式的小段会合并，最终得到「每个样式一段」。 */
 private fun appendStyled(text: String, style: MotdStyle, out: MutableList<MotdSegment>) {
     if (text.isEmpty()) return
     val normalized = text.replace('\r', ' ').replace('\n', ' ')
@@ -458,12 +456,13 @@ private fun codeStyle(code: Char, style: MotdStyle): MotdStyle? {
 private fun appendRun(text: String, style: MotdStyle, out: MutableList<MotdSegment>) {
     if (text.isEmpty()) return
     val last = out.lastOrNull()
-    if (last != null &&
-        last.color == style.color &&
-        last.bold == style.bold &&
-        last.italic == style.italic &&
-        last.underlined == style.underlined &&
-        last.struck == style.struck
+    if (
+        last != null &&
+            last.color == style.color &&
+            last.bold == style.bold &&
+            last.italic == style.italic &&
+            last.underlined == style.underlined &&
+            last.struck == style.struck
     ) {
         out[out.size - 1] = last.copy(text = last.text + text)
     } else {

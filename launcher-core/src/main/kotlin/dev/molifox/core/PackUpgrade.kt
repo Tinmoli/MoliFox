@@ -1,3 +1,5 @@
+// 负责整合包升级计划、受保护文件和回滚。
+
 package dev.molifox.core
 
 import java.io.IOException

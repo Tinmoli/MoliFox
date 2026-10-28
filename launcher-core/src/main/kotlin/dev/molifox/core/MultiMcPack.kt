@@ -1,3 +1,5 @@
+// 负责MultiMC 整合包的识别和导入。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser

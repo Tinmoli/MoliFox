@@ -1,3 +1,5 @@
+// 负责模组元数据与依赖声明的读取。
+
 package dev.molifox.core
 
 import com.google.gson.JsonElement

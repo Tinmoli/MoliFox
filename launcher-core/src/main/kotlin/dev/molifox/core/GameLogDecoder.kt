@@ -1,3 +1,5 @@
+// 负责游戏进程日志的编码识别与流式解码。
+
 package dev.molifox.core
 
 internal data class DecodedGameLog(val message: String, val error: Boolean)
@@ -40,7 +42,8 @@ internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
             output(
                 DecodedGameLog(
                     rendered,
-                    if (level.isBlank()) isGameError(rendered) else level in setOf("ERROR", "FATAL"),
+                    if (level.isBlank()) isGameError(rendered)
+                    else level in setOf("ERROR", "FATAL"),
                 )
             )
         } else if (buffer.length > 128 * 1024) {

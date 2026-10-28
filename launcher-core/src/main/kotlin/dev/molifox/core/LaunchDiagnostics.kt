@@ -1,3 +1,5 @@
+// 负责启动失败诊断和诊断包导出。
+
 package dev.molifox.core
 
 import java.nio.file.Files

@@ -1,3 +1,5 @@
+// 负责验证模组元数据与依赖声明的读取的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Path

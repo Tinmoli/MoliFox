@@ -1,3 +1,5 @@
+// 负责原版游戏和模组加载器的安装维护。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -150,7 +152,11 @@ class MinecraftInstaller(
                 managedGameDirectory = true,
             )
         store.mutate {
-            it.copy(instances = it.instances + instance, selectedInstanceId = instance.id, activeGameDirectoryId = gameDirectoryId)
+            it.copy(
+                instances = it.instances + instance,
+                selectedInstanceId = instance.id,
+                activeGameDirectoryId = gameDirectoryId,
+            )
         }
         store.instancePath(instance.id).createDirectories()
         return instance

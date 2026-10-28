@@ -1,3 +1,5 @@
+// 负责验证实例删除范围、确认信息和文件删除执行的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -92,7 +94,13 @@ class InstanceDeletionTest {
             assertEquals(listOf(expected), report.removedPaths.map { Path.of(it) })
             assertTrue(report.freedBytes > 0)
             assertFalse(folder.exists())
-            assertTrue(temporary.resolve("trash").listDirectoryEntries().single { it.name.endsWith(id) }.isDirectory())
+            assertTrue(
+                temporary
+                    .resolve("trash")
+                    .listDirectoryEntries()
+                    .single { it.name.endsWith(id) }
+                    .isDirectory()
+            )
             assertTrue(sibling.resolve("KeepMe[1.21]_v2.json").isRegularFile())
             assertTrue(root.resolve("versions").isDirectory())
             assertEquals("shared", root.resolve("saves/world/level.dat").readText())
@@ -120,7 +128,10 @@ class InstanceDeletionTest {
             root.resolve("assets").createDirectories().resolve("a.bin").writeText("asset")
             val expected = setOf(own.toRealPath(), versionFolder.toRealPath())
             assertEquals(expected, controller.deletionTargets(created.id).toSet())
-            val report = runBlocking { controller.deleteInstance(created.id, permanent = true) }.getOrThrow()
+            val report = runBlocking {
+                controller.deleteInstance(created.id, permanent = true)
+            }
+                .getOrThrow()
             assertFalse(report.movedToTrash)
             assertEquals(0, platform.trashCalls)
             assertEquals(expected, report.removedPaths.map { Path.of(it) }.toSet())
@@ -142,7 +153,8 @@ class InstanceDeletionTest {
             val second = controller.installer.createInstance(InstallRequest("第二个", "1.20.1"))
             val versionFolder = version(root, "1.20.1")
             val firstOwn = root.resolve("instances").resolve(first.id).apply { createDirectories() }
-            val secondOwn = root.resolve("instances").resolve(second.id).apply { createDirectories() }
+            val secondOwn =
+                root.resolve("instances").resolve(second.id).apply { createDirectories() }
             firstOwn.resolve("mods").createDirectories().resolve("a.jar").writeText("mod")
             secondOwn.resolve("saves").createDirectories().resolve("level.dat").writeText("save")
             runBlocking { controller.deleteInstance(first.id) }.getOrThrow()
@@ -153,7 +165,10 @@ class InstanceDeletionTest {
             assertTrue(versionFolder.resolve("1.20.1.json").isRegularFile())
             runBlocking { controller.deleteInstance(second.id) }.getOrThrow()
             assertEquals(2, platform.trashCalls)
-            assertEquals(listOf(versionFolder.toRealPath(), secondOwn.toRealPath()), platform.trashed.takeLast(2))
+            assertEquals(
+                listOf(versionFolder.toRealPath(), secondOwn.toRealPath()),
+                platform.trashed.takeLast(2),
+            )
             assertFalse(secondOwn.exists())
             assertFalse(versionFolder.exists())
             assertEquals(emptyList(), controller.store.data.instances)

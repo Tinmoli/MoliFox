@@ -1,3 +1,5 @@
+// 负责远端服务错误的结构化描述。
+
 package dev.molifox.core
 
 import java.io.IOException

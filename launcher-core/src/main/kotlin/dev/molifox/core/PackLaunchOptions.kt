@@ -1,3 +1,5 @@
+// 负责整合包启动选项的转换与校验。
+
 package dev.molifox.core
 
 /** Source arguments become editable instance overrides; repair never reapplies them. */

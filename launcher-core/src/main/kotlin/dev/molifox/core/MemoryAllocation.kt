@@ -1,3 +1,5 @@
+// 负责自动和手动游戏内存分配。
+
 package dev.molifox.core
 
 data class GameMemoryAllocation(val maximumMb: Int, val initialMb: Int, val automatic: Boolean)

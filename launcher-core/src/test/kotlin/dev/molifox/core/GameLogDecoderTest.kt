@@ -1,3 +1,5 @@
+// 负责验证游戏进程日志的编码识别与流式解码的行为与边界。
+
 package dev.molifox.core
 
 import kotlin.test.*

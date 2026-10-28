@@ -1,3 +1,5 @@
+// 负责模组归档内图标的读取与缓存。
+
 package dev.molifox.core
 
 import com.google.gson.JsonElement
@@ -16,10 +18,10 @@ import kotlin.io.path.*
 import org.tomlj.Toml
 
 /** 模组图标上限 1 MiB：超过上限的图片不当图标，避免把整包资源读进内存。 */
-private const val modIconMaxBytes = 1024 * 1024
+private const val MOD_ICON_MAX_BYTES = 1024 * 1024
 
 /** 声明文件（fabric.mod.json / mods.toml / mcmod.info）的读取上限。 */
-private const val modIconDeclarationMaxBytes = 2 * 1024 * 1024
+private const val MOD_ICON_DECLARATION_MAX_BYTES = 2 * 1024 * 1024
 
 /** 兜底候选：assets/<命名空间>/icon.png → logo.png → pack.png → 根目录 icon.png。 */
 private val modIconFallbacks =
@@ -42,8 +44,8 @@ private class ModIconPayload(val bytes: ByteArray, val png: Boolean)
  * 3. `mcmod.info` 的 `logoFile`；
  * 4. 兜底：`assets/<命名空间>/icon.png`、`assets/<命名空间>/logo.png`、`pack.png`、根目录 `icon.png`。
  *
- * 缓存位置：`<cacheRoot>/mod-icons/<sha256(JAR 绝对路径 + 长度 + 修改时间)>.png`；命中时只看缓存文件，
- * 不再打开 JAR。只读取声明与图片字节，从不加载类文件；任何异常都当作「没有图标」，不向调用方抛出。
+ * 缓存位置：`<cacheRoot>/mod-icons/<sha256(JAR 绝对路径 + 长度 + 修改时间)>.png`；命中时只看缓存文件， 不再打开
+ * JAR。只读取声明与图片字节，从不加载类文件；任何异常都当作「没有图标」，不向调用方抛出。
  */
 fun modIcon(jar: Path, cacheRoot: Path): Path? {
     return try {
@@ -56,7 +58,7 @@ fun modIcon(jar: Path, cacheRoot: Path): Path? {
             if (
                 target.isRegularFile() &&
                     !Files.isSymbolicLink(target) &&
-                    target.fileSize() in 1L..modIconMaxBytes.toLong()
+                    target.fileSize() in 1L..MOD_ICON_MAX_BYTES.toLong()
             )
                 target
             else {
@@ -103,11 +105,15 @@ private fun modIconPayload(zip: ZipFile): ModIconPayload? {
     textEntry(zip, "mcmod.info")?.let { source ->
         mcmodLogo(source)?.let(::declaredIconName)?.let(declared::add)
     }
-    for (name in declared) iconPayload(zip, name)?.let { return it }
+    for (name in declared) iconPayload(zip, name)?.let {
+        return it
+    }
     for (pattern in modIconFallbacks) {
         for (entry in zip.entries().asSequence()) {
             if (entry.isDirectory || !pattern.matches(entry.name)) continue
-            iconPayload(zip, entry.name)?.let { return it }
+            iconPayload(zip, entry.name)?.let {
+                return it
+            }
         }
     }
     return null
@@ -116,17 +122,18 @@ private fun modIconPayload(zip: ZipFile): ModIconPayload? {
 /** 读取声明文件文本；目录、空文件和超大文件都视为没有声明。 */
 private fun textEntry(zip: ZipFile, name: String): String? {
     val entry = zip.getEntry(name) ?: return null
-    if (entry.isDirectory || entry.size !in 1L..modIconDeclarationMaxBytes.toLong()) return null
-    val bytes = zip.getInputStream(entry).use { it.readNBytes(modIconDeclarationMaxBytes + 1) }
-    if (bytes.size !in 1..modIconDeclarationMaxBytes) return null
+    if (entry.isDirectory || entry.size !in 1L..MOD_ICON_DECLARATION_MAX_BYTES.toLong()) return null
+    val bytes = zip.getInputStream(entry).use { it.readNBytes(MOD_ICON_DECLARATION_MAX_BYTES + 1) }
+    if (bytes.size !in 1..MOD_ICON_DECLARATION_MAX_BYTES) return null
     return bytes.toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
 }
 
 /** 声明里的相对路径先做安全裁剪；绝对路径、协议、`..` 一律不认。 */
 private fun declaredIconName(value: String): String? {
     val name =
-        value.trim().replace('\\', '/').removePrefix("./").removePrefix("/").takeIf { it.isNotBlank() }
-            ?: return null
+        value.trim().replace('\\', '/').removePrefix("./").removePrefix("/").takeIf {
+            it.isNotBlank()
+        } ?: return null
     if (name.length > 240 || "://" in name) return null
     if (name.split('/').any { it.isEmpty() || it == "." || it == ".." }) return null
     return name
@@ -142,9 +149,9 @@ private fun iconEntry(zip: ZipFile, name: String): ZipEntry? =
 /** 读取单张候选图片：条目必须存在、非空、不超过 1 MiB；超过上限或读不出来都返回 null。 */
 private fun iconPayload(zip: ZipFile, name: String): ModIconPayload? {
     val entry = iconEntry(zip, name) ?: return null
-    if (entry.isDirectory || entry.size !in 1L..modIconMaxBytes.toLong()) return null
-    val bytes = zip.getInputStream(entry).use { it.readNBytes(modIconMaxBytes + 1) }
-    if (bytes.size !in 1..modIconMaxBytes) return null
+    if (entry.isDirectory || entry.size !in 1L..MOD_ICON_MAX_BYTES.toLong()) return null
+    val bytes = zip.getInputStream(entry).use { it.readNBytes(MOD_ICON_MAX_BYTES + 1) }
+    if (bytes.size !in 1..MOD_ICON_MAX_BYTES) return null
     return ModIconPayload(bytes, entry.name.endsWith(".png", ignoreCase = true))
 }
 
@@ -158,7 +165,9 @@ private fun fabricIcon(info: JsonObject?): String? {
         .entrySet()
         .mapNotNull { (size, value) ->
             val path =
-                value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+                value
+                    .takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                    ?.asString
                     ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val rank = size.takeWhile { character -> character.isDigit() }.toIntOrNull() ?: 0
             rank to path
@@ -174,32 +183,31 @@ private val tomlLogoPattern =
 private fun tomlLogo(source: String): String? =
     tomlLogoPattern
         .findAll(source)
-        .mapNotNull { match -> (match.groupValues[1].ifBlank { match.groupValues[2] }).takeIf { it.isNotBlank() } }
+        .mapNotNull { match ->
+            (match.groupValues[1].ifBlank { match.groupValues[2] }).takeIf { it.isNotBlank() }
+        }
         .firstOrNull()
 
 /** 旧版 Forge：`mcmod.info` 是数组，或带 `modList` 数组的对象；取第一个非空 `logoFile`。 */
-private fun mcmodLogo(source: String): String? =
-    runCatching {
-            val json = JsonParser.parseString(source)
-            val entries =
-                when {
-                    json.isJsonArray -> json.asJsonArray.toList()
-                    json.isJsonObject ->
-                        json.asJsonObject
-                            .get("modList")
-                            ?.takeIf { it.isJsonArray }
-                            ?.asJsonArray
-                            ?.toList() ?: listOf(json)
-                    else -> emptyList()
-                }
-            entries
-                .mapNotNull { value ->
-                    value.takeIf { it.isJsonObject }
-                        ?.asJsonObject
-                        ?.get("logoFile")
-                        ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
-                        ?.asString
-                }
-                .firstOrNull { it.isNotBlank() }
+private fun mcmodLogo(source: String): String? = runCatching {
+    val json = JsonParser.parseString(source)
+    val entries =
+        when {
+            json.isJsonArray -> json.asJsonArray.toList()
+            json.isJsonObject ->
+                json.asJsonObject.get("modList")?.takeIf { it.isJsonArray }?.asJsonArray?.toList()
+                    ?: listOf(json)
+            else -> emptyList()
         }
-        .getOrNull()
+    entries
+        .mapNotNull { value ->
+            value
+                .takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.get("logoFile")
+                ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                ?.asString
+        }
+        .firstOrNull { it.isNotBlank() }
+}
+    .getOrNull()

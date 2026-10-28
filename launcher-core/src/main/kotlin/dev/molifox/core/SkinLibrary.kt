@@ -1,3 +1,5 @@
+// 负责本地皮肤文件的导入、索引和导出。
+
 package dev.molifox.core
 
 import java.nio.file.Files

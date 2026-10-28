@@ -1,3 +1,5 @@
+// 负责账户创建、登录、启动凭据刷新和本地退出。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject
@@ -51,10 +53,7 @@ class AccountService(
     /** 已保存的外置认证服务器（供界面展示名称、选择与删除，不含任何令牌）。 */
     fun authlibServers(): List<AuthlibServer> = store.data.authlibServers.toList()
 
-    /**
-     * 校验并保存外置认证服务器：先请求 Yggdrasil 元数据，成功后按规范化 URL 去重保存。
-     * 同一 URL 的重复添加会更新显示名，不会产生重复条目。
-     */
+    /** 校验并保存外置认证服务器：先请求 Yggdrasil 元数据，成功后按规范化 URL 去重保存。 同一 URL 的重复添加会更新显示名，不会产生重复条目。 */
     suspend fun addAuthlibServer(serverUrl: String): Result<AuthlibServer> =
         try {
             Result.success(persistAuthlibServer(authlibClient.metadata(serverUrl)))
@@ -71,10 +70,7 @@ class AccountService(
             )
         }
 
-    /**
-     * 非挂起显示名：账户列表/卡片可直接调用，不发起网络请求。
-     * 已保存的服务器取缓存名称，未保存时退回主机名（仍无法识别则为空字符串）。
-     */
+    /** 非挂起显示名：账户列表/卡片可直接调用，不发起网络请求。 已保存的服务器取缓存名称，未保存时退回主机名（仍无法识别则为空字符串）。 */
     fun authlibServerName(serverUrl: String): String {
         val normalized = normalizeAuthlibServerUrl(serverUrl) ?: return ""
         return store.data.authlibServers.find { matchesAuthlibServer(it.url, normalized) }?.name
@@ -93,25 +89,24 @@ class AccountService(
         return true
     }
 
-    /**
-     * 服务器显示名（账户卡片副标题）。已保存的服务器直接取缓存名称，不发起请求；
-     * 未保存的地址会先校验元数据，失败时抛出 [AuthlibException]。
-     */
+    /** 服务器显示名（账户卡片副标题）。已保存的服务器直接取缓存名称，不发起请求； 未保存的地址会先校验元数据，失败时抛出 [AuthlibException]。 */
     suspend fun authlibMetadata(serverUrl: String): String {
         val normalized =
             normalizeAuthlibServerUrl(serverUrl)
                 ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
-        store.data.authlibServers.find { matchesAuthlibServer(it.url, normalized) }?.let {
-            return it.name
-        }
+        store.data.authlibServers
+            .find { matchesAuthlibServer(it.url, normalized) }
+            ?.let {
+                return it.name
+            }
         return authlibClient.metadata(normalized).name
     }
 
     /**
      * 用外置认证服务器（LittleSkin 等）登录并保存账户。
      *
-     * 返回的 [Result] 失败时异常一定是 [AuthlibException]，界面可通过 `error.error` 区分
-     * 密码错误 / 无法连接 / 不是 Yggdrasil 元数据 / 需要重新登录等情况。
+     * 返回的 [Result] 失败时异常一定是 [AuthlibException]，界面可通过 `error.error` 区分 密码错误 / 无法连接 / 不是 Yggdrasil
+     * 元数据 / 需要重新登录等情况。
      */
     suspend fun addAuthlibAccount(
         serverUrl: String,
@@ -156,8 +151,7 @@ class AccountService(
             vault.save(account.id, encodeAuthlibSession(session, server.url, playerName))
             store.mutate {
                 it.copy(
-                    accounts =
-                        it.accounts.filter { item -> item.id != existing?.id } + account,
+                    accounts = it.accounts.filter { item -> item.id != existing?.id } + account,
                     activeAccountId = account.id,
                 )
             }
@@ -307,8 +301,8 @@ class AccountService(
     }
 
     /**
-     * 外置认证账户的启动凭据：校验令牌，过期则续期；续期失败抛出 [AuthlibError.SessionExpired]，
-     * 网络失败抛出 [AuthlibError.Network]，界面据此决定是提示重登还是检查网络。
+     * 外置认证账户的启动凭据：校验令牌，过期则续期；续期失败抛出 [AuthlibError.SessionExpired]， 网络失败抛出
+     * [AuthlibError.Network]，界面据此决定是提示重登还是检查网络。
      */
     private suspend fun authlibCredentials(account: Account): GameCredentials {
         val server =
@@ -357,8 +351,7 @@ class AccountService(
                 it.copy(
                     accounts =
                         it.accounts.map { item ->
-                            if (item.id == account.id) item.copy(name = name, uuid = uuid)
-                            else item
+                            if (item.id == account.id) item.copy(name = name, uuid = uuid) else item
                         }
                 )
             }
@@ -376,9 +369,8 @@ class AccountService(
     /**
      * 保存已验证的服务器；同一规范化 URL 只保留一条，重复添加时更新显示名。
      *
-     * 去重按 [matchesAuthlibServer] 判断，与删除 / 显示名查找同一套口径：内置默认项、
-     * 带或不带 `/api/yggdrasil`、以及末尾多一个 `/` 的写法都算同一个服务器，
-     * 不会因为站点根地址与 API 根地址两种写法并存而多出一条 LittleSkin。
+     * 去重按 [matchesAuthlibServer] 判断，与删除 / 显示名查找同一套口径：内置默认项、 带或不带 `/api/yggdrasil`、以及末尾多一个 `/`
+     * 的写法都算同一个服务器， 不会因为站点根地址与 API 根地址两种写法并存而多出一条 LittleSkin。
      */
     private fun persistAuthlibServer(metadata: AuthlibMetadata): AuthlibServer {
         val existing =
@@ -394,8 +386,7 @@ class AccountService(
             val servers = data.authlibServers
             data.copy(
                 authlibServers =
-                    if (existing != null)
-                        servers.map { if (it.url == existing.url) server else it }
+                    if (existing != null) servers.map { if (it.url == existing.url) server else it }
                     else servers + server
             )
         }

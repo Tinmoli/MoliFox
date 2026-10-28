@@ -1,3 +1,5 @@
+// 负责游戏版本继承链、依赖库和启动主类解析。
+
 package dev.molifox.core
 
 import com.google.gson.JsonArray

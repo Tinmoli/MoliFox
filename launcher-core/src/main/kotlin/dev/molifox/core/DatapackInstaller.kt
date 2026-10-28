@@ -1,3 +1,5 @@
+// 负责数据包向指定存档的校验与安装。
+
 package dev.molifox.core
 
 import java.nio.file.Files

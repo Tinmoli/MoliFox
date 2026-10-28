@@ -1,3 +1,5 @@
+// 负责后台任务调度、进度和取消。
+
 package dev.molifox.core
 
 import java.util.UUID

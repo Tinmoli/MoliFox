@@ -1,3 +1,5 @@
+// 负责定位并操作 Windows 测试游戏窗口。
+
 package dev.molifox.core
 
 import com.sun.jna.Pointer

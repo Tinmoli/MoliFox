@@ -1,3 +1,5 @@
+// 负责为测试构造 NBT 二进制样例。
+
 package dev.molifox.core
 
 import java.io.ByteArrayOutputStream

@@ -1,3 +1,5 @@
+// 负责Modrinth 标准整合包的导出与文件识别。
+
 package dev.molifox.core
 
 import java.net.URI

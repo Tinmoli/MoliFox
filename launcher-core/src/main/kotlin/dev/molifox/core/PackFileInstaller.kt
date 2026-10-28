@@ -1,3 +1,5 @@
+// 负责整合包文件下载与实例写入。
+
 package dev.molifox.core
 
 import java.nio.file.Files

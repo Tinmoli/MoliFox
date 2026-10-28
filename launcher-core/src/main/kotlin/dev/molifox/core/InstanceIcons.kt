@@ -1,3 +1,5 @@
+// 负责实例图标导入、优先级解析和共享资源回收。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -65,10 +67,10 @@ class InstanceIcons(private val store: LauncherStore) {
             }
             if (instance.iconStyle == InstanceIconStyle.Auto && instance.packIconId.isNotBlank())
                 runCatching {
-                        managed(instance.packIconId).takeIf {
-                            validInstanceIcon(it) && digest(it, "SHA-256") == instance.packIconId
-                        }
+                    managed(instance.packIconId).takeIf {
+                        validInstanceIcon(it) && digest(it, "SHA-256") == instance.packIconId
                     }
+                }
                     .getOrNull()
                     ?.let {
                         return@withContext it
@@ -110,7 +112,8 @@ class InstanceIcons(private val store: LauncherStore) {
                         Charsets.UTF_8.newDecoder()
                             .decode(java.nio.ByteBuffer.wrap(bytes))
                             .toString()
-                    }.getOrElse { bytes.toString(java.nio.charset.Charset.forName("GB18030")) }
+                    }
+                        .getOrElse { bytes.toString(java.nio.charset.Charset.forName("GB18030")) }
                     text
                         .lineSequence()
                         .mapNotNull { line ->

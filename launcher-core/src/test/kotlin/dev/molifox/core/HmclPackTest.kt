@@ -1,3 +1,5 @@
+// 负责验证HMCL 整合包格式兼容行为的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

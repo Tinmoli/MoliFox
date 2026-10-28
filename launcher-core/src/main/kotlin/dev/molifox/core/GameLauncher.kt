@@ -1,3 +1,5 @@
+// 负责游戏启动计划、参数组装和 Java 子进程管理。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -158,13 +160,17 @@ class LaunchPlanner(
             val modern = profile.json.obj("arguments")
             val jvm =
                 if (modern.array("jvm").size() > 0)
-                    expandArguments(modern.array("jvm"), values, platform, features).map { argument ->
-                        // Modular loaders must ignore the actual inherited JAR, even for renamed profiles.
+                    expandArguments(modern.array("jvm"), values, platform, features).map { argument
+                        ->
+                        // Modular loaders must ignore the actual inherited JAR, even for renamed
+                        // profiles.
                         if (argument.startsWith("-DignoreList=")) {
-                            "-DignoreList=" + argument.removePrefix("-DignoreList=")
-                                .split(',')
-                                .joinToString(",") { entry ->
-                                    if (entry == "${profile.id}.jar") jar.fileName.toString() else entry
+                            "-DignoreList=" +
+                                argument.removePrefix("-DignoreList=").split(',').joinToString(
+                                    ","
+                                ) { entry ->
+                                    if (entry == "${profile.id}.jar") jar.fileName.toString()
+                                    else entry
                                 }
                         } else argument
                     }

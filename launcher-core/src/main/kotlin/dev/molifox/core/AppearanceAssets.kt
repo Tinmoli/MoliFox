@@ -1,3 +1,5 @@
+// 负责背景图片、字体等个性化资源的导入与清理。
+
 package dev.molifox.core
 
 import java.awt.Font
@@ -30,7 +32,8 @@ fun importAppearanceBackground(dataDirectory: Path, source: Path): Path {
             reader.dispose()
         }
     }
-    val directory = LauncherDirectories(dataDirectory).backgrounds.apply { createStorageDirectory(this) }
+    val directory =
+        LauncherDirectories(dataDirectory).backgrounds.apply { createStorageDirectory(this) }
     val destination = directory.resolve("background.img")
     if (destination.exists() && Files.isSameFile(source, destination)) return destination
     val temporary = Files.createTempFile(directory, "background-", ".tmp")

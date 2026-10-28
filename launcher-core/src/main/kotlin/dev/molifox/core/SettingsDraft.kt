@@ -1,3 +1,5 @@
+// 负责设置草稿与已保存配置的合并。
+
 package dev.molifox.core
 
 import com.google.gson.JsonElement

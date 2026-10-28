@@ -1,3 +1,5 @@
+// 负责验证启动目录与便携存储的迁移初始化的行为与边界。
+
 package dev.molifox.core
 
 import java.io.IOException

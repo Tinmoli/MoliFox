@@ -1,3 +1,5 @@
+// 负责验证版本、路径和启动参数的基础规则的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser

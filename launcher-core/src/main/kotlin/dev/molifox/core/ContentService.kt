@@ -1,3 +1,5 @@
+// 负责内容搜索、安装和整合包管理的服务入口。
+
 package dev.molifox.core
 
 import java.nio.file.AtomicMoveNotSupportedException

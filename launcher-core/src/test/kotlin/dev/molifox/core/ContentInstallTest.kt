@@ -1,3 +1,5 @@
+// 负责验证资源依赖规划和事务安装的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files

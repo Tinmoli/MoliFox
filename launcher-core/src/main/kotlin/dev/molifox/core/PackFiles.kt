@@ -1,3 +1,5 @@
+// 负责整合包文件条目的归一化与校验。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

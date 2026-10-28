@@ -1,3 +1,5 @@
+// 负责高级启动参数的校验、继承和合并。
+
 package dev.molifox.core
 
 /**

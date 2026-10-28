@@ -1,3 +1,5 @@
+// 负责网络请求、下载校验、重试和断点续传。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

@@ -1,3 +1,5 @@
+// 负责验证配置存储与后台任务的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Path

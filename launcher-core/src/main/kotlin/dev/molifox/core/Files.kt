@@ -1,3 +1,5 @@
+// 负责文件路径、原子写入、校验与 JSON 访问辅助。
+
 package dev.molifox.core
 
 import com.google.gson.GsonBuilder

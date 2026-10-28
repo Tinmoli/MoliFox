@@ -1,3 +1,5 @@
+// 负责验证整合包升级计划、受保护文件和回滚的行为与边界。
+
 package dev.molifox.core
 
 import java.io.ByteArrayOutputStream

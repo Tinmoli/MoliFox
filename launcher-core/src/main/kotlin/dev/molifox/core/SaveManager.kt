@@ -1,3 +1,5 @@
+// 负责存档列表、备份、恢复、复制和回收。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -75,18 +77,14 @@ private val parseBackupStamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS"
 private val saveBackupParsePattern = Regex("^\\d{8}-\\d{6}-\\d{3}$")
 
 /**
- * 存档管理（B10）：列出、备份、恢复与跨实例复制 `saves/` 下的世界。
+ * 存档管理：列出、备份、恢复与跨实例复制 `saves/` 下的世界。
  *
  * 约定：
- * - 只操作实例 `saves/` 的直接子项，目录与 `.zip` 都算存档；不跟随符号链接/目录联接，
- *   损坏或不可读的子项只跳过，不抛异常。
- * - 备份写到实例目录下的 `.molifox-saves-backups/<时间戳>-<安全化名称>.zip`，先写 `.part`
- *   再原子改名；备份**保留原存档**，不移动、不删除用户内容。
- * - 恢复先解压到 `saves/` 内的隐藏临时目录，校验通过后才改名到最终位置；`overwrite=false`
- *   时目标已存在直接拒绝，`overwrite=true` 时先把现有存档打成 `.replaced.zip` 再替换，
- *   任一步失败都回滚（删除临时目录、把旧存档搬回原位、删除本次生成的 replaced 备份）。
- * - 跨实例复制只接受 MoliFox 自建的版本隔离实例；目标已有同名存档时**自动加序号**
- *   （`World` → `World 2`），从不覆盖目标实例的现有存档。
+ * - 只操作实例 `saves/` 的直接子项，目录与 `.zip` 都算存档；不跟随符号链接/目录联接， 损坏或不可读的子项只跳过，不抛异常。
+ * - 备份写到实例目录下的 `.molifox-saves-backups/<时间戳>-<安全化名称>.zip`，先写 `.part` 再原子改名；备份**保留原存档**，不移动、不删除用户内容。
+ * - 恢复先解压到 `saves/` 内的隐藏临时目录，校验通过后才改名到最终位置；`overwrite=false` 时目标已存在直接拒绝，`overwrite=true` 时先把现有存档打成
+ *   `.replaced.zip` 再替换， 任一步失败都回滚（删除临时目录、把旧存档搬回原位、删除本次生成的 replaced 备份）。
+ * - 跨实例复制只接受 MoliFox 自建的版本隔离实例；目标已有同名存档时**自动加序号** （`World` → `World 2`），从不覆盖目标实例的现有存档。
  * - 删除备份与删除存档走 [PlatformServices.moveToTrash]，不做不可恢复的硬删除。
  */
 class SaveManager(private val store: LauncherStore) {
@@ -94,19 +92,19 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 列出实例 `saves/` 下的直接子项。
      *
-     * `saves/` 不存在时返回空列表；程序目录、非 `.zip` 文件、符号链接与目录联接都不列出；
-     * 单个子项读不出属性时只跳过它。结果按名称排序（忽略大小写）。
+     * `saves/` 不存在时返回空列表；程序目录、非 `.zip` 文件、符号链接与目录联接都不列出； 单个子项读不出属性时只跳过它。结果按名称排序（忽略大小写）。
      */
     fun listSaves(instanceId: String): List<SaveEntry> {
         store.instance(instanceId)
         val saves = savesDirectory(instanceId)
         if (!saves.isDirectory(LinkOption.NOFOLLOW_LINKS) || isLink(saves)) return emptyList()
-        val children =
-            runCatching { saves.listDirectoryEntries() }
-                .getOrElse {
-                    store.log("读取存档目录失败：${it.message ?: saves}", true)
-                    return emptyList()
-                }
+        val children = runCatching {
+            saves.listDirectoryEntries()
+        }
+            .getOrElse {
+                store.log("读取存档目录失败：${it.message ?: saves}", true)
+                return emptyList()
+            }
         return children
             .mapNotNull { child -> runCatching { describeSave(child) }.getOrNull() }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
@@ -122,8 +120,12 @@ class SaveManager(private val store: LauncherStore) {
         val directory = backupDirectory(instanceId)
         if (!directory.isDirectory(LinkOption.NOFOLLOW_LINKS) || isLink(directory))
             return emptyList()
-        val children =
-            runCatching { directory.listDirectoryEntries() }.getOrElse { return emptyList() }
+        val children = runCatching {
+            directory.listDirectoryEntries()
+        }
+            .getOrElse {
+                return emptyList()
+            }
         return children
             .filter {
                 it.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
@@ -137,8 +139,7 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 把 `saves/<saveName>` 打包到实例的备份区，返回备份信息。
      *
-     * 世界目录按内容打包（跳过符号链接与越界路径），`saves/` 下现成的 `.zip` 存档直接复制；
-     * 成功与否都保留原存档。取消或失败时删除 `.part`，不留下半个压缩包。
+     * 世界目录按内容打包（跳过符号链接与越界路径），`saves/` 下现成的 `.zip` 存档直接复制； 成功与否都保留原存档。取消或失败时删除 `.part`，不留下半个压缩包。
      */
     suspend fun backupSave(
         instanceId: String,
@@ -179,9 +180,9 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 把备份解压回 `saves/<备份时的名称>`，返回恢复后的路径。
      *
-     * [overwrite] 为 false 且目标已存在时拒绝（中文错误，不做任何修改）；为 true 时先把现有
-     * 存档打包成 `.molifox-saves-backups/<时间戳>-<名称>.replaced.zip` 再替换。解压只允许落在
-     * `saves/` 之内，拒绝 `..`、绝对路径、盘符与符号链接条目。
+     * [overwrite] 为 false 且目标已存在时拒绝（中文错误，不做任何修改）；为 true 时先把现有 存档打包成
+     * `.molifox-saves-backups/<时间戳>-<名称>.replaced.zip` 再替换。解压只允许落在 `saves/` 之内，拒绝
+     * `..`、绝对路径、盘符与符号链接条目。
      */
     suspend fun restoreSave(
         instanceId: String,
@@ -239,9 +240,9 @@ class SaveManager(private val store: LauncherStore) {
                 runCatching { deleteTree(staging) }.onFailure { failures += it }
                 if (hold != null) {
                     runCatching {
-                            if (target.exists(LinkOption.NOFOLLOW_LINKS)) deleteTree(target)
-                            Files.move(checkNotNull(hold), target)
-                        }
+                        if (target.exists(LinkOption.NOFOLLOW_LINKS)) deleteTree(target)
+                        Files.move(checkNotNull(hold), target)
+                    }
                         .onFailure {
                             failures += it
                             holdingRestored = false
@@ -268,9 +269,8 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 把源实例的存档复制到目标实例，返回目标路径。
      *
-     * 目标已有同名存档时自动加序号（`World` → `World 2`），从不覆盖；复制先写目标 `saves/`
-     * 内的隐藏临时目录再原子改名，失败不污染目标。两个实例都必须是 MoliFox 自建的版本隔离
-     * 实例，外部游戏目录的实例由原启动器维护，直接拒绝。
+     * 目标已有同名存档时自动加序号（`World` → `World 2`），从不覆盖；复制先写目标 `saves/` 内的隐藏临时目录再原子改名，失败不污染目标。两个实例都必须是
+     * MoliFox 自建的版本隔离 实例，外部游戏目录的实例由原启动器维护，直接拒绝。
      */
     suspend fun copySaveToInstance(
         sourceInstanceId: String,
@@ -294,9 +294,7 @@ class SaveManager(private val store: LauncherStore) {
                 "目标实例未启用版本隔离，无法复制存档，请先启用版本隔离"
             }
             val sourceSaves = savesDirectory(sourceInstanceId)
-            require(
-                sourceSaves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(sourceSaves)
-            ) {
+            require(sourceSaves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(sourceSaves)) {
                 "源实例的存档目录不存在，无法复制"
             }
             val sourcePath = saveSource(sourceSaves, saveName)
@@ -310,11 +308,12 @@ class SaveManager(private val store: LauncherStore) {
             require(requested.length <= 80) { "存档名称需要 1–80 个字符" }
             val base = if (isZip) requested.removeSuffixIgnoreCase(".zip") else requested
             val finalName = uniqueSaveName(targetSaves, base, isZip)
-            val target = safePath(targetSaves, finalName).also {
-                require(it.parent.toAbsolutePath().normalize() == absolute(targetSaves)) {
-                    "存档名称无效：$finalName"
+            val target =
+                safePath(targetSaves, finalName).also {
+                    require(it.parent.toAbsolutePath().normalize() == absolute(targetSaves)) {
+                        "存档名称无效：$finalName"
+                    }
                 }
-            }
             require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$finalName" }
             val staging = safePath(targetSaves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
             try {
@@ -336,10 +335,10 @@ class SaveManager(private val store: LauncherStore) {
         val archive = runCatching { resolveBackup(instanceId, backupId) }.getOrNull()
         if (archive == null) return false
         return runCatching {
-                store.platform.moveToTrash(archive)
-                store.log("存档备份已移入回收站：${archive.name}")
-                true
-            }
+            store.platform.moveToTrash(archive)
+            store.log("存档备份已移入回收站：${archive.name}")
+            true
+        }
             .getOrElse {
                 store.log("删除存档备份失败：${it.message ?: backupId}", true)
                 false
@@ -353,17 +352,18 @@ class SaveManager(private val store: LauncherStore) {
         val saves = savesDirectory(instanceId)
         val path = runCatching { saveSource(saves, saveName) }.getOrNull() ?: return false
         return runCatching {
-                store.platform.moveToTrash(path)
-                store.log("存档已移入回收站：${instance.name} / $saveName")
-                true
-            }
+            store.platform.moveToTrash(path)
+            store.log("存档已移入回收站：${instance.name} / $saveName")
+            true
+        }
             .getOrElse {
                 store.log("删除存档失败：${it.message ?: saveName}", true)
                 false
             }
     }
 
-    private fun savesDirectory(instanceId: String): Path = store.instancePath(instanceId).resolve("saves")
+    private fun savesDirectory(instanceId: String): Path =
+        store.instancePath(instanceId).resolve("saves")
 
     private fun backupDirectory(instanceId: String): Path =
         store.instancePath(instanceId).resolve(SAVE_BACKUP_DIRECTORY)
@@ -372,12 +372,12 @@ class SaveManager(private val store: LauncherStore) {
     private fun describeSave(path: Path): SaveEntry? {
         val attributes =
             runCatching {
-                    Files.readAttributes(
-                        path,
-                        BasicFileAttributes::class.java,
-                        LinkOption.NOFOLLOW_LINKS,
-                    )
-                }
+                Files.readAttributes(
+                    path,
+                    BasicFileAttributes::class.java,
+                    LinkOption.NOFOLLOW_LINKS,
+                )
+            }
                 .getOrNull() ?: return null
         // 符号链接与目录联接（Windows junction）都不列出，避免把实例外的世界当成存档。
         if (attributes.isSymbolicLink || attributes.isOther) return null
@@ -391,8 +391,7 @@ class SaveManager(private val store: LauncherStore) {
                     size = directorySize(path),
                     lastModified = modified,
                     hasLevelDat =
-                        path.resolve("level.dat")
-                            .isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
+                        path.resolve("level.dat").isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
                             !Files.isSymbolicLink(path.resolve("level.dat")),
                     backup = false,
                 )
@@ -429,57 +428,57 @@ class SaveManager(private val store: LauncherStore) {
     private fun directorySize(directory: Path): Long {
         var total = 0L
         runCatching {
-                Files.walkFileTree(
-                    directory,
-                    object : SimpleFileVisitor<Path>() {
-                        override fun preVisitDirectory(
-                            dir: Path,
-                            attrs: BasicFileAttributes,
-                        ): FileVisitResult =
-                            if (dir != directory && (attrs.isOther || attrs.isSymbolicLink))
-                                FileVisitResult.SKIP_SUBTREE
-                            else FileVisitResult.CONTINUE
+            Files.walkFileTree(
+                directory,
+                object : SimpleFileVisitor<Path>() {
+                    override fun preVisitDirectory(
+                        dir: Path,
+                        attrs: BasicFileAttributes,
+                    ): FileVisitResult =
+                        if (dir != directory && (attrs.isOther || attrs.isSymbolicLink))
+                            FileVisitResult.SKIP_SUBTREE
+                        else FileVisitResult.CONTINUE
 
-                        override fun visitFile(
-                            file: Path,
-                            attrs: BasicFileAttributes,
-                        ): FileVisitResult {
-                            if (attrs.isRegularFile && !attrs.isOther)
-                                total += runCatching { file.fileSize() }.getOrDefault(0L)
-                            return FileVisitResult.CONTINUE
-                        }
+                    override fun visitFile(
+                        file: Path,
+                        attrs: BasicFileAttributes,
+                    ): FileVisitResult {
+                        if (attrs.isRegularFile && !attrs.isOther)
+                            total += runCatching { file.fileSize() }.getOrDefault(0L)
+                        return FileVisitResult.CONTINUE
+                    }
 
-                        override fun visitFileFailed(
-                            file: Path,
-                            error: IOException,
-                        ): FileVisitResult = FileVisitResult.CONTINUE
-                    },
-                )
-            }
+                    override fun visitFileFailed(
+                        file: Path,
+                        error: IOException,
+                    ): FileVisitResult = FileVisitResult.CONTINUE
+                },
+            )
+        }
             .onFailure { store.log("读取存档体积失败：${it.message ?: directory}") }
         return total
     }
 
     /** `.zip` 存档里是否有 `level.dat`；损坏的压缩包按「不像世界」处理，不抛异常。 */
-    private fun zipHasLevelDat(archive: Path): Boolean =
-        runCatching {
-                ZipFile(archive.toFile()).use { zip ->
-                    Collections.list(zip.entries()).any { entry ->
-                        !entry.isDirectory &&
-                            (entry.name.equals("level.dat", true) ||
-                                entry.name.endsWith("/level.dat", true))
-                    }
-                }
+    private fun zipHasLevelDat(archive: Path): Boolean = runCatching {
+        ZipFile(archive.toFile()).use { zip ->
+            Collections.list(zip.entries()).any { entry ->
+                !entry.isDirectory &&
+                    (entry.name.equals("level.dat", true) ||
+                        entry.name.endsWith("/level.dat", true))
             }
-            .getOrDefault(false)
+        }
+    }
+        .getOrDefault(false)
 
     /** 解析 `saves/` 下的直接子项；只接受目录或 `.zip`，并拒绝越界与符号链接。 */
     private fun saveSource(saves: Path, saveName: String): Path {
         require(saveName.isNotBlank() && saveName.length < 200) { "存档名称无效" }
         require('/' !in saveName && '\\' !in saveName && ':' !in saveName) { "存档名称无效：$saveName" }
-        val path =
-            runCatching { safePath(saves, saveName) }
-                .getOrElse { error("存档名称不安全：$saveName") }
+        val path = runCatching {
+            safePath(saves, saveName)
+        }
+            .getOrElse { error("存档名称不安全：$saveName") }
         require(path.parent?.toAbsolutePath()?.normalize() == absolute(saves)) {
             "只能操作 saves 目录下的存档：$saveName"
         }
@@ -497,9 +496,7 @@ class SaveManager(private val store: LauncherStore) {
     /** 恢复目标路径：`saves/<名称>`，并保证它就是 `saves/` 的直接子项。 */
     private fun saveTarget(saves: Path, name: String): Path {
         require(isPlainName(name)) { "备份里的存档名称无效：$name" }
-        val target =
-            runCatching { safePath(saves, name) }
-                .getOrElse { error("备份里的存档名称不安全：$name") }
+        val target = runCatching { safePath(saves, name) }.getOrElse { error("备份里的存档名称不安全：$name") }
         require(target.parent.toAbsolutePath().normalize() == absolute(saves)) {
             "备份里的存档名称超出 saves 目录：$name"
         }
@@ -511,15 +508,14 @@ class SaveManager(private val store: LauncherStore) {
         require(backupId.isNotBlank() && backupId.length < 200) { "备份标识无效" }
         require('/' !in backupId && '\\' !in backupId && ':' !in backupId) { "备份标识无效" }
         val directory = backupDirectory(instanceId)
-        val archive =
-            runCatching { safePath(directory, "$backupId.zip") }
-                .getOrElse { error("备份标识无效：$backupId") }
+        val archive = runCatching {
+            safePath(directory, "$backupId.zip")
+        }
+            .getOrElse { error("备份标识无效：$backupId") }
         require(archive.parent.toAbsolutePath().normalize() == absolute(directory)) {
             "备份标识无效：$backupId"
         }
-        require(
-            archive.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLink(archive)
-        ) {
+        require(archive.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLink(archive)) {
             "找不到备份文件：$backupId"
         }
         return archive
@@ -537,10 +533,10 @@ class SaveManager(private val store: LauncherStore) {
         val prefix = backupId.take(19)
         if (!saveBackupParsePattern.matches(prefix)) return null
         return runCatching {
-                java.time.LocalDateTime.parse(prefix, parseBackupStamp)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-            }
+            java.time.LocalDateTime.parse(prefix, parseBackupStamp)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+        }
             .getOrNull()
     }
 
@@ -604,9 +600,9 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 收集世界目录内的普通文件（相对路径统一正斜杠）。
      *
-     * 用 [Files.walkFileTree] 而不是 `Files.walk`：Windows 目录联接（junction）的
-     * `isSymbolicLink` 为 false，`Files.walk` 会递归进去，必须在 `preVisitDirectory` 里跳过整棵子树。
-     * 链接、越出世界目录的路径与读不出的文件只跳过；取消时抛 [CancellationException]。
+     * 用 [Files.walkFileTree] 而不是 `Files.walk`：Windows 目录联接（junction）的 `isSymbolicLink` 为
+     * false，`Files.walk` 会递归进去，必须在 `preVisitDirectory` 里跳过整棵子树。 链接、越出世界目录的路径与读不出的文件只跳过；取消时抛
+     * [CancellationException]。
      */
     private suspend fun collectSaveFiles(source: Path): List<Pair<String, Path>> {
         val root = source.toAbsolutePath().normalize()
@@ -633,8 +629,9 @@ class SaveManager(private val store: LauncherStore) {
                 override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
                     if (++visited % 256 == 0) checkCancelled()
                     if (!attrs.isRegularFile || attrs.isOther) return FileVisitResult.CONTINUE
-                    val real = runCatching { file.toRealPath() }.getOrNull()
-                        ?: return FileVisitResult.CONTINUE
+                    val real =
+                        runCatching { file.toRealPath() }.getOrNull()
+                            ?: return FileVisitResult.CONTINUE
                     if (!real.startsWith(realRoot)) return FileVisitResult.CONTINUE
                     files.add(root.relativize(file).joinToString("/") to file)
                     return FileVisitResult.CONTINUE
@@ -730,13 +727,15 @@ class SaveManager(private val store: LauncherStore) {
     private fun isPlainName(name: String): Boolean {
         if (name.isBlank() || name.length > 80) return false
         if ('/' in name || '\\' in name || ':' in name) return false
-        return runCatching { safePath(Path.of(System.getProperty("java.io.tmpdir")), name) }.isSuccess
+        return runCatching { safePath(Path.of(System.getProperty("java.io.tmpdir")), name) }
+            .isSuccess
     }
 
     /** 文件名安全化：去掉各平台的非法字符与结尾的点/空格，限制长度，空名称回退为 `save`。 */
     private fun safeSaveLabel(name: String): String {
         val cleaned =
-            name.trim()
+            name
+                .trim()
                 .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
                 .trimEnd('.', ' ')
                 .trim()
@@ -749,19 +748,18 @@ class SaveManager(private val store: LauncherStore) {
     /**
      * 符号链接与 Windows 目录联接（junction）都算链接。
      *
-     * Java 把 junction 的 `isSymbolicLink` 报成 false、`isOther` 报成 true，因此只看
-     * `isSymbolicLink` 会漏掉联接，`Files.walk` 甚至会递归进联接指向的目录。
+     * Java 把 junction 的 `isSymbolicLink` 报成 false、`isOther` 报成 true，因此只看 `isSymbolicLink`
+     * 会漏掉联接，`Files.walk` 甚至会递归进联接指向的目录。
      */
-    private fun isLink(path: Path): Boolean =
-        runCatching {
-                Files.readAttributes(
-                    path,
-                    BasicFileAttributes::class.java,
-                    LinkOption.NOFOLLOW_LINKS,
-                )
-            }
-            .map { it.isSymbolicLink || it.isOther }
-            .getOrDefault(false)
+    private fun isLink(path: Path): Boolean = runCatching {
+        Files.readAttributes(
+            path,
+            BasicFileAttributes::class.java,
+            LinkOption.NOFOLLOW_LINKS,
+        )
+    }
+        .map { it.isSymbolicLink || it.isOther }
+        .getOrDefault(false)
 
     private fun moveIntoPlace(part: Path, target: Path) {
         try {

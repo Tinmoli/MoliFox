@@ -1,3 +1,5 @@
+// 负责游戏版本、平台规则和版本清单转换。
+
 package dev.molifox.core
 
 /** Meta services do not all return loader releases in chronological order. */

@@ -1,3 +1,5 @@
+// 负责MCBBS 整合包格式的读取与导出。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

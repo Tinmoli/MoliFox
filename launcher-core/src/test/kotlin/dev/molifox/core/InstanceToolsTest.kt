@@ -1,3 +1,5 @@
+// 负责验证实例复制、整理和文件账本校验的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -195,29 +197,27 @@ class InstanceToolsTest {
         val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("instances")
         val job = Job()
         val cancelled = AtomicBoolean(false)
-        val watcher =
-            Thread {
-                    val deadline = System.nanoTime() + 15_000_000_000L
-                    while (System.nanoTime() < deadline) {
-                        val fresh =
-                            runCatching {
-                                    instancesRoot.listDirectoryEntries().any {
-                                        it.name != source.id
-                                    }
-                                }
-                                .getOrDefault(false)
-                        if (fresh) {
-                            job.cancel()
-                            cancelled.set(true)
-                            return@Thread
-                        }
-                        Thread.yield()
+        val watcher = Thread {
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline) {
+                val fresh = runCatching {
+                    instancesRoot.listDirectoryEntries().any {
+                        it.name != source.id
                     }
                 }
-                .apply {
-                    isDaemon = true
-                    start()
+                    .getOrDefault(false)
+                if (fresh) {
+                    job.cancel()
+                    cancelled.set(true)
+                    return@Thread
                 }
+                Thread.yield()
+            }
+        }
+            .apply {
+                isDaemon = true
+                start()
+            }
         try {
             assertFailsWith<CancellationException> {
                 withContext(job) {
@@ -317,22 +317,21 @@ class InstanceToolsTest {
         outside.resolve("nested").createDirectories()
         outside.resolve("keep.txt").writeText("outside")
         val link = root.resolve("linked")
-        val created =
-            runCatching {
-                    val process =
-                        ProcessBuilder(
-                                "cmd",
-                                "/c",
-                                "mklink",
-                                "/J",
-                                link.toString(),
-                                outside.toString(),
-                            )
-                            .redirectErrorStream(true)
-                            .start()
-                    process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
-                }
-                .getOrDefault(false)
+        val created = runCatching {
+            val process =
+                ProcessBuilder(
+                        "cmd",
+                        "/c",
+                        "mklink",
+                        "/J",
+                        link.toString(),
+                        outside.toString(),
+                    )
+                    .redirectErrorStream(true)
+                    .start()
+            process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
+        }
+            .getOrDefault(false)
         assumeTrue(created, "当前环境不允许创建目录联接")
 
         val report = InstanceTools(store).tidyInstance(source.id)

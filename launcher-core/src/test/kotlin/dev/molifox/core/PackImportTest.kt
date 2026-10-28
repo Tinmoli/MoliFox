@@ -1,3 +1,5 @@
+// 负责验证多格式整合包导入的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

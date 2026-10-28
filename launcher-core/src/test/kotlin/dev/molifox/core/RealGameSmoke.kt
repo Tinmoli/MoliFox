@@ -1,3 +1,5 @@
+// 负责执行真实游戏安装与主菜单验收。
+
 package dev.molifox.core
 
 import java.awt.GraphicsEnvironment

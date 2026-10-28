@@ -1,3 +1,5 @@
+// 负责验证已报告实例版本和皮肤问题的回归的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage
@@ -28,7 +30,8 @@ class ReportedIssuesTest {
         val directory = root.resolve("versions/$id").apply { createDirectories() }
         writeJson(
             directory.resolve("$id.json"),
-            mapOf("id" to id, "mainClass" to "Fixture", "libraries" to emptyList<String>()) + extras,
+            mapOf("id" to id, "mainClass" to "Fixture", "libraries" to emptyList<String>()) +
+                extras,
         )
         JarOutputStream(directory.resolve("$id.jar").outputStream()).use { jar ->
             if (embeddedVersion != null) {

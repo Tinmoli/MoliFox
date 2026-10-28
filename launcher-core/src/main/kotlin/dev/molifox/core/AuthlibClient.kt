@@ -1,3 +1,5 @@
+// 负责外置认证服务器的元数据和 Yggdrasil 认证请求。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject
@@ -56,10 +58,7 @@ data class AuthlibSession(
 /** 服务器元数据（Yggdrasil API 根地址的 JSON）；[rawJson] 用于 authlib-injector 预取参数。 */
 data class AuthlibMetadata(val apiRoot: String, val name: String, val rawJson: String)
 
-/**
- * 规范化用户输入的认证服务器地址：补 https://、去首尾空白与末尾 `/`。
- * 只接受 http(s) 且不含账号密码、查询串或片段的地址；无法识别时返回 null。
- */
+/** 规范化用户输入的认证服务器地址：补 https://、去首尾空白与末尾 `/`。 只接受 http(s) 且不含账号密码、查询串或片段的地址；无法识别时返回 null。 */
 fun normalizeAuthlibServerUrl(raw: String): String? {
     val trimmed = raw.trim()
     if (trimmed.isEmpty() || trimmed.length > 2048) return null
@@ -76,9 +75,8 @@ fun normalizeAuthlibServerUrl(raw: String): String? {
 /**
  * Yggdrasil 客户端。
  *
- * 只负责协议与错误归类：认证服务器由用户自行填写（LittleSkin 等），
- * 因此请求直接使用 [NetworkClient] 的代理配置，但允许 http(s) 地址——
- * 启动器其它接口仍强制 HTTPS。选择 http 会让密码与令牌明文传输，由用户自行承担。
+ * 只负责协议与错误归类：认证服务器由用户自行填写（LittleSkin 等）， 因此请求直接使用 [NetworkClient] 的代理配置，但允许 http(s) 地址—— 启动器其它接口仍强制
+ * HTTPS。选择 http 会让密码与令牌明文传输，由用户自行承担。
  */
 class AuthlibClient(private val network: NetworkClient) {
     private val http: OkHttpClient by lazy {
@@ -92,8 +90,7 @@ class AuthlibClient(private val network: NetworkClient) {
     }
 
     /**
-     * 读取并校验服务器元数据。先请求用户填写的地址，失败后再尝试 `<地址>/api/yggdrasil`，
-     * 兼容只填写站点根地址（如 https://littleskin.cn）的情况。
+     * 读取并校验服务器元数据。先请求用户填写的地址，失败后再尝试 `<地址>/api/yggdrasil`， 兼容只填写站点根地址（如 https://littleskin.cn）的情况。
      */
     suspend fun metadata(serverUrl: String): AuthlibMetadata {
         val base = normalizeAuthlibServerUrl(serverUrl) ?: throw invalidServer()
@@ -209,8 +206,8 @@ class AuthlibClient(private val network: NetworkClient) {
                 AuthlibError.ServerError,
                 "认证服务器请求失败 (${result.code})",
             )
-        return runCatching { JsonParser.parseString(result.body.orEmpty()).asJsonObject }.getOrNull()
-            ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+        return runCatching { JsonParser.parseString(result.body.orEmpty()).asJsonObject }
+            .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
     }
 
     private fun session(
@@ -267,7 +264,10 @@ class AuthlibClient(private val network: NetworkClient) {
             try {
                 Request.Builder()
                     .url(url)
-                    .header("User-Agent", "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)")
+                    .header(
+                        "User-Agent",
+                        "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)",
+                    )
                     .header("Accept", "application/json")
                     .apply {
                         if (body == null) get()
@@ -292,9 +292,9 @@ class AuthlibClient(private val network: NetworkClient) {
                             try {
                                 response.use {
                                     val bytes =
-                                        it.body?.byteStream()?.readNBytes(maxResponseBytes + 1)
+                                        it.body?.byteStream()?.readNBytes(MAX_RESPONSE_BYTES + 1)
                                             ?: ByteArray(0)
-                                    if (bytes.size > maxResponseBytes)
+                                    if (bytes.size > MAX_RESPONSE_BYTES)
                                         throw AuthlibException(
                                             AuthlibError.InvalidResponse,
                                             "认证服务器返回的数据无效",
@@ -319,15 +319,12 @@ class AuthlibClient(private val network: NetworkClient) {
 
     private companion object {
         val jsonMediaType = "application/json".toMediaType()
-        const val maxResponseBytes = 1024 * 1024
+        const val MAX_RESPONSE_BYTES = 1024 * 1024
 
-        fun invalidServer() =
-            AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+        fun invalidServer() = AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
 
-        fun notYggdrasil() =
-            AuthlibException(AuthlibError.NotYggdrasil, "该地址返回的不是 Yggdrasil 元数据")
+        fun notYggdrasil() = AuthlibException(AuthlibError.NotYggdrasil, "该地址返回的不是 Yggdrasil 元数据")
 
-        fun connectionError() =
-            AuthlibException(AuthlibError.Network, "无法连接认证服务器（超时或网络错误）")
+        fun connectionError() = AuthlibException(AuthlibError.Network, "无法连接认证服务器（超时或网络错误）")
     }
 }

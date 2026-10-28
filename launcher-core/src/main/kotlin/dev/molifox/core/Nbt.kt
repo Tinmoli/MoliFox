@@ -1,3 +1,5 @@
+// 负责NBT 二进制标签的安全读取。
+
 package dev.molifox.core
 
 import java.io.BufferedInputStream
@@ -13,8 +15,7 @@ import kotlin.io.path.*
 /**
  * 只读的 NBT 标签：Minecraft 的二进制数据格式，1–12 号标签全部覆盖。
  *
- * 这里只为读取 `servers.dat` 这类小文件服务，不提供写入；数值、字符串、数组、列表与复合标签
- * 都是不可变的普通数据类，便于测试直接比较。
+ * 这里只为读取 `servers.dat` 这类小文件服务，不提供写入；数值、字符串、数组、列表与复合标签 都是不可变的普通数据类，便于测试直接比较。
  */
 sealed interface NbtTag
 
@@ -80,16 +81,14 @@ private const val MAX_NBT_LIST = 1_000_000
 /**
  * 读取一个 NBT 根复合标签，自动识别 gzip（`servers.dat`、`level.dat` 可能压缩也可能不压缩）。
  *
- * 文件缺失、格式错误、根标签不是复合标签、解压后超过 8 MB 时返回 null，从不抛异常；
- * 根标签名按惯例为空串，这里不校验。文件只读，不修改。
+ * 文件缺失、格式错误、根标签不是复合标签、解压后超过 8 MB 时返回 null，从不抛异常； 根标签名按惯例为空串，这里不校验。文件只读，不修改。
  */
-fun readCompound(path: Path): NbtCompound? =
-    runCatching {
-            if (!path.isRegularFile()) return@runCatching null
-            val bytes = readNbtBytes(path) ?: return@runCatching null
-            parseNbtRoot(bytes)
-        }
-        .getOrNull()
+fun readCompound(path: Path): NbtCompound? = runCatching {
+    if (!path.isRegularFile()) return@runCatching null
+    val bytes = readNbtBytes(path) ?: return@runCatching null
+    parseNbtRoot(bytes)
+}
+    .getOrNull()
 
 /** 打开文件并嗅探 gzip 魔数；无论压缩与否都只读入最多 8 MB。 */
 private fun readNbtBytes(path: Path): ByteArray? =
@@ -207,8 +206,7 @@ private class Cursor(private val bytes: ByteArray) {
     fun utf(): String {
         val length = u16()
         if (length > remaining()) fail()
-        val text =
-            DataInputStream(ByteArrayInputStream(bytes, position - 2, length + 2)).readUTF()
+        val text = DataInputStream(ByteArrayInputStream(bytes, position - 2, length + 2)).readUTF()
         position += length
         return text
     }

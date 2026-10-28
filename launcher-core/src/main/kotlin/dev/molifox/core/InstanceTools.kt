@@ -1,3 +1,5 @@
+// 负责实例复制、整理和文件账本校验。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -32,7 +34,7 @@ data class VerifyReport(
     val ledgerMismatches: List<String>,
     /** 磁盘存在、账本未登记的实例文件；日志、缓存、存档等运行数据不计入。 */
     val unknownFiles: List<String>,
-    /** 实例是否有 B07 文件归属账本；没有账本时返回空报告。 */
+    /** 实例是否有 文件归属账本；没有账本时返回空报告。 */
     val hasLedger: Boolean = false,
 )
 
@@ -46,13 +48,13 @@ private val internalInstanceFiles = setOf(".molifox-content.json", ".molifox-cla
 private val modFilePattern = Regex("(?i).*\\.jar(?:\\.disabled)?")
 
 /**
- * 实例复制与整理（B08）。
+ * 实例复制与整理。
  *
  * 约定：
  * - 只接受 MoliFox 自建的隔离实例：共用游戏目录或外部游戏目录版本由原启动器维护， 复制或整理会改变目录语义，因此直接拒绝。
  * - 复制跳过日志、崩溃报告、缓存、升级备份目录、`.fabric/remappedJars` 以及符号链接/目录联接；文件归属账本与整合包归档一并复制，副本独立持有。
  * - 整理默认只删除实例目录内的空目录；重复模组、停用模组、残留文件只统计和报告。
- * - 校验按 B07 账本比对，未知文件只列入报告。
+ * - 校验按 账本比对，未知文件只列入报告。
  */
 class InstanceTools(private val store: LauncherStore) {
 
@@ -174,7 +176,7 @@ class InstanceTools(private val store: LauncherStore) {
     }
 
     /**
-     * 用 B07 文件归属账本校验实例内容。
+     * 用 文件归属账本校验实例内容。
      *
      * 没有账本的实例（老实例或非整合包实例）返回空报告并置 [VerifyReport.hasLedger] 为 false；未知文件只报告，不做任何删除。
      */

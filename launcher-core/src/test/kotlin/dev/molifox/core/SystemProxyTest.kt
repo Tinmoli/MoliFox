@@ -1,3 +1,5 @@
+// 负责验证系统代理设置的接入的行为与边界。
+
 package dev.molifox.core
 
 import java.io.IOException

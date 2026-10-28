@@ -1,3 +1,5 @@
+// 负责实例隔离切换与跨游戏目录迁移。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -27,7 +29,7 @@ enum class MigrationAction {
     Conflict,
 }
 
-/** 迁移计划的一条：相对路径统一使用正斜杠，与 B07 文件归属账本一致。 */
+/** 迁移计划的一条：相对路径统一使用正斜杠，与 文件归属账本一致。 */
 data class MigrationEntry(
     val relativePath: String,
     val action: MigrationAction,
@@ -83,7 +85,7 @@ internal fun IsolationMode.versionIsolation(): VersionIsolation =
     if (this == IsolationMode.Isolated) VersionIsolation.Enabled else VersionIsolation.Disabled
 
 /**
- * 计划生成（B09）。
+ * 计划生成。
  *
  * - 白名单之外的文件（日志、崩溃报告、缓存、截图、`.molifox-content.json` 等启动器文件、 `.molifox-pack-upgrade-*` 升级备份）不进入计划；
  * - 目标已存在且内容相同 → Skip，内容不同或不可覆盖 → Conflict 并写入 blockers；
@@ -461,7 +463,7 @@ internal class IsolationMigrationTransaction(
 }
 
 /**
- * 隔离方式切换与跨游戏目录迁移（B09）。
+ * 隔离方式切换与跨游戏目录迁移。
  *
  * 目录语义以 [LauncherStore.gamePath] 为准：共用游戏目录的实例使用游戏根目录，版本隔离的实例
  * 使用自己的目录。切换隔离方式时先搬运文件、再写记录；整体移动时先复制、校验文件数与字节数， 再切记录、最后删源，任何一步失败都不删除源目录。
@@ -538,7 +540,8 @@ class IsolationMigration(private val store: LauncherStore) {
         require(destination.parent != null) { "请选择专用的游戏文件夹，而非磁盘根目录" }
         val targetRoot = runCatching {
             safePath(destination.resolve("instances"), instanceId)
-        }.getOrElse { error("目标游戏目录不可用：${it.message}") }
+        }
+            .getOrElse { error("目标游戏目录不可用：${it.message}") }
         val blockers = mutableListOf<String>()
         if (targetRoot.exists(LinkOption.NOFOLLOW_LINKS)) {
             blockers += "目标游戏目录中已存在同名实例文件夹，请先移除或换一个目录"

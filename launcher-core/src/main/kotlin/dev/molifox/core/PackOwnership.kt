@@ -1,3 +1,5 @@
+// 负责整合包文件归属账本的读写。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser

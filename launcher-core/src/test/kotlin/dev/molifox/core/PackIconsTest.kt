@@ -1,3 +1,5 @@
+// 负责验证整合包内图标的读取与导出的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

@@ -1,3 +1,5 @@
+// 负责内容文件索引、更新检查和版本锁定。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

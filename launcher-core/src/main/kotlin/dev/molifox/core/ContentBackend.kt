@@ -1,3 +1,5 @@
+// 负责内容来源接口和跨来源数据类型。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

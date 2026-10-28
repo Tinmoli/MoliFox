@@ -1,3 +1,5 @@
+// 负责验证GameDirectory的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Path
@@ -25,13 +27,26 @@ class GameDirectoryTest {
             assertNotEquals(firstPath, controller.store.instancePath(second.id))
             firstPath.resolve("saves").createDirectories()
             firstPath.resolve("saves/test.txt").writeText("world data")
-            controller.store.updateInstance(first.id) { it.copy(versionId = "different-loader-profile") }
+            controller.store.updateInstance(first.id) {
+                it.copy(versionId = "different-loader-profile")
+            }
             assertEquals(firstPath, controller.store.instancePath(first.id))
             controller.directories.refresh()
             assertTrue(controller.store.data.instances.any { it.id == first.id })
-            assertEquals("world data", controller.store.instancePath(first.id).resolve("saves/test.txt").readText())
-            val legacy = GameInstance(versionId = "old-profile", gameDirectoryId = first.gameDirectoryId, externalProfile = true)
-            assertEquals(root.toRealPath().resolve("versions/old-profile"), controller.store.gamePath(legacy))
+            assertEquals(
+                "world data",
+                controller.store.instancePath(first.id).resolve("saves/test.txt").readText(),
+            )
+            val legacy =
+                GameInstance(
+                    versionId = "old-profile",
+                    gameDirectoryId = first.gameDirectoryId,
+                    externalProfile = true,
+                )
+            assertEquals(
+                root.toRealPath().resolve("versions/old-profile"),
+                controller.store.gamePath(legacy),
+            )
         }
     }
 
@@ -125,8 +140,10 @@ class GameDirectoryTest {
             assertEquals(VersionIsolation.Disabled, instance.isolation)
             // 这里只验证删除范围，用永久删除避免把测试夹具放进用户系统回收站。
             // 共用游戏根、存档与其它版本必须原样保留。
-            val report =
-                runBlocking { controller.deleteInstance(instance.id, permanent = true) }.getOrThrow()
+            val report = runBlocking {
+                controller.deleteInstance(instance.id, permanent = true)
+            }
+                .getOrThrow()
             assertEquals(listOf(folder.toRealPath()), report.removedPaths.map { Path.of(it) })
             assertFalse(report.movedToTrash)
             assertTrue(report.freedBytes > 0)

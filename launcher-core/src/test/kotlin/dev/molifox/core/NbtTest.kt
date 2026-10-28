@@ -1,3 +1,5 @@
+// 负责验证NBT 二进制标签的安全读取的行为与边界。
+
 package dev.molifox.core
 
 import kotlin.io.path.*
@@ -7,25 +9,24 @@ import org.junit.jupiter.api.Test
 class NbtTest {
     /** 一个覆盖 1–12 号标签的合成复合标签，供压缩与未压缩两种读取路径复用。 */
     private fun sampleBytes(): ByteArray =
-        TestNbtWriter()
-            .root {
-                byte("byte", 7)
-                short("short", 300)
-                int("int", -42)
-                long("long", 9_000_000_000L)
-                float("float", 1.5f)
-                double("double", 2.25)
-                string("name", "MoliFox 服务器")
-                byteArray("bytes", byteArrayOf(1, 2, 3))
-                intArray("ints", intArrayOf(-1, 0, 1))
-                longArray("longs", longArrayOf(1L, -2L))
-                nested("nested") { string("value", "深一层") }
-                list("list", 10, 2) {
-                    compoundElement { int("id", 1) }
-                    compoundElement { int("id", 2) }
-                }
-                list("empty", 0, 0) {}
+        TestNbtWriter().root {
+            byte("byte", 7)
+            short("short", 300)
+            int("int", -42)
+            long("long", 9_000_000_000L)
+            float("float", 1.5f)
+            double("double", 2.25)
+            string("name", "MoliFox 服务器")
+            byteArray("bytes", byteArrayOf(1, 2, 3))
+            intArray("ints", intArrayOf(-1, 0, 1))
+            longArray("longs", longArrayOf(1L, -2L))
+            nested("nested") { string("value", "深一层") }
+            list("list", 10, 2) {
+                compoundElement { int("id", 1) }
+                compoundElement { int("id", 2) }
             }
+            list("empty", 0, 0) {}
+        }
 
     @Test
     fun `gzipped compound round trip keeps every supported tag kind`() =

@@ -1,3 +1,5 @@
+// 负责验证CurseForge API 适配和授权下载规则的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

@@ -1,3 +1,5 @@
+// 负责账户皮肤纹理的获取与本地缓存。
+
 package dev.molifox.core
 
 import java.net.URI

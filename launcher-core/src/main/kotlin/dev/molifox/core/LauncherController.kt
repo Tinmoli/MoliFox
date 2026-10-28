@@ -1,3 +1,5 @@
+// 负责桌面操作的服务协调与状态更新。
+
 package dev.molifox.core
 
 import java.net.InetSocketAddress
@@ -192,9 +194,8 @@ class LauncherController(
     }
 
     /**
-     * 启动时自动发现：按启动器自身位置（[LauncherLocation]，不是 user.dir）解析旁边的
-     * `.minecraft`、启动器自身即 `.minecraft`/游戏根、以及 `MoliFox/` 旁的目录，只读登记现有版本。
-     * 已登记目录不会重复添加，也不会覆盖用户的选择；没有发现时不产生任何日志或提示。
+     * 启动时自动发现：按启动器自身位置（[LauncherLocation]，不是 user.dir）解析旁边的 `.minecraft`、启动器自身即 `.minecraft`/游戏根、以及
+     * `MoliFox/` 旁的目录，只读登记现有版本。 已登记目录不会重复添加，也不会覆盖用户的选择；没有发现时不产生任何日志或提示。
      */
     fun discoverStartupGameDirectories(): Int =
         directories.discover(StartupGameRoots.resolve(LauncherLocation.locate()))
@@ -331,30 +332,31 @@ class LauncherController(
     }
 
     /** 「删除实例」会永久删除的绝对路径（版本文件夹与游戏文件夹）；无法解析或只清记录时为空，仅用于对话框展示。 */
-    fun deletionTargets(instanceId: String): List<Path> =
-        runCatching { deletion.plan(instanceId).targets }.getOrElse { emptyList() }
+    fun deletionTargets(instanceId: String): List<Path> = runCatching {
+        deletion.plan(instanceId).targets
+    }
+        .getOrElse { emptyList() }
 
     /** 删除实例会一并删除的存档名单（名称 + 上次修改时间），只用于确认框展示。 */
-    fun deletionWorlds(instanceId: String): List<InstanceDeletionWorld> =
-        runCatching { deletion.worlds(instanceId) }.getOrElse { emptyList() }
+    fun deletionWorlds(instanceId: String): List<InstanceDeletionWorld> = runCatching {
+        deletion.worlds(instanceId)
+    }
+        .getOrElse { emptyList() }
 
     /** 实例是否有独立游戏目录；为真时存档、资源包、Mod 都在会被删除的目录里。 */
-    fun hasSeparateGameDirectory(instanceId: String): Boolean =
-        runCatching {
-                val instance = store.instance(instanceId)
-                store.gamePath(instance).toAbsolutePath().normalize() !=
-                    store.minecraftRoot(instance).toAbsolutePath().normalize()
-            }
-            .getOrDefault(false)
+    fun hasSeparateGameDirectory(instanceId: String): Boolean = runCatching {
+        val instance = store.instance(instanceId)
+        store.gamePath(instance).toAbsolutePath().normalize() !=
+            store.minecraftRoot(instance).toAbsolutePath().normalize()
+    }
+        .getOrDefault(false)
 
     /**
-     * 删除实例：先清除启动器记录，再把实例自己的版本文件夹与游戏文件夹移到回收站或永久删除。
+     * 删除实例：先处理实例自己的文件目录，成功后移除启动器记录。
      *
-     * [deleteFiles] 为 false 时只清记录，保留游戏文件（界面不再提供入口）。
-     * [permanent] 为 true（界面上按住 Shift 确认）时永久删除，否则移入系统回收站；回收站不可用时自动回退永久删除，
-     * 结果里的 [InstanceDeletionReport.movedToTrash] 会说明实际去向。
-     * 实例正在运行、路径无法解析、目标是符号链接或不在实例自己目录下时返回失败，磁盘完全不动；
-     * 删除中途失败时返回失败，已处理的部分不回滚。
+     * [deleteFiles] 为 false 时只清记录，保留游戏文件（界面不再提供入口）。 [permanent] 为 true（界面上按住 Shift
+     * 确认）时永久删除，否则移入系统回收站；回收站不可用时自动回退永久删除， 结果里的 [InstanceDeletionReport.movedToTrash] 会说明实际去向。
+     * 实例正在运行、路径无法解析、目标是符号链接或不在实例自己目录下时返回失败，磁盘完全不动； 删除中途失败时返回失败，已处理的部分不回滚。
      */
     suspend fun deleteInstance(
         instanceId: String,

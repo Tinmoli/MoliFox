@@ -1,3 +1,5 @@
+// 负责验证实例隔离切换与跨游戏目录迁移的行为与边界。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -107,7 +109,11 @@ class IsolationMigrationTest {
 
         val error =
             assertFailsWith<IllegalArgumentException> {
-                migration.changeIsolation(shared.id, isolate = true, context = JobContext(store, "fixture"))
+                migration.changeIsolation(
+                    shared.id,
+                    isolate = true,
+                    context = JobContext(store, "fixture"),
+                )
             }
         assertTrue(error.message.orEmpty().contains("mods/a.jar"))
         assertEquals("theirs", target.resolve("mods/a.jar").readText())
@@ -175,7 +181,8 @@ class IsolationMigrationTest {
         val shared = instance(store, isolate = false)
         write(store.instancePath(shared.id).resolve("mods/a.jar"), "jar")
 
-        val plan = IsolationMigration(store).planIsolation(shared.id, isolate = true, moveSource = true)
+        val plan =
+            IsolationMigration(store).planIsolation(shared.id, isolate = true, moveSource = true)
 
         assertEquals(MigrationAction.Copy, plan.entries.single().action)
         assertEquals(0, plan.moveCount)
@@ -194,7 +201,11 @@ class IsolationMigrationTest {
         write(root.resolve("options.txt"), "options")
 
         val executed =
-            migration.changeIsolation(shared.id, isolate = true, context = JobContext(store, "fixture"))
+            migration.changeIsolation(
+                shared.id,
+                isolate = true,
+                context = JobContext(store, "fixture"),
+            )
 
         assertEquals(2, executed)
         val updated = store.instance(shared.id)
@@ -266,28 +277,25 @@ class IsolationMigrationTest {
         val targetMods = sharedRoot(store).resolve("mods")
         val job = Job()
         val cancelled = AtomicBoolean(false)
-        val watcher =
-            Thread {
-                    val deadline = System.nanoTime() + 15_000_000_000L
-                    while (System.nanoTime() < deadline) {
-                        val started =
-                            runCatching {
-                                    targetMods.isDirectory() &&
-                                        targetMods.listDirectoryEntries().isNotEmpty()
-                                }
-                                .getOrDefault(false)
-                        if (started) {
-                            job.cancel()
-                            cancelled.set(true)
-                            return@Thread
-                        }
-                        Thread.yield()
-                    }
+        val watcher = Thread {
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline) {
+                val started = runCatching {
+                    targetMods.isDirectory() && targetMods.listDirectoryEntries().isNotEmpty()
                 }
-                .apply {
-                    isDaemon = true
-                    start()
+                    .getOrDefault(false)
+                if (started) {
+                    job.cancel()
+                    cancelled.set(true)
+                    return@Thread
                 }
+                Thread.yield()
+            }
+        }
+            .apply {
+                isDaemon = true
+                start()
+            }
         try {
             assertFailsWith<CancellationException> {
                 withContext(job) {
@@ -393,8 +401,7 @@ class IsolationMigrationTest {
         assertTrue(plan.blockers.isEmpty(), plan.blockers.toString())
         assertEquals(3, plan.transferCount)
 
-        val moved =
-            migration.moveInstance(isolated.id, destination, JobContext(store, "fixture"))
+        val moved = migration.moveInstance(isolated.id, destination, JobContext(store, "fixture"))
 
         val expected = destination.resolve("instances/${isolated.id}")
         assertEquals(expected.toAbsolutePath().normalize(), moved)

@@ -1,3 +1,5 @@
+// 负责便携数据、依赖和缓存目录的解析。
+
 package dev.molifox.core
 
 import java.nio.file.Files

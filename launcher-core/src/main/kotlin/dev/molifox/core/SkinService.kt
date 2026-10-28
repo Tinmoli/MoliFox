@@ -1,3 +1,5 @@
+// 负责正版皮肤档案刷新和皮肤上传。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

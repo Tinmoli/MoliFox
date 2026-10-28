@@ -1,3 +1,5 @@
+// 负责各页面的显示选项和布局偏好。
+
 package dev.molifox.core
 
 data class LauncherFont(val name: String = "", val path: String = "")

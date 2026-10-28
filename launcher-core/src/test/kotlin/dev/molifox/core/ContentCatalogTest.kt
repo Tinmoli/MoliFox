@@ -1,3 +1,5 @@
+// 负责验证内容文件索引、更新检查和版本锁定的行为与边界。
+
 package dev.molifox.core
 
 import com.google.gson.JsonParser

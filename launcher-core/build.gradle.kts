@@ -1,3 +1,5 @@
+// 负责配置核心模块依赖、测试和功能验收任务。
+
 import java.time.Duration
 
 plugins { kotlin("jvm") }
@@ -39,21 +41,44 @@ tasks.register("writeGameSmokeClasspath") {
 
 tasks.register<JavaExec>("gameSmoke") {
     group = "verification"
-    description = "Opt-in real Minecraft install and main-menu acceptance; requires visual review and a desktop"
+    description =
+        "Opt-in real Minecraft install and main-menu acceptance; requires visual review and a desktop"
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.molifox.core.RealGameSmokeKt")
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
     systemProperty("java.net.useSystemProxies", "true")
-    systemProperty("molifox.game.version", providers.gradleProperty("gameVersion").getOrElse("1.20.1"))
-    systemProperty("molifox.game.loader", providers.gradleProperty("gameLoader").getOrElse("Vanilla"))
-    systemProperty("molifox.game.loaderVersion", providers.gradleProperty("gameLoaderVersion").getOrElse(""))
+    systemProperty(
+        "molifox.game.version",
+        providers.gradleProperty("gameVersion").getOrElse("1.20.1"),
+    )
+    systemProperty(
+        "molifox.game.loader",
+        providers.gradleProperty("gameLoader").getOrElse("Vanilla"),
+    )
+    systemProperty(
+        "molifox.game.loaderVersion",
+        providers.gradleProperty("gameLoaderVersion").getOrElse(""),
+    )
     systemProperty("molifox.game.seedRoot", providers.gradleProperty("gameSeedRoot").getOrElse(""))
     systemProperty("molifox.game.javaPath", providers.gradleProperty("gameJavaPath").getOrElse(""))
-    systemProperty("molifox.game.downloadSource", providers.gradleProperty("gameDownloadSource").getOrElse("official"))
-    systemProperty("molifox.game.windowMode", providers.gradleProperty("gameWindowMode").getOrElse("custom"))
-    systemProperty("molifox.game.report", rootProject.file("docs/validation/real-game-${System.getProperty("os.name").lowercase().substringBefore(' ')}-${providers.gradleProperty("gameLoader").getOrElse("Vanilla").lowercase()}.json").absolutePath)
+    systemProperty(
+        "molifox.game.downloadSource",
+        providers.gradleProperty("gameDownloadSource").getOrElse("official"),
+    )
+    systemProperty(
+        "molifox.game.windowMode",
+        providers.gradleProperty("gameWindowMode").getOrElse("custom"),
+    )
+    systemProperty(
+        "molifox.game.report",
+        rootProject
+            .file(
+                "docs/validation/real-game-${System.getProperty("os.name").lowercase().substringBefore(' ')}-${providers.gradleProperty("gameLoader").getOrElse("Vanilla").lowercase()}.json"
+            )
+            .absolutePath,
+    )
 }
 
 tasks.register<JavaExec>("onlineSmoke") {
@@ -65,7 +90,12 @@ tasks.register<JavaExec>("onlineSmoke") {
     systemProperty("java.net.useSystemProxies", "true")
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
-    args(rootProject.layout.projectDirectory.dir(".work/tests/launcher-core-onlineSmoke/profile").asFile.absolutePath)
+    args(
+        rootProject.layout.projectDirectory
+            .dir(".work/tests/launcher-core-onlineSmoke/profile")
+            .asFile
+            .absolutePath
+    )
 }
 
 tasks.register<JavaExec>("contentSmoke") {
@@ -77,12 +107,16 @@ tasks.register<JavaExec>("contentSmoke") {
     systemProperty("java.net.useSystemProxies", "true")
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
-    systemProperty("molifox.content.report", rootProject.file("docs/validation/content-online.json").absolutePath)
+    systemProperty(
+        "molifox.content.report",
+        rootProject.file("docs/validation/content-online.json").absolutePath,
+    )
 }
 
 tasks.register<JavaExec>("mrpackSmoke") {
     group = "verification"
-    description = "Opt-in public mrpack round trip and local HMCL parser check; never starts a GUI or game"
+    description =
+        "Opt-in public mrpack round trip and local HMCL parser check; never starts a GUI or game"
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.molifox.core.MrpackOnlineSmokeKt")
@@ -90,7 +124,10 @@ tasks.register<JavaExec>("mrpackSmoke") {
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
     systemProperty("molifox.mrpack.hmcl", providers.gradleProperty("hmclReference").getOrElse(""))
-    systemProperty("molifox.mrpack.report", rootProject.file("docs/validation/mrpack-online.json").absolutePath)
+    systemProperty(
+        "molifox.mrpack.report",
+        rootProject.file("docs/validation/mrpack-online.json").absolutePath,
+    )
 }
 
 tasks.register<JavaExec>("reportedIssuesSmoke") {
@@ -102,14 +139,24 @@ tasks.register<JavaExec>("reportedIssuesSmoke") {
     systemProperty("java.net.useSystemProxies", "true")
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
-    systemProperty("molifox.reference.games", providers.gradleProperty("referenceGameRoot").getOrElse(""))
-    systemProperty("molifox.reference.config", providers.gradleProperty("referenceLauncherConfig").getOrElse(""))
-    systemProperty("molifox.issues.report", rootProject.file("docs/validation/reported-issues-online.json").absolutePath)
+    systemProperty(
+        "molifox.reference.games",
+        providers.gradleProperty("referenceGameRoot").getOrElse(""),
+    )
+    systemProperty(
+        "molifox.reference.config",
+        providers.gradleProperty("referenceLauncherConfig").getOrElse(""),
+    )
+    systemProperty(
+        "molifox.issues.report",
+        rootProject.file("docs/validation/reported-issues-online.json").absolutePath,
+    )
 }
 
 tasks.register<JavaExec>("accountSmoke") {
     group = "verification"
-    description = "Explicit interactive Microsoft login, restart/refresh and local sign-out acceptance"
+    description =
+        "Explicit interactive Microsoft login, restart/refresh and local sign-out acceptance"
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.molifox.core.AccountOnlineSmokeKt")
@@ -117,5 +164,8 @@ tasks.register<JavaExec>("accountSmoke") {
     systemProperty("java.net.useSystemProxies", "true")
     systemProperty("stdout.encoding", "UTF-8")
     systemProperty("stderr.encoding", "UTF-8")
-    systemProperty("molifox.account.report", rootProject.file("docs/validation/account-online.json").absolutePath)
+    systemProperty(
+        "molifox.account.report",
+        rootProject.file("docs/validation/account-online.json").absolutePath,
+    )
 }

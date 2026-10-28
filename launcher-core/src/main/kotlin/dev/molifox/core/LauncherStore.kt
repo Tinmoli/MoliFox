@@ -1,3 +1,5 @@
+// 负责配置持久化、实例路径和界面状态。
+
 package dev.molifox.core
 
 import java.nio.file.Files
@@ -260,14 +262,15 @@ class LauncherStore(
 }
 
 /**
- * 默认游戏根：启动器目录旁的 `.minecraft`。若这一层本身就是 `.minecraft`（启动器装在游戏里），
- * 或已经是 versions/libraries/assets 齐全的游戏根，就直接用这一层，避免再套一层不存在的目录。
+ * 默认游戏根：启动器目录旁的 `.minecraft`。若这一层本身就是 `.minecraft`（启动器装在游戏里）， 或已经是 versions/libraries/assets
+ * 齐全的游戏根，就直接用这一层，避免再套一层不存在的目录。
  */
 private fun defaultGameRoot(launcherDirectory: Path): Path =
     when {
         launcherDirectory.fileName?.toString().equals(".minecraft", ignoreCase = true) ->
             launcherDirectory
-        listOf("versions", "libraries", "assets")
-            .all { launcherDirectory.resolve(it).isDirectory() } -> launcherDirectory
+        listOf("versions", "libraries", "assets").all {
+            launcherDirectory.resolve(it).isDirectory()
+        } -> launcherDirectory
         else -> launcherDirectory.resolve(".minecraft")
     }

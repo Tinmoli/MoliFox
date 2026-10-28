@@ -1,3 +1,5 @@
+// 负责整合包内图标的读取与导出。
+
 package dev.molifox.core
 
 import java.nio.file.Files

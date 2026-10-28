@@ -1,3 +1,5 @@
+// 负责验证启动器个性化与页面偏好的保存的行为与边界。
+
 package dev.molifox.core
 
 import java.awt.image.BufferedImage

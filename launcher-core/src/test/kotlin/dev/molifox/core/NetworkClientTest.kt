@@ -1,3 +1,5 @@
+// 负责验证网络请求、下载校验、重试和断点续传的行为与边界。
+
 package dev.molifox.core
 
 import java.io.IOException
@@ -28,8 +30,8 @@ private fun payload(size: Int, seed: Int = 7) =
 /** 测试数据放在项目内 `.work/tests/` 下，结束后（含失败）删除。 */
 private fun workDirectory(name: String): Path {
     var root = Path.of(System.getProperty("user.dir")).toAbsolutePath()
-    while (root.parent != null && !root.resolve("settings.gradle.kts").isRegularFile())
-        root = root.parent
+    while (root.parent != null && !root.resolve("settings.gradle.kts").isRegularFile()) root =
+        root.parent
     val directory = root.resolve(".work/tests/launcher-core-download/$name")
     removeTree(directory)
     directory.createDirectories()
@@ -51,10 +53,10 @@ private suspend fun <T> withWorkDirectory(name: String, block: suspend (Path) ->
         removeTree(directory)
         // 本次运行的数据全部删掉，父目录空了也一并清掉（测试按顺序执行）。
         runCatching {
-                directory.parent
-                    ?.takeIf { it.isDirectory() && it.listDirectoryEntries().isEmpty() }
-                    ?.deleteIfExists()
-            }
+            directory.parent
+                ?.takeIf { it.isDirectory() && it.listDirectoryEntries().isEmpty() }
+                ?.deleteIfExists()
+        }
             .getOrNull()
     }
 }
@@ -63,8 +65,8 @@ private fun artifact(url: String, target: Path, content: ByteArray) =
     DownloadArtifact(url, target, sha1(content), content.size.toLong())
 
 /**
- * 支持 `Range: bytes=N-` 的本地服务：无 Range 回 200 全量，有 Range 回 206 剩余部分，
- * 起点越界回 416。记录每个请求的 Range 头，用于证明续传确实发生。
+ * 支持 `Range: bytes=N-` 的本地服务：无 Range 回 200 全量，有 Range 回 206 剩余部分， 起点越界回 416。记录每个请求的 Range
+ * 头，用于证明续传确实发生。
  */
 private class RangedFiles(private val content: ByteArray) : Dispatcher() {
     val requests = AtomicInteger()
@@ -183,9 +185,11 @@ class NetworkClientTest {
                 val target = directory.resolve("file.jar")
                 val download =
                     launch(Dispatchers.IO) {
-                        client.download(DownloadArtifact(server.loopbackUrl("/slow").toString(), target))
+                        client.download(
+                            DownloadArtifact(server.loopbackUrl("/slow").toString(), target)
+                        )
                     }
-                // B11 起取消要保留 `<目标>.part` 才能续传；断点不含最终文件名，目标仍不可安装。
+                // 起取消要保留 `<目标>.part` 才能续传；断点不含最终文件名，目标仍不可安装。
                 val partial = client.partialFile(target)
                 withTimeout(20_000) {
                     while (!partial.isRegularFile() || partial.fileSize() == 0L) delay(20)
@@ -200,7 +204,7 @@ class NetworkClientTest {
         }
     }
 
-    // ---- B11：断点续传、校验、重试与取消 ----
+    // ---- ：断点续传、校验、重试与取消 ----
 
     @Test
     fun `verified download leaves no partial file behind`() = runBlocking {
@@ -450,14 +454,18 @@ class NetworkClientTest {
                         override fun dispatch(request: RecordedRequest): MockResponse {
                             val attempt = count.incrementAndGet()
                             if (attempt <= 2) return MockResponse().setResponseCode(503)
-                            return MockResponse().setResponseCode(200).setBody(Buffer().write(content))
+                            return MockResponse()
+                                .setResponseCode(200)
+                                .setBody(Buffer().write(content))
                         }
                     }
                 val client = NetworkClient()
                 try {
                     val target = work.resolve("core.jar")
                     val started = System.nanoTime()
-                    client.download(artifact(server.loopbackUrl("/core.jar").toString(), target, content))
+                    client.download(
+                        artifact(server.loopbackUrl("/core.jar").toString(), target, content)
+                    )
                     val elapsedMs = (System.nanoTime() - started) / 1_000_000
                     assertContentEquals(content, target.readBytes())
                     assertEquals(3, count.get())
@@ -523,7 +531,11 @@ class NetworkClientTest {
                     val job =
                         launch(Dispatchers.IO) {
                             client.download(
-                                artifact(server.loopbackUrl("/core.jar").toString(), target, content)
+                                artifact(
+                                    server.loopbackUrl("/core.jar").toString(),
+                                    target,
+                                    content,
+                                )
                             )
                         }
                     withTimeout(30_000) {

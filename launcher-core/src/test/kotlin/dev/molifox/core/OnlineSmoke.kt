@@ -1,3 +1,5 @@
+// 负责验证游戏清单、加载器和内容接口的真实连通性。
+
 package dev.molifox.core
 
 import java.nio.file.Path

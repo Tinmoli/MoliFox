@@ -1,3 +1,5 @@
+// 负责游戏依赖文件的缺失和完整性校验。
+
 package dev.molifox.core
 
 import java.io.IOException

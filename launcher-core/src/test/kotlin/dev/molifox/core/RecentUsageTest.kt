@@ -1,3 +1,5 @@
+// 负责验证世界和服务器最近使用时间的本地记录的行为与边界。
+
 package dev.molifox.core
 
 import java.time.Instant

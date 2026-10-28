@@ -1,3 +1,5 @@
+// 负责验证便携目录分层和旧数据迁移的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Files

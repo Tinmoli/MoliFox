@@ -1,3 +1,5 @@
+// 负责账户凭据的本地加密保存与读取。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject
@@ -17,7 +19,7 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.io.path.*
 
 /**
- * Portable protection requested by the user. The application key is intentionally shared between
+ * Portable AES-GCM credential storage. The application key is intentionally shared between
  * installations: this hides readable tokens on disk but is not OS-bound secret storage. Passwords
  * and private OAuth device codes are never saved here.
  */
@@ -44,7 +46,7 @@ internal constructor(private val store: LauncherStore, private val legacy: Legac
         val envelope =
             JsonObject().apply {
                 addProperty("formatVersion", 1)
-                addProperty("protection", protection)
+                addProperty("protection", PROTECTION)
                 addProperty("nonce", Base64.getEncoder().encodeToString(nonce))
                 addProperty("payload", Base64.getEncoder().encodeToString(cipher.doFinal(bytes)))
             }
@@ -89,7 +91,7 @@ internal constructor(private val store: LauncherStore, private val legacy: Legac
                 val envelope = readObject(target)
                 require(
                     envelope.int("formatVersion") == 1 &&
-                        envelope.string("protection") == protection
+                        envelope.string("protection") == PROTECTION
                 )
                 val nonce = Base64.getDecoder().decode(envelope.string("nonce"))
                 require(nonce.size == 12)
@@ -120,10 +122,10 @@ internal constructor(private val store: LauncherStore, private val legacy: Legac
         memory.remove(id)
     }
 
-    private fun associatedData(id: String) = "$protection|$id".toByteArray(Charsets.UTF_8)
+    private fun associatedData(id: String) = "$PROTECTION|$id".toByteArray(Charsets.UTF_8)
 
     private companion object {
-        const val protection = "molifox-portable-aesgcm-v1"
+        const val PROTECTION = "molifox-portable-aesgcm-v1"
         val random = SecureRandom()
         // Public format key, not a secret. Keep stable across releases so portable data stays
         // readable.

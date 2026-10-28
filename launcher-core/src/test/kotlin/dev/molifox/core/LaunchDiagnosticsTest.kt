@@ -1,3 +1,5 @@
+// 负责验证启动失败诊断和诊断包导出的行为与边界。
+
 package dev.molifox.core
 
 import java.nio.file.Path

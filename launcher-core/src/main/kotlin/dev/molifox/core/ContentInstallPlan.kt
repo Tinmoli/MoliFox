@@ -1,3 +1,5 @@
+// 负责内容安装前置依赖和目标文件计划。
+
 package dev.molifox.core
 
 import com.google.gson.JsonObject

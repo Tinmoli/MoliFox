@@ -1,3 +1,5 @@
+// 负责验证真实资源下载、哈希、版本与更新。
+
 package dev.molifox.core
 
 import java.nio.file.Path

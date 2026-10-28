@@ -1,3 +1,5 @@
+// 负责系统代理与手动代理配置的解析。
+
 package dev.molifox.core
 
 import java.io.IOException

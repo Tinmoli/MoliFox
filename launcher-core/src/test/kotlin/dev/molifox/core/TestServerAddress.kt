@@ -1,3 +1,5 @@
+// 负责提供测试服务器的回环地址。
+
 package dev.molifox.core
 
 import okhttp3.HttpUrl
