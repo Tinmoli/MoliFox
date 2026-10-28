@@ -8,7 +8,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.molifox.core.LaunchPlan
 import java.awt.Toolkit
@@ -33,7 +32,7 @@ fun LaunchPreviewDialog(plan: LaunchPlan, onDismiss: () -> Unit) {
                 Modifier.fillMaxWidth()
                     .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState()),
-                fontFamily = FontFamily.Monospace,
+                fontFamily = LocalLauncherFont.current,
                 style = MaterialTheme.typography.bodySmall,
             )
         }

@@ -30,7 +30,7 @@ final class DownloadActionChecks {
         UiSmoke.click(robot, "选择");
         UiFunctionalChecks.waitEnabled("开始安装");
         UiSmoke.clickTopButton(robot, "开始安装");
-        Path mods = root.resolve(".minecraft/instances/" + UiSmoke.MAIN_INSTANCE_ID + "/mods");
+        Path mods = root.resolve(".minecraft/versions/smoke-saves/mods");
         UiSmoke.awaitFileState(
                 "actual public Sodium installation",
                 90000,

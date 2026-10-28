@@ -87,18 +87,22 @@ final class SettingsActionChecks {
     }
 
     private static void save(Robot robot) throws Exception {
-        UiSmoke.click(robot, "保存设置");
-        robot.delay(300);
+        robot.delay(500);
+        if (UiSmoke.hasControlStartingWith("有设置未保存"))
+            throw new IllegalStateException("Settings did not save");
     }
 
     private static void globalGame(Robot robot, Window window, Path root) throws Exception {
-        UiSmoke.enterText("最大内存（MB）", "2048");
-        UiSmoke.enterText("初始内存（MB）", "512");
+        if (UiFunctionalChecks.settings(root).get("autoMemory").getAsBoolean())
+            toggleRow(robot, window, "自动分配内存");
+        UiSmoke.setSlider(robot, "全局内存滑块", .12f);
         UiSmoke.scrollUntilVisible(robot, "窗口宽度（px）");
         UiSmoke.enterText("窗口宽度（px）", "1024");
         UiSmoke.enterText("窗口高度（px）", "576");
         save(robot);
-        expect(root, "memoryMb", "2048");
+        UiFunctionalChecks.require(
+                UiFunctionalChecks.settings(root).get("memoryMb").getAsInt() >= 512,
+                "Memory slider did not save a valid allocation");
         expect(root, "initialMemoryMb", "512");
         expect(root, "width", "1024");
         expect(root, "height", "576");
@@ -126,10 +130,10 @@ final class SettingsActionChecks {
         UiSmoke.enterText("附加 JVM 参数", "-Dmolifox.discard=true");
         UiSmoke.click(robot, "还原修改");
         expect(root, "extraJvmArgs", "-Dmolifox.ui.check=true");
-        toggleRow(robot, window, "默认启用版本隔离");
+        toggleRow(robot, window, "启用版本隔离");
         save(robot);
         expect(root, "isolateVersions", "false");
-        toggleRow(robot, window, "默认启用版本隔离");
+        toggleRow(robot, window, "启用版本隔离");
         save(robot);
         expect(root, "isolateVersions", "true");
         UiFunctionalChecks.record(
@@ -167,9 +171,7 @@ final class SettingsActionChecks {
                         && values.getProperty("environment").equals("hello world"),
                 "UI game arguments/environment were not applied");
         Path expected =
-                root.resolve(".minecraft/instances/" + UiSmoke.MAIN_INSTANCE_ID)
-                        .toAbsolutePath()
-                        .normalize();
+                root.resolve(".minecraft/versions/smoke-saves").toAbsolutePath().normalize();
         UiFunctionalChecks.require(
                 Path.of(values.getProperty("cwd")).toAbsolutePath().normalize().equals(expected),
                 "UI-configured isolated working directory differs");
@@ -352,7 +354,7 @@ final class SettingsActionChecks {
                 "all page-layout toggles/dropdowns/sliders clicked and saved; hidden advanced editor checked");
     }
 
-    private static void toggleRow(Robot robot, Window window, String label) throws Exception {
+    static void toggleRow(Robot robot, Window window, String label) throws Exception {
         UiSmoke.scrollUntilVisible(robot, label);
         AccessibleContext title = UiSmoke.waitFor(label);
         AtomicReference<AccessibleContext> chosen = new AtomicReference<>();

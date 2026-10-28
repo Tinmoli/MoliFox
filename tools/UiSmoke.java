@@ -453,45 +453,6 @@ public final class UiSmoke {
                 "Versions view toggle not found: " + (grid ? "grid" : "list"));
     }
 
-    private static final List<String> isolationTitles = List.of("继承全局设置", "版本隔离", "共用游戏目录");
-
-    /** 选择版本隔离下拉框，按按钮角色区分当前取值与同名小标题。 */
-    private static AccessibleContext isolationTrigger() throws Exception {
-        for (int attempt = 0; attempt < 40; attempt++) {
-            AtomicReference<AccessibleContext> found = new AtomicReference<>();
-            EventQueue.invokeAndWait(
-                    () -> {
-                        for (Window window : Window.getWindows())
-                            if (window.isShowing() && belongsToApp(window)) {
-                                List<AccessibleContext> nodes = new ArrayList<>();
-                                walk(window.getAccessibleContext(), 0, nodes);
-                                for (AccessibleContext node : nodes) {
-                                    if (!javax.accessibility.AccessibleRole.PUSH_BUTTON.equals(
-                                                    node.getAccessibleRole())
-                                            && !javax.accessibility.AccessibleRole.COMBO_BOX.equals(
-                                                    node.getAccessibleRole())) continue;
-                                    if (isolationTitles.contains(node.getAccessibleName())
-                                            && componentBounds(node) != null) {
-                                        found.set(node);
-                                        return;
-                                    }
-                                }
-                            }
-                    });
-            if (found.get() != null) return found.get();
-            Thread.sleep(250);
-        }
-        throw new IllegalStateException("UI control not found: 版本隔离下拉框");
-    }
-
-    /** 展开版本隔离下拉框并选中目标取值。 */
-    private static void chooseIsolation(Robot robot, String title) throws Exception {
-        ensureForeground();
-        activate(robot, isolationTrigger(), "版本隔离下拉框");
-        robot.delay(450);
-        click(robot, title);
-    }
-
     private static boolean isWithinOwnedWindow(Point point) {
         for (Window window : Window.getWindows())
             if (window.isShowing()
@@ -827,7 +788,13 @@ public final class UiSmoke {
     private static void seedInternalInstances(Path testRoot) throws Exception {
         Path minecraftRoot = testRoot.resolve(".minecraft").toAbsolutePath().normalize();
         for (String id : List.of(MAIN_INSTANCE_ID, TARGET_INSTANCE_ID)) {
-            Path directory = minecraftRoot.resolve("instances").resolve(id);
+            Path directory =
+                    minecraftRoot
+                            .resolve("versions")
+                            .resolve(
+                                    id.equals(MAIN_INSTANCE_ID)
+                                            ? "smoke-saves"
+                                            : "smoke-saves-target");
             Files.createDirectories(directory.resolve("saves"));
             Files.writeString(directory.resolve("instance-marker.txt"), "internal fixture " + id);
         }
@@ -934,8 +901,8 @@ public final class UiSmoke {
      */
     private static void exerciseInstanceExtras(
             Robot robot, Window target, File output, Path testRoot, Path fixture) throws Exception {
-        Path mainInstance = testRoot.resolve(".minecraft/instances").resolve(MAIN_INSTANCE_ID);
-        Path targetInstance = testRoot.resolve(".minecraft/instances").resolve(TARGET_INSTANCE_ID);
+        Path mainInstance = testRoot.resolve(".minecraft/versions/smoke-saves");
+        Path targetInstance = testRoot.resolve(".minecraft/versions/smoke-saves-target");
         Path saves = mainInstance.resolve("saves");
         Path backups = mainInstance.resolve(".molifox-saves-backups");
         Path world = saves.resolve("SmokeWorld");
@@ -954,46 +921,10 @@ public final class UiSmoke {
         click(robot, "管理实例");
         waitFor("基本信息");
 
-        // 1) 隔离切换对话框：断言方向与两个复选框，确认按钮可用；只取消，不真的切换。
-        click(robot, "切换…");
-        waitFor("切换隔离方式");
-        waitFor("迁移方向");
-        waitFor("版本隔离 → 共用游戏目录");
-        waitFor("复制存档");
-        waitFor("移动源文件");
-        AccessibleContext isolationConfirm = waitFor("开始切换");
-        boolean isolationBlocked = hasControlStartingWith("需要先处理");
-        boolean isolationEnabled = isolationConfirm.getAccessibleComponent().isEnabled();
-        if (isolationBlocked == isolationEnabled)
-            throw new IllegalStateException(
-                    "Isolation dialog confirm state is wrong: blockers="
-                            + isolationBlocked
-                            + " enabled="
-                            + isolationEnabled);
-        System.out.println(
-                "ISOLATION_DIALOG blockers="
-                        + isolationBlocked
-                        + " confirmEnabled="
-                        + isolationEnabled);
-        capture(
-                robot,
-                target,
-                new File(output.getParentFile(), "MoliFox-isolation-change.png"),
-                true);
-        clickTopButton(robot, "取消");
-        waitUntilGone("迁移方向");
-        // 取消不得写配置：实例仍是隔离模式。
-        if (!"Enabled"
-                .equals(
-                        savedInstance(
-                                        testRoot.resolve("profile/config/launcher.json"),
-                                        "smoke-saves")
-                                .get("isolation")
-                                .getAsString()))
-            throw new IllegalStateException(
-                    "Cancelled isolation dialog changed the saved isolation mode");
-        System.out.println(
-                "ISOLATION_CHANGE_DIALOG_OK direction=版本隔离→共用游戏目录 copySaves=present moveSource=present cancelled=true unchanged=true");
+        if (hasControlStartingWith("切换…"))
+            throw new IllegalStateException("Per-instance isolation entry remains");
+        if (!UiFunctionalChecks.settings(testRoot).get("isolateVersions").getAsBoolean())
+            throw new IllegalStateException("Expected global version isolation");
 
         // 2) 移动实例：目录选择器选 .work 下的空目录，预览出现后取消，且不得写目标目录。
         click(robot, "更多操作");
@@ -1280,8 +1211,7 @@ public final class UiSmoke {
         click(robot, "版本列表");
         click(robot, "选择推荐");
         click(robot, "下载", false);
-        chooseDirectory(
-                root.resolve(".minecraft/instances/" + MAIN_INSTANCE_ID + "/mods").toFile());
+        chooseDirectory(root.resolve(".minecraft/versions/smoke-saves/mods").toFile());
         waitFor("开始安装");
         waitFor("已匹配");
         if (!waitFor("开始安装").getAccessibleComponent().isEnabled())
@@ -1594,7 +1524,7 @@ public final class UiSmoke {
         click(robot, "导出所选");
         chooseDirectory(root.resolve("screenshot-export").toFile());
         waitFor("已导出 2 张；重名文件自动编号。");
-        Path source = root.resolve(".minecraft/instances/" + MAIN_INSTANCE_ID + "/screenshots");
+        Path source = root.resolve(".minecraft/versions/smoke-saves/screenshots");
         for (String name : List.of("today.png", "yesterday.png")) {
             byte[] originalBytes = Files.readAllBytes(source.resolve(name));
             byte[] exportedBytes =
@@ -1816,15 +1746,12 @@ public final class UiSmoke {
         if (args.length > 1 && args[1].startsWith("actions"))
             UiFunctionalChecks.seed(testRoot, fixture);
         if (args.length > 1 && args[1].equals("storageUi")) {
-            Path config =
-                    testRoot.resolve(
-                            ".minecraft/instances/" + MAIN_INSTANCE_ID + "/config/ui-fixture.cfg");
+            Path config = testRoot.resolve(".minecraft/versions/smoke-saves/config/ui-fixture.cfg");
             Files.createDirectories(config.getParent());
             Files.writeString(config, "independent-ui-export=true");
         }
         if (args.length > 1 && args[1].equals("screenshots")) {
-            Path source =
-                    testRoot.resolve(".minecraft/instances/" + MAIN_INSTANCE_ID + "/screenshots");
+            Path source = testRoot.resolve(".minecraft/versions/smoke-saves/screenshots");
             Files.createDirectories(source);
             Files.createDirectories(testRoot.resolve("screenshot-export"));
             for (String name : List.of("today.png", "yesterday.png")) {
@@ -2027,13 +1954,12 @@ public final class UiSmoke {
                     click(robot, "更多操作");
                     click(robot, "管理实例");
                     waitFor("基本信息");
-                    // 版本隔离搬进详情页的「设置」页签，并改为下拉框：先切到「继承全局设置」，
-                    // 再改一个数值字段，保存后才能验证草稿确实落盘（最后再切回共用游戏目录）。
                     clickRail(robot, "设置");
-                    waitFor("版本隔离");
-                    chooseIsolation(robot, "继承全局设置");
-                    waitFor("有未保存的修改");
-                    enterText("最大内存（MB）", "2048");
+                    if (hasControlStartingWith("版本隔离"))
+                        throw new IllegalStateException("Per-instance isolation remains");
+                    click(robot, "继承全局内存策略");
+                    click(robot, "手动分配");
+                    setSlider(robot, "实例内存滑块", .08f);
                     capture(
                             robot,
                             target,
@@ -2051,7 +1977,7 @@ public final class UiSmoke {
                     click(robot, "关闭预览");
                     // 组件维护位于实例设置页。
                     clickRail(robot, "设置");
-                    waitFor("组件维护");
+                    waitFor("更换加载器");
                     capture(
                             robot,
                             target,
@@ -2091,22 +2017,8 @@ public final class UiSmoke {
                     click(robot, "保存设置");
                     Path profileJson = testRoot.resolve("profile/config/launcher.json");
                     var savedInstance = savedInstance(profileJson, "1.20.1");
-                    if (!"Inherit".equals(savedInstance.get("isolation").getAsString()))
-                        throw new IllegalStateException("Isolation setting was not saved");
-                    if (savedInstance.get("memoryMb").getAsInt() != 2048)
-                        throw new IllegalStateException("Instance memory was not saved");
-                    // 第二回合：切回「共用游戏目录」，证明隔离值确实被改写，也让后面的启动和模组继续用游戏目录。
-                    click(robot, "更多操作");
-                    click(robot, "管理实例");
-                    waitFor("基本信息");
-                    clickRail(robot, "设置");
-                    waitFor("版本隔离");
-                    chooseIsolation(robot, "共用游戏目录");
-                    if (!waitFor("保存设置").getAccessibleComponent().isEnabled())
-                        throw new IllegalStateException("Second instance save stayed disabled");
-                    click(robot, "保存设置");
-                    if (!Files.readString(profileJson).contains("Disabled"))
-                        throw new IllegalStateException("Isolation setting did not switch back");
+                    if (savedInstance.get("memoryMb").getAsInt() < 512)
+                        throw new IllegalStateException("Instance memory slider was not saved");
                     if (!Files.readString(fixture.resolve("keep-user-data.txt"))
                             .equals("directory contents remain unchanged"))
                         throw new IllegalStateException("Linked directory data changed");

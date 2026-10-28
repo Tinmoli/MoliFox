@@ -9,10 +9,33 @@ final class RefinementActions {
     private static java.net.ServerSocket motdServer;
 
     static void seed(Path root) throws Exception {
-        Path game = root.resolve(".minecraft/instances/" + UiSmoke.MAIN_INSTANCE_ID);
+        Path game = root.resolve(".minecraft/versions/smoke-saves");
         for (String folder :
                 new String[] {"logs", "crash-reports", "screenshots", "shaderpacks", "schematics"})
             java.nio.file.Files.createDirectories(game.resolve(folder));
+        Path world = game.resolve("saves/LocalWorld");
+        java.nio.file.Files.createDirectories(world);
+        java.nio.file.Files.writeString(world.resolve("level.dat"), "refinement-world");
+        var image =
+                new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var paint = image.createGraphics();
+        paint.setColor(new java.awt.Color(0x39a8d6));
+        paint.fillRect(0, 0, 16, 16);
+        paint.dispose();
+        javax.imageio.ImageIO.write(image, "png", world.resolve("icon.png").toFile());
+        Path pack = game.resolve("resourcepacks/LocalPack.zip");
+        java.nio.file.Files.createDirectories(pack.getParent());
+        try (var zip =
+                new java.util.zip.ZipOutputStream(java.nio.file.Files.newOutputStream(pack))) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("pack.png"));
+            javax.imageio.ImageIO.write(image, "png", zip);
+            zip.closeEntry();
+            zip.putNextEntry(new java.util.zip.ZipEntry("pack.mcmeta"));
+            zip.write(
+                    "{\"pack\":{\"pack_format\":15,\"description\":\"fixture\"}}"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
         motdServer = new java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"));
         try (var nbt =
                 new java.io.DataOutputStream(
@@ -92,6 +115,18 @@ final class RefinementActions {
             throw new IllegalStateException("Redundant home directory actions remain");
         UiSmoke.click(robot, "管理");
         UiSmoke.waitFor("Java 与内存");
+        if (UiSmoke.hasControlStartingWith("最大内存（MB）")
+                || UiSmoke.hasControlStartingWith("初始内存（MB）")
+                || UiSmoke.hasControlStartingWith("版本隔离"))
+            throw new IllegalStateException("Removed instance controls remain");
+        UiSmoke.click(robot, "继承全局内存策略");
+        UiSmoke.click(robot, "手动分配");
+        UiSmoke.setSlider(robot, "实例内存滑块", .08f);
+        UiSmoke.click(robot, "保存设置");
+        UiSmoke.click(robot, "开始");
+        UiSmoke.click(robot, "管理");
+        UiSmoke.waitFor("Java 与内存");
+        checkLocalContent(robot, window, output, root);
         UiSmoke.capture(
                 robot,
                 window,
@@ -104,6 +139,11 @@ final class RefinementActions {
             throw new IllegalStateException("Missing mods folder must not be offered");
         UiSmoke.click(robot, "设置");
         UiSmoke.clickRail(robot, "全局游戏设置");
+        if (UiSmoke.hasControlStartingWith("最大内存（MB）")
+                || UiSmoke.hasControlStartingWith("初始内存（MB）"))
+            throw new IllegalStateException("Removed global memory inputs remain");
+        UiSmoke.scrollUntilVisible(robot, "全局内存滑块");
+        UiSmoke.setSlider(robot, "全局内存滑块", .1f);
         UiSmoke.scrollUntilVisible(robot, "附加 JVM 参数");
         robot.mouseMove(
                 window.getX() + window.getWidth() * 3 / 4,
@@ -147,6 +187,19 @@ final class RefinementActions {
                 new File(output.getParentFile(), "MoliFox-refinement-parameters.png"),
                 true);
         UiSmoke.clickRail(robot, "通用");
+        UiSmoke.click(robot, "游戏语言跟随启动器开关");
+        UiSmoke.awaitFileState(
+                "game language switch saved",
+                10000,
+                () -> {
+                    try {
+                        return UiFunctionalChecks.settings(root)
+                                .get("gameLanguageFollowsLauncher")
+                                .getAsBoolean();
+                    } catch (Exception pending) {
+                        return false;
+                    }
+                });
         UiSmoke.click(robot, "检查更新");
         UiSmoke.waitFor("尚无正式发布版本");
         UiSmoke.capture(
@@ -164,6 +217,9 @@ final class RefinementActions {
                 true);
         UiSmoke.click(robot, "关闭", false);
         UiSmoke.clickRail(robot, "外观");
+        UiSmoke.click(robot, "字体与缩放");
+        checkFont(robot, root);
+        UiSmoke.click(robot, "主题与效果");
         UiSmoke.scrollUntilVisible(robot, "界面圆角");
         UiSmoke.setSlider(robot, "界面圆角滑块", .65f);
         UiSmoke.awaitFileState(
@@ -213,6 +269,11 @@ final class RefinementActions {
         UiSmoke.scrollUntilVisible(robot, "Java 8");
         UiSmoke.click(robot, "Java 8");
         UiSmoke.waitFor("打开任务中心");
+        UiSmoke.click(robot, "开始");
+        UiSmoke.click(robot, "管理");
+        UiSmoke.waitFor("实例内存滑块");
+        UiSmoke.setSlider(robot, "实例内存滑块", .09f);
+        UiSmoke.click(robot, "保存设置");
         UiSmoke.click(robot, "打开任务中心");
         UiSmoke.waitFor("任务中心");
         UiSmoke.waitFor("安装 Java 8");
@@ -222,9 +283,13 @@ final class RefinementActions {
                 new File(output.getParentFile(), "MoliFox-refinement-tasks.png"),
                 true);
         UiSmoke.click(robot, "取消任务 安装 Java 8");
-        UiSmoke.click(robot, "确认取消");
+        UiSmoke.click(robot, "继续任务");
+        UiSmoke.waitFor("取消任务 安装 Java 8");
+        UiSmoke.click(robot, "取消任务 安装 Java 8");
+        UiSmoke.click(robot, "取消");
         UiSmoke.waitFor("已结束");
         UiSmoke.click(robot, "关闭任务中心");
+        UiSmoke.click(robot, "设置");
         UiSmoke.clickRail(robot, "日志");
         if (UiSmoke.hasControlStartingWith("下载任务"))
             throw new IllegalStateException("Tasks still embedded in logs page");
@@ -234,6 +299,102 @@ final class RefinementActions {
                 new File(output.getParentFile(), "MoliFox-refinement-logs.png"),
                 true);
         System.out.println(
-                "REFINEMENT_UI: JVM editing, GitHub empty-release, legal notices, appearance, tasks and logs checked");
+                "REFINEMENT_UI: memory sliders, global isolation layout, language, font, local icons, save backup/restore/copy/delete, JVM editing, appearance and cancellation checked");
+    }
+
+    private static void checkFont(Robot robot, Path root) throws Exception {
+        UiSmoke.scrollUntilVisible(robot, "选择字体");
+        UiSmoke.click(robot, "选择字体");
+        String family =
+                java.util.Arrays.stream(
+                                java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                                        .getAvailableFontFamilyNames())
+                        .filter(name -> name.contains("YaHei") || name.contains("微软雅黑"))
+                        .findFirst()
+                        .orElse("Dialog");
+        UiSmoke.enterText("搜索字体", family);
+        UiSmoke.click(robot, family);
+        UiSmoke.awaitFileState(
+                "global font saved",
+                10000,
+                () -> {
+                    try {
+                        return UiFunctionalChecks.settings(root)
+                                .get("fontChoice")
+                                .getAsString()
+                                .equals("system:" + family);
+                    } catch (Exception pending) {
+                        return false;
+                    }
+                });
+    }
+
+    private static long backups(Path root) {
+        try (var paths = java.nio.file.Files.list(root)) {
+            return paths.filter(file -> file.toString().endsWith(".zip")).count();
+        } catch (Exception pending) {
+            return 0;
+        }
+    }
+
+    private static void checkLocalContent(Robot robot, Window window, File output, Path root)
+            throws Exception {
+        Path game = root.resolve(".minecraft/versions/smoke-saves");
+        Path world = game.resolve("saves/LocalWorld");
+        Path backup = game.resolve(".molifox-saves-backups");
+        UiSmoke.clickRail(robot, "资源包");
+        UiSmoke.waitFor("LocalPack.zip");
+        robot.delay(300);
+        verifyIcon(robot, window);
+        UiSmoke.capture(
+                robot,
+                window,
+                new File(output.getParentFile(), "MoliFox-local-pack-icon.png"),
+                true);
+        UiSmoke.clickRail(robot, "存档");
+        UiSmoke.waitFor("LocalWorld");
+        robot.delay(300);
+        verifyIcon(robot, window);
+        UiSmoke.clickTopButton(robot, "备份");
+        UiSmoke.awaitFileState("save backup", 10000, () -> backups(backup) == 1);
+        UiSmoke.waitFor("恢复");
+        java.nio.file.Files.writeString(world.resolve("after-backup.txt"), "changed");
+        UiSmoke.clickTopButton(robot, "恢复");
+        UiSmoke.clickTopButton(robot, "覆盖并恢复");
+        UiSmoke.awaitFileState(
+                "save restored",
+                10000,
+                () -> !java.nio.file.Files.exists(world.resolve("after-backup.txt")));
+        UiSmoke.clickTopButton(robot, "复制到…");
+        UiSmoke.clickTopButton(robot, "开始复制");
+        Path copied =
+                root.resolve(".minecraft/versions/smoke-saves-target/saves/LocalWorld/level.dat");
+        UiSmoke.awaitFileState(
+                "save copied", 10000, () -> java.nio.file.Files.isRegularFile(copied));
+        if (!java.nio.file.Files.readString(copied).equals("refinement-world"))
+            throw new IllegalStateException("Copied world differs");
+        UiSmoke.capture(
+                robot,
+                window,
+                new File(output.getParentFile(), "MoliFox-local-world-icon.png"),
+                true);
+        UiSmoke.clickTopButton(robot, "删除");
+        UiSmoke.clickTopButton(robot, "移入回收站");
+        UiSmoke.awaitFileState("save removed", 10000, () -> !java.nio.file.Files.exists(world));
+        if (!java.nio.file.Files.isRegularFile(copied))
+            throw new IllegalStateException("Deleting source removed copied world");
+        UiSmoke.clickRail(robot, "设置");
+    }
+
+    private static void verifyIcon(Robot robot, Window window) {
+        var image =
+                robot.createScreenCapture(
+                        new java.awt.Rectangle(window.getLocationOnScreen(), window.getSize()));
+        int pixels = 0;
+        for (int x = 0; x < image.getWidth(); x++)
+            for (int y = 0; y < image.getHeight(); y++)
+                if ((image.getRGB(x, y) & 0xffffff) == 0x39a8d6) pixels++;
+        if (pixels < 100)
+            throw new IllegalStateException("Local content icon pixels missing: " + pixels);
     }
 }

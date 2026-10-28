@@ -13,8 +13,8 @@ import javax.accessibility.*;
 
 final class InstanceActionChecks {
     static void run(Robot robot, Window window, File output, Path root) throws Exception {
-        Path game = root.resolve(".minecraft/instances/" + UiSmoke.MAIN_INSTANCE_ID);
-        Path target = root.resolve(".minecraft/instances/" + UiSmoke.TARGET_INSTANCE_ID);
+        Path game = root.resolve(".minecraft/versions/smoke-saves");
+        Path target = root.resolve(".minecraft/versions/smoke-saves-target");
         Files.createDirectories(game.resolve("saves/ActionWorld"));
         Files.writeString(game.resolve("saves/ActionWorld/level.dat"), "disposable-world");
         openMain(robot);
@@ -25,7 +25,7 @@ final class InstanceActionChecks {
         tidyAndVerify(robot, game);
         backup(robot, root);
         copyInstance(robot, root, game);
-        isolation(robot, root, game);
+        isolation(robot, window, root, game);
         moveInstance(robot, root, game);
         UiSmoke.capture(
                 robot,
@@ -248,7 +248,8 @@ final class InstanceActionChecks {
                     }
                 });
         JsonObject clone = findByName(root, "ActionClone");
-        Path cloned = root.resolve(".minecraft/instances/" + clone.get("id").getAsString());
+        Path cloned =
+                root.resolve(".minecraft/versions/" + clone.get("gameDirectoryName").getAsString());
         UiFunctionalChecks.require(
                 Files.readString(cloned.resolve("saves/ActionWorld/level.dat"))
                         .equals("disposable-world"),
@@ -265,54 +266,38 @@ final class InstanceActionChecks {
         return null;
     }
 
-    private static void isolation(Robot robot, Path root, Path game) throws Exception {
-        UiSmoke.click(robot, "实例");
-        UiSmoke.enterText("搜索名称、版本或备注", "ActionRenamed");
-        UiSmoke.click(robot, "更多操作");
-        UiSmoke.click(robot, "管理实例");
-        UiSmoke.click(robot, "切换…");
-        UiSmoke.waitFor("迁移方向");
-        UiSmoke.clickTopButton(robot, "开始切换");
+    private static void isolation(Robot robot, Window window, Path root, Path game)
+            throws Exception {
         Path shared = root.resolve(".minecraft/saves/ActionWorld/level.dat");
-        UiSmoke.awaitFileState("shared save copied", 30000, () -> Files.isRegularFile(shared));
-        UiSmoke.awaitFileState(
-                "shared mode saved",
-                10000,
-                () -> {
-                    try {
-                        return UiSmoke.savedInstance(
-                                        root.resolve("profile/config/launcher.json"), "smoke-saves")
-                                .get("isolation")
-                                .getAsString()
-                                .equals("Disabled");
-                    } catch (Exception pending) {
-                        return false;
-                    }
-                });
-        UiFunctionalChecks.require(
-                Files.isRegularFile(game.resolve("saves/ActionWorld/level.dat")),
-                "Default isolation copy moved source data");
-        openRenamed(robot);
-        UiSmoke.click(robot, "切换…");
-        UiSmoke.waitFor("迁移方向");
-        UiSmoke.clickTopButton(robot, "开始切换");
-        UiSmoke.awaitFileState(
-                "isolated mode restored",
-                30000,
-                () -> {
-                    try {
-                        return UiSmoke.savedInstance(
-                                        root.resolve("profile/config/launcher.json"), "smoke-saves")
-                                .get("isolation")
-                                .getAsString()
-                                .equals("Enabled");
-                    } catch (Exception pending) {
-                        return false;
-                    }
-                });
+        boolean sharedExisted = Files.exists(shared);
+        UiSmoke.click(robot, "设置");
+        UiSmoke.clickRail(robot, "全局游戏设置");
+        for (boolean expected : new boolean[] {false, true}) {
+            if (UiFunctionalChecks.settings(root).get("isolateVersions").getAsBoolean() != expected)
+                SettingsActionChecks.toggleRow(robot, window, "启用版本隔离");
+            UiSmoke.awaitFileState(
+                    "global isolation saved",
+                    10000,
+                    () -> {
+                        try {
+                            return UiFunctionalChecks.settings(root)
+                                            .get("isolateVersions")
+                                            .getAsBoolean()
+                                    == expected;
+                        } catch (Exception pending) {
+                            return false;
+                        }
+                    });
+            UiFunctionalChecks.require(
+                    Files.isRegularFile(game.resolve("saves/ActionWorld/level.dat")),
+                    "Global isolation removed version data");
+            UiFunctionalChecks.require(
+                    Files.exists(shared) == sharedExisted,
+                    "Global isolation unexpectedly moved shared saves");
+        }
         UiFunctionalChecks.record(
                 "instance.isolation",
-                "actual transfer confirmed in both directions; default copy preserves source");
+                "global-only switch saved; both original directories preserved");
         openRenamed(robot);
     }
 
@@ -332,9 +317,7 @@ final class InstanceActionChecks {
         UiSmoke.chooseDirectory(destination.toFile());
         UiSmoke.waitFor("移动预览");
         UiSmoke.clickTopButton(robot, "开始移动");
-        Path moved =
-                destination.resolve(
-                        "instances/" + UiSmoke.MAIN_INSTANCE_ID + "/saves/ActionWorld/level.dat");
+        Path moved = destination.resolve("versions/smoke-saves/saves/ActionWorld/level.dat");
         UiSmoke.awaitFileState(
                 "instance actually moved",
                 30000,

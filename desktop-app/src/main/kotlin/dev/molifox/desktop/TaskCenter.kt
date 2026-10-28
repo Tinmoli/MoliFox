@@ -230,13 +230,13 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
         AlertDialog(
             onDismissRequest = { cancelling = null },
             title = { Text("取消任务？") },
-            text = { Text(job.title + "\n已下载的可续传文件会保留。") },
+            text = { Text(job.title + "\n取消后删除本次下载的文件和分段缓存。已有文件与其他实例共用的文件会保留。") },
             confirmButton = {
                 TextButton({
                     actions.controller.jobs.cancel(job.id)
                     cancelling = null
                 }) {
-                    Text("确认取消")
+                    Text("取消")
                 }
             },
             dismissButton = { TextButton({ cancelling = null }) { Text("继续任务") } },

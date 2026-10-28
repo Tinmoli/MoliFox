@@ -256,14 +256,16 @@ fun main() {
                         onClick = {
                             windowVisible = true
                             windowState.isMinimized = false
-                            if (controller.busy) confirmExit = true else exitApplication()
+                            if (controller.jobs.busy) confirmExit = true else exitApplication()
                         },
                     )
                 }
             // 窗口透明必须在创建时决定；运行中切换该设置需重启生效。
             val windowTransparent = launcherState.data.settings.windowTransparent
             Window(
-                onCloseRequest = { if (controller.busy) confirmExit = true else exitApplication() },
+                onCloseRequest = {
+                    if (controller.jobs.busy) confirmExit = true else exitApplication()
+                },
                 state = windowState,
                 visible = windowVisible,
                 title = "MoliFox",
@@ -316,7 +318,7 @@ fun main() {
                                         Icons.Outlined.Close,
                                         "关闭",
                                         {
-                                            if (controller.busy) confirmExit = true
+                                            if (controller.jobs.busy) confirmExit = true
                                             else exitApplication()
                                         },
                                         tint,
@@ -357,8 +359,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     var tidyReport by remember { mutableStateOf<Pair<String, TidyReport>?>(null) }
     var verifyingInstance by remember { mutableStateOf<GameInstance?>(null) }
     var upgradingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
-    // 隔离切换与跨游戏目录移动：对话框挂在根级，任务开始后实例记录更新不会打断页面动画。
-    var switchingIsolation by remember { mutableStateOf<GameInstance?>(null) }
+    // 目录移动对话框挂在根级，避免任务更新实例记录时打断预览。
     var movingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
     var pendingMove by remember { mutableStateOf<Pair<String, String?>?>(null) }
     // 移动完成后让实例列表跟随到新的游戏目录：同一个实例保持选中，不会从列表里消失。
@@ -471,16 +472,13 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                                             }
                                     }
                                 },
-                                onSwitchIsolation = { target ->
-                                    switchingIsolation = target
-                                },
                                 onMoveInstance = { target ->
                                     // 先选目标游戏目录，再打开只读移动预览；预览会重新扫描实例目录。
                                     actions.run {
                                         val destination =
                                             actions
                                                 .choose(
-                                                    "选择目标游戏目录（实例会放到其中的 instances 文件夹）",
+                                                    "选择目标游戏目录（实例会放到其中的 versions 文件夹）",
                                                     directory = true,
                                                 )
                                                 .firstOrNull()
@@ -596,14 +594,6 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             archive,
             actions,
             { upgradingInstance = null },
-            { actions.taskQueued() },
-        )
-    }
-    switchingIsolation?.let { instance ->
-        IsolationChangeDialog(
-            instance,
-            actions,
-            { switchingIsolation = null },
             { actions.taskQueued() },
         )
     }

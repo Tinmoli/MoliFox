@@ -575,6 +575,7 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                     rootProject.file("tools/NativeDialogActions.java").absolutePath,
                     rootProject.file("tools/RefinementActions.java").absolutePath,
                     rootProject.file("tools/PackDragChecks.java").absolutePath,
+                    rootProject.file("tools/NativeRuntimeCache.java").absolutePath,
                 ) == 0
             ) {
                 "$probe compilation failed"

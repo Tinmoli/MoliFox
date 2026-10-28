@@ -211,12 +211,7 @@ fun ContentProjectDialog(
                 style = MaterialTheme.typography.bodySmall,
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                val links =
-                    details?.links
-                        ?: listOf(
-                            ContentLink("项目网页", contentWebsite(hit)),
-                            ContentLink("MC 百科搜索", mcmodSearchUrl(hit.title)),
-                        )
+                val links = details?.links.orEmpty()
                 links.forEach { link ->
                     TextButton(
                         { actions.run { actions.controller.platform.openUrl(link.url) } },

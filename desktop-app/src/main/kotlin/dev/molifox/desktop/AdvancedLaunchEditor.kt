@@ -31,6 +31,16 @@ fun AdvancedLaunchEditor(
         .exceptionOrNull()
         ?.message
     LaunchedEffect(error) { onValidityChange(error == null) }
+    SettingRow("启动时校验文件摘要", "关闭后检查文件是否存在及大小；下载和修复仍进行完整校验。") {
+        CompactSwitch(value.verifyFileHashes, { onChange(value.copy(verifyFileHashes = it)) })
+    }
+    if (os == "windows")
+        SettingRow("使用 java.exe", "使用同一 Java 安装中的 java.exe 替代 javaw.exe，便于兼容和诊断。") {
+            CompactSwitch(
+                value.useJavaConsoleExecutable,
+                { onChange(value.copy(useJavaConsoleExecutable = it)) },
+            )
+        }
     OutlinedTextField(
         value.extraGameArgs,
         { onChange(value.copy(extraGameArgs = it)) },
@@ -86,11 +96,7 @@ fun AdvancedLaunchEditor(
         val visibility =
             value.launcherVisibility.ifBlank { if (legacyMinimize) "minimize" else "keep" }
         SimpleDropdown(
-            when (visibility) {
-                "minimize" -> "最小化"
-                "hide" -> "隐藏到托盘"
-                else -> "保持显示"
-            },
+            visibility,
             listOf("keep" to "保持显示", "minimize" to "最小化", "hide" to "隐藏到托盘"),
             { onChange(value.copy(launcherVisibility = it)) },
             Modifier.widthIn(min = 180.dp, max = 230.dp),

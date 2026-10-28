@@ -42,7 +42,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1180,7 +1179,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
                                         Text(
                                             "等待日志输出…",
                                             color = consoleTimestamp,
-                                            fontFamily = FontFamily.Monospace,
+                                            fontFamily = LocalLauncherFont.current,
                                             fontSize = 12.sp,
                                         )
                                         Text(
@@ -1203,7 +1202,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
                                     line.time.substringAfter('T').take(8),
                                     Modifier.width(64.dp),
                                     color = consoleTimestamp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = LocalLauncherFont.current,
                                     fontSize = (preferences.fontSize - 1).sp,
                                     lineHeight = (preferences.fontSize + 8).sp,
                                 )
@@ -1212,7 +1211,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
                                     color =
                                         if (line.isError) consoleError
                                         else if (line.isGame) consoleGame else consoleText,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = LocalLauncherFont.current,
                                     fontSize = preferences.fontSize.sp,
                                     lineHeight = (preferences.fontSize + 8).sp,
                                 )

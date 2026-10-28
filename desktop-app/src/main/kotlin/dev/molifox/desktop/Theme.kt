@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -177,6 +178,30 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
         // 字号阶梯只有 6 档：18 / 16 / 14 / 13 / 12 / 11，行高按 1.35–1.45 倍给。
         typography =
             Typography(
+                displayLarge =
+                    MaterialTheme.typography.displayLarge.copy(
+                        fontFamily = font,
+                        fontSize = 18.sp,
+                        lineHeight = 25.sp,
+                    ),
+                displayMedium =
+                    MaterialTheme.typography.displayMedium.copy(
+                        fontFamily = font,
+                        fontSize = 18.sp,
+                        lineHeight = 25.sp,
+                    ),
+                displaySmall =
+                    MaterialTheme.typography.displaySmall.copy(
+                        fontFamily = font,
+                        fontSize = 16.sp,
+                        lineHeight = 22.sp,
+                    ),
+                headlineSmall =
+                    MaterialTheme.typography.headlineSmall.copy(
+                        fontFamily = font,
+                        fontSize = 16.sp,
+                        lineHeight = 22.sp,
+                    ),
                 headlineLarge =
                     MaterialTheme.typography.headlineLarge.copy(
                         fontFamily = font,
@@ -254,6 +279,8 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
             ),
     ) {
         CompositionLocalProvider(
+            LocalLauncherFont provides font,
+            LocalTextStyle provides MaterialTheme.typography.bodyLarge.copy(fontFamily = font),
             LocalContentColor provides colors.onSurface,
             LocalAnimationsEnabled provides settings.animationsEnabled,
             LocalReducedMotion provides !settings.animationsEnabled,
@@ -267,6 +294,8 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
         )
     }
 }
+
+val LocalLauncherFont = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 
 /** 卡片描边、卡片内分隔线、标题栏底线使用统一颜色，浅色下也保留可见对比。 */
 @Composable fun hairline(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .9f)

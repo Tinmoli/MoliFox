@@ -30,8 +30,8 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
     val scope = rememberCoroutineScope()
     val state by actions.controller.state.collectAsState()
     val busy =
-        state.runningInstanceId != null ||
-            state.jobs.any { it.status in setOf(JobStatus.Queued, JobStatus.Running) }
+        actions.controller.game.isRunning(instanceId) ||
+            actions.controller.isInstanceBusy(instanceId)
     LaunchedEffect(instanceId, includePrerelease, refresh) {
         loading = true
         error = null
@@ -179,7 +179,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                                 error = null
                                                 scope.launch {
                                                     try {
-                                                        actions.controller.requireIdle()
+                                                        actions.controller.requireIdle(instanceId)
                                                         withContext(Dispatchers.IO) {
                                                             actions.controller.content.catalog
                                                                 .setLocked(

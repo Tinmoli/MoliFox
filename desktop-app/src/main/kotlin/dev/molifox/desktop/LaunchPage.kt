@@ -81,7 +81,7 @@ fun ColumnScope.HomePage(
         }
     val account = state.data.accounts.find { it.id == state.data.activeAccountId }
     val preferences = state.data.settings.pages.home
-    val busy = actions.controller.busy
+    val busy = selected?.let { actions.controller.isInstanceBusy(it.id) } ?: actions.controller.busy
     // 启动进度只读真实的排队/运行任务，不凭空造一份「launching」状态。
     val launchJob =
         state.jobs.firstOrNull { it.status == JobStatus.Running && it.title.startsWith("启动 ") }

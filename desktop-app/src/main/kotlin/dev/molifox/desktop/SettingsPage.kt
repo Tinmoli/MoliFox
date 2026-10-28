@@ -378,7 +378,7 @@ private fun SettingTextArea(
                 textStyle =
                     MaterialTheme.typography.bodyMedium.copy(
                         color = colors.onSurface,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontFamily = LocalLauncherFont.current,
                     ),
                 cursorBrush = SolidColor(colors.primary),
                 interactionSource = interaction,
@@ -477,36 +477,11 @@ private fun gameSettingCards(
                         CompactSlider(
                             memory.floatValue,
                             { memory.floatValue = steppedMemory(it, maximum).toFloat() },
-                            Modifier.weight(1f),
+                            Modifier.weight(1f).semantics { contentDescription = "全局内存滑块" },
                             valueRange = 512f..maximum.toFloat(),
                             enabled = !settings.autoMemory,
                         )
                         Tag("%.1f GB".format(memory.floatValue / 1024f))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        LiveNumberField(
-                            settings.memoryMb,
-                            "最大内存（MB）",
-                            512..maximum,
-                            Modifier.weight(1f),
-                            enabled = !settings.autoMemory,
-                        ) { value ->
-                            applySetting(actions) {
-                                it.copy(
-                                    memoryMb = value,
-                                    initialMemoryMb = minOf(it.initialMemoryMb, value),
-                                )
-                            }
-                        }
-                        LiveNumberField(
-                            settings.initialMemoryMb,
-                            "初始内存（MB）",
-                            128..settings.memoryMb,
-                            Modifier.weight(1f),
-                            enabled = !settings.autoMemory,
-                        ) { value ->
-                            applySetting(actions) { it.copy(initialMemoryMb = value) }
-                        }
                     }
                     MutedText("原版通常从 2–4 GB 开始；大型整合包按需要调整。初始内存不能超过最大内存。")
                 },
@@ -631,13 +606,13 @@ private fun gameSettingCards(
             "版本隔离",
             "",
             listOf(
-                settingRow("默认启用版本隔离", "分别保存各个版本的模组、存档与配置") {
+                settingRow("启用版本隔离", "开启时使用游戏目录下 versions/版本名；关闭时共用游戏根目录。") {
                     CompactSwitch(
                         settings.isolateVersions,
                         { value -> writer.commit { it.copy(isolateVersions = value) } },
                     )
                 },
-                settingNote("单个版本可覆盖此选项。切换隔离规则会改变使用目录，现有文件仍在原位置。"),
+                settingNote("所有实例统一遵循此开关。切换后不删除或合并原目录里的存档、模组与配置。"),
             ),
         )
     )
@@ -645,7 +620,7 @@ private fun gameSettingCards(
 }
 
 /** 内存按 256 MB 步进并限制在有效范围内：滑块与数字输入共用。 */
-private fun steppedMemory(value: Float, maximum: Int): Int =
+internal fun steppedMemory(value: Float, maximum: Int): Int =
     (value.toInt() / 256 * 256).coerceIn(512, maximum)
 
 /** Java 管理：检测结果、Java 路径与运行环境准备。 */
@@ -795,7 +770,15 @@ private fun generalSettingCards(
             "当前仅提供简体中文；多语言在后续版本提供。",
             listOf(
                 settingRow("界面语言", "切换语言需要重启启动器") { Tag("简体中文") },
-                settingNote("更多语言翻译将在后续版本提供，字段已随设置保存。"),
+                settingRow("游戏语言跟随启动器", "下次启动时将所选实例的游戏语言设为简体中文；关闭后保留游戏内选择。") {
+                    CompactSwitch(
+                        settings.gameLanguageFollowsLauncher,
+                        { enabled ->
+                            writer.commit { it.copy(gameLanguageFollowsLauncher = enabled) }
+                        },
+                        Modifier.semantics { contentDescription = "游戏语言跟随启动器开关" },
+                    )
+                },
             ),
         ),
     )
@@ -837,15 +820,12 @@ private fun downloadSettingCards(
                 },
                 settingField(
                     "附加内容下载源",
-                    "检索接口当前只接收 Modrinth；CurseForge 需要 API Key，开通前不可选。",
+                    "Modrinth 可直接使用；CurseForge 需要已获批的 API Key。",
                 ) {
-                    // 只保留真正生效的选项：检索接口当前不接收来源参数，
-                    // 让用户选 CurseForge 会得到一个改了也不生效的开关。
                     SimpleDropdown(
-                        "modrinth",
-                        listOf("modrinth" to "Modrinth（默认）"),
-                        { writer.commit { it.copy(contentDownloadSource = "modrinth") } },
-                        enabled = false,
+                        settings.contentDownloadSource,
+                        listOf("modrinth" to "Modrinth", "curseforge" to "CurseForge（需 API Key）"),
+                        { value -> writer.commit { it.copy(contentDownloadSource = value) } },
                     )
                 },
                 settingRow("并行下载数", "同时进行的文件下载数量") {
@@ -858,7 +838,54 @@ private fun downloadSettingCards(
                         Modifier.width(132.dp),
                     )
                 },
-                settingNote("加载器资源使用各自官方服务。下载任务可从右下角进入任务中心取消。"),
+                settingField("CurseForge API Key", "填写已获批的 Key 后可使用 CurseForge；留空保存可清除。") {
+                    var keyDraft by
+                        remember(settings.curseForgeApiKey) {
+                            mutableStateOf(settings.curseForgeApiKey)
+                        }
+                    OutlinedTextField(
+                        keyDraft,
+                        { keyDraft = it.take(512) },
+                        Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("CurseForge API Key") },
+                        visualTransformation =
+                            androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    )
+                    TextButton(
+                        { writer.commit { it.copy(curseForgeApiKey = keyDraft.trim()) } },
+                        enabled = keyDraft != settings.curseForgeApiKey,
+                    ) {
+                        Text("保存 Key")
+                    }
+                },
+                settingRow("单文件分段数", "有大小与校验摘要的大文件分段下载；服务器不支持时自动回退。") {
+                    SimpleDropdown(
+                        settings.downloadSegments.toString(),
+                        listOf("1" to "关闭", "2" to "2 段", "4" to "4 段（默认）", "8" to "8 段"),
+                        { value -> writer.commit { it.copy(downloadSegments = value.toInt()) } },
+                        Modifier.width(132.dp),
+                    )
+                },
+                settingRow("失败重试次数", "包含首次请求；只对可恢复的网络错误重试。") {
+                    SimpleDropdown(
+                        settings.downloadAttempts.toString(),
+                        listOf(1, 2, 3, 5, 8).map { it.toString() to "$it 次" },
+                        { value -> writer.commit { it.copy(downloadAttempts = value.toInt()) } },
+                        Modifier.width(132.dp),
+                    )
+                },
+                settingRow("网络超时", "新请求的读取超时；代理和分段设置无需重启。") {
+                    SimpleDropdown(
+                        settings.networkTimeoutSeconds.toString(),
+                        listOf(15, 30, 45, 60, 120, 180).map { it.toString() to "$it 秒" },
+                        { value ->
+                            writer.commit { it.copy(networkTimeoutSeconds = value.toInt()) }
+                        },
+                        Modifier.width(132.dp),
+                    )
+                },
+                settingNote("加载器资源使用各自官方服务。可同时添加下载；取消任务会清理本次下载的文件与分段缓存。"),
             ),
         )
     )

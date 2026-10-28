@@ -388,19 +388,6 @@ private fun ColumnScope.InstallGamePage(
                     ) {
                         Text("官方更新", fontSize = 12.sp)
                     }
-                    TextButton(
-                        {
-                            actions.run {
-                                actions.controller.platform.openUrl(
-                                    mcmodSearchUrl("Minecraft $selected")
-                                )
-                            }
-                        },
-                        enabled = selected.isNotBlank(),
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Text("MC 百科搜索", fontSize = 12.sp)
-                    }
                 }
                 CompactTextField(
                     name,

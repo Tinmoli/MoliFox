@@ -13,9 +13,9 @@ final class LogActionChecks {
         UiSmoke.click(robot, "打开任务中心");
         UiSmoke.click(robot, "取消任务 安装 Java 25");
         UiSmoke.waitFor("继续任务");
-        UiSmoke.click(robot, "确认取消");
+        UiSmoke.click(robot, "取消");
         UiSmoke.click(robot, "已结束");
-        UiSmoke.waitFor("已取消");
+        UiSmoke.waitFor("已取消，本次下载文件已清理");
         UiFunctionalChecks.record(
                 "tasks.cancel",
                 "running installer cancelled using confirmation dialog; cancelled status displayed");

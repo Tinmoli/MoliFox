@@ -30,7 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -263,7 +262,7 @@ fun ColumnScope.AccountListPage(
                     SelectionContainer {
                         Text(
                             code.userCode,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = LocalLauncherFont.current,
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 6.sp,

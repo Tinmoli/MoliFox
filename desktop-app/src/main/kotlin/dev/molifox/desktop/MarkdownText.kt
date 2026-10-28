@@ -40,7 +40,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -385,7 +384,6 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
         SpanStyle(color = palette.primary, textDecoration = TextDecoration.Underline)
     private val codeStyle =
         SpanStyle(
-            fontFamily = FontFamily.Monospace,
             background = palette.codeBackground,
             color = palette.codeText,
         )
@@ -690,7 +688,6 @@ private fun MarkdownBlockView(
                         modifier = Modifier.fillMaxWidth(),
                         style =
                             body.copy(
-                                fontFamily = FontFamily.Monospace,
                                 fontSize = 11.5.sp,
                                 lineHeight = 16.sp,
                             ),
@@ -729,7 +726,6 @@ private fun MarkdownCodeBlock(block: MarkdownCode, palette: MarkdownPalette) {
                     block.code,
                     style =
                         MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
                             fontSize = 11.5.sp,
                             lineHeight = 16.sp,
                             color = palette.codeText,

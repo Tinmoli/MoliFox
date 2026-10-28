@@ -21,10 +21,30 @@ import javax.imageio.ImageIO;
 /** Windows package check; only inspects the newly started, isolated process. */
 public final class NativeSmoke {
     public static void main(String[] args) throws Exception {
+        boolean cachedOnly = args.length > 2 && args[2].equals("cached-offline");
         boolean roundTrip = args.length > 2 && args[2].equals("online-then-offline");
         String[] first = args.clone();
+        int seeded = 0;
+        if (cachedOnly) {
+            seeded = NativeRuntimeCache.seed(Path.of(args[0]));
+            first[2] = "offline";
+        }
         if (roundTrip) first[2] = "online";
         runPackage(first);
+        if (cachedOnly) {
+            var result = new com.google.gson.JsonObject();
+            result.addProperty("platform", "Windows");
+            result.addProperty("cachedOfflineStart", "passed");
+            result.addProperty("verifiedDependencyHashes", seeded);
+            result.addProperty("normalExitAndTemporaryCleanup", "passed");
+            result.addProperty(
+                    "firstOnlineStart", "not repeated; unchanged bootstrap dependency set");
+            result.addProperty("updated", java.time.Instant.now().toString());
+            Path report =
+                    Path.of(System.getProperty("molifox.native.report"))
+                            .resolveSibling("native-cached-startup.json");
+            Files.writeString(report, result.toString());
+        }
         if (roundTrip) {
             int dependencies = verifyRuntimeCache(Path.of(args[0]));
             String[] second = args.clone();

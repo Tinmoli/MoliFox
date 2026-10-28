@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,7 +54,7 @@ private val instanceTabs =
         InstanceTab("原理图", Icons.Outlined.Architecture),
     )
 
-/** 实例管理：设置优先的五个页签；组件维护与隔离切换统一放在设置页。 */
+/** 实例管理的设置、组件、内容与存档页签。 */
 @Composable
 fun ColumnScope.InstanceDetailsPage(
     instance: GameInstance,
@@ -65,7 +67,6 @@ fun ColumnScope.InstanceDetailsPage(
     onTidyInstance: (GameInstance) -> Unit = {},
     onVerifyInstance: (GameInstance) -> Unit = {},
     onUpgradePack: (GameInstance) -> Unit = {},
-    onSwitchIsolation: (GameInstance) -> Unit = {},
     onMoveInstance: (GameInstance) -> Unit = {},
 ) {
     var tab by remember { mutableIntStateOf(0) }
@@ -119,21 +120,24 @@ fun ColumnScope.InstanceDetailsPage(
             initial != instance.initialMemoryMb.toString() ||
             width != instance.width.toString() ||
             height != instance.height.toString()
-    val launchEnabled =
-        instance.installed && !actions.controller.busy && state.runningInstanceId == null
+    val launchEnabled = instance.installed && !actions.controller.isInstanceBusy(instance.id)
     // 实例工具与 整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
     val isolated = actions.controller.store.isolated(instance)
-    val canCopyInstance = isolated && !instance.externalProfile && !actions.controller.busy
-    val canMaintainInstance = isolated && !actions.controller.busy
+    val canCopyInstance =
+        isolated && !instance.externalProfile && !actions.controller.isInstanceBusy(instance.id)
+    val canMaintainInstance = isolated && !actions.controller.isInstanceBusy(instance.id)
     val canUpgradePack =
-        instance.packFile.isNotBlank() && instance.installed && !actions.controller.busy
+        instance.packFile.isNotBlank() &&
+            instance.installed &&
+            !actions.controller.isInstanceBusy(instance.id)
     // 跨游戏目录移动：外部目录由原启动器维护，共用游戏目录没有独立目录可搬。
-    val canMoveInstance = isolated && !instance.externalProfile && !actions.controller.busy
+    val canMoveInstance =
+        isolated && !instance.externalProfile && !actions.controller.isInstanceBusy(instance.id)
     val moveBlockedNote =
         when {
             instance.externalProfile -> "外部游戏目录的实例由原启动器维护，不能移动"
             !isolated -> "共用游戏目录没有独立目录，请先启用版本隔离"
-            actions.controller.busy -> "请等待当前任务结束"
+            actions.controller.isInstanceBusy(instance.id) -> "请等待当前任务结束"
             else -> ""
         }
     val launch: () -> Unit = {
@@ -153,10 +157,16 @@ fun ColumnScope.InstanceDetailsPage(
         HeaderIconButton(Icons.Outlined.ArrowBack, "返回实例列表", onClick = onBack)
         Spacer(Modifier.width(10.dp))
         // 实例页头也显示图标：默认草方块，自定义图片或加载器图标会替换它。
-        IconButton({ editingIcon = true }, enabled = !actions.controller.busy) {
+        IconButton(
+            { editingIcon = true },
+            enabled = !actions.controller.isInstanceBusy(instance.id),
+        ) {
             InstanceArtwork(instance, actions, Modifier.size(34.dp))
         }
-        TextButton({ editingIcon = true }, enabled = !actions.controller.busy) {
+        TextButton(
+            { editingIcon = true },
+            enabled = !actions.controller.isInstanceBusy(instance.id),
+        ) {
             Text("更换图标", fontSize = 12.sp)
         }
         Spacer(Modifier.width(10.dp))
@@ -210,7 +220,7 @@ fun ColumnScope.InstanceDetailsPage(
                     withContext(Dispatchers.Swing) { onBack() }
                 }
             },
-            enabled = valid && !actions.controller.busy && dirty,
+            enabled = valid && !actions.controller.isInstanceBusy(instance.id) && dirty,
         ) {
             Icon(Icons.Outlined.Check, null, Modifier.size(15.dp))
             Spacer(Modifier.width(5.dp))
@@ -229,7 +239,7 @@ fun ColumnScope.InstanceDetailsPage(
                         menu = false
                         actions.previewLaunch(instance.id)
                     },
-                    enabled = instance.installed && !actions.controller.busy,
+                    enabled = instance.installed && !actions.controller.isInstanceBusy(instance.id),
                 )
                 DropdownMenuItem(
                     { Text("打开游戏目录", fontSize = 13.sp) },
@@ -244,7 +254,7 @@ fun ColumnScope.InstanceDetailsPage(
                         menu = false
                         exportingMrpack = true
                     },
-                    enabled = !actions.controller.busy,
+                    enabled = !actions.controller.isInstanceBusy(instance.id),
                 )
                 DropdownMenuItem(
                     { Text("更换实例图标…", fontSize = 13.sp) },
@@ -252,7 +262,7 @@ fun ColumnScope.InstanceDetailsPage(
                         menu = false
                         editingIcon = true
                     },
-                    enabled = !actions.controller.busy,
+                    enabled = !actions.controller.isInstanceBusy(instance.id),
                 )
                 DropdownMenuItem(
                     { Text("管理游戏截图…", fontSize = 13.sp) },
@@ -267,7 +277,7 @@ fun ColumnScope.InstanceDetailsPage(
                         menu = false
                         actions.exportInstance(instance)
                     },
-                    enabled = instance.installed && !actions.controller.busy,
+                    enabled = instance.installed && !actions.controller.isInstanceBusy(instance.id),
                 )
                 DropdownMenuItem(
                     { Text("复制实例", fontSize = 13.sp) },
@@ -510,22 +520,33 @@ fun ColumnScope.InstanceDetailsPage(
                                     )
                                     if (draft.autoMemory == true)
                                         MutedText("启动时根据系统可用内存分配；保留手动值，切回手动时继续使用。")
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        NumberField(
-                                            memory,
-                                            "最大内存（MB）",
-                                            { memory = it },
-                                            Modifier.weight(1f),
-                                            "0 = 全局 " + state.data.settings.memoryMb + " MB",
-                                            enabled = draft.autoMemory != true,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        val maximum =
+                                            maxOf(
+                                                512,
+                                                actions.controller.platform.totalMemoryMb - 512,
+                                            )
+                                        val current =
+                                            memory.toIntOrNull()?.takeIf { it > 0 }
+                                                ?: state.data.settings.memoryMb
+                                        CompactSlider(
+                                            current.toFloat().coerceIn(512f, maximum.toFloat()),
+                                            { dragged ->
+                                                val value = steppedMemory(dragged, maximum)
+                                                memory = value.toString()
+                                                if ((initial.toIntOrNull() ?: 0) > value)
+                                                    initial = value.toString()
+                                            },
+                                            Modifier.weight(1f).semantics {
+                                                contentDescription = "实例内存滑块"
+                                            },
+                                            valueRange = 512f..maximum.toFloat(),
+                                            enabled = draft.autoMemory != true && memory != "0",
                                         )
-                                        NumberField(
-                                            initial,
-                                            "初始内存（MB）",
-                                            { initial = it },
-                                            Modifier.weight(1f),
-                                            "0 = 全局 " + state.data.settings.initialMemoryMb + " MB",
-                                        )
+                                        Tag("%.1f GB".format(current / 1024f))
                                     }
                                 }
                                 CompactSettingsSection("游戏窗口") {
@@ -555,35 +576,6 @@ fun ColumnScope.InstanceDetailsPage(
                                         )
                                     }
                                 }
-                                CompactSettingsSection("版本隔离", "决定此版本使用的存档、模组与配置目录。") {
-                                    IsolationInfoRow(
-                                        instance,
-                                        actions.controller.store.isolated(instance),
-                                        !actions.controller.busy &&
-                                            instance.gameDirectoryId == null,
-                                        if (instance.gameDirectoryId != null) "外部目录保持原有布局。"
-                                        else "切换前先预览文件移动与冲突。",
-                                        { onSwitchIsolation(instance) },
-                                    )
-                                    SimpleDropdown(
-                                        draft.isolation.name,
-                                        VersionIsolation.entries.map { it.name to it.title },
-                                        {
-                                            draft =
-                                                draft.copy(isolation = VersionIsolation.valueOf(it))
-                                        },
-                                    )
-                                    Text(
-                                        "保存后使用：" + actions.controller.store.gamePath(draft),
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        "切换设置会改变使用目录，现有文件保留在原位置。",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
                                 CompactSettingsSection("基本信息") {
                                     CompactTextField(
                                         draft.name,
@@ -608,7 +600,8 @@ fun ColumnScope.InstanceDetailsPage(
                                         InstanceArtwork(instance, actions, Modifier.size(40.dp))
                                         SecondaryButton(
                                             { editingIcon = true },
-                                            enabled = !actions.controller.busy,
+                                            enabled =
+                                                !actions.controller.isInstanceBusy(instance.id),
                                         ) {
                                             Text("更换实例图标…")
                                         }
@@ -652,7 +645,8 @@ fun ColumnScope.InstanceDetailsPage(
                                             { draft = draft.copy(extraJvmArgs = it) },
                                             Modifier.fillMaxWidth(),
                                             label = { Text("此版本的附加 JVM 参数") },
-                                            minLines = 3,
+                                            minLines = 1,
+                                            maxLines = 4,
                                         )
                                         SettingRow("使用独立高级启动设置") {
                                             CompactSwitch(
@@ -821,72 +815,6 @@ private fun packSourceOf(instance: GameInstance): String =
         else -> "启动器安装"
     }
 
-/** 隔离方式的真实值：继承全局时同时标出当前实际生效的那一种， 避免只显示「继承全局设置」而看不出实例到底用哪套目录。 */
-private fun isolationLabel(instance: GameInstance, isolated: Boolean): String =
-    when (instance.isolation) {
-        VersionIsolation.Inherit ->
-            "继承全局（当前=" +
-                (if (isolated) VersionIsolation.Enabled.title
-                else VersionIsolation.Disabled.title) +
-                "）"
-        VersionIsolation.Enabled -> VersionIsolation.Enabled.title
-        VersionIsolation.Disabled -> VersionIsolation.Disabled.title
-    }
-
-/** 隔离状态与迁移入口；外部目录或任务进行中时说明不可用的原因。 */
-@Composable
-private fun IsolationInfoRow(
-    instance: GameInstance,
-    isolated: Boolean,
-    enabled: Boolean,
-    note: String,
-    onSwitch: () -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = Metrics.rowMinHeight),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Outlined.Shield,
-            null,
-            Modifier.size(16.dp),
-            MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "隔离",
-            Modifier.width(64.dp),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Column(Modifier.weight(1f)) {
-            Text(
-                isolationLabel(instance, isolated),
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (note.isNotBlank())
-                Text(
-                    note,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-        }
-        Spacer(Modifier.width(8.dp))
-        SecondaryButton(
-            onSwitch,
-            enabled = enabled,
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-        ) {
-            Text("切换…", fontSize = 12.sp)
-        }
-    }
-}
-
-/** 安装与更新：当前安装状态、修复入口，以及更换模组加载器及其版本。 */
 @Composable
 private fun ColumnScope.InstanceInstallSections(
     instance: GameInstance,
@@ -899,7 +827,7 @@ private fun ColumnScope.InstanceInstallSections(
     var loadingVersions by remember { mutableStateOf(false) }
     var versionError by remember { mutableStateOf<String?>(null) }
     var versionRetry by remember { mutableIntStateOf(0) }
-    val editable = !instance.externalProfile && instance.packFile.isBlank()
+    val editable = instance.installed
     var pending by remember { mutableStateOf<ComponentSelection?>(null) }
     var restoring by remember { mutableStateOf(false) }
     var enabledMods by remember { mutableIntStateOf(0) }
@@ -918,7 +846,8 @@ private fun ColumnScope.InstanceInstallSections(
     val requestChange: (ComponentSelection, Boolean) -> Unit = { selection, restore ->
         actions.run {
             enabledMods = actions.controller.content.listMods(instance.id).count { it.enabled }
-            if (enabledMods == 0) applyChange(selection, restore)
+            if (enabledMods == 0 && !instance.externalProfile && instance.packFile.isBlank())
+                applyChange(selection, restore)
             else {
                 pending = selection
                 restoring = restore
@@ -963,7 +892,7 @@ private fun ColumnScope.InstanceInstallSections(
                     actions.run { actions.controller.repair(instance.id) }
                     actions.taskQueued()
                 },
-                enabled = !actions.controller.busy,
+                enabled = !actions.controller.isInstanceBusy(instance.id),
             ) {
                 Text("修复游戏", fontSize = 12.sp)
             }
@@ -1033,7 +962,7 @@ private fun ColumnScope.InstanceInstallSections(
                             targetVersion.isNotBlank() &&
                                 !loadingVersions &&
                                 versionError == null) &&
-                        !actions.controller.busy,
+                        !actions.controller.isInstanceBusy(instance.id),
                 ) {
                     requestChange(
                         ComponentSelection(
@@ -1063,7 +992,7 @@ private fun ColumnScope.InstanceInstallSections(
                 SettingRow("上一组件", previous.title) {
                     SecondaryButton(
                         { requestChange(previous, true) },
-                        enabled = !actions.controller.busy,
+                        enabled = !actions.controller.isInstanceBusy(instance.id),
                     ) {
                         Text("回退组件", fontSize = 12.sp)
                     }
@@ -1080,6 +1009,7 @@ private fun ColumnScope.InstanceInstallSections(
         }
     pending?.let { selection ->
         Modal("加载器兼容提醒", "目标：${selection.title}", onDismiss = { pending = null }) {
+            Text("更换前会备份原版本配置，可在成功后回退。整合包与外部实例的自定义组件可能受影响，请确认目标加载器兼容。")
             Text("当前有 $enabledMods 个已启用的模组。请确认它们支持目标加载器及版本；现有模组文件会保留。")
             if (selection.loader == LoaderType.Vanilla)
                 Text(
@@ -1143,7 +1073,7 @@ private fun InstanceMods(
                     val filename = mod.filename
                     deletingMod = null
                     actions.run {
-                        actions.controller.requireIdle()
+                        actions.controller.requireIdle(instance.id)
                         actions.controller.content.deleteMod(instance.id, filename)
                         withContext(Dispatchers.Swing) { refresh++ }
                     }
@@ -1184,22 +1114,25 @@ private fun InstanceMods(
                 Icons.Outlined.Refresh,
                 "刷新模组",
                 { refresh++ },
-                enabled = !actions.controller.busy,
+                enabled = !actions.controller.isInstanceBusy(instance.id),
             )
-            TextButton({ updatesOpen = true }, enabled = !actions.controller.busy) {
+            TextButton(
+                { updatesOpen = true },
+                enabled = !actions.controller.isInstanceBusy(instance.id),
+            ) {
                 Text("检查更新", fontSize = 12.sp)
             }
             SecondaryButton(
                 {
                     actions.run {
-                        actions.controller.requireIdle()
+                        actions.controller.requireIdle(instance.id)
                         val files =
                             actions.choose("导入本地模组", multiple = true, extensions = listOf("jar"))
                         actions.controller.content.importMods(instance.id, files)
                         withContext(Dispatchers.Swing) { refresh++ }
                     }
                 },
-                enabled = !actions.controller.busy,
+                enabled = !actions.controller.isInstanceBusy(instance.id),
             ) {
                 Text("导入模组", fontSize = 12.sp)
             }
@@ -1251,11 +1184,11 @@ private fun InstanceMods(
                             jar = modsDirectory?.resolve(mod.filename),
                             iconCacheRoot = iconCacheRoot,
                             modifier = Modifier.animateItem(),
-                            busy = actions.controller.busy,
+                            busy = actions.controller.isInstanceBusy(instance.id),
                             onDetail = { detailMod = mod },
                             onToggle = {
                                 actions.run {
-                                    actions.controller.requireIdle()
+                                    actions.controller.requireIdle(instance.id)
                                     actions.controller.content.toggleMod(instance.id, mod.filename)
                                     withContext(Dispatchers.Swing) { refresh++ }
                                 }
@@ -1440,17 +1373,14 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
     var restoring by remember { mutableStateOf<SaveBackupInfo?>(null) }
     var copying by remember { mutableStateOf<SaveEntry?>(null) }
     val liveState by actions.controller.state.collectAsState()
-    val busy = actions.controller.busy
-    val external = instance.externalProfile
-    val isolated = actions.controller.store.isolated(instance)
-    // 外部游戏目录的实例由原启动器维护，后端对备份/恢复/复制/删除都会拒绝，这里直接禁用并说明。
-    val canManage = !external && !busy
-    val canCopy = canManage && isolated
+    val busy = actions.controller.isInstanceBusy(instance.id)
+    val running = actions.controller.game.isRunning(instance.id)
+    val canManage = !busy && !running
+    val canCopy = canManage
     val blockedNote =
         when {
-            external -> "外部游戏目录的实例由原启动器维护，这里的存档只能浏览。"
+            running -> "游戏正在使用存档，请先退出游戏再进行存档操作。"
             busy -> "任务进行中，存档操作暂时不可用。"
-            !isolated -> "共用游戏目录没有独立存档目录；复制到其他实例前需要先启用版本隔离。"
             else -> ""
         }
     val savesDirectory = actions.controller.store.instancePath(instance.id).resolve("saves")
@@ -1738,13 +1668,7 @@ private fun SaveRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                if (entry.name.endsWith(".zip", true)) Icons.Outlined.Description
-                else Icons.Outlined.Folder,
-                null,
-                Modifier.size(18.dp),
-                MaterialTheme.colorScheme.primary,
-            )
+            LocalContentThumbnail(entry.path, world = true)
             Column(Modifier.weight(1f)) {
                 Text(
                     entry.name,
@@ -1926,7 +1850,7 @@ private fun InstanceFolderBrowser(
                     val name = file.name
                     deletingFile = null
                     actions.run {
-                        actions.controller.requireIdle()
+                        actions.controller.requireIdle(instance.id)
                         actions.controller.content.deleteSchematic(instance.id, name)
                         withContext(Dispatchers.Swing) { refresh++ }
                     }
@@ -1969,7 +1893,7 @@ private fun InstanceFolderBrowser(
                             }
                         }
                     },
-                    enabled = !actions.controller.busy,
+                    enabled = !actions.controller.isInstanceBusy(instance.id),
                 ) {
                     Icon(Icons.Outlined.FileDownload, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(5.dp))
@@ -1983,14 +1907,17 @@ private fun InstanceFolderBrowser(
                     Text("导入", fontSize = 12.sp)
                 }
             if (folder in setOf("resourcepacks", "shaderpacks"))
-                TextButton({ updatesOpen = true }, enabled = !actions.controller.busy) {
+                TextButton(
+                    { updatesOpen = true },
+                    enabled = !actions.controller.isInstanceBusy(instance.id),
+                ) {
                     Text("检查更新", fontSize = 12.sp)
                 }
             SmallIconButton(
                 Icons.Outlined.Refresh,
                 "刷新文件",
                 { refresh++ },
-                enabled = !actions.controller.busy,
+                enabled = !actions.controller.isInstanceBusy(instance.id),
             )
             SecondaryButton({
                 actions.run { actions.controller.openFolder(instance.id, folder) }
@@ -2056,7 +1983,7 @@ private fun InstanceFolderBrowser(
                                     }
                                 },
                                 onDelete = { deletingFile = entry.path },
-                                busy = actions.controller.busy,
+                                busy = actions.controller.isInstanceBusy(instance.id),
                             )
                         }
                     }
@@ -2131,12 +2058,15 @@ private fun FolderRow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
-                null,
-                Modifier.size(19.dp),
-                MaterialTheme.colorScheme.primary,
-            )
+            if (entry.path.parent?.fileName?.toString() in setOf("resourcepacks", "shaderpacks"))
+                LocalContentThumbnail(entry.path, world = false)
+            else
+                Icon(
+                    if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
+                    null,
+                    Modifier.size(19.dp),
+                    MaterialTheme.colorScheme.primary,
+                )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(

@@ -409,7 +409,10 @@ fun CopySaveDialog(
     val state by actions.controller.state.collectAsState()
     val targets =
         state.data.instances.filter {
-            it.id != instance.id && !it.externalProfile && actions.controller.store.isolated(it)
+            it.id != instance.id &&
+                it.installed &&
+                actions.controller.store.instancePath(it.id).toAbsolutePath().normalize() !=
+                    actions.controller.store.instancePath(instance.id).toAbsolutePath().normalize()
         }
     val defaultName = saveNameWithoutZip(saveName)
     var targetId by remember(saveName) { mutableStateOf(targets.firstOrNull()?.id.orEmpty()) }
@@ -424,14 +427,14 @@ fun CopySaveDialog(
         if (targets.isEmpty()) {
             EmptyState(
                 "没有可用的目标实例",
-                "目标必须是 MoliFox 自建并启用了版本隔离的实例；外部游戏目录与当前实例不在列表里。",
+                "需要另一个已安装且使用不同游戏目录的实例。",
                 Icons.Outlined.Info,
             )
             DialogActions(confirmText = "知道了", onConfirm = onDismiss, onCancel = null)
         } else {
             SettingsSection(
                 "目标实例",
-                "只列出启用版本隔离的实例；外部游戏目录的实例由原启动器维护。",
+                "支持外部实例；原存档保留，同名存档会自动加序号。",
             ) {
                 SimpleDropdown(
                     value = targetId,

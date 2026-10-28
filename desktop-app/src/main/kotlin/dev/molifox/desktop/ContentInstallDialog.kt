@@ -16,6 +16,7 @@ import dev.molifox.core.*
 import java.nio.file.Path
 import kotlinx.coroutines.*
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ContentInstallDialog(
     hit: ContentHit,
@@ -130,26 +131,16 @@ fun ContentInstallDialog(
                         "${info.license.ifBlank { "未声明许可" }} · " +
                         "${info.versions.size} 个兼容版本"
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    TextButton(
-                        {
-                            actions.run {
-                                actions.controller.platform.openUrl(contentWebsite(info.hit))
-                            }
-                        },
-                        enabled = !loading,
-                    ) {
-                        Text("打开项目网页", fontSize = 12.sp)
-                    }
-                    TextButton({
-                        actions.run {
-                            actions.controller.platform.openUrl(mcmodSearchUrl(hit.title))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    info.links.forEach { link ->
+                        TextButton(
+                            {
+                                actions.run { actions.controller.platform.openUrl(link.url) }
+                            },
+                            enabled = !loading,
+                        ) {
+                            Text(link.title, fontSize = 12.sp)
                         }
-                    }) {
-                        Text("MC 百科搜索", fontSize = 12.sp)
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
