@@ -148,7 +148,7 @@ class SaveManager(private val store: LauncherStore) {
     ): SaveBackupInfo =
         withContext(Dispatchers.IO) {
             val instance = store.instance(instanceId)
-            require(!instance.externalProfile) { "外部游戏目录的实例由原启动器维护，无法备份存档" }
+            requireGameStopped(instanceId)
             val saves = savesDirectory(instanceId)
             require(saves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(saves)) {
                 "存档目录不存在，无法备份"
@@ -192,7 +192,7 @@ class SaveManager(private val store: LauncherStore) {
     ): Path =
         withContext(Dispatchers.IO) {
             val instance = store.instance(instanceId)
-            require(!instance.externalProfile) { "外部游戏目录的实例由原启动器维护，无法恢复存档" }
+            requireGameStopped(instanceId)
             val root = store.instancePath(instanceId)
             require(root.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "实例目录不存在，无法恢复存档" }
             val saves = savesDirectory(instanceId)
@@ -283,15 +283,11 @@ class SaveManager(private val store: LauncherStore) {
             require(sourceInstanceId != targetInstanceId) { "源实例与目标实例相同，请选择另一个实例" }
             val source = store.instance(sourceInstanceId)
             val destination = store.instance(targetInstanceId)
-            require(!source.externalProfile) {
-                "源实例是外部游戏目录，由原启动器维护，无法复制存档"
-            }
-            require(!destination.externalProfile) {
-                "目标实例是外部游戏目录，由原启动器维护，无法复制存档"
-            }
-            require(store.isolated(source)) { "源实例未启用版本隔离，无法复制存档，请先启用版本隔离" }
-            require(store.isolated(destination)) {
-                "目标实例未启用版本隔离，无法复制存档，请先启用版本隔离"
+            requireGameStopped(sourceInstanceId, targetInstanceId)
+            require(
+                taskPathKey(store.gamePath(source)) != taskPathKey(store.gamePath(destination))
+            ) {
+                "源和目标使用同一个存档目录，无需复制"
             }
             val sourceSaves = savesDirectory(sourceInstanceId)
             require(sourceSaves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(sourceSaves)) {
@@ -348,7 +344,7 @@ class SaveManager(private val store: LauncherStore) {
     /** 删除一个存档：移入回收站，不硬删；找不到或回收站失败返回 false。 */
     fun deleteSave(instanceId: String, saveName: String): Boolean {
         val instance = store.instance(instanceId)
-        require(!instance.externalProfile) { "外部游戏目录的实例由原启动器维护，无法删除存档" }
+        requireGameStopped(instanceId)
         val saves = savesDirectory(instanceId)
         val path = runCatching { saveSource(saves, saveName) }.getOrNull() ?: return false
         return runCatching {
@@ -360,6 +356,17 @@ class SaveManager(private val store: LauncherStore) {
                 store.log("删除存档失败：${it.message ?: saveName}", true)
                 false
             }
+    }
+
+    private fun requireGameStopped(vararg ids: String) {
+        val directories = ids.map { taskPathKey(store.instancePath(it)) }.toSet()
+        require(
+            store.state.value.runningGames.none {
+                taskPathKey(store.instancePath(it.instanceId)) in directories
+            }
+        ) {
+            "游戏正在使用此存档目录，请先退出游戏"
+        }
     }
 
     private fun savesDirectory(instanceId: String): Path =

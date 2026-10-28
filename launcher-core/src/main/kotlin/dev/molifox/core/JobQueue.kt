@@ -6,10 +6,67 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
-class JobContext internal constructor(private val store: LauncherStore, val id: String) {
+class JobContext
+internal constructor(
+    private val store: LauncherStore,
+    val id: String,
+    private val bindResources: ((Set<String>) -> Unit)? = null,
+) {
+    private val cancellationActions = ConcurrentHashMap<Any, suspend () -> Unit>()
+    private val completionActions = ConcurrentHashMap<Any, () -> Unit>()
+
+    internal fun onFinished(key: Any, cancel: suspend () -> Unit, complete: () -> Unit) {
+        cancellationActions.putIfAbsent(key, cancel)
+        completionActions.putIfAbsent(key, complete)
+    }
+
+    internal suspend fun finish(cancelled: Boolean): Boolean {
+        var cleaned = true
+        try {
+            if (cancelled)
+                for (cleanup in cancellationActions.values) {
+                    try {
+                        cleanup()
+                    } catch (error: Exception) {
+                        cleaned = false
+                        store.log("取消任务时清理文件失败：${error.message}", true)
+                    }
+                }
+        } finally {
+            completionActions.values.forEach { it() }
+        }
+        return cleaned
+    }
+
+    internal fun canRemoveDownload(path: java.nio.file.Path): Boolean {
+        val resources = store.state.value.jobs.find { it.id == id }?.resources.orEmpty()
+        val ownedIds =
+            resources
+                .filter { it.startsWith("instance:") }
+                .map { it.removePrefix("instance:") }
+                .toSet()
+        val normalized = path.toAbsolutePath().normalize()
+        return store.data.instances.none { instance ->
+            if (instance.id in ownedIds || !instance.installed) false
+            else {
+                val root = store.minecraftRoot(instance).toAbsolutePath().normalize()
+                normalized.startsWith(root.resolve("libraries")) ||
+                    normalized.startsWith(root.resolve("assets")) ||
+                    normalized.startsWith(root.resolve("versions").resolve(instance.versionId)) ||
+                    normalized.startsWith(root.resolve("versions").resolve(instance.gameVersion)) ||
+                    normalized.startsWith(store.gamePath(instance).toAbsolutePath().normalize())
+            }
+        } &&
+            !normalized.startsWith(
+                store.dataDirectory.resolve("runtimes").toAbsolutePath().normalize()
+            )
+    }
+
+    internal fun bindInstance(instanceId: String) {
+        bindResources?.invoke(taskResourcesForInstances(store, instanceId))
+    }
+
     private var lastUpdate = 0L
     private val transfers = mutableMapOf<String, Triple<Long, Long, Boolean>>()
     private var transferCount = 0
@@ -84,7 +141,7 @@ class JobContext internal constructor(private val store: LauncherStore, val id: 
 }
 
 class JobQueue(private val store: LauncherStore, private val scope: CoroutineScope) {
-    private val mutex = Mutex()
+    private val gate = TaskResourceGate()
     private val workers = ConcurrentHashMap<String, Job>()
     val busy: Boolean
         get() =
@@ -92,23 +149,60 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                 it.status == JobStatus.Queued || it.status == JobStatus.Running
             }
 
-    fun enqueue(title: String, action: suspend JobContext.() -> Unit): String {
+    val globallyBusy: Boolean
+        get() = conflicts(setOf(GLOBAL_TASK_RESOURCE), globalOnly = true)
+
+    fun conflicts(resources: Set<String>, globalOnly: Boolean = false): Boolean =
+        store.state.value.jobs.any {
+            it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
+                (if (globalOnly) GLOBAL_TASK_RESOURCE in it.resources
+                else taskResourcesConflict(resources, it.resources))
+        }
+
+    fun enqueue(
+        title: String,
+        resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
+        action: suspend JobContext.() -> Unit,
+    ): String {
         val id = UUID.randomUUID().toString()
-        store.updateState { it.copy(jobs = listOf(DownloadJob(id, title)) + it.jobs) }
+        val reserved = resources.toSet()
+        gate.register(id, reserved)
+        store.updateState {
+            it.copy(jobs = listOf(DownloadJob(id, title, resources = reserved)) + it.jobs)
+        }
         val worker =
             scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-                try {
-                    mutex.withLock {
-                        coroutineContext.ensureActive()
-                        update(id, JobStatus.Running, "准备中…")
-                        store.log("任务开始：$title")
-                        JobContext(store, id).action()
-                        coroutineContext.ensureActive()
-                        update(id, JobStatus.Completed, "已完成")
-                        store.log("任务完成：$title")
+                val context =
+                    JobContext(store, id) { resources ->
+                        gate.rebind(id, resources)
+                        store.updateState {
+                            it.copy(
+                                jobs =
+                                    it.jobs.map { job ->
+                                        if (job.id == id) job.copy(resources = resources) else job
+                                    }
+                            )
+                        }
                     }
+                var cancelled = false
+                try {
+                    gate.acquire(id)
+                    coroutineContext.ensureActive()
+                    update(id, JobStatus.Running, "准备中…")
+                    store.log("任务开始：$title")
+                    withContext(TaskDownloadContext(context)) { context.action() }
+                    coroutineContext.ensureActive()
+                    update(id, JobStatus.Completed, "已完成")
+                    store.log("任务完成：$title")
                 } catch (_: CancellationException) {
-                    update(id, JobStatus.Cancelled, "已取消")
+                    cancelled = true
+                    val cleaned =
+                        withContext(NonCancellable + Dispatchers.IO) { context.finish(true) }
+                    update(
+                        id,
+                        JobStatus.Cancelled,
+                        if (cleaned) "已取消，本次下载文件已清理" else "已取消；部分文件无法清理，请查看日志",
+                    )
                     store.log("任务已取消：$title")
                 } catch (error: Exception) {
                     val message = error.message ?: error.javaClass.simpleName
@@ -117,10 +211,22 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                     store.log(error.stackTraceToString(), true)
                     store.notify(message)
                 } finally {
-                    workers.remove(id)
+                    if (!cancelled) context.finish(false)
                 }
             }
         workers[id] = worker
+        worker.invokeOnCompletion {
+            gate.release(id)
+            workers.remove(id, worker)
+            if (
+                worker.isCancelled &&
+                    store.state.value.jobs.any {
+                        it.id == id && it.status in setOf(JobStatus.Queued, JobStatus.Running)
+                    }
+            ) {
+                update(id, JobStatus.Cancelled, "已取消")
+            }
+        }
         worker.start()
         return id
     }
@@ -160,7 +266,8 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
     }
 
     suspend fun awaitIdle() {
-        while (workers.isNotEmpty()) workers.values.toList().joinAll()
+        // 完成回调会并发移除任务；逐项遍历不依赖集合瞬间的 size。
+        while (workers.isNotEmpty()) workers.values.map { it }.joinAll()
     }
 
     fun cancelAll() {

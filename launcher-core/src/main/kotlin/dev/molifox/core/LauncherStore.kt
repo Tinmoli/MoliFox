@@ -55,12 +55,7 @@ class LauncherStore(
             )
         } ?: minecraftRoot
 
-    fun isolated(instance: GameInstance): Boolean =
-        when (instance.isolation) {
-            VersionIsolation.Inherit -> data.settings.isolateVersions
-            VersionIsolation.Enabled -> true
-            VersionIsolation.Disabled -> false
-        }
+    fun isolated(instance: GameInstance): Boolean = data.settings.isolateVersions
 
     private val backup = directories.previousConfiguration
 
@@ -194,32 +189,23 @@ class LauncherStore(
     fun gamePath(instance: GameInstance): Path {
         require(runCatching { UUID.fromString(instance.id) }.isSuccess) { "实例标识无效" }
         if (!isolated(instance)) return minecraftRoot(instance)
-        if (
-            instance.gameDirectoryId != null &&
-                instance.managedGameDirectory &&
-                !instance.externalProfile
-        )
-            return safePath(minecraftRoot(instance).resolve("instances"), instance.id)
-        if (instance.gameDirectoryId != null)
-            return safePath(
-                minecraftRoot(instance).resolve("versions"),
-                safeFilename(instance.versionId),
-            )
-        return ownedInstancePath(instance.id)
+        return versionGamePath(instance)
     }
 
-    /** Only this directory belongs exclusively to an internally created instance. */
+    fun versionGamePath(instance: GameInstance): Path =
+        safePath(
+            minecraftRoot(instance).resolve("versions"),
+            safeFilename(
+                instance.gameDirectoryName.ifBlank {
+                    instance.versionId.ifBlank { instance.gameVersion }
+                }
+            ),
+        )
+
+    /** 返回版本隔离目录；删除前仍须检查其他实例的继承与共享引用。 */
     fun ownedInstancePath(id: String): Path {
         require(runCatching { UUID.fromString(id) }.isSuccess) { "实例标识无效" }
-        data.instances
-            .find { it.id == id }
-            ?.takeIf {
-                it.managedGameDirectory && it.gameDirectoryId != null && !it.externalProfile
-            }
-            ?.let {
-                return safePath(minecraftRoot(it).resolve("instances"), id)
-            }
-        return safePath(Path.of(data.settings.gameRoot).resolve("instances"), id)
+        return versionGamePath(instance(id))
     }
 
     @Synchronized

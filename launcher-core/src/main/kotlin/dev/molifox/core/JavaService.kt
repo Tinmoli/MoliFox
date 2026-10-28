@@ -11,6 +11,8 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import kotlin.io.path.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 
@@ -28,6 +30,7 @@ fun parseJavaVersion(output: String): Int? =
 
 class JavaService(private val store: LauncherStore, private val network: NetworkClient) {
     @Volatile private var cached: List<JavaRuntime> = emptyList()
+    private val installLocks = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
 
     suspend fun inspect(executable: String): JavaRuntime? =
         withContext(Dispatchers.IO) {
@@ -196,6 +199,22 @@ class JavaService(private val store: LauncherStore, private val network: Network
     }
 
     suspend fun install(major: Int, context: JobContext): JavaRuntime =
+        installLocks
+            .computeIfAbsent(major) { Mutex() }
+            .withLock {
+                cached.firstOrNull {
+                    it.majorVersion == major &&
+                        Path.of(it.path)
+                            .toAbsolutePath()
+                            .normalize()
+                            .startsWith(
+                                store.dataDirectory.resolve("runtimes").toAbsolutePath().normalize()
+                            ) &&
+                        Path.of(it.path).isRegularFile()
+                } ?: installRuntime(major, context)
+            }
+
+    private suspend fun installRuntime(major: Int, context: JobContext): JavaRuntime =
         withContext(Dispatchers.IO) {
             require(major in listOf(8, 16, 17, 21, 25)) { "暂不支持自动安装 Java $major，请手动选择" }
             val os =
@@ -296,7 +315,7 @@ class JavaService(private val store: LauncherStore, private val network: Network
                 val relativeJava = unpacking.relativize(Path.of(found.path))
                 Files.move(unpacking, destination)
                 val runtime = found.copy(path = destination.resolve(relativeJava).toString())
-                cached = cached + runtime
+                synchronized(this@JavaService) { cached = cached + runtime }
                 archive.deleteIfExists()
                 store.log("${artifact.distribution} Java $major 安装完成")
                 runtime

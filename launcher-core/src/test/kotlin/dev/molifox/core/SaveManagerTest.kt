@@ -34,6 +34,7 @@ class SaveManagerTest {
                 name = name,
                 gameVersion = "1.20.1",
                 versionId = "1.20.1",
+                gameDirectoryName = name,
                 loader = LoaderType.Fabric,
                 loaderVersion = "0.15.0",
                 installed = true,
@@ -41,7 +42,12 @@ class SaveManagerTest {
                 isolation = if (isolate) VersionIsolation.Enabled else VersionIsolation.Disabled,
                 externalProfile = external,
             )
-        store.mutate { it.copy(instances = it.instances + instance) }
+        store.mutate {
+            it.copy(
+                instances = it.instances + instance,
+                settings = it.settings.copy(isolateVersions = isolate),
+            )
+        }
         store.instancePath(instance.id).createDirectories()
         return store.instance(instance.id)
     }
@@ -502,25 +508,22 @@ class SaveManagerTest {
     }
 
     @Test
-    fun `copy rejects external and shared instances with a Chinese message`() = runBlocking {
+    fun `copy supports external instances but rejects a shared physical directory`() = runBlocking {
         val store = store()
         val manager = SaveManager(store)
         val source = instance(store, "Source")
         val external = instance(store, "External", external = true)
         world(store.instancePath(source.id), "World")
 
-        val externalError =
-            assertFailsWith<IllegalArgumentException> {
-                manager.copySaveToInstance(source.id, "World", external.id)
-            }
-        assertTrue(externalError.message.orEmpty().contains("外部游戏目录"))
+        val copied = manager.copySaveToInstance(source.id, "World", external.id)
+        assertTrue(copied.resolve("level.dat").isRegularFile())
 
         val shared = instance(store, "Shared", isolate = false)
         val sharedError =
             assertFailsWith<IllegalArgumentException> {
                 manager.copySaveToInstance(source.id, "World", shared.id)
             }
-        assertTrue(sharedError.message.orEmpty().contains("版本隔离"))
+        assertTrue(sharedError.message.orEmpty().contains("同一个存档目录"))
 
         val sameError =
             assertFailsWith<IllegalArgumentException> {

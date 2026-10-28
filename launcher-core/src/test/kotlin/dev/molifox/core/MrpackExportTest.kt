@@ -455,7 +455,7 @@ class MrpackExportTest {
     fun `shared directory exports user content and external standard loaders with explicit versions`() =
         runBlocking {
             fixture { store, service, instance, _ ->
-                store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
+                store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
                 val root = store.instancePath(instance.id)
                 write(root, "config/a.txt")
                 write(root, "OtherLauncher/settings.json")

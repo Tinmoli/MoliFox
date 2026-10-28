@@ -67,6 +67,9 @@ class LauncherController(
                         .getOrNull()
             },
             { store.data.settings.effectiveProxyMode() == "system" },
+            downloadSegments = { store.data.settings.downloadSegments },
+            downloadAttempts = { store.data.settings.downloadAttempts },
+            requestTimeoutSeconds = { store.data.settings.networkTimeoutSeconds },
         )
     val jobs = JobQueue(store, scope)
     val updater = GitHubUpdater(store, network, updateApiBase)
@@ -84,9 +87,22 @@ class LauncherController(
     private val migration = IsolationMigration(store)
     val game = GameLauncher(store, installer, java, accounts, scope)
     val busy: Boolean
-        get() = jobs.busy
+        get() = jobs.globallyBusy
+
+    fun isInstanceBusy(id: String): Boolean =
+        jobs.conflicts(taskResourcesForInstances(store, id)) ||
+            (!store.instance(id).installed &&
+                state.value.jobs.any {
+                    it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
+                        it.resources.any { resource -> resource.startsWith("new-pack:") }
+                })
 
     init {
+        runCatching { VersionGameDirectories(store).migrateLegacy() }
+            .onFailure {
+                store.log("旧游戏目录尚未完成迁移，原文件保留：${it.message}", true)
+                store.notify("旧游戏目录迁移未完成，请先处理目录冲突或链接：${it.message}")
+            }
         directories.refreshVersionMetadata()
         store.log("欢迎使用 MoliFox · ${platform.osName} / ${platform.architecture}")
         if (store.data.settings.autoCheckUpdates) checkForUpdates(false)
@@ -103,7 +119,9 @@ class LauncherController(
 
     fun downloadUpdate(): String {
         val release = requireNotNull(state.value.update.release) { "请先检查更新" }
-        return jobs.enqueue("更新 MoliFox ${release.version}") { updater.download(release, this) }
+        return jobs.enqueue("更新 MoliFox ${release.version}", setOf("launcher-update")) {
+            updater.download(release, this)
+        }
     }
 
     fun perform(action: suspend () -> Unit): Job = scope.launch {
@@ -115,8 +133,23 @@ class LauncherController(
         }
     }
 
-    fun requireIdle() {
-        check(!jobs.busy && !game.isRunning) { "此操作会修改现有实例，请等待游戏或后台任务结束后再操作" }
+    fun requireIdle(vararg instanceIds: String) {
+        if (instanceIds.isEmpty()) {
+            check(!jobs.busy && !game.isRunning) { "此操作会修改游戏目录，请等待游戏或后台任务结束后再操作" }
+            return
+        }
+        val resources = taskResourcesForInstances(store, *instanceIds)
+        check(
+            instanceIds.none(::isInstanceBusy) &&
+                state.value.runningGames.none {
+                    taskResourcesConflict(
+                        resources,
+                        taskResourcesForInstances(store, it.instanceId),
+                    )
+                }
+        ) {
+            "此实例或其共用文件正在被使用，请等待相关游戏或任务结束"
+        }
     }
 
     fun install(
@@ -124,13 +157,15 @@ class LauncherController(
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
     ): String {
         val instance = installer.createInstance(request, gameDirectoryId)
-        return jobs.enqueue("安装 ${instance.name}") { installer.install(instance.id, this) }
+        return jobs.enqueue("安装 ${instance.name}", taskResourcesForInstances(store, instance.id)) {
+            installer.install(instance.id, this)
+        }
     }
 
     fun repair(id: String): String {
-        requireIdle()
+        requireIdle(id)
         val instance = store.instance(id)
-        return jobs.enqueue("修复 ${instance.name}") {
+        return jobs.enqueue("修复 ${instance.name}", taskResourcesForInstances(store, id)) {
             if (instance.packFile.isNotBlank())
                 content.importPack(Path.of(instance.packFile), this, instance.id)
             else installer.install(id, this)
@@ -140,7 +175,9 @@ class LauncherController(
     fun launch(id: String): String {
         require(store.instance(id).installed) { "此实例尚未安装完成，请先修复" }
         require(store.data.activeAccountId != null) { "请先添加并选择游戏账户" }
-        return jobs.enqueue("启动 ${store.instance(id).name}") { game.launch(id, this) }
+        return jobs.enqueue("启动 ${store.instance(id).name}", taskResourcesForInstances(store, id)) {
+            game.launch(id, this)
+        }
     }
 
     fun selectInstance(id: String) {
@@ -151,7 +188,6 @@ class LauncherController(
     }
 
     fun selectGameDirectory(id: String?) {
-        requireIdle()
         directories.select(id)
     }
 
@@ -187,7 +223,7 @@ class LauncherController(
     }
 
     fun saveInstanceConfiguration(configuration: GameInstance) {
-        requireIdle()
+        requireIdle(configuration.id)
         require(configuration.name.isNotBlank() && configuration.name.length <= 80) {
             "实例名称需要 1–80 个字符"
         }
@@ -246,16 +282,22 @@ class LauncherController(
         loader: LoaderType,
         loaderVersion: String,
     ): String {
-        requireIdle()
+        requireIdle(instanceId)
         val instance = store.instance(instanceId)
-        return jobs.enqueue("更新加载器 ${instance.name}") {
+        return jobs.enqueue(
+            "更新加载器 ${instance.name}",
+            taskResourcesForInstances(store, instanceId),
+        ) {
             installer.changeLoader(instanceId, loader, loaderVersion, this)
         }
     }
 
     fun restoreInstanceComponents(instanceId: String): String {
-        requireIdle()
-        return jobs.enqueue("回退组件 ${store.instance(instanceId).name}") {
+        requireIdle(instanceId)
+        return jobs.enqueue(
+            "回退组件 ${store.instance(instanceId).name}",
+            taskResourcesForInstances(store, instanceId),
+        ) {
             installer.restoreComponents(instanceId, this)
         }
     }
@@ -332,10 +374,10 @@ class LauncherController(
     ): Result<InstanceDeletionReport> =
         withContext(Dispatchers.IO) {
             try {
-                require(store.state.value.runningInstanceId != instanceId) {
+                require(!game.isRunning(instanceId)) {
                     "实例正在运行，请先退出游戏再删除"
                 }
-                requireIdle()
+                requireIdle(instanceId)
                 val instance = store.instance(instanceId)
                 val plan =
                     if (deleteFiles) deletion.plan(instanceId)
@@ -375,6 +417,10 @@ class LauncherController(
         }
 
     fun saveSettings(settings: LauncherSettings) {
+        require(settings.downloadAttempts in 1..8 && settings.networkTimeoutSeconds in 10..180) {
+            "重试次数或网络超时无效"
+        }
+        require(settings.downloadSegments in setOf(1, 2, 4, 8)) { "单文件分段数无效" }
         validateAdvancedLaunchSettings(settings.advancedLaunch, platform.osName)
         if (settings.isolateVersions != store.data.settings.isolateVersions) requireIdle()
         require(
@@ -532,16 +578,21 @@ class LauncherController(
     }
 
     fun installJava(major: Int): String =
-        jobs.enqueue("安装 Java $major") { java.install(major, this) }
+        jobs.enqueue("安装 Java $major", setOf("java:$major")) { java.install(major, this) }
 
     fun installContent(hit: ContentHit, id: String?): String {
-        requireIdle()
-        return jobs.enqueue("安装 ${hit.title}") { content.installContent(hit, id, this) }
+        if (hit.type != "modpack") requireIdle(requireNotNull(id) { "请选择实例" })
+        val resources =
+            if (hit.type == "modpack") setOf("new-pack:${UUID.randomUUID()}")
+            else taskResourcesForInstances(store, id!!)
+        return jobs.enqueue("安装 ${hit.title}", resources) { content.installContent(hit, id, this) }
     }
 
     fun installContent(plan: ContentInstallPlan): String {
-        requireIdle()
-        return jobs.enqueue("安装 ${plan.title}") { content.installPlan(plan, this) }
+        requireIdle(plan.instanceId)
+        return jobs.enqueue("安装 ${plan.title}", taskResourcesForInstances(store, plan.instanceId)) {
+            content.installPlan(plan, this)
+        }
     }
 
     fun preparePack(
@@ -549,8 +600,7 @@ class LauncherController(
         versionId: String = "",
         onReady: (PackPreview) -> Unit,
     ): String {
-        requireIdle()
-        return jobs.enqueue("准备 ${hit.title}") {
+        return jobs.enqueue("准备 ${hit.title}", setOf("pack-download:${hit.id}:$versionId")) {
             val archive = content.downloadPack(hit, this, versionId)
             onReady(content.previewPack(archive))
         }
@@ -562,8 +612,8 @@ class LauncherController(
         instanceId: String,
         worldName: String,
     ): String {
-        requireIdle()
-        return jobs.enqueue("安装数据包 ${hit.title}") {
+        requireIdle(instanceId)
+        return jobs.enqueue("安装数据包 ${hit.title}", taskResourcesForInstances(store, instanceId)) {
             content.installDatapack(hit, versionId, instanceId, worldName, this)
         }
     }
@@ -573,8 +623,7 @@ class LauncherController(
         optionalFiles: Set<String>? = null,
         expectedHash: String? = null,
     ): String {
-        requireIdle()
-        return jobs.enqueue("导入 ${file.fileName}") {
+        return jobs.enqueue("导入 ${file.fileName}", setOf("new-pack:${UUID.randomUUID()}")) {
             content.importPack(
                 file,
                 this,
@@ -591,15 +640,18 @@ class LauncherController(
         permittedLocalFiles: Set<String> = emptySet(),
         format: PackExportFormat = PackExportFormat.Modrinth,
     ): String {
-        requireIdle()
-        return jobs.enqueue("导出标准整合包 ${plan.metadata.name}") {
+        requireIdle(plan.instanceId)
+        return jobs.enqueue(
+            "导出标准整合包 ${plan.metadata.name}",
+            taskResourcesForInstances(store, plan.instanceId),
+        ) {
             content.exportMrpack(plan, destination, this, selected, permittedLocalFiles, format)
         }
     }
 
     fun exportInstance(id: String, destination: Path): String {
-        requireIdle()
-        return jobs.enqueue("导出 ${store.instance(id).name}") {
+        requireIdle(id)
+        return jobs.enqueue("导出 ${store.instance(id).name}", taskResourcesForInstances(store, id)) {
             content.exportInstance(id, destination)
         }
     }
@@ -615,8 +667,11 @@ class LauncherController(
         allowComponentChange: Boolean = false,
         policy: PackUpgradePolicy = PackUpgradePolicy(restoreUserDeleted = true),
     ): String {
-        requireIdle()
-        return jobs.enqueue("升级整合包 ${store.instance(instanceId).name}") {
+        requireIdle(instanceId)
+        return jobs.enqueue(
+            "升级整合包 ${store.instance(instanceId).name}",
+            taskResourcesForInstances(store, instanceId),
+        ) {
             content.upgradePack(
                 instanceId,
                 archive,
@@ -635,15 +690,18 @@ class LauncherController(
         copySaves: Boolean = true,
         copyMods: Boolean = true,
     ): String {
-        requireIdle()
-        return jobs.enqueue("复制 ${store.instance(sourceId).name}") {
+        requireIdle(sourceId)
+        return jobs.enqueue(
+            "复制 ${store.instance(sourceId).name}",
+            taskResourcesForInstances(store, sourceId),
+        ) {
             tools.copyInstance(sourceId, name, copySaves, copyMods, this)
         }
     }
 
     /** 整理实例目录（默认删除空目录）；重复模组等只报告。 */
     fun tidyInstance(id: String, removeEmptyDirs: Boolean = true): TidyReport {
-        requireIdle()
+        requireIdle(id)
         return tools.tidyInstance(id, removeEmptyDirs)
     }
 
@@ -657,14 +715,16 @@ class LauncherController(
 
     /** 在后台任务里备份一个存档；备份成功后原存档保留，进度在日志页。 */
     fun backupSave(instanceId: String, saveName: String): String {
-        requireIdle()
-        return jobs.enqueue("备份存档 $saveName") { saves.backupSave(instanceId, saveName, this) }
+        requireIdle(instanceId)
+        return jobs.enqueue("备份存档 $saveName", taskResourcesForInstances(store, instanceId)) {
+            saves.backupSave(instanceId, saveName, this)
+        }
     }
 
     /** 在后台任务里恢复备份；[overwrite] 为 false 时目标已存在会被拒绝，为 true 时先自动备份现有存档。 */
     fun restoreSave(instanceId: String, backupId: String, overwrite: Boolean = false): String {
-        requireIdle()
-        return jobs.enqueue("恢复存档 $backupId") {
+        requireIdle(instanceId)
+        return jobs.enqueue("恢复存档 $backupId", taskResourcesForInstances(store, instanceId)) {
             saves.restoreSave(instanceId, backupId, overwrite, this)
         }
     }
@@ -676,21 +736,24 @@ class LauncherController(
         targetInstanceId: String,
         rename: String? = null,
     ): String {
-        requireIdle()
-        return jobs.enqueue("复制存档 $saveName") {
+        requireIdle(sourceInstanceId, targetInstanceId)
+        return jobs.enqueue(
+            "复制存档 $saveName",
+            taskResourcesForInstances(store, sourceInstanceId, targetInstanceId),
+        ) {
             saves.copySaveToInstance(sourceInstanceId, saveName, targetInstanceId, rename, this)
         }
     }
 
     /** 删除一个存档备份：移入回收站，不做不可恢复的硬删除。 */
     fun deleteSaveBackup(instanceId: String, backupId: String): Boolean {
-        requireIdle()
+        requireIdle(instanceId)
         return saves.deleteBackup(instanceId, backupId)
     }
 
     /** 删除一个存档：移入回收站，不做不可恢复的硬删除。 */
     fun deleteSave(instanceId: String, saveName: String): Boolean {
-        requireIdle()
+        requireIdle(instanceId)
         return saves.deleteSave(instanceId, saveName)
     }
 

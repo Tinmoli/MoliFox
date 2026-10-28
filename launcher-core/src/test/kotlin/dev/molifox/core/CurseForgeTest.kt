@@ -409,7 +409,7 @@ class CurseForgeTest {
             assertNull(request.queryParameter("gameVersion"))
             assertNull(request.queryParameter("modLoaderType"))
             assertEquals("curseforge:1:12", recommendedContentVersion(details.versions)?.id)
-            assertTrue(details.links.any { it.title == "MC 百科搜索" })
+            assertFalse(details.links.any { it.url.contains("search.mcmod.cn") })
         }
 
     @Test
@@ -824,7 +824,7 @@ class CurseForgeTest {
         assertFails { service.importPack(archive, JobContext(store, "test")) }
         val failed = store.data.instances.last()
         assertEquals(before + 1, store.data.instances.size)
-        assertEquals(VersionIsolation.Enabled, failed.isolation)
+        assertEquals(VersionIsolation.Inherit, failed.isolation)
         assertFalse(failed.installed)
         val root = store.instancePath(failed.id)
         assertFalse(root.resolve("resourcepacks/11.zip").exists())

@@ -119,7 +119,7 @@ class AdvancedLaunchTest {
                 val before = snapshot()
                 val preview = controller.previewLaunch(instance.id)
                 assertEquals(before, snapshot())
-                assertFalse(controller.store.instancePath(instance.id).exists())
+                assertFalse(controller.store.instancePath(instance.id).resolve("natives").exists())
                 assertTrue(preview.arguments.any { it.length >= 30_000 })
                 assertTrue(preview.arguments.contains("<访问令牌>"))
                 assertTrue(preview.arguments.contains("example.test"))

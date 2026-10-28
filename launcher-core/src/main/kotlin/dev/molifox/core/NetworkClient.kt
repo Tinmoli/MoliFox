@@ -62,6 +62,9 @@ class NetworkClient(
     private val proxyProvider: () -> Proxy? = { null },
     private val systemProxyEnabled: () -> Boolean = { false },
     private val systemProxySelector: ProxySelector = SystemProxyResolver(),
+    private val downloadSegments: () -> Int = { 4 },
+    private val downloadAttempts: () -> Int = { 3 },
+    private val requestTimeoutSeconds: () -> Int = { 45 },
 ) : AutoCloseable {
     internal val client =
         OkHttpClient.Builder()
@@ -114,11 +117,13 @@ class NetworkClient(
 
     /** 按目标路径分片的下载锁，避免同一文件被并发写入同一份 `.part`。 */
     private val downloadLocks = List(16) { Mutex() }
+    private val downloadJournals =
+        java.util.concurrent.ConcurrentHashMap<String, TaskDownloadJournal>()
 
     private suspend fun execute(
         request: Request,
         redirects: Boolean = true,
-        attempts: Int = 3,
+        attempts: Int = downloadAttempts().coerceIn(1, 8),
     ): Response {
         for (attempt in 1..attempts) {
             try {
@@ -153,7 +158,17 @@ class NetworkClient(
 
     private suspend fun executeOnce(request: Request, redirects: Boolean): Response =
         suspendCancellableCoroutine { continuation ->
-            val call = (if (redirects) client else noRedirectClient).newCall(request)
+            val timeout = requestTimeoutSeconds().coerceIn(10, 180)
+            val configured =
+                (if (redirects) client else noRedirectClient).let {
+                    if (timeout == 45) it
+                    else
+                        it.newBuilder()
+                            .connectTimeout(minOf(timeout, 30).toLong(), TimeUnit.SECONDS)
+                            .readTimeout(timeout.toLong(), TimeUnit.SECONDS)
+                            .build()
+                }
+            val call = configured.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(
                 object : Callback {
@@ -162,7 +177,23 @@ class NetworkClient(
                     }
 
                     override fun onResponse(call: Call, response: Response) {
-                        continuation.resume(response) { _, value, _ -> value.close() }
+                        val cancellable =
+                            response
+                                .newBuilder()
+                                .request(
+                                    response.request
+                                        .newBuilder()
+                                        .tag(
+                                            ResponseCancellation::class.java,
+                                            ResponseCancellation(call::cancel),
+                                        )
+                                        .build()
+                                )
+                                .build()
+                        continuation.resume(cancellable) { _, value, _ ->
+                            call.cancel()
+                            value.close()
+                        }
                     }
                 }
             )
@@ -209,6 +240,24 @@ class NetworkClient(
 
     suspend fun json(url: String, sourceOverride: String? = null): com.google.gson.JsonElement =
         JsonParser.parseString(text(url, sourceOverride))
+
+    internal suspend fun encyclopediaText(url: String): String =
+        withContext(Dispatchers.IO) {
+            val uri = URI(url)
+            require(
+                uri.scheme == "https" &&
+                    uri.host in setOf("www.mcmod.cn", "search.mcmod.cn") &&
+                    uri.userInfo == null
+            )
+            execute(builder(url).build(), attempts = 1).readCancellable { response ->
+                check(response.isSuccessful) { "百科页面暂不可用" }
+                val body = response.body ?: error("百科页面为空")
+                require(body.contentLength() <= 2 * 1024 * 1024)
+                val bytes = body.byteStream().readNBytes(2 * 1024 * 1024 + 1)
+                require(bytes.size <= 2 * 1024 * 1024)
+                bytes.toString(Charsets.UTF_8)
+            }
+        }
 
     internal suspend fun githubJson(url: String): com.google.gson.JsonElement =
         withContext(Dispatchers.IO) {
@@ -409,29 +458,16 @@ class NetworkClient(
     /** 断点缓存固定为 `<目标>.part`，与目标同目录，随实例目录一起迁移或清理。 */
     fun partialFile(target: Path): Path = target.resolveSibling("${target.fileName}.part")
 
-    /** 显式丢弃断点缓存。正常取消、网络失败与重试都会保留 `.part`，只有下载成功、校验失败、 或用户主动「重新下载 / 清理半成品」时才会删除。 */
+    /** 删除普通与分段缓存；显式取消不保留断点，网络中断则允许重试续传。 */
     fun discardPartial(target: Path) {
         partialFile(target).deleteIfExists()
+        SegmentedDownloader.discard(target)
     }
 
-    /**
-     * 下载并校验 [artifact]，支持断点续传、镜像回退与可恢复失败重试。
-     *
-     * `.part` 生命周期：
-     * - 成功：大小与哈希校验通过后才改名到目标，不留 `.part`；
-     * - 取消（[JobContext.checkCancelled] / 协程取消）：保留 `.part` 并抛 CancellationException， 下次调用用 `Range:
-     *   bytes=N-` 续传；
-     * - 网络失败（IO 中断、超时、5xx/408/429）：保留 `.part`，重试沿用已有字节；
-     * - 校验失败（大小/哈希不符）、服务器回 416 或忽略 Range：删除 `.part` 从头重下，不留坏文件；
-     * - 目标已完整：删除残留 `.part` 后直接返回。
-     *
-     * @param attempts 总尝试次数（含首次），默认 [DEFAULT_DOWNLOAD_ATTEMPTS]，每次失败按指数退避； 放在 `progress` 之前，既有
-     *   `download(artifact) { 字节, 总长 -> }` 的尾随 lambda 调用保持不变。
-     * @param progress 进度回调，`bytesDone` 是含续传偏移的累计字节，`total` 始终是完整大小。
-     */
+    /** 下载到临时文件，校验整体大小与摘要后替换目标；网络失败可续传，显式取消则清理。 */
     suspend fun download(
         artifact: DownloadArtifact,
-        attempts: Int = DEFAULT_DOWNLOAD_ATTEMPTS,
+        attempts: Int = downloadAttempts().coerceIn(1, 8),
         progress: (Long, Long) -> Unit = { _, _ -> },
     ) =
         withContext(Dispatchers.IO) {
@@ -440,34 +476,74 @@ class NetworkClient(
                 coroutineContext.ensureActive()
                 target.parent.createDirectories()
                 val partial = partialFile(target)
+                val path = target.toAbsolutePath().normalize()
+                val context = coroutineContext[TaskDownloadContext]?.task
+                val journal = context?.let {
+                    downloadJournals
+                        .computeIfAbsent(it.id) { _ -> TaskDownloadJournal(it) }
+                        .also { journal ->
+                            it.onFinished(
+                                this@NetworkClient,
+                                cancel = {
+                                    journal.clean { file, action ->
+                                        withTargetLock(file) { action() }
+                                    }
+                                },
+                                complete = { downloadJournals.remove(it.id) },
+                            )
+                        }
+                }
+                downloadJournals.values.filter { it !== journal }.forEach { it.borrowed(path) }
+                val existed = target.exists()
                 if (artifactProblem(artifact) == null) {
                     // 目标已经完整，残留的断点只会占空间。
-                    partial.deleteIfExists()
+                    discardPartial(target)
                     return@withTargetLock
                 }
                 val candidates = downloadCandidates(artifact.url)
                 val tries = attempts.coerceIn(1, 8)
-                for (attempt in 1..tries) {
-                    coroutineContext.ensureActive()
-                    try {
-                        fetch(
-                            artifact,
-                            partial,
-                            candidates[(attempt - 1) % candidates.size],
-                            progress,
-                        )
-                        return@withTargetLock
-                    } catch (cancelled: CancellationException) {
-                        // 取消保留 .part：这是续传的前提，清理只由 discardPartial 负责。
-                        throw cancelled
-                    } catch (error: Exception) {
-                        val mirrorFallback = candidates.size > 1
-                        if (
-                            attempt == tries || !isRecoverableDownloadFailure(error, mirrorFallback)
-                        )
-                            throw error
-                        delay(minOf(500L shl (attempt - 1), 8_000L))
+                try {
+                    for (attempt in 1..tries) {
+                        coroutineContext.ensureActive()
+                        try {
+                            val candidate = candidates[(attempt - 1) % candidates.size]
+                            val segmented = SegmentedDownloader { url, range ->
+                                execute(builder(url).header("Range", range).build(), attempts = 1)
+                            }
+                            if (
+                                !segmented.download(
+                                    artifact,
+                                    partial,
+                                    candidate,
+                                    downloadSegments(),
+                                    progress,
+                                )
+                            )
+                                fetch(
+                                    artifact,
+                                    partial,
+                                    candidate,
+                                    progress,
+                                )
+                            if (!existed) journal?.completed(path)
+                            return@withTargetLock
+                        } catch (cancelled: CancellationException) {
+                            discardPartial(target)
+                            throw cancelled
+                        } catch (error: Exception) {
+                            coroutineContext.ensureActive()
+                            val mirrorFallback = candidates.size > 1
+                            if (
+                                attempt == tries ||
+                                    !isRecoverableDownloadFailure(error, mirrorFallback)
+                            )
+                                throw error
+                            delay(minOf(500L shl (attempt - 1), 8_000L))
+                        }
                     }
+                } finally {
+                    if (!existed && target.isRegularFile()) journal?.completed(path)
+                    if (!coroutineContext.isActive) discardPartial(target)
                 }
             }
         }
@@ -484,7 +560,7 @@ class NetworkClient(
             val request = builder(url)
             if (offset > 0) request.header("Range", "bytes=$offset-")
             var restart = true
-            execute(request.build(), attempts = 1).use { response ->
+            execute(request.build(), attempts = 1).readCancellable { response ->
                 restart = receive(artifact, partial, offset, response, progress)
             }
             if (!restart) return
@@ -610,7 +686,7 @@ class NetworkClient(
 
     /** 同一目标的并发下载共用一把锁：`.part` 只有一份，不能让两个协程同时写。 */
     private suspend fun <T> withTargetLock(target: Path, block: suspend () -> T): T {
-        val key = target.toAbsolutePath().normalize()
+        val key = taskPathKey(target)
         val index = Math.floorMod(key.hashCode(), downloadLocks.size)
         return downloadLocks[index].withLock { block() }
     }

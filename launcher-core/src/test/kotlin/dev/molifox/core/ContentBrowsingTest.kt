@@ -145,11 +145,11 @@ class ContentBrowsingTest {
         assertEquals(listOf("beta", "stable"), details.versions.map { it.id })
         assertEquals(listOf("26.3"), details.versions.first().gameVersions)
         assertEquals(
-            listOf("Modrinth", "MC 百科搜索", "项目 Wiki", "源代码"),
+            listOf("Modrinth", "项目 Wiki", "源代码"),
             details.links.map { it.title },
         )
         assertFalse(details.links.any { "secret" in it.url || it.url.startsWith("javascript:") })
-        assertTrue(details.links[1].url.contains("%26"))
+        assertFalse(details.links.any { it.url.contains("search.mcmod.cn") })
         val requests = List(2) { server.takeRequest() }
         assertEquals("false", requests.last().requestUrl!!.queryParameter("include_changelog"))
         assertEquals("stable", recommendedContentVersion(details.versions)?.id)

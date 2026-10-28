@@ -483,7 +483,8 @@ class IsolationMigration(private val store: LauncherStore) {
         val to = if (isolate) IsolationMode.Isolated else IsolationMode.Shared
         require(from != to) { if (isolate) "此实例已经启用版本隔离" else "此实例已经共用游戏目录" }
         val sourceRoot = store.gamePath(instance)
-        val targetRoot = store.gamePath(instance.copy(isolation = to.versionIsolation()))
+        val targetRoot =
+            if (isolate) store.versionGamePath(instance) else store.minecraftRoot(instance)
         require(
             sourceRoot.toAbsolutePath().normalize() != targetRoot.toAbsolutePath().normalize()
         ) {
@@ -521,7 +522,16 @@ class IsolationMigration(private val store: LauncherStore) {
                 )
             val executed =
                 transaction.apply(plan, context, copySaves, moveSource) { record ->
-                    store.updateInstance(record.id) { it.copy(isolation = record.isolation) }
+                    store.mutate { data ->
+                        data.copy(
+                            settings = data.settings.copy(isolateVersions = isolate),
+                            instances =
+                                data.instances.map {
+                                    if (it.id == record.id) it.copy(isolation = record.isolation)
+                                    else it
+                                },
+                        )
+                    }
                 }
             store.log(
                 "已切换隔离方式：${store.instance(instanceId).name} → ${plan.to.title}（$executed 个文件）"
@@ -539,7 +549,10 @@ class IsolationMigration(private val store: LauncherStore) {
         val destination = destinationGameDirectory.toAbsolutePath().normalize()
         require(destination.parent != null) { "请选择专用的游戏文件夹，而非磁盘根目录" }
         val targetRoot = runCatching {
-            safePath(destination.resolve("instances"), instanceId)
+            safePath(
+                destination.resolve("versions"),
+                instance.gameDirectoryName.ifBlank { instance.versionId },
+            )
         }
             .getOrElse { error("目标游戏目录不可用：${it.message}") }
         val blockers = mutableListOf<String>()

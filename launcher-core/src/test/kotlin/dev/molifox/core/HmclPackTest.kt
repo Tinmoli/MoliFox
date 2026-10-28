@@ -670,7 +670,7 @@ class HmclPackTest {
                     assertFails { service.importPack(source, JobContext(store, "test")) }
                     val instance = store.data.instances.single()
                     assertFalse(instance.installed)
-                    assertEquals(VersionIsolation.Enabled, instance.isolation)
+                    assertEquals(VersionIsolation.Inherit, instance.isolation)
                     failDownload = false
                     service.importPack(
                         Path.of(instance.packFile),

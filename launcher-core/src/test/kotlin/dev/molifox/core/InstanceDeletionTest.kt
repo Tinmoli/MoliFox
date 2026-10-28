@@ -121,7 +121,7 @@ class InstanceDeletionTest {
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
             controller.directories.add(root)
             val created = controller.installer.createInstance(InstallRequest("隔离实例", "1.20.1"))
-            val own = root.resolve("instances").resolve(created.id)
+            val own = controller.store.instancePath(created.id)
             own.resolve("mods").createDirectories().resolve("m.jar").writeText("mod")
             own.resolve("config").createDirectories().resolve("c.toml").writeText("cfg")
             own.resolve("saves/world").createDirectories().resolve("level.dat").writeText("save")
@@ -154,9 +154,8 @@ class InstanceDeletionTest {
             val first = controller.installer.createInstance(InstallRequest("第一个", "1.20.1"))
             val second = controller.installer.createInstance(InstallRequest("第二个", "1.20.1"))
             val versionFolder = version(root, "1.20.1")
-            val firstOwn = root.resolve("instances").resolve(first.id).apply { createDirectories() }
-            val secondOwn =
-                root.resolve("instances").resolve(second.id).apply { createDirectories() }
+            val firstOwn = controller.store.instancePath(first.id).apply { createDirectories() }
+            val secondOwn = controller.store.instancePath(second.id).apply { createDirectories() }
             firstOwn.resolve("mods").createDirectories().resolve("a.jar").writeText("mod")
             secondOwn.resolve("saves").createDirectories().resolve("level.dat").writeText("save")
             val firstExpected = firstOwn.toRealPath()

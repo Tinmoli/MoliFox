@@ -67,17 +67,20 @@ fun compatibleContentVersion(version: ContentVersion, instance: GameInstance, ki
         instance.gameVersion in version.gameVersions &&
         (kind != "mod" || version.loaders.any { it.equals(instance.loader.name, true) })
 
-/** Search links identify themselves as searches; no guessed MC百科 project identifiers. */
-fun mcmodSearchUrl(title: String) = "https://search.mcmod.cn/s?key=${encoded(title)}"
-
-internal fun contentLinks(hit: ContentHit, project: JsonObject): List<ContentLink> = buildList {
+internal fun contentLinks(
+    hit: ContentHit,
+    project: JsonObject,
+    encyclopediaUrl: String? = null,
+): List<ContentLink> = buildList {
     add(
         ContentLink(
             if (hit.id.startsWith("curseforge:")) "CurseForge" else "Modrinth",
             contentWebsite(hit),
         )
     )
-    add(ContentLink("MC 百科搜索", mcmodSearchUrl(hit.title)))
+    (encyclopediaUrl ?: directEncyclopediaUrl(project.string("wiki_url")))?.let {
+        add(ContentLink("MC 百科", it))
+    }
     for ((key, title) in
         listOf(
             "wiki_url" to "项目 Wiki",

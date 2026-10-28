@@ -81,6 +81,8 @@ class InstanceTools(private val store: LauncherStore) {
             require(requestedName.length <= 80) { "实例名称需要 1–80 个字符" }
             val targetName = uniqueName(requestedName)
             val targetId = UUID.randomUUID().toString()
+            val directoryName =
+                VersionGameDirectories(store).availableName(store.minecraftRoot(source), targetName)
             var targetRoot: Path? = null
             try {
                 store.mutate {
@@ -89,6 +91,7 @@ class InstanceTools(private val store: LauncherStore) {
                             it.instances +
                                 source.copy(
                                     id = targetId,
+                                    gameDirectoryName = directoryName,
                                     name = targetName,
                                     createdAt = Instant.now().toString(),
                                     lastPlayed = null,
@@ -117,6 +120,7 @@ class InstanceTools(private val store: LauncherStore) {
                 store.updateInstance(targetId) {
                     it.copy(installed = source.installed, packFile = archive.orEmpty())
                 }
+                VersionGameDirectories(store).writeProfile(store.instance(targetId))
                 context.progress(1f, "复制实例完成")
                 store.log("已复制实例：${source.name} → $targetName")
                 store.instance(targetId)
@@ -218,6 +222,7 @@ class InstanceTools(private val store: LauncherStore) {
                 if (path == root || Files.isSymbolicLink(path)) continue
                 if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue
                 val relative = packRelative(root.relativize(path).toString())
+                if (relative in setOf("${root.fileName}.json", "${root.fileName}.jar")) continue
                 if (relative in known || skipForVerify(relative)) continue
                 val real = runCatching { path.toRealPath() }.getOrNull() ?: continue
                 if (!real.startsWith(realRoot)) continue

@@ -2,7 +2,6 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -29,6 +28,7 @@ class InstanceToolsTest {
                 name = name,
                 gameVersion = "1.20.1",
                 versionId = "1.20.1",
+                gameDirectoryName = name,
                 loader = LoaderType.Fabric,
                 loaderVersion = "0.15.0",
                 installed = true,
@@ -194,7 +194,7 @@ class InstanceToolsTest {
             file.parent.createDirectories()
             file.writeBytes(payload)
         }
-        val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("instances")
+        val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("versions")
         val job = Job()
         val cancelled = AtomicBoolean(false)
         val watcher = Thread {
@@ -202,7 +202,7 @@ class InstanceToolsTest {
             while (System.nanoTime() < deadline) {
                 val fresh = runCatching {
                     instancesRoot.listDirectoryEntries().any {
-                        it.name != source.id
+                        it.name != source.gameDirectoryName
                     }
                 }
                     .getOrDefault(false)
@@ -230,7 +230,10 @@ class InstanceToolsTest {
         assertTrue(cancelled.get(), "watcher did not cancel the copy")
         assertEquals(1, store.data.instances.size)
         assertEquals(source.id, store.data.instances.single().id)
-        assertEquals(listOf(source.id), instancesRoot.listDirectoryEntries().map { it.name })
+        assertEquals(
+            listOf(source.gameDirectoryName),
+            instancesRoot.listDirectoryEntries().map { it.name },
+        )
     }
 
     // ---- 整理实例目录 ----

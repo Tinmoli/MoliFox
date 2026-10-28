@@ -28,6 +28,14 @@ dependencies {
 
 tasks.test { useJUnitPlatform() }
 
+tasks.register<JavaExec>("encyclopediaSmoke") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.molifox.core.EncyclopediaOnlineSmoke")
+    args(rootProject.file("docs/validation/encyclopedia-online.json").absolutePath)
+    timeout.set(Duration.ofSeconds(30))
+}
+
 tasks.register<JavaExec>("networkDiagnosticsSmoke") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath

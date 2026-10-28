@@ -189,15 +189,13 @@ class NetworkClientTest {
                             DownloadArtifact(server.loopbackUrl("/slow").toString(), target)
                         )
                     }
-                // 起取消要保留 `<目标>.part` 才能续传；断点不含最终文件名，目标仍不可安装。
                 val partial = client.partialFile(target)
                 withTimeout(20_000) {
                     while (!partial.isRegularFile() || partial.fileSize() == 0L) delay(20)
                 }
                 download.cancelAndJoin()
                 assertFalse(target.exists())
-                assertTrue(partial.isRegularFile(), "取消后必须保留断点文件")
-                assertTrue(partial.fileSize() > 0L, "断点文件应包含已下载的字节")
+                assertFalse(partial.exists(), "显式取消后必须删除断点文件")
             } finally {
                 client.close()
             }
@@ -512,62 +510,67 @@ class NetworkClientTest {
     }
 
     @Test
-    fun `cancellation keeps the partial and later failures keep it too`() = runBlocking {
-        val content = payload(400_000, seed = 17)
-        withWorkDirectory("cancel") { work ->
-            MockWebServer().use { server ->
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest) =
-                            MockResponse()
-                                .setResponseCode(200)
-                                .setBody(Buffer().write(content))
-                                .throttleBody(4096, 40, TimeUnit.MILLISECONDS)
-                    }
-                val client = NetworkClient()
-                try {
-                    val target = work.resolve("core.jar")
-                    val partial = client.partialFile(target)
-                    val job =
-                        launch(Dispatchers.IO) {
+    fun `cancellation removes partial but network failures preserve an existing checkpoint`() =
+        runBlocking {
+            val content = payload(400_000, seed = 17)
+            withWorkDirectory("cancel") { work ->
+                MockWebServer().use { server ->
+                    server.dispatcher =
+                        object : Dispatcher() {
+                            override fun dispatch(request: RecordedRequest) =
+                                MockResponse()
+                                    .setResponseCode(200)
+                                    .setBody(Buffer().write(content))
+                                    .throttleBody(4096, 40, TimeUnit.MILLISECONDS)
+                        }
+                    val client = NetworkClient()
+                    try {
+                        val target = work.resolve("core.jar")
+                        val partial = client.partialFile(target)
+                        val job =
+                            launch(Dispatchers.IO) {
+                                client.download(
+                                    artifact(
+                                        server.loopbackUrl("/core.jar").toString(),
+                                        target,
+                                        content,
+                                    )
+                                )
+                            }
+                        withTimeout(30_000) {
+                            while (!partial.isRegularFile() || partial.fileSize() < 4096L) delay(20)
+                        }
+                        job.cancelAndJoin()
+                        assertFalse(target.exists())
+                        assertFalse(partial.exists(), "显式取消必须删除断点")
+                        val preserved = 4096L
+                        partial.writeBytes(content.copyOfRange(0, preserved.toInt()))
+
+                        // 之后的网络失败也不能删掉断点（只有校验失败和 discardPartial 才删）。
+                        server.dispatcher =
+                            object : Dispatcher() {
+                                override fun dispatch(request: RecordedRequest) =
+                                    MockResponse().setResponseCode(503)
+                            }
+                        assertFailsWith<DownloadHttpException> {
                             client.download(
                                 artifact(
                                     server.loopbackUrl("/core.jar").toString(),
                                     target,
                                     content,
-                                )
+                                ),
+                                attempts = 1,
                             )
                         }
-                    withTimeout(30_000) {
-                        while (!partial.isRegularFile() || partial.fileSize() < 4096L) delay(20)
+                        assertTrue(partial.isRegularFile(), "网络失败不得删除断点")
+                        assertEquals(preserved, partial.fileSize())
+                        assertFalse(target.exists())
+                    } finally {
+                        client.close()
                     }
-                    job.cancelAndJoin()
-                    assertFalse(target.exists())
-                    assertTrue(partial.isRegularFile(), "取消必须保留断点")
-                    val preserved = partial.fileSize()
-                    assertTrue(preserved >= 4096L)
-
-                    // 之后的网络失败也不能删掉断点（只有校验失败和 discardPartial 才删）。
-                    server.dispatcher =
-                        object : Dispatcher() {
-                            override fun dispatch(request: RecordedRequest) =
-                                MockResponse().setResponseCode(503)
-                        }
-                    assertFailsWith<DownloadHttpException> {
-                        client.download(
-                            artifact(server.loopbackUrl("/core.jar").toString(), target, content),
-                            attempts = 1,
-                        )
-                    }
-                    assertTrue(partial.isRegularFile(), "网络失败不得删除断点")
-                    assertEquals(preserved, partial.fileSize())
-                    assertFalse(target.exists())
-                } finally {
-                    client.close()
                 }
             }
         }
-    }
 
     @Test
     fun `resumed progress starts at the existing offset and keeps the full total`() = runBlocking {

@@ -106,7 +106,7 @@ class ScreenshotManagerTest {
         assertFailsWith<IllegalArgumentException> { manager.remove(listOf(shot)) }
         assertEquals("changed", original.readText())
         val refreshed = manager.list(instance.id).single()
-        store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
+        store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
         assertFailsWith<IllegalArgumentException> { manager.resolve(refreshed) }
     }
 

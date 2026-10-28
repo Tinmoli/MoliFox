@@ -14,6 +14,8 @@ data class AdvancedLaunchSettings(
     /** Empty preserves the old minimizeOnLaunch switch. */
     val launcherVisibility: String = "",
     val closeLauncherAfterGameExit: Boolean = false,
+    val verifyFileHashes: Boolean = true,
+    val useJavaConsoleExecutable: Boolean = false,
 )
 
 fun effectiveLaunchSettings(

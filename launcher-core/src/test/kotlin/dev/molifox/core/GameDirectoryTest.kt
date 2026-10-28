@@ -109,7 +109,7 @@ class GameDirectoryTest {
     }
 
     @Test
-    fun `global isolation and per-version override select the correct game and mod directories`() {
+    fun `only global isolation selects the game directory and old per version flags are ignored`() {
         val root = temporary.resolve(".minecraft")
         val folder = version(root)
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
@@ -119,10 +119,10 @@ class GameDirectoryTest {
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
         assertEquals(root.toRealPath(), store.instancePath(instance.id))
         store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Enabled) }
-        assertEquals(folder.toRealPath(), store.instancePath(instance.id))
+        assertEquals(root.toRealPath(), store.instancePath(instance.id))
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = true)) }
         store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
-        assertEquals(root.toRealPath(), store.instancePath(instance.id))
+        assertEquals(folder.toRealPath(), store.instancePath(instance.id))
         assertEquals(
             VersionIsolation.Disabled,
             LauncherStore(DesktopPlatform(), store.dataDirectory).data.instances.single().isolation,
@@ -226,6 +226,11 @@ class GameDirectoryTest {
                         VersionIsolation.Enabled to folder.toRealPath(),
                         VersionIsolation.Disabled to root.toRealPath(),
                     )) {
+                    controller.saveSettings(
+                        controller.store.data.settings.copy(
+                            isolateVersions = isolation == VersionIsolation.Enabled
+                        )
+                    )
                     controller.updateInstance(
                         instance.id,
                         instance.name,

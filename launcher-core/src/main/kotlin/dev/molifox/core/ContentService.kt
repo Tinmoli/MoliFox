@@ -445,13 +445,14 @@ class ContentService(
                         ?: installer.createInstance(request).let { created ->
                             store.updateInstance(created.id) {
                                 it.copy(
-                                    isolation = VersionIsolation.Enabled,
+                                    isolation = VersionIsolation.Inherit,
                                     extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
                                     advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
                                 )
                             }
                             store.instance(created.id)
                         }
+                context.bindInstance(instance.id)
                 var root = store.instancePath(instance.id)
                 // Validate every override path before any download or extraction.
                 for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)

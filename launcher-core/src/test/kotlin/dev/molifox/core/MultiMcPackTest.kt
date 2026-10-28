@@ -329,7 +329,7 @@ class MultiMcPackTest {
                 val source = archive()
                 assertFails { service.importPack(source, JobContext(store, "test")) }
                 val instance = store.data.instances.single()
-                assertEquals(VersionIsolation.Enabled, instance.isolation)
+                assertEquals(VersionIsolation.Inherit, instance.isolation)
                 assertFalse(instance.installed)
                 val root = store.instancePath(instance.id)
                 assertFalse(root.resolve("config/test.txt").exists())

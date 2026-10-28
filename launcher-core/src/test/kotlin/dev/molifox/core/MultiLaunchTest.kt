@@ -111,11 +111,23 @@ class MultiLaunchTest {
                 }
                 controller.accounts.addOffline("MultiTester")
                 try {
+                    val started = CompletableDeferred<Unit>()
+                    val release = CompletableDeferred<Unit>()
+                    controller.jobs.enqueue("下载中的独立任务", setOf("another-download")) {
+                        started.complete(Unit)
+                        release.await()
+                    }
+                    started.await()
+                    assertFalse(controller.busy)
+                    controller.saveInstanceConfiguration(second.copy(notes = "下载期间可保存其他实例设置"))
                     repeat(2) {
                         controller.launch(instance.id)
-                        controller.jobs.awaitIdle()
+                        val expected = it + 1
+                        eventually { controller.state.value.runningGames.size == expected }
                     }
                     controller.launch(second.id)
+                    eventually { controller.state.value.runningGames.size == 3 }
+                    release.complete(Unit)
                     controller.jobs.awaitIdle()
                     val runs = controller.state.value.runningGames
                     assertEquals(

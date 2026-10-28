@@ -27,7 +27,11 @@ internal fun artifactProblem(artifact: DownloadArtifact): String? = runCatching 
 }
     .getOrElse { "文件无法读取：${it.message}" }
 
-internal class GameFileVerifier(private val network: NetworkClient, private val concurrency: Int) {
+internal class GameFileVerifier(
+    private val network: NetworkClient,
+    private val concurrency: Int,
+    private val verifyHashes: Boolean = true,
+) {
     suspend fun ensure(
         artifacts: List<DownloadArtifact>,
         context: JobContext,
@@ -40,7 +44,7 @@ internal class GameFileVerifier(private val network: NetworkClient, private val 
                 .distinctBy { it.target }
                 .filter {
                     context.checkCancelled()
-                    artifactProblem(it) != null
+                    artifactProblem(if (verifyHashes) it else it.copy(sha1 = "")) != null
                 }
         if (broken.isEmpty()) return
         val unavailable = broken.filter { it.url.isBlank() }

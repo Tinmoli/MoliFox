@@ -271,7 +271,18 @@ class LaunchPlanner(
                 require(invocation.sumOf { it.length + 3 } + runtime.path.length < 30_000) {
                     "启动命令过长，请缩短附加游戏参数或游戏目录"
                 }
-            LaunchPlan(runtime.path, invocation, game, advanced.environmentVariables.toMap())
+            val executable =
+                if (
+                    platform.osName == "windows" &&
+                        advanced.useJavaConsoleExecutable &&
+                        Path.of(runtime.path).fileName.toString().equals("javaw.exe", true)
+                ) {
+                    Path.of(runtime.path)
+                        .resolveSibling("java.exe")
+                        .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
+                        .toString()
+                } else runtime.path
+            LaunchPlan(executable, invocation, game, advanced.environmentVariables.toMap())
         }
 }
 
@@ -328,6 +339,7 @@ class GameLauncher(
                 store.minecraftRoot(instance),
                 .01f,
                 .35f,
+                verifyHashes = launchSettings.verifyFileHashes,
             )
             context.progress(.36f, "选择 Java ${profile.requiredJava}…")
             session.stage("选择 Java")
@@ -364,6 +376,7 @@ class GameLauncher(
                 session,
             )
             context.checkCancelled()
+            applyGameLanguage(store, instance)
             val process =
                 ProcessBuilder(listOf(plan.executable) + plan.arguments)
                     .directory(plan.gameDirectory.toFile())

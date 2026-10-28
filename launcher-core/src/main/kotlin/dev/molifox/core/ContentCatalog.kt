@@ -102,6 +102,8 @@ internal constructor(
     private val backend: ContentBackend = ModrinthBackend(network, api),
     private val curseForge: CurseForgeBackend? = null,
 ) {
+    private val encyclopedia = EncyclopediaLinks(network)
+
     /** Lazy changelog loading avoids one extra request per version in a large project. */
     suspend fun browse(projectId: String): ContentDetails {
         val project = backend.project(projectId)
@@ -132,7 +134,14 @@ internal constructor(
             project.string("body").take(60000),
             project.obj("license").string("id"),
             versions,
-            contentLinks(hit, project),
+            contentLinks(
+                hit,
+                project,
+                // 私有内容服务的项目名称不发送给第三方百科。
+                if (java.net.URI(api).host == "api.modrinth.com")
+                    encyclopedia.resolve(hit, project.string("wiki_url"))
+                else directEncyclopediaUrl(project.string("wiki_url")),
+            ),
         )
     }
 

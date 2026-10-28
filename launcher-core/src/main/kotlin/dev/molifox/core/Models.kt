@@ -60,6 +60,9 @@ data class LauncherSettings(
     val advancedLaunch: AdvancedLaunchSettings = AdvancedLaunchSettings(),
     val downloadSource: String = "auto",
     val maxConcurrent: Int = 8,
+    val downloadSegments: Int = 4,
+    val downloadAttempts: Int = 3,
+    val networkTimeoutSeconds: Int = 45,
     val microsoftClientId: String = MoliFoxIdentity.microsoftClientId,
     val darkTheme: Boolean = false,
     val minimizeOnLaunch: Boolean = false,
@@ -97,6 +100,7 @@ data class LauncherSettings(
     val windowTransparent: Boolean = false,
     /** 界面语言，当前仅提供 zh-CN。 */
     val language: String = "zh-CN",
+    val gameLanguageFollowsLauncher: Boolean = false,
     /** 兼容旧配置；更新服务固定使用项目的 GitHub Releases。 */
     val updateManifestUrl: String = "",
     /** 启动时检查 GitHub 上已发布的正式版本。 */
@@ -159,6 +163,8 @@ data class GameInstance(
     val packIconId: String = "",
     val gameVersion: String = "",
     val versionId: String = "",
+    val gameDirectoryName: String = "",
+    val componentBackupId: String = "",
     val loader: LoaderType = LoaderType.Vanilla,
     val loaderVersion: String = "",
     val createdAt: String = Instant.now().toString(),
@@ -222,6 +228,7 @@ data class DownloadJob(
     val completedFiles: Int = 0,
     val totalFiles: Int = 0,
     val bytesPerSecond: Long = 0,
+    val resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
 )
 
 data class LogLine(

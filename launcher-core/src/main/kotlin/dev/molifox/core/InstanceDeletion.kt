@@ -85,7 +85,12 @@ class InstanceDeletionService(private val store: LauncherStore) {
                 }
             }
         }
-        // 实例自己名下的游戏目录：存在就整目录删除（mods/config/saves 等全部在内）。
+        ownedTarget(root, store.versionGamePath(instance))?.let { folder ->
+            if (sharesVersion(instance, root, folder.fileName.toString()))
+                preserved += "$folder（另一个实例仍在使用）"
+            else if (folder !in targets) targets.add(folder)
+        }
+        // 兼容尚未迁移的旧目录，不触及已经移入备份的内容。
         ownedTarget(root, root.resolve("instances").resolve(instance.id))?.let { targets.add(it) }
         return InstanceDeletionPlan(targets, preserved)
     }
@@ -164,9 +169,29 @@ class InstanceDeletionService(private val store: LauncherStore) {
     private fun sharesVersion(instance: GameInstance, root: Path, versionId: String): Boolean =
         store.data.instances.any { other ->
             other.id != instance.id &&
-                other.versionId == versionId &&
+                (other.versionId == versionId ||
+                    other.gameVersion == versionId ||
+                    other.gameDirectoryName == versionId ||
+                    inheritsVersion(other, versionId)) &&
                 runCatching { store.minecraftRoot(other).toRealPath() }.getOrNull() == root
         }
+
+    private fun inheritsVersion(instance: GameInstance, target: String): Boolean {
+        var id = instance.versionId
+        val visited = mutableSetOf<String>()
+        return try {
+            while (id.isNotBlank() && visited.add(id) && visited.size <= 64) {
+                if (id == target) return true
+                val file =
+                    safePath(store.minecraftRoot(instance), "versions/${safeFilename(id)}/$id.json")
+                if (!file.isRegularFile()) return false
+                id = readObject(file).string("inheritsFrom")
+            }
+            false
+        } catch (_: Exception) {
+            true
+        }
+    }
 
     /**
      * 校验 [candidate] 确实位于 [root] 之下、正好两层的版本目录或实例目录，且不是符号链接。

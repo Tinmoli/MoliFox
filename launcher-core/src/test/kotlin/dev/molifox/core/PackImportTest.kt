@@ -330,7 +330,7 @@ class PackImportTest {
     }
 
     @Test
-    fun `pack install uses isolation and failed install can be repaired without a second instance`() =
+    fun `pack respects shared global directory and failed install repairs without a second instance`() =
         runBlocking {
             val store = store()
             store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
@@ -414,7 +414,7 @@ class PackImportTest {
                     }
                     val failed = store.data.instances.single()
                     assertFalse(failed.installed)
-                    assertEquals(VersionIsolation.Enabled, failed.isolation)
+                    assertEquals(VersionIsolation.Inherit, failed.isolation)
                     assertTrue(Path.of(failed.packFile).isRegularFile())
                     rejectClient = false
                     service.importPack(
@@ -429,7 +429,7 @@ class PackImportTest {
                         "pack config",
                         store.instancePath(failed.id).resolve("config/fixture.txt").readText(),
                     )
-                    assertFalse(store.minecraftRoot.resolve("config/fixture.txt").exists())
+                    assertTrue(store.minecraftRoot.resolve("config/fixture.txt").exists())
                     assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
                 }
             }

@@ -27,13 +27,19 @@ class IsolationMigrationTest {
                 name = name,
                 gameVersion = "1.20.1",
                 versionId = "1.20.1",
+                gameDirectoryName = name,
                 loader = LoaderType.Fabric,
                 loaderVersion = "0.15.0",
                 installed = true,
                 managedGameDirectory = isolate,
                 isolation = if (isolate) VersionIsolation.Enabled else VersionIsolation.Disabled,
             )
-        store.mutate { it.copy(instances = it.instances + instance) }
+        store.mutate {
+            it.copy(
+                instances = it.instances + instance,
+                settings = it.settings.copy(isolateVersions = isolate),
+            )
+        }
         store.instancePath(instance.id).createDirectories()
         return store.instance(instance.id)
     }
@@ -46,7 +52,7 @@ class IsolationMigrationTest {
     private fun sharedRoot(store: LauncherStore) = Path.of(store.data.settings.gameRoot)
 
     private fun isolatedRoot(store: LauncherStore, instance: GameInstance) =
-        store.gamePath(instance.copy(isolation = VersionIsolation.Enabled))
+        store.versionGamePath(instance)
 
     // ---- 计划 ----
 
@@ -211,7 +217,7 @@ class IsolationMigrationTest {
         val updated = store.instance(shared.id)
         assertEquals(VersionIsolation.Enabled, updated.isolation)
         val target = store.instancePath(shared.id)
-        assertTrue(target.startsWith(sharedRoot(store).resolve("instances")))
+        assertTrue(target.startsWith(sharedRoot(store).resolve("versions")))
         assertEquals("jar", target.resolve("mods/a.jar").readText())
         assertEquals("options", target.resolve("options.txt").readText())
         assertTrue(root.resolve("mods/a.jar").isRegularFile(), "共用游戏目录的源文件必须保留")
@@ -403,7 +409,7 @@ class IsolationMigrationTest {
 
         val moved = migration.moveInstance(isolated.id, destination, JobContext(store, "fixture"))
 
-        val expected = destination.resolve("instances/${isolated.id}")
+        val expected = destination.resolve("versions/${isolated.gameDirectoryName}")
         assertEquals(expected.toAbsolutePath().normalize(), moved)
         assertEquals("jar", expected.resolve("mods/a.jar").readText())
         assertEquals("level", expected.resolve("saves/world/level.dat").readText())
@@ -431,7 +437,7 @@ class IsolationMigrationTest {
         val isolated = instance(store, isolate = true)
         write(store.instancePath(isolated.id).resolve("mods/a.jar"), "jar")
         val destination = temporary.resolve("other-game")
-        destination.resolve("instances/${isolated.id}/mods").createDirectories()
+        destination.resolve("versions/${isolated.gameDirectoryName}/mods").createDirectories()
 
         val plan = migration.planInstanceMove(isolated.id, destination)
         assertEquals(1, plan.blockers.size)

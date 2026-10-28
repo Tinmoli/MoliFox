@@ -19,7 +19,7 @@ class ComponentMaintenanceTest {
     @TempDir lateinit var temporary: Path
 
     @Test
-    fun `external and linked pack instances cannot be relabelled as a different loader`() =
+    fun `instances without a game version cannot be relabelled as a different loader`() =
         runBlocking {
             val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
             NetworkClient().use { network ->
@@ -100,6 +100,8 @@ class ComponentMaintenanceTest {
                     loaderVersion = "old",
                     installed = true,
                     managedGameDirectory = true,
+                    externalProfile = true,
+                    packFile = "linked.mrpack",
                 )
             store.mutate { it.copy(instances = listOf(instance)) }
             val game = store.instancePath(instance.id).apply { createDirectories() }
@@ -208,6 +210,9 @@ class ComponentMaintenanceTest {
                     store.minecraftRoot
                         .resolve("versions/old-profile/old-profile.json")
                         .deleteExisting()
+                    store.directories.instanceBackups
+                        .resolve("components/${current.componentBackupId}/0.json")
+                        .writeText("corrupt backup")
                     assertFails {
                         installer.restoreComponents(instance.id, JobContext(store, "test"))
                     }

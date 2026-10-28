@@ -141,11 +141,17 @@ class MinecraftInstaller(
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
     ): GameInstance {
         validate(request)
+        val root =
+            gameDirectoryId?.let { id ->
+                Path.of(store.data.gameDirectories.first { it.id == id }.path)
+            } ?: store.minecraftRoot
         val instance =
             GameInstance(
                 name = request.name.trim(),
                 gameVersion = request.gameVersion,
                 versionId = request.gameVersion,
+                gameDirectoryName =
+                    VersionGameDirectories(store).availableName(root, request.name.trim()),
                 loader = request.loader,
                 loaderVersion = request.loaderVersion,
                 gameDirectoryId = gameDirectoryId,
@@ -198,6 +204,7 @@ class MinecraftInstaller(
                 )
         }
         context.checkCancelled()
+        VersionGameDirectories(store).writeProfile(store.instance(instanceId))
         store.updateInstance(instanceId) { it.copy(installed = true) }
         context.progress(1f, "安装完成")
     }
@@ -211,8 +218,9 @@ class MinecraftInstaller(
     ) {
         val previous = store.instance(instanceId)
         require(previous.installed) { "请先完成游戏安装，再更改加载器" }
-        require(!previous.externalProfile) { "外部实例的加载器请由原目录维护，避免覆盖自定义启动配置" }
-        require(previous.packFile.isBlank()) { "整合包的加载器由包清单定义，暂不支持直接更换" }
+        require(previous.gameVersion.isNotBlank() && previous.versionId.isNotBlank()) {
+            "实例缺少游戏版本标识，请先重新识别游戏目录"
+        }
         if (
             previous.loader == loader &&
                 previous.loaderVersion == (if (loader == LoaderType.Vanilla) "" else loaderVersion)
@@ -222,22 +230,29 @@ class MinecraftInstaller(
             require(loaderVersion.isNotBlank()) { "请选择加载器版本" }
             safeFilename(loaderVersion)
         }
+        val backups = ComponentBackup(store)
+        val backupId = backups.capture(previous)
         store.updateInstance(instanceId) {
-            it.copy(loader = loader, loaderVersion = loaderVersion, installed = false)
+            it.copy(
+                loader = loader,
+                loaderVersion = loaderVersion,
+                installed = false,
+                externalProfile = false,
+                gameDirectoryName = previous.gameDirectoryName.ifBlank { previous.versionId },
+            )
         }
         try {
             install(instanceId, context)
             store.updateInstance(instanceId) {
-                it.copy(previousComponents = previous.componentSelection())
+                it.copy(
+                    previousComponents = previous.componentSelection(),
+                    componentBackupId = backupId,
+                )
             }
         } catch (failure: Exception) {
-            store.updateInstance(instanceId) {
-                it.copy(
-                    loader = previous.loader,
-                    loaderVersion = previous.loaderVersion,
-                    versionId = previous.versionId,
-                    installed = previous.installed,
-                )
+            withContext(NonCancellable + Dispatchers.IO) {
+                backups.restore(backupId, previous)
+                store.updateInstance(instanceId) { previous }
             }
             throw failure
         }
@@ -246,10 +261,38 @@ class MinecraftInstaller(
     /** Restore a known profile after checking its actual client, libraries and assets. */
     suspend fun restoreComponents(instanceId: String, context: JobContext) {
         val current = store.instance(instanceId)
-        require(current.installed && !current.externalProfile && current.packFile.isBlank()) {
+        require(current.installed) {
             "此实例当前不支持组件回退"
         }
         val previous = requireNotNull(current.previousComponents) { "没有可回退的组件记录" }
+        if (current.componentBackupId.isNotBlank()) {
+            val backups = ComponentBackup(store)
+            val rollback = backups.capture(current)
+            try {
+                val original = backups.previous(current.componentBackupId, current)
+                backups.restore(current.componentBackupId, current)
+                val profile =
+                    VersionResolver(store.minecraftRoot(current), store.platform)
+                        .resolve(original.versionId)
+                installDependencies(profile, context, store.minecraftRoot(current))
+                context.checkCancelled()
+                store.updateInstance(instanceId) {
+                    it.copy(
+                        loader = original.loader,
+                        loaderVersion = original.loaderVersion,
+                        versionId = original.versionId,
+                        externalProfile = original.externalProfile,
+                        gameDirectoryName = original.gameDirectoryName,
+                        previousComponents = current.componentSelection(),
+                        componentBackupId = rollback,
+                    )
+                }
+                return
+            } catch (failure: Exception) {
+                withContext(NonCancellable + Dispatchers.IO) { backups.restore(rollback, current) }
+                throw failure
+            }
+        }
         context.progress(0f, "校验上一组件及其依赖…")
         val root = store.minecraftRoot(current)
         val profile = VersionResolver(root, store.platform).resolve(previous.versionId)
@@ -287,9 +330,10 @@ class MinecraftInstaller(
         root: Path = store.minecraftRoot,
         from: Float = 0f,
         to: Float = 1f,
+        verifyHashes: Boolean = true,
     ) {
         fun at(fraction: Float) = from + (to - from) * fraction
-        val verifier = GameFileVerifier(network, store.data.settings.maxConcurrent)
+        val verifier = GameFileVerifier(network, store.data.settings.maxConcurrent, verifyHashes)
         context.progress(at(.02f), "检查游戏文件…")
         val resolver = VersionResolver(root, store.platform)
         val artifacts =
