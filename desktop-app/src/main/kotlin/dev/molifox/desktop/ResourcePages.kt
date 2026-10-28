@@ -359,7 +359,7 @@ fun ColumnScope.ContentBrowser(
             { projectHit = null },
             {
                 projectHit = null
-                navigate(Page.Downloads)
+                actions.taskQueued()
             },
         )
     }
@@ -1005,18 +1005,11 @@ private fun ContentResultCard(
 @Composable
 fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
     val preferences = state.data.settings.pages.logs
-    var tab by
-        remember(preferences.defaultTab) {
-            mutableIntStateOf(if (preferences.defaultTab == "logs") 1 else 0)
-        }
-    var filter by remember { mutableStateOf("all") }
     var query by remember { mutableStateOf("") }
     var onlyErrors by remember { mutableStateOf(false) }
     var onlyGame by remember { mutableStateOf(false) }
     var autoScroll by remember(preferences.autoScroll) { mutableStateOf(preferences.autoScroll) }
     // 危险操作先落成确认框状态，确认后才调用原有回调。
-    var confirmClear by remember { mutableStateOf(false) }
-    var cancelTarget by remember { mutableStateOf<DownloadJob?>(null) }
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     // 右上角提供日志导出和停止操作。
@@ -1026,13 +1019,12 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
             SecondaryButton({ actions.exportDiagnostics() }) { Text("导出诊断包", fontSize = 12.sp) }
             if (state.runningInstanceId != null)
                 SecondaryButton({ actions.run { actions.controller.game.stop() } }) {
-                    Text("停止游戏", fontSize = 12.sp)
+                    Text(
+                        if (state.runningGames.size > 1) "停止所有游戏（${state.runningGames.size}）"
+                        else "停止游戏",
+                        fontSize = 12.sp,
+                    )
                 }
-        }
-    }
-    SecondaryTabRow(tab, containerColor = MaterialTheme.colorScheme.surface) {
-        listOf("下载任务", "运行日志").forEachIndexed { index, title ->
-            Tab(tab == index, { tab = index }, text = { Text(title, fontSize = 13.sp) })
         }
     }
     state.launchIssue?.let { issue ->
@@ -1060,51 +1052,7 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
                 )
         }
     }
-    if (tab == 0) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            listOf("all" to "全部", "active" to "进行中", "failed" to "失败", "completed" to "已完成")
-                .forEach { (id, title) ->
-                    FilterChip(
-                        filter == id,
-                        { filter = id },
-                        { Text(title, fontSize = 11.sp) },
-                        modifier = Modifier.height(28.dp),
-                    )
-                }
-            Spacer(Modifier.weight(1f))
-            TextButton({ confirmClear = true }) { Text("清除已结束任务", fontSize = 12.sp) }
-        }
-        val jobs =
-            state.jobs.filter { job ->
-                when (filter) {
-                    "active" -> job.status in listOf(JobStatus.Queued, JobStatus.Running)
-                    "failed" -> job.status == JobStatus.Failed
-                    "completed" -> job.status == JobStatus.Completed
-                    else -> true
-                }
-            }
-        if (jobs.isEmpty()) {
-            Panel(Modifier.fillMaxWidth()) {
-                EmptyState(
-                    "暂时没有下载任务",
-                    "安装游戏或添加资源后，进度会显示在这里。",
-                    Icons.Outlined.CloudDone,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-        } else
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(jobs, key = { it.id }) { job ->
-                    JobCard(job, actions, Modifier.animateItem()) { active ->
-                        if (active) cancelTarget = job
-                    }
-                }
-            }
-    } else {
+    run {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1281,115 +1229,4 @@ fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
         )
     }
     // 清除历史与取消运行中任务都不可撤销，统一用 AlertDialog 二次确认
-    // （样式与 Main.kt 的退出确认保持一致）。
-    if (confirmClear)
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("清除已结束任务？") },
-            text = { Text("已完成、失败与已取消的记录会从任务列表移除，进行中的任务不受影响。") },
-            confirmButton = {
-                TextButton({
-                    confirmClear = false
-                    actions.controller.jobs.clearFinished()
-                }) {
-                    Text("清除记录", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton({ confirmClear = false }) { Text("取消") } },
-        )
-    cancelTarget?.let { job ->
-        AlertDialog(
-            onDismissRequest = { cancelTarget = null },
-            title = { Text("取消这个任务？") },
-            text = { Text("「" + job.title + "」的下载会中断，已经写入的文件可能保留在游戏目录中。") },
-            confirmButton = {
-                TextButton({
-                    val id = job.id
-                    cancelTarget = null
-                    actions.controller.jobs.cancel(id)
-                }) {
-                    Text("取消任务", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton({ cancelTarget = null }) { Text("继续下载") } },
-        )
-    }
-}
-
-/** 任务卡片：状态色用 animateColorAsState 过渡，卡片进出列表有 animateItem 位移。 */
-@Composable
-private fun JobCard(
-    job: DownloadJob,
-    actions: UiActions,
-    modifier: Modifier = Modifier,
-    onCancel: (Boolean) -> Unit,
-) {
-    val active = job.status in listOf(JobStatus.Queued, JobStatus.Running)
-    val statusColor by
-        animateColorAsState(
-            when (job.status) {
-                JobStatus.Failed -> MaterialTheme.colorScheme.error
-                JobStatus.Completed -> MutedGreen
-                else -> MaterialTheme.colorScheme.primary
-            },
-            tween(220),
-            label = "job-status-color",
-        )
-    Panel(modifier.fillMaxWidth(), padding = 14) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                when (job.status) {
-                    JobStatus.Completed -> Icons.Outlined.CheckCircleOutline
-                    JobStatus.Failed -> Icons.Outlined.ErrorOutline
-                    else -> Icons.Outlined.Downloading
-                },
-                null,
-                Modifier.size(22.dp),
-                statusColor,
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(job.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Text(
-                    job.error ?: job.detail,
-                    fontSize = 11.sp,
-                    color =
-                        if (job.status == JobStatus.Failed) statusColor
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Tag(
-                when (job.status) {
-                    JobStatus.Queued -> "排队中"
-                    JobStatus.Running -> (job.progress * 100).toInt().toString() + "%"
-                    JobStatus.Completed -> "已完成"
-                    JobStatus.Failed -> "失败"
-                    JobStatus.Cancelled -> "已取消"
-                },
-                statusColor,
-            )
-            if (active)
-                SmallIconButton(
-                    Icons.Outlined.Close,
-                    "取消任务",
-                    {
-                        // 运行中的下载会中断已写入文件，先确认；排队中的任务直接取消。
-                        if (job.status == JobStatus.Running) onCancel(true)
-                        else actions.controller.jobs.cancel(job.id)
-                    },
-                )
-        }
-        if (job.status == JobStatus.Running) {
-            Spacer(Modifier.height(10.dp))
-            LinearProgressIndicator(
-                progress = { job.progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(4.dp),
-                color = statusColor,
-                trackColor = statusColor.copy(alpha = .12f),
-            )
-        }
-    }
 }

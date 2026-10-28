@@ -90,7 +90,7 @@ fun ColumnScope.InstancesPage(
     fun launch(instance: GameInstance) {
         if (!instance.installed) {
             actions.run { actions.controller.repair(instance.id) }
-            navigate(Page.Downloads)
+            actions.taskQueued()
         } else if (state.data.activeAccountId == null) {
             actions.controller.store.notify("请先添加一个游戏账户")
             navigate(Page.Home)
@@ -99,7 +99,7 @@ fun ColumnScope.InstancesPage(
                 actions.controller.selectInstance(instance.id)
                 actions.controller.launch(instance.id)
             }
-            navigate(Page.Downloads)
+            actions.taskQueued()
         }
     }
     // 目录可读性只在 IO 线程探测：失败与「没有实例」必须能区分开，否则用户无从判断是空目录还是读不到。

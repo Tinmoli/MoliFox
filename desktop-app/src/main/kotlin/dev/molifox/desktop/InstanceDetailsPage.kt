@@ -145,7 +145,7 @@ fun ColumnScope.InstanceDetailsPage(
                 actions.controller.selectInstance(instance.id)
                 actions.controller.launch(instance.id)
             }
-            navigate(Page.Downloads)
+            actions.taskQueued()
         }
     }
     // ---------------- 页头 ----------------
@@ -347,7 +347,7 @@ fun ColumnScope.InstanceDetailsPage(
     }
     // ---------------- 左侧页签 + 右侧内容 ----------------
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Column(Modifier.width(158.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        ScrollColumn(Modifier.width(158.dp).fillMaxHeight(), gap = 3.dp) {
             instanceTabs.forEachIndexed { index, item ->
                 InstanceRailItem(item.title, item.icon, tab == index) { tab = index }
             }
@@ -368,9 +368,26 @@ fun ColumnScope.InstanceDetailsPage(
                         "实例文件夹" to "",
                         "模组文件夹" to "mods",
                         "资源包文件夹" to "resourcepacks",
+                        "光影包文件夹" to "shaderpacks",
                         "存档文件夹" to "saves",
                         "原理图文件夹" to "schematics",
+                        "配置文件夹" to "config",
+                        "日志文件夹" to "logs",
+                        "崩溃报告文件夹" to "crash-reports",
+                        "截图文件夹" to "screenshots",
                     )
+                    .filter { (_, subfolder) ->
+                        runCatching {
+                                java.nio.file.Files.readAttributes(
+                                        actions.controller.store
+                                            .instancePath(instance.id)
+                                            .resolve(subfolder),
+                                        java.nio.file.attribute.BasicFileAttributes::class.java,
+                                    )
+                                    .isDirectory
+                            }
+                            .getOrDefault(false)
+                    }
                     .forEach { (title, subfolder) ->
                         RailSubEntry(title) {
                             actions.run {
@@ -423,94 +440,7 @@ fun ColumnScope.InstanceDetailsPage(
                             )
                         else ->
                             ScrollColumn(Modifier.weight(1f).fillMaxHeight()) {
-                                SettingsSection("基本信息") {
-                                    CompactTextField(
-                                        draft.name,
-                                        { draft = draft.copy(name = it.take(80)) },
-                                        Modifier.fillMaxWidth(),
-                                        label = "实例名称",
-                                    )
-                                    OutlinedTextField(
-                                        draft.notes,
-                                        { draft = draft.copy(notes = it.take(2000)) },
-                                        Modifier.fillMaxWidth(),
-                                        label = { Text("版本备注") },
-                                        minLines = 2,
-                                        maxLines = 4,
-                                    )
-                                }
-                                SettingsSection("图标", "默认跟随原版或加载器；整合包自带图标优先，也可以手动替换。") {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    ) {
-                                        InstanceArtwork(instance, actions, Modifier.size(40.dp))
-                                        SecondaryButton(
-                                            { editingIcon = true },
-                                            enabled = !actions.controller.busy,
-                                        ) {
-                                            Text("更换实例图标…")
-                                        }
-                                    }
-                                }
-                                SettingsSection("版本隔离", "决定此版本使用的存档、模组与配置目录。") {
-                                    IsolationInfoRow(
-                                        instance,
-                                        actions.controller.store.isolated(instance),
-                                        !actions.controller.busy &&
-                                            instance.gameDirectoryId == null,
-                                        if (instance.gameDirectoryId != null) "外部目录保持原有布局。"
-                                        else "切换前先预览文件移动与冲突。",
-                                        { onSwitchIsolation(instance) },
-                                    )
-                                    SimpleDropdown(
-                                        draft.isolation.name,
-                                        VersionIsolation.entries.map { it.name to it.title },
-                                        {
-                                            draft =
-                                                draft.copy(isolation = VersionIsolation.valueOf(it))
-                                        },
-                                    )
-                                    Text(
-                                        "保存后使用：" + actions.controller.store.gamePath(draft),
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        "切换设置会改变使用目录，现有文件保留在原位置。",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                SettingsSection("版本信息") {
-                                    SettingRow("Minecraft", instance.gameVersion) {
-                                        Tag(instance.loader.title)
-                                    }
-                                    SettingRow("包来源", packSourceOf(instance)) {
-                                        Text(instance.versionId, fontSize = 12.sp)
-                                    }
-                                    Text(
-                                        "创建于 " +
-                                            instance.createdAt.take(10) +
-                                            " · 游玩 " +
-                                            instance.playTimeSeconds / 60 +
-                                            " 分钟",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    SecondaryButton({
-                                        actions.run { actions.controller.openFolder(instance.id) }
-                                    }) {
-                                        Icon(
-                                            Icons.Outlined.FolderOpen,
-                                            null,
-                                            Modifier.size(15.dp),
-                                        )
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("打开游戏目录", fontSize = 12.sp)
-                                    }
-                                }
-                                SettingsSection("Java 与内存", "数值 0 或空路径表示使用全局设置。") {
+                                CompactSettingsSection("Java 与内存", "数值 0 或空路径表示使用全局设置。") {
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         verticalAlignment = Alignment.Bottom,
@@ -598,7 +528,7 @@ fun ColumnScope.InstanceDetailsPage(
                                         )
                                     }
                                 }
-                                SettingsSection("游戏窗口") {
+                                CompactSettingsSection("游戏窗口") {
                                     SimpleDropdown(
                                         draft.windowMode,
                                         listOf(
@@ -623,6 +553,93 @@ fun ColumnScope.InstanceDetailsPage(
                                             Modifier.weight(1f),
                                             "0 = 继承全局",
                                         )
+                                    }
+                                }
+                                CompactSettingsSection("版本隔离", "决定此版本使用的存档、模组与配置目录。") {
+                                    IsolationInfoRow(
+                                        instance,
+                                        actions.controller.store.isolated(instance),
+                                        !actions.controller.busy &&
+                                            instance.gameDirectoryId == null,
+                                        if (instance.gameDirectoryId != null) "外部目录保持原有布局。"
+                                        else "切换前先预览文件移动与冲突。",
+                                        { onSwitchIsolation(instance) },
+                                    )
+                                    SimpleDropdown(
+                                        draft.isolation.name,
+                                        VersionIsolation.entries.map { it.name to it.title },
+                                        {
+                                            draft =
+                                                draft.copy(isolation = VersionIsolation.valueOf(it))
+                                        },
+                                    )
+                                    Text(
+                                        "保存后使用：" + actions.controller.store.gamePath(draft),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        "切换设置会改变使用目录，现有文件保留在原位置。",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                CompactSettingsSection("基本信息") {
+                                    CompactTextField(
+                                        draft.name,
+                                        { draft = draft.copy(name = it.take(80)) },
+                                        Modifier.fillMaxWidth(),
+                                        label = "实例名称",
+                                    )
+                                    OutlinedTextField(
+                                        draft.notes,
+                                        { draft = draft.copy(notes = it.take(2000)) },
+                                        Modifier.fillMaxWidth(),
+                                        label = { Text("版本备注") },
+                                        minLines = 2,
+                                        maxLines = 4,
+                                    )
+                                }
+                                CompactSettingsSection("图标", "默认跟随原版或加载器；整合包自带图标优先，也可以手动替换。") {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        InstanceArtwork(instance, actions, Modifier.size(40.dp))
+                                        SecondaryButton(
+                                            { editingIcon = true },
+                                            enabled = !actions.controller.busy,
+                                        ) {
+                                            Text("更换实例图标…")
+                                        }
+                                    }
+                                }
+                                CompactSettingsSection("版本信息") {
+                                    SettingRow("Minecraft", instance.gameVersion) {
+                                        Tag(instance.loader.title)
+                                    }
+                                    SettingRow("包来源", packSourceOf(instance)) {
+                                        Text(instance.versionId, fontSize = 12.sp)
+                                    }
+                                    Text(
+                                        "创建于 " +
+                                            instance.createdAt.take(10) +
+                                            " · 游玩 " +
+                                            instance.playTimeSeconds / 60 +
+                                            " 分钟",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    SecondaryButton({
+                                        actions.run { actions.controller.openFolder(instance.id) }
+                                    }) {
+                                        Icon(
+                                            Icons.Outlined.FolderOpen,
+                                            null,
+                                            Modifier.size(15.dp),
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("打开游戏目录", fontSize = 12.sp)
                                     }
                                 }
                                 if (state.data.settings.pages.showAdvancedLaunchOptions)
@@ -735,7 +752,7 @@ fun ColumnScope.InstanceDetailsPage(
             instance,
             actions,
             { exportingMrpack = false },
-            { navigate(Page.Downloads) },
+            { actions.taskQueued() },
         )
 }
 
@@ -896,7 +913,7 @@ private fun ColumnScope.InstanceInstallSections(
                     selection.loaderVersion,
                 )
         }
-        navigate(Page.Downloads)
+        actions.taskQueued()
     }
     val requestChange: (ComponentSelection, Boolean) -> Unit = { selection, restore ->
         actions.run {
@@ -944,7 +961,7 @@ private fun ColumnScope.InstanceInstallSections(
             SecondaryButton(
                 {
                     actions.run { actions.controller.repair(instance.id) }
-                    navigate(Page.Downloads)
+                    actions.taskQueued()
                 },
                 enabled = !actions.controller.busy,
             ) {

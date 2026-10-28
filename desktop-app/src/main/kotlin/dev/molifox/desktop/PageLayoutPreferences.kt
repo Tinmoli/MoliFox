@@ -16,7 +16,7 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
     var page by remember { mutableIntStateOf(0) }
     val options = settings.pages
     SecondaryTabRow(page, containerColor = MaterialTheme.colorScheme.surface) {
-        listOf("开始页", "版本库", "下载中心", "任务与日志", "启动设置").forEachIndexed { index, title ->
+        listOf("开始页", "版本库", "下载中心", "运行日志", "启动设置").forEachIndexed { index, title ->
             Tab(page == index, { page = index }, text = { Text(title) })
         }
     }
@@ -153,23 +153,7 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                 }
             }
         3 ->
-            SettingsSection("任务与日志", contentGap = 0.dp) {
-                SettingRow("默认页签") {
-                    SimpleDropdown(
-                        options.logs.defaultTab,
-                        listOf("tasks" to "下载任务", "logs" to "运行日志"),
-                        { value ->
-                            apply {
-                                it.copy(
-                                    pages =
-                                        it.pages.copy(logs = it.pages.logs.copy(defaultTab = value))
-                                )
-                            }
-                        },
-                        Modifier.width(170.dp),
-                    )
-                }
-                SettingDivider()
+            SettingsSection("运行日志", contentGap = 0.dp) {
                 PreferenceSwitch("日志自动滚动", "新日志出现时自动跟随到末尾", options.logs.autoScroll) { value ->
                     apply {
                         it.copy(

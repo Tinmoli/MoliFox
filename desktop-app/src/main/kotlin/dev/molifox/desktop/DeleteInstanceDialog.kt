@@ -55,7 +55,7 @@ fun DeleteInstanceDialog(
     val windowInfo = LocalWindowInfo.current
     var busy by remember(instance.id) { mutableStateOf(false) }
     var error by remember(instance.id) { mutableStateOf<String?>(null) }
-    val running = liveState.runningInstanceId == instance.id
+    val running = liveState.runningGames.any { it.instanceId == instance.id }
     // 只做展示：解析失败或没有可删目录时由核心给出明确的中文失败原因或只清记录。
     val targets = remember(instance.id) { actions.controller.deletionTargets(instance.id) }
     val separate =

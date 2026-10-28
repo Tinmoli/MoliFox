@@ -21,6 +21,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -182,7 +184,7 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
         )
     val generalCards = generalSettingCards(actions, writer, settings)
     val downloadCards = downloadSettingCards(actions, writer, settings)
-    val aboutCards = aboutSettingCards()
+    val aboutCards = aboutSettingCards(actions)
     val searchCards = gameCards + javaCards + generalCards + downloadCards + aboutCards
     // 搜索框位于右上角；右侧留出与滚动列一致的 12dp，
     // 否则会比下面白卡的右边缘多探出一截。
@@ -335,6 +337,7 @@ private fun SettingTextArea(
     hint: String? = null,
 ) {
     val live = rememberLiveTextDraft(value, onCommit)
+    val textFocus = remember { FocusRequester() }
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -356,16 +359,22 @@ private fun SettingTextArea(
         if (label.isNotBlank()) Text(label, color = colors.onSurfaceVariant, fontSize = 11.sp)
         Box(
             Modifier.fillMaxWidth()
-                .heightIn(min = 72.dp)
+                .heightIn(min = 42.dp)
                 .clip(RoundedCornerShape(Metrics.innerRadius))
                 .background(fill)
                 .border(1.dp, border, RoundedCornerShape(Metrics.innerRadius))
+                .clickable(interactionSource = interaction, indication = null) {
+                    textFocus.requestFocus()
+                }
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
             BasicTextField(
                 live.text,
                 live.onChange,
-                Modifier.fillMaxWidth().semantics { contentDescription = label },
+                Modifier.fillMaxWidth()
+                    .heightIn(min = 26.dp, max = 150.dp)
+                    .focusRequester(textFocus)
+                    .semantics { contentDescription = label },
                 textStyle =
                     MaterialTheme.typography.bodyMedium.copy(
                         color = colors.onSurface,
@@ -373,6 +382,8 @@ private fun SettingTextArea(
                     ),
                 cursorBrush = SolidColor(colors.primary),
                 interactionSource = interaction,
+                minLines = 1,
+                maxLines = 6,
             )
         }
         val message = live.error ?: hint
@@ -385,7 +396,7 @@ private fun SettingTextArea(
     }
 }
 
-/** 全局游戏设置：内存、游戏窗口、高级参数、游戏目录、版本隔离与启动器文件。 */
+/** 全局游戏设置：内存、游戏窗口、高级参数、游戏目录与版本隔离。 */
 @Composable
 private fun gameSettingCards(
     state: LauncherState,
@@ -630,26 +641,6 @@ private fun gameSettingCards(
             ),
         )
     )
-    cards.add(
-        SettingCard(
-            "启动器文件",
-            "启动器运行数据、日志与缓存都保存在这个目录。",
-            listOf(
-                settingField("数据目录") {
-                    MutedText(actions.controller.store.dataDirectory.toString())
-                    SecondaryButton({
-                        actions.run {
-                            actions.controller.platform.openFolder(
-                                actions.controller.store.dataDirectory
-                            )
-                        }
-                    }) {
-                        Text("打开数据目录")
-                    }
-                }
-            ),
-        )
-    )
     return cards
 }
 
@@ -762,7 +753,7 @@ private fun javaSettingCards(
                             SecondaryButton(
                                 {
                                     actions.run { actions.controller.installJava(version) }
-                                    navigate(Page.Downloads)
+                                    actions.taskQueued()
                                 },
                                 enabled = !actions.controller.busy,
                             ) {
@@ -784,33 +775,18 @@ private fun generalSettingCards(
 ): List<SettingCard> =
     listOf(
         SettingCard(
-            "更新",
-            "检查启动器新版本；更新包需手动下载安装。",
+            "启动器更新",
+            "从茉狐官方 GitHub Releases 检查正式版本。",
             listOf(
-                settingRow("当前版本", LAUNCHER_VERSION) {
-                    SecondaryButton(
-                        { actions.controller.checkForUpdates(true) },
-                        enabled = !actions.controller.busy,
-                    ) {
-                        Text("检查更新")
-                    }
+                settingControl("GitHub Releases") {
+                    val state by actions.controller.state.collectAsState()
+                    LauncherUpdatePanel(state.update, actions)
                 },
-                settingRow("启动时自动检查更新", "需要先配置下方更新清单地址") {
+                settingRow("启动时自动检查更新", "检查过程中可以正常使用启动器") {
                     CompactSwitch(
                         settings.autoCheckUpdates,
-                        { value -> writer.commit { it.copy(autoCheckUpdates = value) } },
+                        { enabled -> writer.commit { it.copy(autoCheckUpdates = enabled) } },
                     )
-                },
-                settingField(
-                    "更新清单地址",
-                    "HTTPS JSON；留空表示未配置更新源，检查更新会如实提示。",
-                ) {
-                    LiveTextField(
-                        settings.updateManifestUrl,
-                        { value -> applySetting(actions) { it.copy(updateManifestUrl = value) } },
-                        placeholder = "https://example.com/molifox.json",
-                    )
-                    MutedText("清单格式：{\"version\":\"x.y.z\",\"notes\":\"更新说明\"}。")
                 },
             ),
         ),
@@ -882,7 +858,7 @@ private fun downloadSettingCards(
                         Modifier.width(132.dp),
                     )
                 },
-                settingNote("加载器资源使用各自官方服务。下载任务可在「日志」取消。"),
+                settingNote("加载器资源使用各自官方服务。下载任务可从右下角进入任务中心取消。"),
             ),
         )
     )
@@ -984,34 +960,12 @@ private fun downloadSettingCards(
     return cards
 }
 
-/** 关于：品牌信息与正版登录说明。 */
+/** 关于页提供项目入口、运行信息与随程序分发的许可文本。 */
 @Composable
-private fun aboutSettingCards(): List<SettingCard> =
+private fun aboutSettingCards(actions: UiActions): List<SettingCard> =
     listOf(
         SettingCard(
-            "MoliFox " + LAUNCHER_VERSION,
-            "",
-            listOf(
-                settingControl("版本与平台") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FoxMark(Modifier.size(42.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                "Minecraft Java Edition Launcher",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            MutedText("Kotlin · Compose Multiplatform · Windows / Linux")
-                        }
-                    }
-                },
-                settingNote("独立实现的桌面启动器。参考成熟启动器的操作习惯与 Material 3 设计体系。"),
-                settingNote("Minecraft 是 Mojang 的商标。本项目与 Mojang、Microsoft 没有关联。"),
-            ),
-        ),
-        SettingCard(
-            "正版登录",
-            "",
-            listOf(settingNote("Microsoft Client ID 已内置。Mojang 应用访问申请已获批，正版登录全流程仍待实际验证。")),
-        ),
+            "关于茉狐",
+            blocks = listOf(settingControl("MoliFox") { LauncherAboutPanel(actions) }),
+        )
     )

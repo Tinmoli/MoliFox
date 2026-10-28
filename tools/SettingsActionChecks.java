@@ -336,9 +336,7 @@ final class SettingsActionChecks {
         expect(root, "pages.downloads.showAuthors", "false");
         toggleRow(robot, window, "显示简介");
         expect(root, "pages.downloads.showDescriptions", "false");
-        UiSmoke.click(robot, "任务与日志");
-        pick(robot, "下载任务", "运行日志");
-        expect(root, "pages.logs.defaultTab", "logs");
+        UiSmoke.click(robot, "运行日志");
         toggleRow(robot, window, "日志自动滚动");
         expect(root, "pages.logs.autoScroll", "false");
         UiSmoke.setSlider(robot, "日志字号滑块", .5f);

@@ -159,6 +159,12 @@ fun bootstrapPayloadFiles(): List<File> =
             if (name != null && name in bootstrapPayloadModules) artifact.file else null
         }
 
+tasks.processResources {
+    from(rootProject.files("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
+        into("META-INF/molifox")
+    }
+}
+
 tasks.register<Jar>("portableJar") {
     group = "distribution"
     description =
@@ -192,7 +198,7 @@ tasks.register<Jar>("portableJar") {
     }
     // 依赖清单固定落在 /molifox-runtime.json，引导程序按这个路径读取。
     from(runtimeManifestFile) { rename { "molifox-runtime.json" } }
-    from(listOf(rootProject.file("LICENSE"), rootProject.file("THIRD_PARTY.md"))) {
+    from(rootProject.files("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
         into("META-INF/molifox")
     }
     from(rootProject.file("launcher-bootstrap/native/miniz/LICENSE")) {
@@ -425,6 +431,11 @@ tasks.register("verifyDesktopPackages") {
             )
         for ((platform, file) in platforms) {
             ZipFile(file).use { zip ->
+                for (notice in listOf("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
+                    check(zip.getEntry("META-INF/molifox/$notice") != null) {
+                        "$platform 包缺少许可声明 $notice"
+                    }
+                }
                 // 运行时依赖不再内嵌；jar 里只留清单。
                 val embedded =
                     zip.entries().asSequence().filter {
@@ -488,6 +499,7 @@ java {
 
 dependencies {
     implementation(project(":launcher-core"))
+    implementation("net.java.dev.jna:jna-platform:5.17.0")
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
     implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
@@ -560,6 +572,9 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                     rootProject.file("tools/LogActionChecks.java").absolutePath,
                     rootProject.file("tools/MicrosoftActionChecks.java").absolutePath,
                     rootProject.file("tools/TestWindowFocus.java").absolutePath,
+                    rootProject.file("tools/NativeDialogActions.java").absolutePath,
+                    rootProject.file("tools/RefinementActions.java").absolutePath,
+                    rootProject.file("tools/PackDragChecks.java").absolutePath,
                 ) == 0
             ) {
                 "$probe compilation failed"
@@ -583,6 +598,7 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
                         File(testDirectory, "screenshots/MoliFox-home.png").absolutePath,
                         when (name) {
                             "microsoftActionsSmoke" -> "actionsMicrosoft"
+                            "refinementSmoke" -> "refinement"
                             "windowActionsSmoke" -> "actionsWindow"
                             "logActionsSmoke" -> "actionsLogs"
                             "packActionsSmoke" -> "actionsPacks"
@@ -606,6 +622,7 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
     }
 
 val uiSmoke = registerGuiSmoke("uiSmoke", "UiSmoke", false)
+val refinementSmoke = registerGuiSmoke("refinementSmoke", "UiSmoke", false)
 val reviewSmoke = registerGuiSmoke("reviewSmoke", "UiSmoke", false)
 val skinSmoke = registerGuiSmoke("skinSmoke", "UiSmoke", false)
 val storageUiSmoke = registerGuiSmoke("storageUiSmoke", "UiSmoke", false)
@@ -654,3 +671,34 @@ nativeSmoke.configure {
 }
 
 nativeSmoke.configure { mustRunAfter(uiSmoke) }
+
+tasks.register<JavaExec>("nativePickerSmoke") {
+    group = "verification"
+    dependsOn(tasks.classes)
+    val root =
+        rootProject.layout.projectDirectory.dir(".work/tests/desktop-app-nativePickerSmoke").asFile
+    classpath = files(File(root, "classes"), sourceSets.main.get().runtimeClasspath)
+    mainClass.set("NativePickerSmoke")
+    timeout.set(Duration.ofMinutes(3))
+    doFirst {
+        check(System.getProperty("os.name").startsWith("Windows"))
+        val classes = File(root, "classes").apply { mkdirs() }
+        val compiler = javax.tools.ToolProvider.getSystemJavaCompiler() ?: error("需要 JDK")
+        check(
+            compiler.run(
+                null,
+                null,
+                null,
+                "-encoding",
+                "UTF-8",
+                "-cp",
+                sourceSets.main.get().runtimeClasspath.asPath,
+                "-d",
+                classes.absolutePath,
+                rootProject.file("tools/NativePickerSmoke.java").absolutePath,
+                rootProject.file("tools/NativeDialogActions.java").absolutePath,
+            ) == 0
+        )
+        setArgs(listOf(File(root, "fixtures").absolutePath))
+    }
+}

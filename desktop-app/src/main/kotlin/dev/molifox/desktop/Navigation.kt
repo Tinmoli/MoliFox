@@ -85,7 +85,6 @@ fun AppHeader(
     val headerColor =
         if (state.data.settings.titlebarTransparent) colors.surface.copy(alpha = 0f)
         else colors.surface
-    val runningJobs = state.jobs.count { it.status in listOf(JobStatus.Queued, JobStatus.Running) }
     Column(Modifier.fillMaxWidth().background(headerColor)) {
         Row(
             Modifier.fillMaxWidth()
@@ -132,9 +131,7 @@ fun AppHeader(
                         TopNavItem(
                             page = item,
                             selected = navigation.activeTab == item,
-                            badge =
-                                if (item == Page.Settings && runningJobs > 0) "$runningJobs"
-                                else null,
+                            badge = null,
                             onClick = { navigation.navigate(item) },
                         )
                     }

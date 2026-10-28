@@ -325,29 +325,15 @@ private fun ThemePreferences(
             Tag((settings.uiScale * 100).toInt().toString() + "%")
         }
         SettingDivider()
-        // 圆角偏好目前没有后端字段：只展示规格里的三档，不放假开关。
-        SettingRow("界面圆角", "规格固定为 4 / 6 / 10 三档，暂不提供自定义") {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                listOf(Metrics.innerRadius, Metrics.cardRadius, Metrics.dialogRadius).forEach {
-                    radius ->
-                    Box(
-                        Modifier.size(width = 22.dp, height = 16.dp)
-                            .clip(RoundedCornerShape(radius))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = .12f))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.primary,
-                                RoundedCornerShape(radius),
-                            )
-                    )
-                }
-                Spacer(Modifier.width(2.dp))
-                Tag("固定")
-            }
+        PreferenceSlider(
+            "界面圆角",
+            settings.cornerRadiusDp.toFloat(),
+            0f..24f,
+            { "${it.toInt()} dp" },
+        ) { value ->
+            apply { it.copy(cornerRadiusDp = value.toInt()) }
         }
+        MutedText("0 为直角；卡片、按钮、输入框与对话框按统一比例实时调整。")
     }
     SettingsSection("界面行为", "标题栏与动画效果；窗口透明需要重启启动器。", contentGap = 0.dp) {
         SettingRow("标题栏半透明", "让背景透过顶部标题栏，无需开启玻璃效果") {
@@ -475,7 +461,7 @@ private fun ThemePreferences(
                 listOf("crop" to "填满并裁切", "fit" to "完整显示", "stretch" to "拉伸铺满"),
                 { value -> apply { it.copy(backgroundFit = value) } },
                 Modifier.width(170.dp),
-                enabled = backgroundOn,
+                enabled = true,
             )
         }
         SettingDivider()
@@ -495,10 +481,11 @@ private fun ThemePreferences(
                 ),
                 { value -> apply { it.copy(backgroundAlignment = value) } },
                 Modifier.width(170.dp),
-                enabled = backgroundOn && settings.backgroundFit != "stretch",
+                enabled = settings.backgroundFit != "stretch",
             )
         }
-        if (!backgroundOn) MutedText("未选择背景图时使用纯色背景。", Modifier.padding(top = 4.dp))
+        if (!backgroundOn) MutedText("可以先设置图片适配和位置，选择背景图片后生效。", Modifier.padding(top = 4.dp))
+        if (settings.backgroundFit == "stretch") MutedText("拉伸铺满时没有空白或裁切区域；切换为填满或完整显示后可调整位置。")
     }
     // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行（C-11）。
     if (removing)

@@ -23,7 +23,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.accessibility.Accessible;
 import javax.accessibility.AccessibleContext;
 import javax.imageio.ImageIO;
-import javax.swing.JFileChooser;
 
 /** Captures only the MoliFox window in this JVM, using an isolated test data directory. */
 public final class UiSmoke {
@@ -146,16 +145,6 @@ public final class UiSmoke {
                         + ")");
     }
 
-    private static JFileChooser findChooser(Component component) {
-        if (component instanceof JFileChooser) return (JFileChooser) component;
-        if (component instanceof Container)
-            for (Component child : ((Container) component).getComponents()) {
-                JFileChooser chooser = findChooser(child);
-                if (chooser != null) return chooser;
-            }
-        return null;
-    }
-
     static void chooseDirectory(File selection) throws Exception {
         choosePaths(List.of(selection));
     }
@@ -168,55 +157,12 @@ public final class UiSmoke {
         if (!requested.startsWith(ownedRoot))
             throw new IllegalArgumentException(
                     "Picker fixture must be inside its isolated test directory");
-        Robot robot = new Robot();
-        robot.setAutoDelay(65);
-        waitFor("快捷位置");
-        click(robot, "MoliFox 数据目录");
-        click(robot, "上一级");
-        robot.delay(250);
-        Path parent = requested.equals(ownedRoot) ? ownedRoot : requested.getParent();
-        for (Path part : ownedRoot.relativize(parent)) {
-            if (part.toString().isEmpty()) continue;
-            var node = waitFor(part.toString());
-            ensureForeground();
-            AtomicReference<Rectangle> located = new AtomicReference<>();
-            EventQueue.invokeAndWait(() -> located.set(componentBounds(node)));
-            Rectangle bounds = located.get();
-            if (bounds == null)
-                throw new IllegalStateException("Picker directory is not visible: " + part);
-            robot.mouseMove(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-            for (int i = 0; i < 2; i++) {
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                robot.delay(60);
-            }
-            robot.delay(250);
-        }
-        if (hasControlStartingWith("文件名")) enterText("文件名", requested.getFileName().toString());
-        else if (!requested.equals(ownedRoot)) {
-            String name = requested.getFileName().toString();
-            for (int attempt = 0; attempt < 20 && !hasControlStartingWith(name); attempt++) {
-                var anchor = waitFor("上一级");
-                AtomicReference<Rectangle> located = new AtomicReference<>();
-                EventQueue.invokeAndWait(() -> located.set(componentBounds(anchor)));
-                Rectangle bounds = located.get();
-                if (bounds == null)
-                    throw new IllegalStateException("Picker navigation has no bounds");
-                robot.mouseMove(bounds.x + 300, bounds.y + 150);
-                robot.mouseWheel(3);
-                robot.delay(220);
-            }
-            click(robot, name);
-        }
-        for (File additional : selections.subList(1, selections.size())) {
-            Path path = additional.toPath().toAbsolutePath().normalize();
-            if (!path.startsWith(ownedRoot) || !path.getParent().equals(requested.getParent()))
+        for (File file : selections) {
+            if (!file.toPath().toAbsolutePath().normalize().startsWith(ownedRoot))
                 throw new IllegalArgumentException(
-                        "Additional picker fixtures must share the owned directory");
-            click(robot, path.getFileName().toString());
+                        "Picker fixture must be inside its test directory");
         }
-        click(robot, "选择");
-        waitUntilGone("快捷位置");
+        NativeDialogActions.select(selections);
     }
 
     private static AccessibleContext find(AccessibleContext context, String name, int depth) {
@@ -618,7 +564,7 @@ public final class UiSmoke {
     }
 
     /** 输入框名字现在直接落在可编辑节点上；探测时优先按名字找可编辑节点， 如果名字仍被静态文本占住（旧布局或无标签控件），退回页面中唯一的可编辑节点。 */
-    private static AccessibleContext waitForEditable(String fieldName) throws Exception {
+    static AccessibleContext waitForEditable(String fieldName) throws Exception {
         for (int attempt = 0; attempt < 80; attempt++) {
             AtomicReference<AccessibleContext> chosen = new AtomicReference<>();
             AtomicReference<String> fallback = new AtomicReference<>("");
@@ -1334,9 +1280,8 @@ public final class UiSmoke {
         click(robot, "版本列表");
         click(robot, "选择推荐");
         click(robot, "下载", false);
-        waitFor("快捷位置");
-        click(robot, "选择");
-        waitUntilGone("快捷位置");
+        chooseDirectory(
+                root.resolve(".minecraft/instances/" + MAIN_INSTANCE_ID + "/mods").toFile());
         waitFor("开始安装");
         waitFor("已匹配");
         if (!waitFor("开始安装").getAccessibleComponent().isEnabled())
@@ -1860,6 +1805,7 @@ public final class UiSmoke {
         ImageIO.write(background, "png", backgroundFixture.toFile());
         // 预置两个内部隔离实例，让存档/移动/隔离预览能操作真实文件而不是只读的外部实例。
         seedInternalInstances(testRoot);
+        if (args.length > 1 && args[1].equals("refinement")) RefinementActions.seed(testRoot);
         if (args.length > 1
                 && (args[1].equals("review")
                         || args[1].equals("skins")
@@ -1936,7 +1882,7 @@ public final class UiSmoke {
                 new Thread(
                         () -> {
                             try {
-                                Class.forName("dev.molifox.bootstrap.BootstrapMainKt")
+                                Class.forName("dev.molifox.desktop.MainKt")
                                         .getMethod("main")
                                         .invoke(null);
                             } catch (Throwable failure) {
@@ -2246,12 +2192,10 @@ public final class UiSmoke {
                 click(robot, "关闭", false);
                 click(robot, "设置");
                 click(robot, "日志");
-                waitFor("运行日志");
-                click(robot, "运行日志");
                 waitFor("自动滚动");
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-logs.png"), true);
                 click(robot, "关于 MoliFox");
-                waitFor("MoliFox 0.3.0");
+                waitFor("MoliFox · 茉狐");
                 click(robot, "外观");
                 waitFor("界面主题");
                 click(robot, "深色");
@@ -2402,6 +2346,8 @@ public final class UiSmoke {
                         });
                 System.exit(1);
             }
+        } else if (args.length > 1 && args[1].equals("refinement")) {
+            RefinementActions.run(robot, target, output, testRoot);
         } else if (args.length > 1 && args[1].equals("review")) {
             reviewFlow(robot, target, output, testRoot);
         } else if (args.length > 1 && args[1].equals("skins")) {

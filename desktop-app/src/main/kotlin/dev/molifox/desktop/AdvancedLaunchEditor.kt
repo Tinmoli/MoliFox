@@ -37,7 +37,8 @@ fun AdvancedLaunchEditor(
         Modifier.fillMaxWidth(),
         label = { Text("附加游戏参数") },
         placeholder = { Text("例如 --server example.org --port 25565") },
-        minLines = 2,
+        minLines = 1,
+        maxLines = 4,
     )
     OutlinedTextField(
         environmentText,
@@ -49,7 +50,8 @@ fun AdvancedLaunchEditor(
         Modifier.fillMaxWidth(),
         label = { Text("游戏环境变量") },
         placeholder = { Text("每行一个 NAME=value") },
-        minLines = 3,
+        minLines = 1,
+        maxLines = 5,
     )
     MutedText("参数中含空格的值请加引号。环境变量仅传给本次游戏；等号后的空格按原样保留。")
     OutlinedTextField(

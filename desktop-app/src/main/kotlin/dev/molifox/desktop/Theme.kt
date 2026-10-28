@@ -50,6 +50,7 @@ val LocalAnimationsEnabled = staticCompositionLocalOf { true }
 
 /** 「减少动态效果」开关：开启后所有过渡（悬停淡入、按下缩放、页面切换）直接跳到终值。 由外观页的「过渡动画」开关派生，默认 false。 */
 val LocalReducedMotion = staticCompositionLocalOf { false }
+val LocalCornerRadius = staticCompositionLocalOf { 6.dp }
 
 /** 统一过渡时长（毫秒）。页面与通用件复用同一组令牌，避免各处写 120/180/260。 */
 object Motion {
@@ -107,6 +108,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
             else -> settings.darkTheme
         }
     val primary = resolveAccent(settings.accentColor, dark)
+    val cornerRadius = settings.cornerRadiusDp.coerceIn(0, 24)
     val font = remember(settings.fontChoice) { launcherFontFamily(settings.fontChoice) }
     val surfaceAlpha = if (settings.glassEnabled) settings.surfaceOpacity.coerceIn(.6f, 1f) else 1f
     // 背景与卡片改为平面色，主题色只出现在选中态、主按钮、开关、滑块与进度上。
@@ -164,14 +166,13 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
     val density = LocalDensity.current
     MaterialTheme(
         colorScheme = colors,
-        // 圆角只有 4 / 6 / 10 三档，Material 的五个槽位向这三档对齐。
         shapes =
             Shapes(
-                extraSmall = RoundedCornerShape(4.dp),
-                small = RoundedCornerShape(4.dp),
-                medium = RoundedCornerShape(6.dp),
-                large = RoundedCornerShape(10.dp),
-                extraLarge = RoundedCornerShape(10.dp),
+                extraSmall = RoundedCornerShape((cornerRadius * 2f / 3).dp),
+                small = RoundedCornerShape((cornerRadius * 2f / 3).dp),
+                medium = RoundedCornerShape(cornerRadius.dp),
+                large = RoundedCornerShape((cornerRadius * 5f / 3).dp),
+                extraLarge = RoundedCornerShape((cornerRadius * 5f / 3).dp),
             ),
         // 字号阶梯只有 6 档：18 / 16 / 14 / 13 / 12 / 11，行高按 1.35–1.45 倍给。
         typography =
@@ -256,6 +257,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
             LocalContentColor provides colors.onSurface,
             LocalAnimationsEnabled provides settings.animationsEnabled,
             LocalReducedMotion provides !settings.animationsEnabled,
+            LocalCornerRadius provides settings.cornerRadiusDp.coerceIn(0, 24).dp,
             LocalDensity provides
                 Density(
                     density.density * settings.uiScale.coerceIn(.85f, 1.2f),
@@ -508,9 +510,15 @@ object Metrics {
     val pageHorizontal = 20.dp
     val pageVertical = 18.dp
     val cardPadding = 16.dp
-    val cardRadius = 6.dp
-    val innerRadius = 4.dp
-    val dialogRadius = 10.dp
+    val cardRadius: Dp
+        @Composable get() = LocalCornerRadius.current
+
+    val innerRadius: Dp
+        @Composable get() = LocalCornerRadius.current * (2f / 3)
+
+    val dialogRadius: Dp
+        @Composable get() = LocalCornerRadius.current * (5f / 3)
+
     val cardGap = 12.dp
     val sectionGap = 12.dp
     val rowHeight = 44.dp

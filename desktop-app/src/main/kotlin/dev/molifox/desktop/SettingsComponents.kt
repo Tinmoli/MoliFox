@@ -263,6 +263,19 @@ fun SettingsGroupTitle(title: String, topPadding: Dp = 18.dp) {
  * 设置卡片：白底、圆角 6、1dp `outlineVariant@.5` 边、无阴影、内边距 16。 标题行 14sp SemiBold（可带 12sp 说明）+ 1dp
  * 分隔线；标题区使用与内容一致的卡片背景。 `action` 是标题行右侧插槽（例如外观页的「已启用」标记），垂直居中。
  */
+val LocalCompactSettings = staticCompositionLocalOf { false }
+
+@Composable
+fun CompactSettingsSection(
+    title: String,
+    detail: String = "",
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    CompositionLocalProvider(LocalCompactSettings provides true) {
+        SettingsSection(title, detail, contentGap = 6.dp, content = content)
+    }
+}
+
 @Composable
 fun SettingsSection(
     title: String,
@@ -305,7 +318,7 @@ fun SettingsSection(
             Column(
                 Modifier.padding(
                     horizontal = Metrics.cardPadding,
-                    vertical = 12.dp,
+                    vertical = if (LocalCompactSettings.current) 8.dp else 12.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(contentGap),
                 content = content,
@@ -320,7 +333,9 @@ fun SettingRow(title: String, detail: String = "", content: @Composable () -> Un
     Row(
         Modifier.fillMaxWidth()
             .defaultMinSize(
-                minHeight = if (detail.isBlank()) Metrics.rowHeight else Metrics.rowHeightWithDetail
+                minHeight =
+                    if (LocalCompactSettings.current) 36.dp
+                    else if (detail.isBlank()) Metrics.rowHeight else Metrics.rowHeightWithDetail
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -597,12 +612,16 @@ fun CompactSlider(
 }
 
 @Composable
-fun ScrollColumn(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun ScrollColumn(
+    modifier: Modifier = Modifier,
+    gap: androidx.compose.ui.unit.Dp = Metrics.sectionGap,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val scroll = rememberScrollState()
     Box(modifier) {
         Column(
             Modifier.fillMaxSize().verticalScroll(scroll).padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
+            verticalArrangement = Arrangement.spacedBy(gap),
             content = content,
         )
         VerticalScrollbar(

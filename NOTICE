@@ -1,0 +1,25 @@
+MoliFox (茉狐) Minecraft Launcher
+Copyright (C) 2026 MoliFox contributors
+https://github.com/Tinmoli/MoliFox
+
+MoliFox is licensed under the GNU General Public License, version 3 only.
+The full license is in LICENSE. There is no warranty.
+
+Additional terms under GNU GPL version 3, section 7(b) and 7(c):
+
+1. Preserve the above copyright notice, this license notice, and these
+   additional terms in copies of the material and in appropriate legal
+   notices displayed by the work.
+2. Modified versions must be plainly marked as modified and must not be
+   misrepresented as the original MoliFox release. Distinguish modified
+   versions with a visible name or version suffix in the interface and
+   distribution filename. This does not restrict modification, redistribution,
+   or commercial use otherwise permitted by the GNU GPL version 3.
+
+These terms apply only to MoliFox's own material. Third-party components
+retain their own licenses; see THIRD_PARTY.md and the bundled notices.
+Minecraft is a trademark of Mojang. This project is not affiliated with
+Mojang or Microsoft.
+
+茉狐自身代码采用 GPLv3；分发时保留署名和许可声明，修改版须明确标识，
+不得冒充原版发布。完整条款以上述英文正文及 LICENSE 为准。

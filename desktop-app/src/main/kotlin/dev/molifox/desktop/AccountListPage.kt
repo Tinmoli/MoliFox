@@ -308,7 +308,7 @@ fun ColumnScope.AccountListPage(
                     actions.run { actions.controller.platform.openUrl(code.verificationUri) }
                 }
             }
-            MutedText("授权完成后会自动添加角色并切换为当前账户。服务错误可在任务与日志中查看。")
+            MutedText("授权完成后会自动添加角色并切换为当前账户。服务错误可在设置 → 日志中查看。")
         }
     }
 }

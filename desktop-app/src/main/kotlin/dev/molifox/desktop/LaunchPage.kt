@@ -85,7 +85,7 @@ fun ColumnScope.HomePage(
     // 启动进度只读真实的排队/运行任务，不凭空造一份「launching」状态。
     val launchJob =
         state.jobs.firstOrNull { it.status == JobStatus.Running && it.title.startsWith("启动 ") }
-    val running = selected != null && state.runningInstanceId == selected.id
+    val running = selected != null && state.runningGames.any { it.instanceId == selected.id }
     // 启动浮窗只在本页存活：remember 状态随页面切换一起释放，启动任务本身留在任务队列继续。
     val launchCard = remember { LaunchCardState() }
     val cardJob = state.jobs.firstOrNull { it.id == launchCard.jobId } ?: launchCard.lastJob
@@ -287,27 +287,6 @@ fun ColumnScope.HomePage(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            if (selected != null)
-                                SecondaryButton(
-                                    {
-                                        actions.run {
-                                            actions.controller.openFolder(selected.id)
-                                        }
-                                    },
-                                    enabled = !busy,
-                                    contentPadding =
-                                        PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) {
-                                    Icon(Icons.Outlined.FolderOpen, null, Modifier.size(15.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("打开目录", fontSize = 13.sp)
-                                }
-                            SecondaryButton(
-                                { actions.importExisting() },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                            ) {
-                                Text("选择目录", fontSize = 13.sp)
-                            }
                             if (selected != null)
                                 SecondaryButton(
                                     { onManage(selected.id) },
@@ -546,7 +525,7 @@ private fun LaunchActionButton(
             Text(
                 when {
                     progress != null -> "正在启动 " + (progress * 100).toInt() + "%"
-                    running -> "游戏运行中"
+                    running -> "再次启动"
                     else -> "启动游戏"
                 },
                 fontSize = 14.sp,

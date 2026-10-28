@@ -1,6 +1,6 @@
 # Third-party components and references
 
-MoliFox's application code and geometric artwork are provided under the MIT
+MoliFox's own application code and artwork are provided under the GNU GPLv3
 license in LICENSE. Dependencies retain their own licenses; their JARs include
 the upstream notices. Downloaded Java runtime notices remain in runtimes/*/legal.
 
@@ -41,7 +41,7 @@ assets, branding, or Java source files are included in the Kotlin application.
 
 PCL and PCL-CE were consulted for account, launch, version-management, download
 and navigation placement. Their source files, XAML, images, icons and branding
-are not included. Their licenses remain separate from MoliFox's MIT code.
+are not included. Their licenses remain separate from MoliFox's own code.
 
 Minecraft is a trademark of Mojang. MoliFox is an independent project and is not
 affiliated with Mojang or Microsoft. Minecraft game files are downloaded on

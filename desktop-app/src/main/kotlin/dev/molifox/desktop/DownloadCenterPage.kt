@@ -68,12 +68,12 @@ fun ColumnScope.DownloadCenterPage(
             if (LocalAnimationsEnabled.current)
                 Crossfade(kind, animationSpec = tween(150), label = "download-kind") { current ->
                     DownloadKindContent(current, state, actions, navigate, onKindChange) {
-                        navigate(Page.Downloads)
+                        actions.taskQueued()
                     }
                 }
             else
                 DownloadKindContent(kind, state, actions, navigate, onKindChange) {
-                    navigate(Page.Downloads)
+                    actions.taskQueued()
                 }
         }
     }

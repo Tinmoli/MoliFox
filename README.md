@@ -14,7 +14,9 @@
 2. 双击运行。启动器优先寻找合适的系统 Java；没有时会联网准备启动器所需的 Java 21。
 3. 在“开始”页添加微软账户或离线账户。
 4. 在“下载 → 原版”安装游戏，或在“实例”页选择已有游戏目录。
-5. 选择实例并启动。下载进度、运行输出和错误可在“设置 → 日志”查看。
+5. 选择实例并启动。有任务时右下角显示进度入口，点击打开任务中心；运行输出和错误在“设置 → 日志”查看。游戏运行时可以安装其他版本，也可以再次启动同一实例或另一个实例。
+
+整合包也可以直接把 `.mrpack` 或支持的整合包 `.zip` 拖入窗口，检查预览与可选内容后点击“开始导入”；原文件保留。
 
 ### Linux x64
 
@@ -25,7 +27,7 @@ chmod +x MoliFox-linux-x64.run
 ./MoliFox-linux-x64.run
 ```
 
-入口使用 `sha256sum` 校验文件；如果需要首次下载 Java，还需要 `curl` 或 `wget` 及 `tar`。不同发行版的图形依赖可能不同，当前没有完整的发行版兼容性承诺。
+入口使用 `sha256sum` 校验文件；如果需要首次下载 Java，还需要 `curl` 或 `wget` 及 `tar`。文件、目录与保存位置使用桌面系统窗口：GNOME/GTK 需要 `zenity`，KDE 优先 `kdialog`。不同发行版的图形依赖可能不同，当前没有完整的发行版兼容性承诺。
 
 ### 首次启动需要联网吗？
 
@@ -183,7 +185,7 @@ chmod +x gradlew
 | --- | --- |
 | `desktop-app/` | Compose 桌面界面、页面操作与桌面分发构建 |
 | `launcher-core/` | 实例、Java、安装与启动、账户、网络、内容和整合包 |
-| `launcher-bootstrap/` | 单文件入口、Java 准备、内置依赖校验与解出 |
+| `launcher-bootstrap/` | 单文件入口、Java 准备、依赖清单和首次联网下载校验 |
 | `tools/` | GUI 探针、打包检查和平台验证工具 |
 | `docs/` | 交接、参考研究、路线图、验证及清理记录 |
 
@@ -219,6 +221,6 @@ chmod +x gradlew
 
 ## 许可与参考
 
-项目源码采用 [MIT 许可证](LICENSE)。第三方依赖及其许可见 [THIRD_PARTY](THIRD_PARTY.md)；Minecraft、游戏资源与作者作品不因本项目的 MIT 许可而改变归属。
+项目自身源码采用 [GNU GPLv3](LICENSE)，并附加第 7(b)/(c) 节允许的保留署名及修改版明确区分条款，详见 [NOTICE](NOTICE)。第三方依赖及其许可见 [THIRD_PARTY](THIRD_PARTY.md)；Minecraft、游戏资源与作者作品保持各自归属。源代码、发布版本及问题反馈见 [Tinmoli/MoliFox](https://github.com/Tinmoli/MoliFox)。
 
 参考项目：[PCL](https://github.com/Meloong-Git/PCL)、[HMCL](https://github.com/HMCL-dev/HMCL)、[SJMCL](https://github.com/UNIkeEN/SJMCL)、[Prism Launcher](https://github.com/PrismLauncher/PrismLauncher)、[Modrinth App](https://github.com/modrinth/code)。参考用于理解布局、操作与格式，未复制其源码、图标、截图或宣传素材作为茉狐的产品资源。

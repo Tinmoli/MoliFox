@@ -43,6 +43,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -86,7 +87,8 @@ fun RecentPlayPanel(
     // 未选择版本时整页已经是「未选择版本」空态，这里不再画第二个空块。
     if (instance == null) return
     val controller = actions.controller
-    val usage = remember(controller) { RecentUsage(controller.store) }
+    val usage = remember(controller) { controller.store.recentUsage }
+    val liveState by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     var refreshToken by remember(instance.id) { mutableStateOf(0) }
@@ -95,7 +97,7 @@ fun RecentPlayPanel(
     // 「查看全部」在本页浮层里展开全部存档与服务器。
     var showAll by remember(instance.id) { mutableStateOf(false) }
     val data by
-        produceState(RecentPlayData(), instance.id, refreshToken) {
+        produceState(RecentPlayData(), instance.id, refreshToken, liveState.recentUsageRevision) {
             // 切实例时先清掉上一个实例的行，避免短暂显示别人的存档；同一实例刷新则保留旧行。
             if (value.instanceId != instance.id) value = RecentPlayData(instanceId = instance.id)
             value =
@@ -329,38 +331,80 @@ private fun ServerPlayRow(
     onCopyAddress: () -> Unit,
     onForget: () -> Unit,
 ) {
-    val motd = status?.motd.orEmpty().filter { it.text.isNotBlank() }
+    val motd = status?.motd.orEmpty().filter { it.text.isNotEmpty() }
     val motdText = if (motd.isEmpty()) null else rememberMotdText(motd)
-    PlayRowFrame(
-        leading = {
-            if (entry.icon != null)
-                Image(
-                    requireNotNull(entry.icon),
-                    entry.title + " 图标",
-                    Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
-                    filterQuality = FilterQuality.None,
-                )
-            else GrassBlockIcon(size = 32.dp)
-        },
-        title = entry.title,
-        subtitle = {
+    Row(
+        Modifier.fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .hoverHighlight(RoundedCornerShape(Metrics.innerRadius))
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (entry.icon != null)
+            Image(
+                requireNotNull(entry.icon),
+                entry.title + " 图标",
+                Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
+                filterQuality = FilterQuality.None,
+            )
+        else GrassBlockIcon(size = 32.dp)
+        Text(
+            entry.title,
+            Modifier.weight(.6f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(Modifier.weight(1.4f), contentAlignment = Alignment.Center) {
             if (motdText != null)
                 TooltipArea(
                     tooltip = { AddressTooltip(entry.subtitle) },
                     delayMillis = 400,
                 ) {
-                    PlaySubtitle(motdText, subtitleSize = 11.sp)
+                    Text(
+                        motdText,
+                        Modifier.fillMaxWidth(),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        minLines = 2,
+                        maxLines = 2,
+                        textAlign = TextAlign.Center,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            else PlaySubtitle(AnnotatedString(entry.subtitle))
-        },
-        timeLabel = timeLabel,
-        statusLabel =
-            when {
-                status != null -> status.players.toString() + "/" + status.maxPlayers
-                pinged -> "离线"
-                else -> null
-            },
-    ) {
+            else
+                Text(
+                    entry.subtitle,
+                    Modifier.fillMaxWidth(),
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val statusLabel =
+                when {
+                    status != null -> status.players.toString() + "/" + status.maxPlayers
+                    pinged -> "离线"
+                    else -> null
+                }
+            if (statusLabel != null)
+                Text(
+                    statusLabel,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            if (timeLabel.isNotBlank())
+                Text(
+                    timeLabel,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+        }
         PrimaryButton("开始游戏", enabled = enabled, onClick = onPlay)
         PlayRowMenu(
             firstLabel = "复制地址",
@@ -763,16 +807,23 @@ private fun loadRecentPlays(
     }
         .getOrNull()
         ?.let { directory -> runCatching { listServers(directory) } }
-    val servers = serversScan?.getOrDefault(emptyList()).orEmpty()
+    val savedServers = serversScan?.getOrDefault(emptyList()).orEmpty()
+    val recentServers =
+        usage
+            .recent(EntryKind.Server, instance.id, 100)
+            .filter { key ->
+                savedServers.none {
+                    sameServerAddress(parseServerAddress(it.ip), parseServerAddress(key))
+                }
+            }
+            .map { ServerEntry(it, it, null) }
+    val servers = savedServers + recentServers
     savesScan.onSuccess { entries ->
         usage.pruneMissing(
             EntryKind.World,
             instance.id,
             entries.filter { it.hasLevelDat }.map { it.name }.toSet(),
         )
-    }
-    serversScan?.onSuccess { entries ->
-        usage.pruneMissing(EntryKind.Server, instance.id, entries.map { it.ip }.toSet())
     }
     val worlds =
         saves

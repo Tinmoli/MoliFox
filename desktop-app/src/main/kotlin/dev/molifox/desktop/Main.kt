@@ -39,16 +39,39 @@ enum class Page(val title: String, val subtitle: String, val icon: ImageVector) 
     Instances("实例", "管理版本与游戏内容", Icons.Outlined.Widgets),
     Discover("下载", "安装游戏与发现资源", Icons.Outlined.Explore),
     Settings("设置", "游戏、外观、下载与日志", Icons.Outlined.Tune),
-    Downloads("日志", "查看下载进度与运行输出", Icons.Outlined.CloudDownload),
+    Downloads("日志", "运行输出与启动诊断", Icons.Outlined.Description),
 
     /** 账户列表是开始页的子页，不在顶部导航里显示，打开时顶部仍高亮「开始」。 */
     Accounts("账户列表", "添加、切换与删除游戏账户", Icons.Outlined.ManageAccounts),
 }
 
 class UiActions(val controller: LauncherController, val window: ComposeWindow) {
+    init {
+        PathPicker.owner = window
+    }
+
     val navigation = DesktopNavigationState()
     var pendingPack by mutableStateOf<PackPreview?>(null)
+    private var packPreviewLoading = false
     var launchPreview by mutableStateOf<LaunchPlan?>(null)
+    var taskCenterOpen by mutableStateOf(false)
+    var taskFilter by mutableStateOf("active")
+
+    fun taskQueued() {
+        taskFilter = "active"
+    }
+
+    fun showTasks() {
+        taskFilter =
+            if (
+                controller.state.value.jobs.any {
+                    it.status == JobStatus.Running || it.status == JobStatus.Queued
+                }
+            )
+                "active"
+            else "all"
+        taskCenterOpen = true
+    }
 
     fun previewLaunch(instanceId: String) = run {
         launchPreview = controller.previewLaunch(instanceId)
@@ -58,7 +81,7 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
         controller.perform(action)
     }
 
-    /** 所有路径选择统一走应用内的 Compose 选择器（[PathPicker]），返回结果中，空列表表示取消，结果一律是绝对路径。 */
+    /** 所有路径选择交给系统窗口；空列表表示取消。 */
     suspend fun choose(
         title: String,
         save: Boolean = false,
@@ -85,7 +108,24 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
     fun importPack() = run {
         choose("选择 Modrinth / MoliFox 整合包", extensions = listOf("mrpack", "zip"))
             .firstOrNull()
-            ?.let { pendingPack = controller.content.previewPack(it) }
+            ?.let { source -> withContext(Dispatchers.Swing) { previewPackFile(source) } }
+    }
+
+    fun previewPackFile(source: Path) {
+        if (packPreviewLoading || pendingPack != null) {
+            controller.store.notify("请先完成当前整合包预览")
+            return
+        }
+        packPreviewLoading = true
+        controller.store.notify("正在检查整合包…")
+        run {
+            try {
+                val preview = controller.content.previewPack(source)
+                withContext(Dispatchers.Swing) { pendingPack = preview }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Swing) { packPreviewLoading = false }
+            }
+        }
     }
 
     fun importExisting() = run {
@@ -179,6 +219,7 @@ fun main() {
             val gameRun = launcherState.gameRun
             LaunchedEffect(gameRun?.id, gameRun?.finished) {
                 val event = gameRun ?: return@LaunchedEffect
+                if (event.finished && launcherState.runningGames.isNotEmpty()) return@LaunchedEffect
                 when (launcherWindowAction(event, traySupported)) {
                     LauncherWindowAction.Keep -> Unit
                     LauncherWindowAction.Minimize -> windowState.isMinimized = true
@@ -247,6 +288,7 @@ fun main() {
                                 else MaterialTheme.colorScheme.background
                             )
                             .border(1.dp, MaterialTheme.colorScheme.outline)
+                            .packDropTarget(actions)
                     ) {
                         LauncherBackdrop(launcherState.data.settings)
                         Column(Modifier.fillMaxSize()) {
@@ -477,6 +519,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                 }
             }
         }
+        TaskProgressButton(state, actions, Modifier.align(Alignment.BottomEnd).padding(20.dp))
         state.toast?.let { message ->
             LaunchedEffect(message) {
                 delay(6500)
@@ -527,6 +570,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     actions.launchPreview?.let { plan ->
         LaunchPreviewDialog(plan) { actions.launchPreview = null }
     }
+    if (actions.taskCenterOpen) TaskCenterDialog(state, actions)
     copyingInstance?.let { instance ->
         CopyInstanceDialog(instance, actions) { copyingInstance = null }
     }
@@ -539,10 +583,10 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             actions,
             { verifyingInstance = null },
             {
-                // 修复沿用原有入口：走任务队列，进度在日志页。
+                // 修复走后台任务队列，进度从右下角任务入口查看。
                 actions.run { actions.controller.repair(instance.id) }
                 verifyingInstance = null
-                navigation.navigate(Page.Downloads)
+                actions.taskQueued()
             },
         )
     }
@@ -552,7 +596,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             archive,
             actions,
             { upgradingInstance = null },
-            { navigation.navigate(Page.Downloads) },
+            { actions.taskQueued() },
         )
     }
     switchingIsolation?.let { instance ->
@@ -560,7 +604,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             instance,
             actions,
             { switchingIsolation = null },
-            { navigation.navigate(Page.Downloads) },
+            { actions.taskQueued() },
         )
     }
     movingInstance?.let { (instance, destination) ->
@@ -572,21 +616,4 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             { pendingMove = instance.id to instance.gameDirectoryId },
         )
     }
-    // 应用内路径选择器挂在根级渲染一次：所有 PathPicker 请求共用同一个对话框。
-    PathPickerHost(
-        quickPlaces =
-            buildList {
-                add("MoliFox 数据目录" to actions.controller.store.dataDirectory)
-                state.data.gameDirectories.forEach { directory ->
-                    runCatching { Path.of(directory.path) }
-                        .getOrNull()
-                        ?.let { path ->
-                            add(
-                                directory.name.ifBlank { path.fileName?.toString().orEmpty() } to
-                                    path
-                            )
-                        }
-                }
-            }
-    )
 }
