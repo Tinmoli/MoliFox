@@ -8,14 +8,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,12 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -46,20 +48,26 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.Popup
 import dev.molifox.core.*
 import java.time.Duration
 import java.time.Instant
@@ -274,7 +282,7 @@ fun RecentPlayPanel(
                                         EntryKind.World ->
                                             WorldPlayRow(
                                                 entry = item,
-                                                timeLabel = relativeTimeLabel(item.usedAt, now),
+                                                timeLabel = playTimeLabel(item.usedAt, now),
                                                 enabled = !busy,
                                                 onPlay = { beginPlay(EntryKind.World, item.key) },
                                                 onOpenFolder = {
@@ -287,9 +295,7 @@ fun RecentPlayPanel(
                                             val ping = rememberServerPing(item.key, refreshToken)
                                             ServerPlayRow(
                                                 entry = item,
-                                                timeLabel =
-                                                    if (item.usedAt == null) "尚未游玩"
-                                                    else relativeTimeLabel(item.usedAt, now),
+                                                timeLabel = playTimeLabel(item.usedAt, now),
                                                 status = ping?.status,
                                                 pinged = ping != null,
                                                 enabled = !busy,
@@ -303,7 +309,9 @@ fun RecentPlayPanel(
                             }
                             VerticalScrollbar(
                                 rememberScrollbarAdapter(listState),
-                                Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                                Modifier.align(Alignment.CenterEnd)
+                                    .fillMaxHeight()
+                                    .offset(x = 12.dp),
                             )
                         }
                         if (hasMore)
@@ -358,8 +366,8 @@ fun RecentPlayPanel(
 }
 
 /**
- * 存档行：32dp 世界图标（游戏写入的 `<saves>/<世界>/icon.png`，缺失或读不出时用草方块）、 目录名、「单人存档 · 游玩时间」，随后紧跟文字操作「开始游戏 / 打开文件夹
- * / 删除」。
+ * 存档行：左 = 32dp 世界图标 + 世界名 + 第二行「`saves/<世界>` · 时间」（没玩过就只有路径），
+ * 中 = 存档说明（「单人存档」），右 = 「开始游戏 + ⋯」。
  */
 @Composable
 private fun WorldPlayRow(
@@ -370,26 +378,37 @@ private fun WorldPlayRow(
     onOpenFolder: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val time = timeLabel.trim()
     PlayRowFrame(
         leading = { WorldPlayIcon(entry) },
         title = entry.title,
-        subtitle = {
-            PlaySubtitle(
-                AnnotatedString(
-                    if (time.isEmpty()) entry.subtitle else entry.subtitle + "  ·  " + time
-                )
+        count = null,
+        // 第二行：世界路径 + 「· 时间」；没玩过就没有时间那一截，路径太长时只省略路径。
+        meta = worldPathLabel(entry),
+        metaTime = timeLabel.trim().ifEmpty { null },
+        centre = remember(entry.subtitle) { listOf(AnnotatedString(entry.subtitle)) },
+        actions = { PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay) },
+        menu = {
+            PlayRowMenu(
+                firstLabel = "打开文件夹",
+                onFirst = onOpenFolder,
+                secondLabel = "删除",
+                onSecond = onDelete,
             )
-        },
-        actions = {
-            PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay)
-            PlayRowAction("打开文件夹", MaterialTheme.colorScheme.onSurface, enabled, onOpenFolder)
-            PlayRowAction("删除", MaterialTheme.colorScheme.error, enabled, onDelete)
         },
     )
 }
 
-/** 世界图标：优先用世界目录（或 `.zip`）里的 `icon.png`，读不出就退回草方块。 图标按「路径 + 修改时间」缓存，滚动或切页回来不会重复解码。 */
+/** 世界路径：显示成 `saves/<世界>`，比整条绝对路径好认；拿不到路径时退回归档说明。 */
+private fun worldPathLabel(entry: RecentPlayItem): String {
+    val path = entry.save?.path ?: return ""
+    val parent = path.parent?.fileName?.toString()
+    return if (parent.isNullOrEmpty()) path.fileName.toString() else parent + "/" + path.fileName
+}
+
+/**
+ * 世界图标：优先用世界目录（或 `.zip`）里的 `icon.png`，读不出就退回草方块。
+ * 图标按「路径 + 修改时间」缓存，滚动或切页回来不会重复解码。
+ */
 @Composable
 private fun WorldPlayIcon(entry: RecentPlayItem) {
     val save = entry.save
@@ -407,12 +426,11 @@ private fun WorldPlayIcon(entry: RecentPlayItem) {
 }
 
 /**
- * 服务器行：32dp `servers.dat` 图标（解不出 PNG 时退回草方块）、服务器名， 副标题是「MOTD（或地址） · 玩家数/离线 · 游玩时间」；MOTD 用带颜色的分段渲染，
- * 悬停显示 `servers.dat` 里的完整地址。随后紧跟文字操作「开始游戏 / 复制地址 / 删除记录」。
+ * 服务器行：左 = 32dp `servers.dat` 图标 + 「服务器名 人数」+ 第二行「地址 · 时间」，
+ * 中 = MOTD（按服务端自带的换行逐行渲染，最多三行，保留彩色分段），右 = 「开始游戏 + ⋯」。
  *
- * 没有查询结果时仍显示 `servers.dat` 里保存的名称与地址；离线时只多一个「离线」标签，开始游戏不受影响。
+ * 没有查询结果时名字后面就不显示人数；没玩过时第二行只有地址。
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ServerPlayRow(
     entry: RecentPlayItem,
@@ -424,23 +442,14 @@ private fun ServerPlayRow(
     onCopyAddress: () -> Unit,
     onForget: () -> Unit,
 ) {
-    val motd = status?.motd.orEmpty().filter { it.text.isNotBlank() }
-    val motdText = if (motd.isEmpty()) null else rememberMotdText(motd)
+    val motdLines = rememberMotdLines(status?.motd.orEmpty())
     val statusLabel =
         when {
             status != null -> status.players.toString() + "/" + status.maxPlayers
             pinged -> "离线"
             else -> null
         }
-    // 状态与游玩时间并进副标题：操作要紧跟在文字后面，行尾不再留第二组标签。
-    val meta = listOfNotNull(statusLabel, timeLabel.trim().ifEmpty { null }).joinToString("  ·  ")
-    val subtitle =
-        remember(motdText, entry.subtitle, meta) {
-            buildAnnotatedString {
-                append(motdText ?: AnnotatedString(entry.subtitle))
-                if (meta.isNotEmpty()) append("  ·  " + meta)
-            }
-        }
+    // 人数（或「离线」）跟名称同一行，紧跟在名字后面；第二行是「地址 · 时间」，没玩过就没有时间那一段。
     PlayRowFrame(
         leading = {
             if (entry.icon != null)
@@ -453,78 +462,282 @@ private fun ServerPlayRow(
             else GrassBlockIcon(size = 32.dp)
         },
         title = entry.title,
-        subtitle = {
-            if (motdText != null)
-                TooltipArea(tooltip = { AddressTooltip(entry.subtitle) }, delayMillis = 400) {
-                    PlaySubtitle(subtitle, subtitleSize = 11.sp)
-                }
-            else PlaySubtitle(subtitle)
-        },
-        actions = {
-            PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay)
-            PlayRowAction("复制地址", MaterialTheme.colorScheme.onSurface, enabled, onCopyAddress)
-            PlayRowAction("删除记录", MaterialTheme.colorScheme.error, enabled, onForget)
+        count = statusLabel,
+        countLeading = { LatencyBadge(latencyMs = status?.ping, pinging = !pinged) },
+        meta = entry.subtitle,
+        metaTime = timeLabel.trim().ifEmpty { null },
+        // 服务端自带的行结构原样渲染：一行就是一行，不合并、不补空行，最多三行。
+        centre = motdLines,
+        actions = { PlayRowAction("开始游戏", MaterialTheme.colorScheme.primary, enabled, onPlay) },
+        menu = {
+            PlayRowMenu(
+                firstLabel = "复制地址",
+                onFirst = onCopyAddress,
+                secondLabel = "删除记录",
+                onSecond = onForget,
+            )
         },
     )
 }
 
 /**
- * 两类行共用的骨架：32dp 图标 + 标题/副标题 + 紧随其后的文字操作，行高 52、悬停淡入。
+ * 延迟信号柱：4 根柱子、总宽约 12dp，颜色按质量（好=主题色、中=琥珀、差=错误色、测速中/离线=次要色半透明），
+ * 悬停用 [Popup] 显示真实值（「延迟 42 ms」/「离线」/「正在测速…」）。数据来自面板同一套 ping 缓存，不自建轮询。
+ */
+@Composable
+private fun LatencyBadge(latencyMs: Int?, pinging: Boolean) {
+    val offline = !pinging && latencyMs == null
+    val color =
+        when {
+            pinging || offline -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f)
+            latencyMs!! < 80 -> MaterialTheme.colorScheme.primary
+            latencyMs < 200 -> Color(0xFFE8A33D)
+            else -> MaterialTheme.colorScheme.error
+        }
+    val lit =
+        when {
+            pinging || offline -> 4
+            latencyMs!! < 80 -> 4
+            latencyMs < 200 -> 3
+            else -> 2
+        }
+    val tip =
+        when {
+            pinging -> "正在测速…"
+            offline -> "离线"
+            else -> "延迟 " + latencyMs + " ms"
+        }
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Box(
+        Modifier.height(12.dp).hoverable(interaction),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(1.5.dp),
+        ) {
+            repeat(4) { index ->
+                Box(
+                    Modifier.width(2.dp)
+                        .height((4 + index * 2.5f).dp)
+                        .background(
+                            if (index < lit) color else color.copy(alpha = .22f),
+                            RoundedCornerShape(1.dp),
+                        )
+                )
+            }
+        }
+        if (hovered)
+            Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, -24)) {
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    shape = RoundedCornerShape(6.dp),
+                ) {
+                    Text(
+                        tip,
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                    )
+                }
+            }
+    }
+}
+
+/**
+ * 两类行共用的骨架：整行按 33% / 34% / 33% 分成三块，中间列因此在数学上就骑在行中线上，
+ * 不依赖任何自定义测量：左块 = 图标 + 「名称 + 同行人数」/ 第二行（地址或路径 · 时间），
+ * 中块 = MOTD 逐行，右块 = 「开始游戏 + ⋯」。
  *
- * 文字列用 `weight(1f, fill = false)`：按内容宽度收窄但最多占满剩余空间， 因此操作紧跟在标题/副标题之后，而不是贴到行尾；行里多出来的空白留在操作右侧。
+ * 三块是并排的普通 `Row`，每块宽度都是行宽的固定比例，所以中间列既撑不宽、也推不动两侧；
+ * 左块里的名字/地址超出就省略（人数始终可见），中间列的 MOTD 先缩字号（11→10→9sp，仅当能整行放下），否则省略。
+ * 行高至少 64dp（够放「名称行 / 最多三行 MOTD」），字号放大时按内容增高，不裁字。
  */
 @Composable
 private fun PlayRowFrame(
     leading: @Composable () -> Unit,
     title: String,
-    subtitle: @Composable () -> Unit,
+    count: String?,
+    countLeading: (@Composable () -> Unit)? = null,
+    meta: String,
+    metaTime: String?,
+    centre: List<AnnotatedString>,
     actions: @Composable RowScope.() -> Unit,
+    menu: @Composable () -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Row(
         Modifier.fillMaxWidth()
-            .height(Metrics.rowHeightWithDetail)
+            .heightIn(min = 64.dp)
             .hoverHighlight(shape)
-            .padding(horizontal = 6.dp),
+            .padding(start = 6.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { leading() }
-        Column(
-            Modifier.weight(1f, fill = false),
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-        ) {
-            Text(
-                title,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            subtitle()
+        // 左块：图标 + 名称/次要行，宽度固定，长文本自己省略。
+        Row(Modifier.weight(.33f), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { leading() }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        Modifier.weight(1f, fill = false),
+                        fontSize = 13.sp,
+                        lineHeight = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (countLeading != null)
+                        Box(Modifier.padding(start = 8.dp)) { countLeading() }
+                    if (count != null)
+                        Text(
+                            count,
+                            Modifier.padding(start = if (countLeading != null) 5.dp else 8.dp),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                }
+                if (meta.isNotEmpty() || metaTime != null)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (meta.isNotEmpty())
+                            PlaySubtitle(
+                                AnnotatedString(meta),
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        if (metaTime != null)
+                            Text(
+                                if (meta.isEmpty()) metaTime else " · " + metaTime,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                    }
+            }
         }
+        Spacer(Modifier.width(14.dp))
+        // 中块：宽度固定、左右两侧留白对称，所以内容永远落在行中线上。
+        BoxWithConstraints(
+            Modifier.weight(.34f),
+            contentAlignment = Alignment.Center,
+        ) {
+            val centreLines = rememberFittedCentreLines(centre, maxWidth)
+            // 行高固定成 MOTD_LINE_HEIGHT，整块高度 = 行数 × 行高 + 2dp，再 clipToBounds：
+            // 最多三行、每行都是单行省略，所以既不会互相重叠，也不会溢出到左右两块。
+            Column(
+                Modifier.fillMaxWidth()
+                    .height((centreLines.size * MOTD_LINE_HEIGHT.value).dp + 2.dp)
+                    .clipToBounds(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                centreLines.forEach { line ->
+                    Text(
+                        line.text,
+                        fontSize = line.size,
+                        lineHeight = MOTD_LINE_HEIGHT,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        // 右块：宽度同样固定，只放「开始游戏 + ⋯」，永远贴着行尾。
         Row(
-            Modifier.padding(start = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.weight(.33f),
+            horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
-            content = actions,
-        )
+        ) {
+            actions()
+            menu()
+        }
     }
 }
 
-/** 行内副标题：单行省略；没有显式颜色的 MOTD 片段沿用次要文字色。 */
+/** MOTD 每一行的固定行高；中块高度按「行数 × 这个值 + 2dp」算，杜绝重叠与溢出。 */
+private val MOTD_LINE_HEIGHT = 15.sp
+
+/** 中间列的一行：文字 + 实际使用的字号（整行放不下时先缩字号，再省略）。 */
+private class CentreLine(val text: AnnotatedString, val size: TextUnit)
+
+/** 中间列的字号候选：11sp 起步，整行都放不下才退到 10sp、9sp。 */
+private val CENTRE_FONT_SIZES = listOf(11.sp, 10.sp, 9.sp)
+
+/**
+ * 按中间列宽度给每行挑字号：能在某一档整行放下就用那一档，三档都放不下就用 11sp 加省略号。
+ *
+ * 这里只做尺寸选择，不参与布局；量不出来（宽度为 0、测量异常）时统一退回 11sp，
+ * 保证调用方总能拿到与传入行数相同的列表，中间列不会因为测量失败而空掉。
+ */
 @Composable
-private fun PlaySubtitle(text: AnnotatedString, subtitleSize: TextUnit = 12.sp) {
+private fun rememberFittedCentreLines(
+    lines: List<AnnotatedString>,
+    width: Dp,
+): List<CentreLine> {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    // 与真正渲染的 Text 用同一套字体设置，量出来的宽度才有意义。
+    val baseStyle = LocalTextStyle.current
+    return remember(lines, width, measurer, density, baseStyle) {
+        val fallback = { lines.map { CentreLine(it, CENTRE_FONT_SIZES.first()) } }
+        if (lines.isEmpty()) return@remember emptyList()
+        val maxPx = runCatching { with(density) { width.toPx() }.toInt() }.getOrDefault(0)
+        if (maxPx <= 0) return@remember fallback()
+        runCatching {
+                lines.map { line ->
+                    val size =
+                        CENTRE_FONT_SIZES.firstOrNull { candidate ->
+                            measurer
+                                .measure(
+                                    line,
+                                    style = baseStyle.copy(fontSize = candidate),
+                                    maxLines = 1,
+                                )
+                                .size
+                                .width <= maxPx
+                        } ?: CENTRE_FONT_SIZES.first()
+                    CentreLine(line, size)
+                }
+            }
+            .getOrElse { fallback() }
+    }
+}
+
+/** 行内小字：11sp、15sp 行高；默认单行省略，调用方可以用 [maxLines] / [textAlign] 调整。 */
+@Composable
+private fun PlaySubtitle(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    subtitleSize: TextUnit = 11.sp,
+    lineHeight: TextUnit = 15.sp,
+    maxLines: Int = 1,
+    textAlign: TextAlign = TextAlign.Start,
+) {
     Text(
         text,
+        modifier,
         fontSize = subtitleSize,
+        lineHeight = lineHeight,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
+        maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
+        textAlign = textAlign,
     )
 }
 
-/** 行内文字操作：12sp 纯文字、无底色、无胶囊，悬停时淡出一层主题色背景。 只有「开始游戏」用主题色，「删除」用错误色，其余是次要文字色；禁用时整体降到 38% 透明度。 */
+/**
+ * 行内文字操作：12sp 纯文字、无底色、无胶囊，悬停时淡出一层主题色背景。
+ * 现在只有「开始游戏」走这里，用主题色；其他操作都收进了 [PlayRowMenu]。
+ */
 @Composable
 private fun PlayRowAction(text: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
@@ -545,6 +758,50 @@ private fun PlayRowAction(text: String, color: Color, enabled: Boolean, onClick:
         color = if (enabled) color else color.copy(alpha = .38f),
         maxLines = 1,
     )
+}
+
+/**
+ * 行尾「⋯」菜单：28dp 热区、悬停有反馈，点开是普通 [DropdownMenu]。
+ * 其余操作（打开文件夹 / 复制地址 / 删除 / 删除记录）都在这里，破坏性操作使用错误色。
+ */
+@Composable
+private fun PlayRowMenu(
+    firstLabel: String,
+    onFirst: () -> Unit,
+    secondLabel: String,
+    onSecond: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(Metrics.innerRadius)
+    Box {
+        Box(
+            Modifier.size(28.dp).clip(shape).hoverHighlight(shape).clickable { menu = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.MoreHoriz,
+                "更多操作",
+                Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(menu, { menu = false }) {
+            DropdownMenuItem(
+                { Text(firstLabel, fontSize = 13.sp) },
+                {
+                    menu = false
+                    onFirst()
+                },
+            )
+            DropdownMenuItem(
+                { Text(secondLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.error) },
+                {
+                    menu = false
+                    onSecond()
+                },
+            )
+        }
+    }
 }
 
 /** 标题行的分段开关：「存档」/「服务器」二选一，正文只渲染选中的一类。 选中项用主题色浅底 + 主题色文字，未选中项是次要色文字，未选中项悬停有反馈。 */
@@ -702,7 +959,7 @@ private fun AllRecentPlayList(
             items(worlds, key = { "world:" + it.key }) { item ->
                 WorldPlayRow(
                     entry = item,
-                    timeLabel = relativeTimeLabel(item.usedAt, now),
+                    timeLabel = playTimeLabel(item.usedAt, now),
                     enabled = !busy,
                     onPlay = { onPlay(EntryKind.World, item.key) },
                     onOpenFolder = { item.save?.let(onOpenFolder) },
@@ -717,8 +974,7 @@ private fun AllRecentPlayList(
                 val ping = rememberServerPing(item.key, refreshToken)
                 ServerPlayRow(
                     entry = item,
-                    timeLabel =
-                        if (item.usedAt == null) "尚未游玩" else relativeTimeLabel(item.usedAt, now),
+                    timeLabel = playTimeLabel(item.usedAt, now),
                     status = ping?.status,
                     pinged = ping != null,
                     enabled = !busy,
@@ -742,35 +998,60 @@ private fun RecentSectionLabel(text: String) {
     )
 }
 
+/** MOTD 最多渲染的行数；多出来的行由第三行末尾的省略号表示。 */
+private const val MOTD_MAX_LINES = 3
+
 /**
- * MOTD 片段的样式表：每段按自己的颜色与粗体/斜体/下划线/删除线渲染， 没有指定颜色的片段沿用副标题的次要色。
+ * 按服务端自带的换行把 MOTD 拆成逐行文本：`\n` 是行分隔符，段内样式随文字一起保留，
+ * 行的顺序不变，也不额外补空行。一行就是一行、两行就是两行，不合并、不强行撑满。
  *
- * 深色主题下 `§0` 这类近黑色会看不清，统一向白色提亮 50%； 浅色主题保持服务器给出的原色。
+ * 样式规则见 [motdStyle]：没有指定颜色的片段沿用副标题的次要色，深色主题下近黑色会提亮。
+ * 超过 [MOTD_MAX_LINES] 行时只保留前三行，并在第三行末尾加省略号。
  */
 @Composable
-private fun rememberMotdText(segments: List<MotdSegment>): AnnotatedString {
+private fun rememberMotdLines(segments: List<MotdSegment>): List<AnnotatedString> {
     val dark = isDarkScheme()
     return remember(segments, dark) {
-        buildAnnotatedString {
-            segments.forEach { segment ->
-                val color =
-                    segment.color?.let { rgb ->
-                        val base = Color(0xFF000000L or rgb.toLong())
-                        if (dark && base.luminance() < .28f) lerp(base, Color.White, .5f) else base
-                    }
-                withStyle(
-                    SpanStyle(
-                        color = color ?: Color.Unspecified,
-                        fontWeight = if (segment.bold) FontWeight.SemiBold else null,
-                        fontStyle = if (segment.italic) FontStyle.Italic else null,
-                        textDecoration = segmentTextDecoration(segment),
-                    )
-                ) {
-                    append(segment.text)
+        // 先切行：每行是「片段 + 该行里的文字」的有序列表，样式不丢。
+        val rows = mutableListOf<MutableList<Pair<MotdSegment, String>>>()
+        rows.add(mutableListOf())
+        segments.filter { it.text.isNotEmpty() }.forEach { segment ->
+            segment.text.split('\n').forEachIndexed { index, part ->
+                if (index > 0) rows.add(mutableListOf())
+                if (part.isNotEmpty()) rows.last().add(segment to part)
+            }
+        }
+        // 服务端多打的换行不算内容，末尾的空行直接丢掉；服务端自己给的空行保留在中间。
+        while (rows.isNotEmpty() && rows.last().isEmpty()) rows.removeAt(rows.lastIndex)
+        val truncated = rows.size > MOTD_MAX_LINES
+        rows.take(MOTD_MAX_LINES).mapIndexed { index, parts ->
+            buildAnnotatedString {
+                parts.forEach { (segment, text) ->
+                    withStyle(motdStyle(segment, dark)) { append(text) }
                 }
+                if (truncated && index == MOTD_MAX_LINES - 1) append("…")
             }
         }
     }
+}
+
+/**
+ * 单个片段的样式：颜色、粗体、斜体、下划线/删除线。
+ *
+ * 深色主题下 `§0` 这类近黑色会看不清，统一向白色提亮 50%；浅色主题保持服务器给出的原色。
+ */
+private fun motdStyle(segment: MotdSegment, dark: Boolean): SpanStyle {
+    val color =
+        segment.color?.let { rgb ->
+            val base = Color(0xFF000000L or rgb.toLong())
+            if (dark && base.luminance() < .28f) lerp(base, Color.White, .5f) else base
+        }
+    return SpanStyle(
+        color = color ?: Color.Unspecified,
+        fontWeight = if (segment.bold) FontWeight.SemiBold else null,
+        fontStyle = if (segment.italic) FontStyle.Italic else null,
+        textDecoration = segmentTextDecoration(segment),
+    )
 }
 
 /** 下划线与删除线可以同时存在。 */
@@ -782,24 +1063,6 @@ private fun segmentTextDecoration(segment: MotdSegment): TextDecoration? =
         segment.struck -> TextDecoration.LineThrough
         else -> null
     }
-
-/** MOTD 取代地址时的悬停提示：显示 `servers.dat` 里的完整地址，样式与卡片一致。 */
-@Composable
-private fun AddressTooltip(address: String) {
-    Surface(
-        shape = RoundedCornerShape(Metrics.innerRadius),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, hairline()),
-        shadowElevation = 2.dp,
-    ) {
-        Text(
-            address,
-            Modifier.widthIn(max = 320.dp).padding(horizontal = 8.dp, vertical = 5.dp),
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
 
 /** 一次查询的快照：`status == null` 表示已确认离线；缓存里没有条目才表示「还没查过」。 */
 private data class ServerPingSnapshot(val status: ServerStatus?, val atMillis: Long)
@@ -958,6 +1221,10 @@ private fun mergeByTime(
 private fun decodeServerIcon(bytes: ByteArray?): ImageBitmap? = bytes?.let { data ->
     runCatching { SkiaImage.makeFromEncoded(data).toComposeImageBitmap() }.getOrNull()
 }
+
+/** 行内「游玩时间」文案：有记录才显示相对时间，没有记录返回空串（调用方据此不渲染这一行）。 */
+private fun playTimeLabel(time: Instant?, now: Instant): String =
+    if (time == null) "" else relativeTimeLabel(time, now)
 
 /**
  * 相对时间：「刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 上个月 / N 个月前 / N 年前」。
