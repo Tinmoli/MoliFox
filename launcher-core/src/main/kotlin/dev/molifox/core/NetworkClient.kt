@@ -115,10 +115,7 @@ class NetworkClient(
         client.newBuilder().followRedirects(false).followSslRedirects(false).build()
     }
 
-    /**
-     * 自动源测速专用：连接、读取与整次调用都压在同一段短超时内（与启动器的镜像探测一致），
-     * 复用同一连接池与调度器，不额外占线程。
-     */
+    /** 自动源测速专用：连接、读取与整次调用都压在同一段短超时内（与启动器的镜像探测一致）， 复用同一连接池与调度器，不额外占线程。 */
     private val probeClient by lazy {
         client
             .newBuilder()
@@ -250,32 +247,29 @@ class NetworkClient(
         return autoMirrorOrder().map { mirrorUrl(url, it) }.distinct()
     }
 
-    /**
-     * 自动模式的真实含义：官方与 BMCLAPI 并发测速（短超时），按耗时升序决定优先顺序；
-     * 探测失败的源排到最后，仍保留作下载失败时的回退。结果缓存，下载源设置一变就清空。
-     */
-    private suspend fun autoMirrorOrder(): List<String> =
-        autoProbeLock.withLock {
-            val cached = autoProbeOrder
-            if (
-                cached != null &&
-                    autoProbeSetting == source() &&
-                    System.currentTimeMillis() - autoProbeAt < AUTO_PROBE_CACHE_MILLIS
-            )
-                return@withLock cached
-            val order = coroutineScope {
-                val measured =
-                    AUTO_PROBE_SOURCES
-                        .map { mirror -> async(Dispatchers.IO) { mirror to measureSource(mirror) } }
-                        .awaitAll()
-                measured.filter { it.second != null }.sortedBy { it.second }.map { it.first } +
-                    measured.filter { it.second == null }.map { it.first }
-            }
-            autoProbeOrder = order
-            autoProbeSetting = source()
-            autoProbeAt = System.currentTimeMillis()
-            order
+    /** 自动模式的真实含义：官方与 BMCLAPI 并发测速（短超时），按耗时升序决定优先顺序； 探测失败的源排到最后，仍保留作下载失败时的回退。结果缓存，下载源设置一变就清空。 */
+    private suspend fun autoMirrorOrder(): List<String> = autoProbeLock.withLock {
+        val cached = autoProbeOrder
+        if (
+            cached != null &&
+                autoProbeSetting == source() &&
+                System.currentTimeMillis() - autoProbeAt < AUTO_PROBE_CACHE_MILLIS
+        )
+            return@withLock cached
+        val order = coroutineScope {
+            val measured =
+                AUTO_PROBE_SOURCES.map { mirror ->
+                        async(Dispatchers.IO) { mirror to measureSource(mirror) }
+                    }
+                    .awaitAll()
+            measured.filter { it.second != null }.sortedBy { it.second }.map { it.first } +
+                measured.filter { it.second == null }.map { it.first }
         }
+        autoProbeOrder = order
+        autoProbeSetting = source()
+        autoProbeAt = System.currentTimeMillis()
+        order
+    }
 
     /** 单源测速：取版本清单开头的一小段确认真的能取到内容，返回毫秒；不可达返回 null。 */
     private suspend fun measureSource(source: String): Long? {
@@ -562,6 +556,7 @@ class NetworkClient(
             val target = artifact.target
             withTargetLock(target) {
                 coroutineContext.ensureActive()
+                coroutineContext[TaskDownloadContext]?.task?.beforeDirectoryCreation(target.parent)
                 target.parent.createDirectories()
                 val partial = partialFile(target)
                 val path = target.toAbsolutePath().normalize()

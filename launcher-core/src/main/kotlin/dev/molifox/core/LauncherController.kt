@@ -151,7 +151,11 @@ class LauncherController(
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
     ): String {
         val instance = installer.createInstance(request, gameDirectoryId)
-        return jobs.enqueue("安装 ${instance.name}", taskResourcesForInstances(store, instance.id)) {
+        return jobs.enqueue(
+            "安装 ${instance.name}",
+            taskResourcesForInstances(store, instance.id),
+            prepare = { NewInstallationCleanup(store).register(instance, it) },
+        ) {
             installer.install(instance.id, this)
         }
     }

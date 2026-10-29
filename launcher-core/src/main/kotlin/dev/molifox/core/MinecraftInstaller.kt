@@ -173,6 +173,12 @@ class MinecraftInstaller(
     suspend fun install(instanceId: String, context: JobContext) {
         var instance = store.instance(instanceId)
         val root = store.minecraftRoot(instance)
+        if (instance.installed)
+            context.onFinished(
+                "installation-status:$instanceId",
+                cancel = { store.updateInstance(instanceId) { it.copy(installed = true) } },
+                complete = {},
+            )
         store.updateInstance(instanceId) { it.copy(installed = false) }
         context.progress(0f, "获取 Minecraft 元数据…")
         if (instance.externalProfile) {
@@ -193,7 +199,7 @@ class MinecraftInstaller(
                 when (instance.loader) {
                     LoaderType.Vanilla -> metadata.id
                     LoaderType.Fabric,
-                    LoaderType.Quilt -> installFabricProfile(instance)
+                    LoaderType.Quilt -> installFabricProfile(instance, context)
                     LoaderType.Forge,
                     LoaderType.NeoForge -> installForge(instance, base, context)
                 }
@@ -206,7 +212,11 @@ class MinecraftInstaller(
                 )
         }
         context.checkCancelled()
-        VersionGameDirectories(store).writeProfile(store.instance(instanceId))
+        val current = store.instance(instanceId)
+        val folder = store.versionGamePath(current)
+        context.writeOutput(folder.resolve("${folder.fileName}.json")) {
+            VersionGameDirectories(store).writeProfile(current)
+        }
         store.updateInstance(instanceId) { it.copy(installed = true) }
         context.progress(1f, "安装完成")
     }
@@ -406,7 +416,7 @@ class MinecraftInstaller(
         }
     }
 
-    private suspend fun installFabricProfile(instance: GameInstance): String {
+    private suspend fun installFabricProfile(instance: GameInstance, context: JobContext): String {
         val root = store.minecraftRoot(instance)
         val host =
             if (instance.loader == LoaderType.Fabric) "https://meta.fabricmc.net"
@@ -423,7 +433,8 @@ class MinecraftInstaller(
                 ?: "molifox-${instance.loader.name.lowercase()}-${instance.gameVersion}-${instance.loaderVersion}"
         safeFilename(id)
         profile.addProperty("id", id)
-        writeJson(root.resolve("versions/$id/$id.json"), profile)
+        val target = root.resolve("versions/$id/$id.json")
+        context.writeOutput(target) { writeJson(target, profile) }
         return id
     }
 
@@ -488,9 +499,11 @@ class MinecraftInstaller(
                 // Extract only installer-owned Maven artifacts, never arbitrary archive paths.
                 for ((entry, target) in validateArchive(zip, "maven/", root.resolve("libraries"))) {
                     context.checkCancelled()
-                    target.parent.createDirectories()
-                    zip.getInputStream(entry).use {
-                        Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+                    context.writeOutput(target) {
+                        target.parent.createDirectories()
+                        zip.getInputStream(entry).use {
+                            Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+                        }
                     }
                 }
                 // Pre-1.13 installers embed the universal JAR outside maven/.
@@ -512,9 +525,11 @@ class MinecraftInstaller(
                                 root.resolve("libraries"),
                                 mavenPath(forgeLibrary.string("name")),
                             )
-                        target.parent.createDirectories()
-                        zip.getInputStream(embedded).use {
-                            Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+                        context.writeOutput(target) {
+                            target.parent.createDirectories()
+                            zip.getInputStream(embedded).use {
+                                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+                            }
                         }
                     }
                 }
@@ -622,13 +637,20 @@ class MinecraftInstaller(
                                     .toString()
                             } + artifact.toString())
                             .joinToString(store.platform.classpathSeparator)
-                    runJavaProcess(
-                        runtime.path,
-                        listOf("-cp", classpath, mainClass) +
-                            processor.array("args").map { expand(it.asString) },
-                        root,
-                    ) { line ->
-                        store.log(line)
+                    val trackedOutputs = outputs.map { (file, _) ->
+                        context.trackOutput(Path.of(file))
+                    }
+                    try {
+                        runJavaProcess(
+                            runtime.path,
+                            listOf("-cp", classpath, mainClass) +
+                                processor.array("args").map { expand(it.asString) },
+                            root,
+                        ) { line ->
+                            store.log(line)
+                        }
+                    } finally {
+                        trackedOutputs.forEach { it() }
                     }
                     outputs.forEach { (file, hash) ->
                         require(
@@ -640,7 +662,8 @@ class MinecraftInstaller(
                         }
                     }
                 }
-                writeJson(root.resolve("versions/$id/$id.json"), versionJson)
+                val target = root.resolve("versions/$id/$id.json")
+                context.writeOutput(target) { writeJson(target, versionJson) }
                 return id
             }
         } finally {

@@ -459,6 +459,7 @@ class ContentService(
                             store.instance(created.id)
                         }
                 context.bindInstance(instance.id)
+                if (repairId == null) NewInstallationCleanup(store).register(instance, context)
                 var root = store.instancePath(instance.id)
                 // Validate every override path before any download or extraction.
                 for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)

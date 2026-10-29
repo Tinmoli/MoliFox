@@ -15,6 +15,16 @@ internal constructor(
 ) {
     private val cancellationActions = ConcurrentHashMap<Any, suspend () -> Unit>()
     private val completionActions = ConcurrentHashMap<Any, () -> Unit>()
+    private val outputs = TaskOutputCleanup(this)
+    private var references: Pair<List<GameInstance>, TaskFileReferences>? = null
+
+    internal fun beforeDirectoryCreation(path: java.nio.file.Path) =
+        outputs.beforeDirectoryCreation(path)
+
+    internal fun writeOutput(path: java.nio.file.Path, action: () -> Unit) =
+        outputs.write(path, action)
+
+    internal fun trackOutput(path: java.nio.file.Path) = outputs.track(path)
 
     internal fun onFinished(key: Any, cancel: suspend () -> Unit, complete: () -> Unit) {
         cancellationActions.putIfAbsent(key, cancel)
@@ -24,7 +34,7 @@ internal constructor(
     internal suspend fun finish(cancelled: Boolean): Boolean {
         var cleaned = true
         try {
-            if (cancelled)
+            if (cancelled) {
                 for (cleanup in cancellationActions.values) {
                     try {
                         cleanup()
@@ -33,6 +43,14 @@ internal constructor(
                         store.log("取消任务时清理文件失败：${error.message}", true)
                     }
                 }
+                try {
+                    outputs.cleanFiles()
+                    outputs.cleanEmptyDirectories()
+                } catch (error: Exception) {
+                    cleaned = false
+                    store.log("取消任务时清理产物失败：${error.message}", true)
+                }
+            }
         } finally {
             completionActions.values.forEach { it() }
         }
@@ -47,17 +65,10 @@ internal constructor(
                 .map { it.removePrefix("instance:") }
                 .toSet()
         val normalized = path.toAbsolutePath().normalize()
-        return store.data.instances.none { instance ->
-            if (instance.id in ownedIds || !instance.installed) false
-            else {
-                val root = store.minecraftRoot(instance).toAbsolutePath().normalize()
-                normalized.startsWith(root.resolve("libraries")) ||
-                    normalized.startsWith(root.resolve("assets")) ||
-                    normalized.startsWith(root.resolve("versions").resolve(instance.versionId)) ||
-                    normalized.startsWith(root.resolve("versions").resolve(instance.gameVersion)) ||
-                    normalized.startsWith(store.gamePath(instance).toAbsolutePath().normalize())
-            }
-        } &&
+        val instances = store.data.instances
+        if (references?.first != instances)
+            references = instances to TaskFileReferences(store, ownedIds)
+        return !requireNotNull(references).second.protects(normalized) &&
             !normalized.startsWith(
                 store.dataDirectory.resolve("runtimes").toAbsolutePath().normalize()
             )
@@ -159,9 +170,11 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                 else taskResourcesConflict(resources, it.resources))
         }
 
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     fun enqueue(
         title: String,
         resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
+        prepare: (JobContext) -> Unit = {},
         action: suspend JobContext.() -> Unit,
     ): String {
         val id = UUID.randomUUID().toString()
@@ -170,20 +183,28 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
         store.updateState {
             it.copy(jobs = listOf(DownloadJob(id, title, resources = reserved)) + it.jobs)
         }
+        val context =
+            JobContext(store, id) { resources ->
+                gate.rebind(id, resources)
+                store.updateState {
+                    it.copy(
+                        jobs =
+                            it.jobs.map { job ->
+                                if (job.id == id) job.copy(resources = resources) else job
+                            }
+                    )
+                }
+            }
+        try {
+            prepare(context)
+        } catch (error: Exception) {
+            gate.release(id)
+            store.updateState { it.copy(jobs = it.jobs.filterNot { job -> job.id == id }) }
+            throw error
+        }
         val worker =
-            scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-                val context =
-                    JobContext(store, id) { resources ->
-                        gate.rebind(id, resources)
-                        store.updateState {
-                            it.copy(
-                                jobs =
-                                    it.jobs.map { job ->
-                                        if (job.id == id) job.copy(resources = resources) else job
-                                    }
-                            )
-                        }
-                    }
+            // Enter cancellation cleanup even when cancelled before the dispatcher starts the body.
+            scope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
                 var cancelled = false
                 try {
                     gate.acquire(id)
@@ -204,6 +225,7 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                         if (cleaned) "已取消，本次下载文件已清理" else "已取消；部分文件无法清理，请查看日志",
                     )
                     store.log("任务已取消：$title")
+                    if (!cleaned) store.notify("任务已取消，部分文件未能清理，请查看日志")
                 } catch (error: Exception) {
                     val message = error.message ?: error.javaClass.simpleName
                     update(id, JobStatus.Failed, message, message)
@@ -254,12 +276,14 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
         workers[id]?.cancel()
     }
 
-    fun clearFinished() {
+    fun clearFinished(ids: Set<String>? = null) {
         store.updateState { state ->
             state.copy(
                 jobs =
                     state.jobs.filter {
-                        it.status == JobStatus.Queued || it.status == JobStatus.Running
+                        it.status == JobStatus.Queued ||
+                            it.status == JobStatus.Running ||
+                            (ids != null && it.id !in ids)
                     }
             )
         }
