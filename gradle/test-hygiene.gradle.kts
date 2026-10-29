@@ -38,6 +38,7 @@ val smokeNames =
         "nativePickerSmoke",
         "networkDiagnosticsSmoke",
         "refinementSmoke",
+        "recentPlaySmoke",
         "gameSmoke",
     )
 

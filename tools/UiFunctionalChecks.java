@@ -33,7 +33,7 @@ final class UiFunctionalChecks {
                 }
             }
         }
-        Path configuration = root.resolve("profile/launcher.json");
+        Path configuration = root.resolve("profile/config/launcher.json");
         JsonObject data = JsonParser.parseString(Files.readString(configuration)).getAsJsonObject();
         data.getAsJsonObject("settings").addProperty("downloadSource", "auto");
         data.getAsJsonObject("settings").addProperty("versionListSource", "auto");

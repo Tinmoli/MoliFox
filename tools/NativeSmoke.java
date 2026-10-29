@@ -179,6 +179,12 @@ public final class NativeSmoke {
                                 + processIds);
             TestWindowFocus.activate(target.get());
             Thread.sleep(2000);
+            for (int attempt = 0;
+                    attempt < 10 && !target.get().equals(User32.INSTANCE.GetForegroundWindow());
+                    attempt++) {
+                TestWindowFocus.activate(target.get());
+                Thread.sleep(150);
+            }
             if (!target.get().equals(User32.INSTANCE.GetForegroundWindow()))
                 throw new IllegalStateException(
                         "Test window is not in front; refusing to capture another application");

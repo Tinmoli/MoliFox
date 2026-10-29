@@ -24,6 +24,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.molifox.core.*
 import java.util.Locale
+import kotlinx.coroutines.delay
+
+private const val COMPLETED_TASK_HIDE_DELAY_MILLIS = 5_000L
 
 private fun DownloadJob.active() = status == JobStatus.Running || status == JobStatus.Queued
 
@@ -33,10 +36,24 @@ private fun taskPercent(jobs: List<DownloadJob>): Float =
 
 @Composable
 fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modifier = Modifier) {
-    if (state.jobs.isEmpty()) return
     val active = state.jobs.filter { it.active() }
     val progress = if (active.isEmpty()) 1f else taskPercent(active)
     val failed = state.jobs.any { it.status == JobStatus.Failed }
+    val completionKey = state.jobs.map { it.id to it.status }
+    var hidden by remember { mutableStateOf(false) }
+    LaunchedEffect(completionKey) {
+        hidden = false
+        if (
+            state.jobs.isNotEmpty() &&
+                active.isEmpty() &&
+                !failed &&
+                state.jobs.any { it.status == JobStatus.Completed }
+        ) {
+            delay(COMPLETED_TASK_HIDE_DELAY_MILLIS)
+            hidden = true
+        }
+    }
+    if (state.jobs.isEmpty() || hidden) return
     Surface(
         modifier
             .semantics { contentDescription = "打开任务中心" }

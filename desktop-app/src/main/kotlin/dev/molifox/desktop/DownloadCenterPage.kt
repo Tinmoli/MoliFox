@@ -509,6 +509,15 @@ private fun ColumnScope.InstallGamePage(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        Text(
+            "安装到：" +
+                (state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }?.path
+                    ?: state.data.settings.gameRoot),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         PrimaryButton(
             "开始安装",
             Icons.Outlined.Download,
@@ -529,8 +538,7 @@ private fun ColumnScope.InstallGamePage(
                         selected,
                         loader,
                         loaderVersion,
-                    ),
-                    gameDirectoryId = null,
+                    )
                 )
                 withContext(Dispatchers.Main) { onInstalled() }
             }

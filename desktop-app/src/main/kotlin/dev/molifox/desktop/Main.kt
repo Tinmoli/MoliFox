@@ -308,6 +308,13 @@ fun main() {
                                     onTitlebarDoubleClick = toggleMaximize,
                                 ) {
                                     val tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    if (launcherState.jobs.isNotEmpty())
+                                        SmallIconButton(
+                                            Icons.Outlined.CloudDownload,
+                                            "任务中心",
+                                            { actions.showTasks() },
+                                            tint,
+                                        )
                                     SmallIconButton(
                                         Icons.Outlined.Remove,
                                         "最小化",

@@ -678,8 +678,6 @@ fun ColumnScope.InstanceDetailsPage(
                                                 actions.controller.platform.osName,
                                                 { draft = draft.copy(advancedLaunch = it) },
                                                 { advancedValid = it },
-                                                legacyMinimize =
-                                                    state.data.settings.minimizeOnLaunch,
                                             )
                                         }
                                     }

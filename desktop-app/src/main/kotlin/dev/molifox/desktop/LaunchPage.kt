@@ -49,13 +49,16 @@ fun ColumnScope.HomePage(
 ) {
     // 选中记录可能为空或指向已删除的实例：先按「当前游戏目录 → 最近游玩」回退，再把回退结果
     // 写回状态。这样自动识别目录后开始页不会停在「未选择版本」，其他页面读到的也是同一个实例。
-    val stored = state.data.instances.find { it.id == state.data.selectedInstanceId }
+    val stored =
+        state.data.instances.find {
+            it.id == state.data.selectedInstanceId &&
+                it.gameDirectoryId == state.data.activeGameDirectoryId
+        }
     val selected =
         stored
             ?: state.data.instances
                 .filter { it.gameDirectoryId == state.data.activeGameDirectoryId }
                 .maxByOrNull { it.lastPlayed ?: it.createdAt }
-            ?: state.data.instances.maxByOrNull { it.lastPlayed ?: it.createdAt }
     LaunchedEffect(stored?.id, selected?.id) {
         if (stored != null) return@LaunchedEffect
         // 只回写与当前游戏目录一致的实例，避免把用户刚选定的空目录又切走；
@@ -104,11 +107,11 @@ fun ColumnScope.HomePage(
         }
     }
     // 开始页的启动路径：先把选中实例写回状态，再把任务交给控制器；进度、取消与失败原因都落在浮窗里。
-    fun beginLaunch(instance: GameInstance) {
+    fun beginLaunch(instance: GameInstance, target: GameLaunchTarget? = null) {
         launchCard.begin(instance)
         actions.run { actions.controller.selectInstance(instance.id) }
         try {
-            launchCard.attach(actions.controller.launch(instance.id))
+            launchCard.attach(actions.controller.launch(instance.id, target))
         } catch (failure: Exception) {
             launchCard.fail(failure.message ?: "启动失败，请查看日志")
         }
@@ -319,7 +322,7 @@ fun ColumnScope.HomePage(
                                     )
                                 }
                             },
-                            onLaunch = { beginLaunch(it) },
+                            onLaunch = { game, target -> beginLaunch(game, target) },
                             // 正文只显示一类：存档或服务器，选择同样写入开始页偏好。
                             kind =
                                 if (preferences.recentPlayKind == "server") EntryKind.Server

@@ -200,7 +200,7 @@ private fun ThemePreferences(
     apply: AppearanceChange,
     onOpenFont: () -> Unit,
 ) {
-    val theme = settings.themeMode.ifBlank { if (settings.darkTheme) "dark" else "light" }
+    val theme = settings.themeMode
     val duration = if (LocalReducedMotion.current) 0 else Motion.fast
     SettingsSection("界面主题", "选择界面明暗；切换后立即生效。") {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -212,7 +212,7 @@ private fun ThemePreferences(
                 settings.accentColor,
                 duration,
             ) {
-                apply { it.copy(themeMode = "light", darkTheme = false) }
+                apply { it.copy(themeMode = "light") }
             }
             ThemeOptionCard(
                 "dark",
@@ -222,7 +222,7 @@ private fun ThemePreferences(
                 settings.accentColor,
                 duration,
             ) {
-                apply { it.copy(themeMode = "dark", darkTheme = true) }
+                apply { it.copy(themeMode = "dark") }
             }
             ThemeOptionCard(
                 "system",
@@ -232,7 +232,7 @@ private fun ThemePreferences(
                 settings.accentColor,
                 duration,
             ) {
-                apply { it.copy(themeMode = "system", darkTheme = false) }
+                apply { it.copy(themeMode = "system") }
             }
         }
     }
@@ -242,7 +242,7 @@ private fun ThemePreferences(
                 AccentChip(
                     id = id,
                     title = title,
-                    dark = settings.darkTheme,
+                    dark = isDarkScheme(),
                     selected = settings.accentColor == id,
                     duration = duration,
                 ) {

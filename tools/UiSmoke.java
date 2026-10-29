@@ -702,7 +702,6 @@ public final class UiSmoke {
                 """
             {
               "gameRoot": %s,
-              "gameRootSemantics": 1,
               "javaPath": "",
               "memoryMb": 3840,
               "width": 1280,
@@ -720,8 +719,6 @@ public final class UiSmoke {
               "downloadSource": "official",
               "maxConcurrent": 8,
               "microsoftClientId": "",
-              "darkTheme": false,
-              "minimizeOnLaunch": false,
               "isolateVersions": true,
               "initialMemoryMb": 512,
               "fullscreen": false,
@@ -748,7 +745,6 @@ public final class UiSmoke {
               "titlebarTransparent": false,
               "windowTransparent": false,
               "language": "zh-CN",
-              "updateManifestUrl": "",
               "autoCheckUpdates": false,
               "versionListSource": "official",
               "contentDownloadSource": "modrinth",
@@ -775,7 +771,7 @@ public final class UiSmoke {
                         TARGET_INSTANCE_NAME,
                         "smoke-saves-target",
                         java.time.Instant.now().minusSeconds(3600).toString());
-        return "{\"schemaVersion\":1,\"settings\":"
+        return "{\"schemaVersion\":2,\"settings\":"
                 + settings
                 + ",\"accounts\":[],\"instances\":["
                 + main
@@ -799,8 +795,8 @@ public final class UiSmoke {
             Files.writeString(directory.resolve("instance-marker.txt"), "internal fixture " + id);
         }
         Path profile = testRoot.resolve("profile");
-        Files.createDirectories(profile);
-        Files.writeString(profile.resolve("launcher.json"), seededConfiguration(minecraftRoot));
+        Files.createDirectories(profile.resolve("config"));
+        Files.writeString(profile.resolve("config/launcher.json"), seededConfiguration(minecraftRoot));
     }
 
     private static long countFiles(Path directory, String suffix) {
@@ -1073,7 +1069,7 @@ public final class UiSmoke {
 
     /** A small opt-in path for the reported defects, independent from the full regression flow. */
     private static void seedReview(Path root) throws Exception {
-        Path config = root.resolve("profile/launcher.json");
+        Path config = root.resolve("profile/config/launcher.json");
         var json =
                 com.google.gson.JsonParser.parseString(Files.readString(config)).getAsJsonObject();
         String texture = "https://textures.minecraft.net/texture/" + "a".repeat(64);

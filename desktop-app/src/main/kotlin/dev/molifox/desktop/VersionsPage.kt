@@ -71,7 +71,7 @@ fun ColumnScope.InstancesPage(
     val activeDirectoryId = state.data.activeGameDirectoryId
     val all =
         state.data.instances.filter {
-            activeDirectoryId == null || it.gameDirectoryId == activeDirectoryId
+            it.gameDirectoryId == activeDirectoryId
         }
     val filtered = all.filter {
         (!favorites || it.favorite) &&

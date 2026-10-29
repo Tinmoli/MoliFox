@@ -108,7 +108,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
             "dark" -> true
             "light" -> false
             "system" -> isSystemInDarkTheme()
-            else -> settings.darkTheme
+            else -> isSystemInDarkTheme()
         }
     val primary = resolveAccent(settings.accentColor, dark)
     val cornerRadius = settings.cornerRadiusDp.coerceIn(0, 24)

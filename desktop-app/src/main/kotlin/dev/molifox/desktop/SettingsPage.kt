@@ -121,7 +121,6 @@ private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): La
     val memory = minOf(defaults.memoryMb, maximumMemoryMb)
     return defaults.copy(
         gameRoot = current.gameRoot,
-        gameRootSemantics = current.gameRootSemantics,
         microsoftClientId = current.microsoftClientId,
         curseForgeApiKey = current.curseForgeApiKey,
         customFonts = current.customFonts,
@@ -567,17 +566,14 @@ private fun gameSettingCards(
                 },
                 settingRow("启动后最小化", "游戏退出后恢复启动器窗口") {
                     CompactSwitch(
-                        settings.advancedLaunch.launcherVisibility.ifBlank {
-                            if (settings.minimizeOnLaunch) "minimize" else "keep"
-                        } == "minimize",
+                        settings.advancedLaunch.launcherVisibility == "minimize",
                         { value ->
                             writer.commit {
                                 it.copy(
-                                    minimizeOnLaunch = value,
                                     advancedLaunch =
                                         it.advancedLaunch.copy(
                                             launcherVisibility = if (value) "minimize" else "keep"
-                                        ),
+                                        )
                                 )
                             }
                         },
@@ -608,7 +604,6 @@ private fun gameSettingCards(
                                 actions.controller.platform.osName,
                                 { value -> advancedDraft = value },
                                 onAdvancedValid,
-                                legacyMinimize = settings.minimizeOnLaunch,
                             )
                         }
                         if (!advancedValid)

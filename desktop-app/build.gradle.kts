@@ -507,6 +507,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
 }
 
+val uiChecksCompilation = kotlin.target.compilations.create("uiChecks") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+    defaultSourceSet.dependencies { implementation("com.google.code.gson:gson:2.13.2") }
+}
+sourceSets["uiChecks"].java.apply {
+    srcDir(rootProject.file("tools"))
+    include("TestWindowFocus.java")
+}
+
 compose.desktop {
     application {
         mainClass = "dev.molifox.desktop.MainKt"
@@ -625,6 +634,13 @@ fun registerGuiSmoke(name: String, probe: String, native: Boolean) =
 
 val uiSmoke = registerGuiSmoke("uiSmoke", "UiSmoke", false)
 val refinementSmoke = registerGuiSmoke("refinementSmoke", "UiSmoke", false)
+tasks.register<JavaExec>("recentPlaySmoke") {
+    dependsOn("uiChecksClasses")
+    classpath = files(uiChecksCompilation.output.allOutputs, uiChecksCompilation.runtimeDependencyFiles)
+    mainClass.set("dev.molifox.desktop.RecentPlayUiSmokeKt")
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dcompose.accessibility.enable=true")
+    workingDir(rootProject.projectDir)
+}
 val reviewSmoke = registerGuiSmoke("reviewSmoke", "UiSmoke", false)
 val skinSmoke = registerGuiSmoke("skinSmoke", "UiSmoke", false)
 val storageUiSmoke = registerGuiSmoke("storageUiSmoke", "UiSmoke", false)
