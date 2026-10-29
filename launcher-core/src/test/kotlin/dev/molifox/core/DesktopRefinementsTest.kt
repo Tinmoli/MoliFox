@@ -88,53 +88,6 @@ class DesktopRefinementsTest {
     }
 
     @Test
-    fun `legacy UUID game files move to a version directory with a verified original backup`() {
-        val store = store()
-        val instance = instance(store)
-        val legacy = store.minecraftRoot.resolve("instances/${instance.id}")
-        val save =
-            legacy.resolve("saves/World/level.dat").apply {
-                parent.createDirectories()
-                writeText("world-data")
-            }
-        VersionGameDirectories(store).migrateLegacy()
-        val target = store.instancePath(instance.id)
-        assertEquals("world-data", target.resolve("saves/World/level.dat").readText())
-        assertFalse(legacy.exists())
-        assertEquals(
-            "world-data",
-            store.directories.instanceBackups
-                .resolve("legacy-${instance.id}/saves/World/level.dat")
-                .readText(),
-        )
-        VersionGameDirectories(store).migrateLegacy()
-        assertEquals(target, store.instancePath(instance.id))
-    }
-
-    @Test
-    fun `migration keeps conflicting saves separate without overwriting either world`() {
-        val store = store()
-        val instance = instance(store)
-        val legacy =
-            store.minecraftRoot.resolve("instances/${instance.id}/saves/World/level.dat").apply {
-                parent.createDirectories()
-                writeText("legacy")
-            }
-        val existing =
-            store.versionGamePath(instance).resolve("saves/World/level.dat").apply {
-                parent.createDirectories()
-                writeText("existing")
-            }
-        VersionGameDirectories(store).migrateLegacy()
-        assertEquals("existing", existing.readText())
-        assertEquals(
-            "legacy",
-            store.instancePath(instance.id).resolve("saves/World/level.dat").readText(),
-        )
-        assertNotEquals(existing.parent.parent.parent, store.instancePath(instance.id))
-    }
-
-    @Test
     fun `language follows launcher only when enabled and preserves unrelated options`() {
         val store = store()
         val instance = instance(store)
@@ -150,28 +103,6 @@ class DesktopRefinementsTest {
         assertEquals("music:0.4\r\nlang:zh_cn\r\n", options.readText())
         applyGameLanguage(store, instance)
         assertEquals(1, options.readText().lineSequence().count { it.startsWith("lang:") })
-    }
-
-    @Test
-    fun `migration never replaces an ordinary user JSON with generated version metadata`() {
-        val store = store()
-        val instance = instance(store)
-        val legacy = store.minecraftRoot.resolve("instances/${instance.id}")
-        legacy.resolve("config/a.txt").apply {
-            parent.createDirectories()
-            writeText("legacy")
-        }
-        legacy.resolve("${instance.name}.json").writeText("ordinary user data")
-        store.versionGamePath(instance).resolve("config/a.txt").apply {
-            parent.createDirectories()
-            writeText("existing")
-        }
-        VersionGameDirectories(store).migrateLegacy()
-        assertEquals(
-            "ordinary user data",
-            store.instancePath(instance.id).resolve("${instance.name}.json").readText(),
-        )
-        assertNotEquals(instance.name, store.instancePath(instance.id).fileName.toString())
     }
 
     @Test

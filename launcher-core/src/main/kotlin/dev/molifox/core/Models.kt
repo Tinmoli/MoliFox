@@ -46,11 +46,6 @@ enum class JobStatus {
 
 data class LauncherSettings(
     val gameRoot: String = "",
-    /**
-     * gameRoot 目录语义：0 = 旧版（实际根目录在 gameRoot 之下的 minecraft/ 一层）， 1 = 直接使用 gameRoot。旧配置首次加载时迁移并置
-     * 1，之后不再重复迁移。
-     */
-    val gameRootSemantics: Int = 0,
     val javaPath: String = "",
     val memoryMb: Int = 4096,
     val autoMemory: Boolean = false,
@@ -64,12 +59,10 @@ data class LauncherSettings(
     val downloadAttempts: Int = 3,
     val networkTimeoutSeconds: Int = 45,
     val microsoftClientId: String = MoliFoxIdentity.microsoftClientId,
-    val darkTheme: Boolean = false,
-    val minimizeOnLaunch: Boolean = false,
     val isolateVersions: Boolean = true,
     val initialMemoryMb: Int = 512,
     val fullscreen: Boolean = false,
-    val themeMode: String = "",
+    val themeMode: String = "system",
     val uiScale: Float = 1f,
     val backgroundPath: String = "",
     val backgroundRevision: Long = 0,
@@ -101,8 +94,6 @@ data class LauncherSettings(
     /** 界面语言，当前仅提供 zh-CN。 */
     val language: String = "zh-CN",
     val gameLanguageFollowsLauncher: Boolean = false,
-    /** 兼容旧配置；更新服务固定使用项目的 GitHub Releases。 */
-    val updateManifestUrl: String = "",
     /** 启动时检查 GitHub 上已发布的正式版本。 */
     val autoCheckUpdates: Boolean = false,
     /** 版本列表源：official / bmclapi，独立于游戏文件下载源。 */
@@ -204,7 +195,7 @@ internal fun GameInstance.componentSelection() =
     ComponentSelection(loader, loaderVersion, versionId)
 
 data class LauncherData(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val settings: LauncherSettings = LauncherSettings(),
     val accounts: List<Account> = emptyList(),
     val instances: List<GameInstance> = emptyList(),

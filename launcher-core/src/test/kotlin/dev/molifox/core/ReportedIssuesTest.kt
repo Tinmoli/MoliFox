@@ -266,13 +266,13 @@ class ReportedIssuesTest {
     fun `settings draft keeps unsaved input and independent live appearance changes`() {
         val base = LauncherSettings()
         val edited = base.copy(memoryMb = 3072, autoMemory = true)
-        val appearance = base.copy(fontScale = 1.25f, backgroundOpacity = .5f, darkTheme = true)
+        val appearance = base.copy(fontScale = 1.25f, backgroundOpacity = .5f, themeMode = "dark")
         val merged = mergeSettingsDraft(base, edited, appearance)
         assertEquals(3072, merged.memoryMb)
         assertTrue(merged.autoMemory)
         assertEquals(1.25f, merged.fontScale)
         assertEquals(.5f, merged.backgroundOpacity)
-        assertTrue(merged.darkTheme)
+        assertEquals("dark", merged.themeMode)
         assertEquals(appearance, mergeSettingsDraft(base, base, appearance))
     }
 

@@ -47,7 +47,7 @@ class AdvancedLaunchTest {
     }
 
     @Test
-    fun `legacy configuration inherits and explicit empty instance settings override the group`() {
+    fun `default launch settings inherit and explicit empty instance settings override the group`() {
         val settings = gson.fromJson("{}", LauncherSettings::class.java)
         val instance = gson.fromJson("{}", GameInstance::class.java)
         assertEquals(AdvancedLaunchSettings(), settings.advancedLaunch)

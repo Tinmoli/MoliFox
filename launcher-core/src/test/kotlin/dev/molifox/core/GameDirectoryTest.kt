@@ -156,7 +156,7 @@ class GameDirectoryTest {
             assertTrue(root.resolve("versions").isDirectory())
             assertEquals("my world", root.resolve("saves/world/level.dat").readText())
             controller.directories.refresh()
-            controller.removeGameDirectory(controller.store.data.activeGameDirectoryId!!)
+            controller.store.data.activeGameDirectoryId?.let(controller::removeGameDirectory)
             assertTrue(controller.store.data.instances.isEmpty())
             assertEquals("my world", root.resolve("saves/world/level.dat").readText())
         }

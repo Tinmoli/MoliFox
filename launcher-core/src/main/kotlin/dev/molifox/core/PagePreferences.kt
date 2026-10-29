@@ -22,6 +22,7 @@ data class HomePagePreferences(
      * 两类内容不再混排，标题行的分段开关切换后立即写入配置，重启后仍停在用户上次选的那一类。
      */
     val recentPlayKind: String = "world",
+    val gradientMotd: Boolean = true,
 )
 
 data class VersionsPagePreferences(

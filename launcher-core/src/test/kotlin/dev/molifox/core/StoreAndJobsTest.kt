@@ -13,11 +13,12 @@ class StoreAndJobsTest {
     @TempDir lateinit var directory: Path
 
     @Test
-    fun `old empty client id adopts MoliFox id without replacing custom applications`() {
+    fun `current configuration defaults to MoliFox client id and preserves explicit values`() {
         val store = LauncherStore(DesktopPlatform(), directory)
+        assertEquals(MoliFoxIdentity.microsoftClientId, store.data.settings.microsoftClientId)
         store.mutate { it.copy(settings = it.settings.copy(microsoftClientId = "")) }
         val migrated = LauncherStore(DesktopPlatform(), directory)
-        assertEquals(MoliFoxIdentity.microsoftClientId, migrated.data.settings.microsoftClientId)
+        assertEquals("", migrated.data.settings.microsoftClientId)
         val customId = "00000000-0000-0000-0000-000000000001"
         migrated.mutate { it.copy(settings = it.settings.copy(microsoftClientId = customId)) }
         assertEquals(

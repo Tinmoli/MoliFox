@@ -55,7 +55,7 @@ class DownloadSourcePolicyTest {
     }
 
     @Test
-    fun `explicit default installation ignores selected external directory without moving it`() {
+    fun `explicit root override installs there without changing the user's current directory`() {
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
         val external = temporary.resolve("external").createDirectory()
         external.resolve("keep.txt").writeText("keep")
@@ -69,7 +69,7 @@ class DownloadSourcePolicyTest {
                 installer.createInstance(InstallRequest("New game", "26.3"), gameDirectoryId = null)
             assertNull(instance.gameDirectoryId)
             assertTrue(store.instancePath(instance.id).startsWith(temporary.resolve(".minecraft")))
-            assertNull(store.data.activeGameDirectoryId)
+            assertEquals(directory.id, store.data.activeGameDirectoryId)
         }
         assertEquals(listOf("keep.txt"), external.listDirectoryEntries().map { it.name })
         assertEquals("keep", external.resolve("keep.txt").readText())

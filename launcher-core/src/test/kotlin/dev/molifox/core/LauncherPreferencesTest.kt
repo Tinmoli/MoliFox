@@ -14,41 +14,6 @@ class LauncherPreferencesTest {
     @TempDir lateinit var directory: Path
 
     @Test
-    fun `legacy configuration retains theme and obtains defaults for new settings`() {
-        val store = LauncherStore(DesktopPlatform(), directory)
-        store.mutate { it.copy(settings = it.settings.copy(darkTheme = true)) }
-        val original = readObject(store.directories.configuration)
-        val settings = original.obj("settings")
-        val legacyKeys =
-            setOf(
-                "gameRoot",
-                "javaPath",
-                "memoryMb",
-                "width",
-                "height",
-                "extraJvmArgs",
-                "downloadSource",
-                "maxConcurrent",
-                "microsoftClientId",
-                "darkTheme",
-                "minimizeOnLaunch",
-                "isolateVersions",
-            )
-        for (key in settings.keySet().toList().filter { it !in legacyKeys }) settings.remove(key)
-        writeJson(store.directories.configuration, original)
-        val restored = LauncherStore(DesktopPlatform(), directory).data.settings
-        assertTrue(restored.darkTheme)
-        assertEquals("", restored.themeMode)
-        assertEquals(512, restored.initialMemoryMb)
-        assertEquals(1f, restored.uiScale)
-        assertFalse(restored.fullscreen)
-        assertEquals("", restored.fontChoice)
-        assertEquals(1f, restored.fontScale)
-        assertTrue(restored.glassEnabled)
-        assertFalse(restored.pages.home.recentPlayExpanded)
-    }
-
-    @Test
     fun `instance launch preferences persist atomically and reject invalid overrides`() {
         LauncherController(dataDirectory = directory).use { controller ->
             val instance =

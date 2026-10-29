@@ -5,6 +5,7 @@ package dev.molifox.core
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.nio.file.Path
+import java.time.Duration
 import java.time.Instant
 import kotlin.io.path.*
 
@@ -27,20 +28,99 @@ class RecentUsage(
     private val store: LauncherStore,
     private val clock: () -> Instant = Instant::now,
 ) {
+    private val sessions = mutableMapOf<String, ActiveUsage>()
+
+    @Synchronized
+    fun setHidden(kind: EntryKind, instanceId: String, key: String, hidden: Boolean) {
+        require(key.isNotBlank())
+        val entries = load()
+        val previous =
+            entries.find { it.kind == kind && it.instanceId == instanceId && it.key == key }
+                ?: Usage(kind, instanceId, key, Instant.EPOCH)
+        entries.removeAll { it.kind == kind && it.instanceId == instanceId && it.key == key }
+        entries.add(previous.copy(hidden = hidden))
+        save(entries)
+    }
+
+    @Synchronized
+    fun isHidden(kind: EntryKind, instanceId: String, key: String): Boolean =
+        load().any { it.kind == kind && it.instanceId == instanceId && it.key == key && it.hidden }
+
+    @Synchronized
+    fun summary(kind: EntryKind, instanceId: String, key: String): UsageSummary {
+        val previous =
+            load().find { it.kind == kind && it.instanceId == instanceId && it.key == key }
+        val active =
+            sessions.values.filter {
+                it.kind == kind && it.instanceId == instanceId && it.key == key
+            }
+        val elapsed = active.sumOf {
+            Duration.between(it.entered, clock()).seconds.coerceAtLeast(0)
+        }
+        return UsageSummary(
+            previous?.lastUsed?.takeIf { it > Instant.EPOCH },
+            (previous?.seconds ?: 0) + elapsed,
+            elapsed,
+            previous?.estimated ?: false,
+            active.isNotEmpty(),
+        )
+    }
+
+    @Synchronized
+    fun beginSession(
+        runId: String,
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+        entered: Instant = clock(),
+    ) {
+        val active = sessions[runId]
+        if (active?.kind == kind && active.instanceId == instanceId && active.key == key) return
+        endSession(runId, true)
+        record(kind, instanceId, key, entered)
+        sessions[runId] = ActiveUsage(kind, instanceId, key, entered)
+        store.updateState { it.copy(recentUsageRevision = it.recentUsageRevision + 1) }
+    }
+
+    @Synchronized
+    fun endSession(runId: String, estimated: Boolean = false) {
+        val active = sessions.remove(runId) ?: return
+        val elapsed = Duration.between(active.entered, clock()).seconds.coerceAtLeast(0)
+        val entries = load()
+        val index = entries.indexOfFirst {
+            it.kind == active.kind && it.instanceId == active.instanceId && it.key == active.key
+        }
+        if (index >= 0) {
+            val previous = entries[index]
+            entries[index] =
+                previous.copy(
+                    seconds = previous.seconds + elapsed,
+                    estimated = previous.estimated || estimated,
+                )
+            save(entries)
+        }
+    }
+
     /** `cache/recent-usage.json`；测试与诊断可直接检查该文件。 */
     val file: Path
         get() = store.directories.cache().root.resolve(FILE_NAME)
 
     /** 记录一次使用：时间取 [clock]，同一条目去重后移到最前。 */
     @Synchronized
-    fun record(kind: EntryKind, instanceId: String, key: String) {
+    fun record(kind: EntryKind, instanceId: String, key: String, entered: Instant = clock()) {
         if (instanceId.isBlank() || key.isBlank()) return
         runCatching {
             val entries = load()
+            val previous = entries.find {
+                it.kind == kind && it.instanceId == instanceId && it.key == key
+            }
             entries.removeAll {
                 it.kind == kind && it.instanceId == instanceId && it.key == key
             }
-            entries.add(0, Usage(kind, instanceId, key, clock()))
+            entries.add(
+                0,
+                (previous ?: Usage(kind, instanceId, key, entered)).copy(lastUsed = entered),
+            )
             save(cap(entries))
         }
             .onFailure { store.log("记录最近使用失败：${it.message ?: key}", true) }
@@ -54,6 +134,7 @@ class RecentUsage(
                 it.kind == kind && it.instanceId == instanceId && it.key == key
             }
             ?.lastUsed
+            ?.takeIf { it > Instant.EPOCH }
     }
         .getOrNull()
 
@@ -63,7 +144,9 @@ class RecentUsage(
         if (limit <= 0) return emptyList()
         return runCatching {
             load()
-                .filter { it.kind == kind && it.instanceId == instanceId }
+                .filter {
+                    it.kind == kind && it.instanceId == instanceId && it.lastUsed > Instant.EPOCH
+                }
                 .sortedByDescending { it.lastUsed }
                 .map { it.key }
                 .distinct()
@@ -132,7 +215,16 @@ class RecentUsage(
                     runCatching { Instant.parse(item.string("lastUsed")) }.getOrNull()
                         ?: return@mapNotNull null
                 if (instanceId.isBlank() || key.isBlank()) null
-                else Usage(kind, instanceId, key, lastUsed)
+                else
+                    Usage(
+                        kind,
+                        instanceId,
+                        key,
+                        lastUsed,
+                        item.boolean("hidden"),
+                        item.get("seconds")?.asLong?.coerceAtLeast(0) ?: 0,
+                        item.boolean("estimated"),
+                    )
             }
             .toMutableList()
     }
@@ -152,6 +244,9 @@ class RecentUsage(
                                     addProperty("instanceId", entry.instanceId)
                                     addProperty("key", entry.key)
                                     addProperty("lastUsed", entry.lastUsed.toString())
+                                    addProperty("hidden", entry.hidden)
+                                    addProperty("seconds", entry.seconds)
+                                    addProperty("estimated", entry.estimated)
                                 }
                             )
                         }
@@ -166,6 +261,7 @@ class RecentUsage(
     private fun cap(entries: List<Usage>): List<Usage> {
         val perInstance = mutableMapOf<String, Int>()
         return entries.filter { entry ->
+            if (entry.hidden) return@filter true
             val count = perInstance[entry.instanceId] ?: 0
             if (count >= MAX_ENTRIES_PER_INSTANCE) false
             else {
@@ -180,6 +276,16 @@ class RecentUsage(
         val instanceId: String,
         val key: String,
         val lastUsed: Instant,
+        val hidden: Boolean = false,
+        val seconds: Long = 0,
+        val estimated: Boolean = false,
+    )
+
+    private data class ActiveUsage(
+        val kind: EntryKind,
+        val instanceId: String,
+        val key: String,
+        val entered: Instant,
     )
 
     private companion object {
@@ -188,3 +294,11 @@ class RecentUsage(
         const val MAX_ENTRIES_PER_INSTANCE = 100
     }
 }
+
+data class UsageSummary(
+    val lastEntered: Instant?,
+    val totalSeconds: Long,
+    val activeSeconds: Long,
+    val estimated: Boolean,
+    val active: Boolean,
+)

@@ -11,8 +11,7 @@ data class AdvancedLaunchSettings(
     val preLaunchCommand: String = "",
     val postExitCommand: String = "",
     val commandTimeoutSeconds: Int = 60,
-    /** Empty falls back to [LauncherSettings.minimizeOnLaunch]. */
-    val launcherVisibility: String = "",
+    val launcherVisibility: String = "keep",
     val closeLauncherAfterGameExit: Boolean = false,
     val verifyFileHashes: Boolean = true,
     val useJavaConsoleExecutable: Boolean = false,

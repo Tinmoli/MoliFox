@@ -60,7 +60,7 @@ class LauncherStore(
     private val backup = directories.previousConfiguration
 
     init {
-        val relocations = directories.initialize()
+        directories.initialize()
         var recoveryMessage: String? = null
         val defaults =
             LauncherData(
@@ -70,8 +70,6 @@ class LauncherStore(
                         // 数据目录本身就在 .minecraft 里、或这一层就是游戏根时直接用这一层，不再套一层。
                         gameRoot =
                             defaultGameRoot(dataDirectory.parent ?: dataDirectory).toString(),
-                        // 新建配置直接使用新目录语义，不参与旧配置迁移。
-                        gameRootSemantics = 1,
                         proxyMode = "system",
                         memoryMb = minOf(4096, maxOf(1024, platform.totalMemoryMb / 4 / 256 * 256)),
                         autoMemory = true,
@@ -100,58 +98,18 @@ class LauncherStore(
             else defaults
         if (config.exists() && recoveryMessage == null)
             Files.copy(config, backup, StandardCopyOption.REPLACE_EXISTING)
-        var migrated =
-            if (loaded.settings.microsoftClientId.isBlank())
-                loaded.copy(
-                    settings =
-                        loaded.settings.copy(microsoftClientId = MoliFoxIdentity.microsoftClientId)
-                )
-            else loaded
-        if (config.exists() && loaded.settings.gameRootSemantics == 0) {
-            // 旧配置的 gameRoot 之下还有一层 minecraft/；当前语义是直接使用 gameRoot，
-            // 因此统一下移一级并写入标记，保持各实例实际使用的目录不变，且只迁移一次。
-            migrated =
-                migrated.copy(
-                    settings =
-                        migrated.settings.copy(
-                            gameRoot =
-                                Path.of(migrated.settings.gameRoot).resolve("minecraft").toString(),
-                            gameRootSemantics = 1,
-                        )
-                )
-        }
-        fun relocated(path: String): String {
-            if (path.isBlank()) return path
-            val original =
-                runCatching { Path.of(path).toAbsolutePath().normalize() }.getOrNull()
-                    ?: return path
-            if (!original.startsWith(directories.root)) return path
-            val replacement =
-                relocations[directories.root.relativize(original).joinToString("/")] ?: return path
-            return safePath(directories.root, replacement).takeIf { it.isRegularFile() }?.toString()
-                ?: path
-        }
-        migrated =
-            migrated.copy(
-                settings =
-                    migrated.settings.copy(
-                        backgroundPath = relocated(migrated.settings.backgroundPath)
-                    ),
-                instances = migrated.instances.map { it.copy(packFile = relocated(it.packFile)) },
-            )
         directories.cache().initialize()
-        if (migrated.settings.downloadCachePath.isNotBlank())
-            directories.cache(migrated.settings.downloadCachePath).initialize()
-        if (migrated != loaded || !config.exists() || recoveryMessage != null)
-            writeJson(config, migrated)
-        mutableState = MutableStateFlow(LauncherState(migrated))
+        if (loaded.settings.downloadCachePath.isNotBlank())
+            directories.cache(loaded.settings.downloadCachePath).initialize()
+        if (!config.exists() || recoveryMessage != null) writeJson(config, loaded)
+        mutableState = MutableStateFlow(LauncherState(loaded))
         recoveryMessage?.let { log(it, true) }
     }
 
     private fun readData(path: Path): LauncherData {
         val json = readObject(path)
         require(
-            json.int("schemaVersion") == 1 &&
+            json.int("schemaVersion") == 2 &&
                 json.has("accounts") &&
                 json.has("instances") &&
                 json.has("settings")
@@ -161,10 +119,6 @@ class LauncherStore(
         val value = gson.fromJson(json, LauncherData::class.java)
         require(value.settings.gameRoot.isNotBlank() && Path.of(value.settings.gameRoot).isAbsolute)
         value.instances.forEach { require(runCatching { UUID.fromString(it.id) }.isSuccess) }
-        // 旧配置里 authlibServers 可能被序列化成空数组，导致界面上「认证服务器」一直是灰的。
-        // 空列表视为「还没配置过」，补上内置的 LittleSkin（与 HMCL/PCL 的默认项一致）。
-        if (value.authlibServers.isEmpty())
-            return value.copy(authlibServers = listOf(DEFAULT_AUTHLIB_SERVER))
         return value
     }
 

@@ -1,4 +1,4 @@
-// 负责NBT 二进制标签的安全读取。
+// 负责 NBT 二进制标签的有界读取和保留根名称的文档描述。
 
 package dev.molifox.core
 
@@ -12,11 +12,7 @@ import java.nio.file.Path
 import java.util.zip.GZIPInputStream
 import kotlin.io.path.*
 
-/**
- * 只读的 NBT 标签：Minecraft 的二进制数据格式，1–12 号标签全部覆盖。
- *
- * 这里只为读取 `servers.dat` 这类小文件服务，不提供写入；数值、字符串、数组、列表与复合标签 都是不可变的普通数据类，便于测试直接比较。
- */
+/** Minecraft 的二进制数据标签，覆盖 1–12 号类型；标签值不可变，写回由 NbtWriter 负责。 */
 sealed interface NbtTag
 
 data class NbtByte(val value: Byte) : NbtTag
@@ -54,6 +50,20 @@ data class NbtCompound(val entries: Map<String, NbtTag>) : NbtTag {
 data class NbtIntArray(val value: IntArray) : NbtTag
 
 data class NbtLongArray(val value: LongArray) : NbtTag
+
+data class NbtDocument(val rootName: String, val root: NbtCompound, val compressed: Boolean)
+
+internal fun readNbtDocument(path: Path): NbtDocument {
+    require(path.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" }
+    val compressed = Files.newInputStream(path).use { it.read() == 0x1f && it.read() == 0x8b }
+    val bytes = requireNotNull(readNbtBytes(path)) { "NBT 数据过大" }
+    val name =
+        DataInputStream(ByteArrayInputStream(bytes)).use {
+            require(it.readUnsignedByte() == 10) { "NBT 根标签无效" }
+            it.readUTF()
+        }
+    return NbtDocument(name, parseNbtRoot(bytes), compressed)
+}
 
 private const val TAG_END = 0
 private const val TAG_BYTE = 1

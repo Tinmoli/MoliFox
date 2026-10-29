@@ -136,6 +136,7 @@ class MinecraftInstaller(
         }
     }
 
+    @Synchronized
     fun createInstance(
         request: InstallRequest,
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
@@ -160,8 +161,9 @@ class MinecraftInstaller(
         store.mutate {
             it.copy(
                 instances = it.instances + instance,
-                selectedInstanceId = instance.id,
-                activeGameDirectoryId = gameDirectoryId,
+                selectedInstanceId =
+                    if (it.activeGameDirectoryId == gameDirectoryId) instance.id
+                    else it.selectedInstanceId,
             )
         }
         store.instancePath(instance.id).createDirectories()
@@ -417,7 +419,8 @@ class MinecraftInstaller(
                 )
                 .asJsonObject
         val id =
-            "molifox-${instance.loader.name.lowercase()}-${instance.gameVersion}-${instance.loaderVersion}"
+            instance.gameDirectoryName.takeIf { it.isNotBlank() && it != instance.gameVersion }
+                ?: "molifox-${instance.loader.name.lowercase()}-${instance.gameVersion}-${instance.loaderVersion}"
         safeFilename(id)
         profile.addProperty("id", id)
         writeJson(root.resolve("versions/$id/$id.json"), profile)

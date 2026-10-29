@@ -4,7 +4,6 @@ package dev.molifox.core
 
 import java.net.InetSocketAddress
 import java.net.Proxy
-import java.net.URI
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.file.Files
@@ -98,11 +97,6 @@ class LauncherController(
                 })
 
     init {
-        runCatching { VersionGameDirectories(store).migrateLegacy() }
-            .onFailure {
-                store.log("旧游戏目录尚未完成迁移，原文件保留：${it.message}", true)
-                store.notify("旧游戏目录迁移未完成，请先处理目录冲突或链接：${it.message}")
-            }
         directories.refreshVersionMetadata()
         store.log("欢迎使用 MoliFox · ${platform.osName} / ${platform.architecture}")
         if (store.data.settings.autoCheckUpdates) checkForUpdates(false)
@@ -172,11 +166,11 @@ class LauncherController(
         }
     }
 
-    fun launch(id: String): String {
+    fun launch(id: String, target: GameLaunchTarget? = null): String {
         require(store.instance(id).installed) { "此实例尚未安装完成，请先修复" }
         require(store.data.activeAccountId != null) { "请先添加并选择游戏账户" }
         return jobs.enqueue("启动 ${store.instance(id).name}", taskResourcesForInstances(store, id)) {
-            game.launch(id, this)
+            game.launch(id, this, target)
         }
     }
 
@@ -185,6 +179,11 @@ class LauncherController(
         store.mutate {
             it.copy(selectedInstanceId = id, activeGameDirectoryId = instance.gameDirectoryId)
         }
+    }
+
+    fun deleteServer(instanceId: String, address: String): ServerDeletion {
+        requireIdle(instanceId)
+        return synchronized(store) { ServerListEditor(store).delete(instanceId, address) }
     }
 
     fun selectGameDirectory(id: String?) {
@@ -510,16 +509,6 @@ class LauncherController(
                 "代理地址或端口无效"
             }
         }
-        require(
-            settings.updateManifestUrl.isEmpty() ||
-                runCatching {
-                        val uri = URI(settings.updateManifestUrl)
-                        uri.scheme == "https" && uri.userInfo == null
-                    }
-                    .getOrDefault(false)
-        ) {
-            "更新清单地址必须是 HTTPS 链接"
-        }
         if (settings.downloadCachePath.isNotBlank()) {
             require(Path.of(settings.downloadCachePath).isAbsolute) { "下载缓存文件夹必须是绝对路径" }
         }
@@ -587,7 +576,10 @@ class LauncherController(
         val resources =
             if (hit.type == "modpack") setOf("new-pack:${UUID.randomUUID()}")
             else taskResourcesForInstances(store, id!!)
-        return jobs.enqueue("安装 ${hit.title}", resources) { content.installContent(hit, id, this) }
+        val directoryId = store.data.activeGameDirectoryId
+        return jobs.enqueue("安装 ${hit.title}", resources) {
+            content.installContent(hit, id, this, directoryId)
+        }
     }
 
     fun installContent(plan: ContentInstallPlan): String {
@@ -625,12 +617,14 @@ class LauncherController(
         optionalFiles: Set<String>? = null,
         expectedHash: String? = null,
     ): String {
+        val directoryId = store.data.activeGameDirectoryId
         return jobs.enqueue("导入 ${file.fileName}", setOf("new-pack:${UUID.randomUUID()}")) {
             content.importPack(
                 file,
                 this,
                 optionalFiles = optionalFiles,
                 expectedHash = expectedHash,
+                gameDirectoryId = directoryId,
             )
         }
     }

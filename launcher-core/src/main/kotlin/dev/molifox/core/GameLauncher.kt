@@ -31,6 +31,7 @@ class LaunchPlanner(
         credentials: GameCredentials,
         prepareFiles: Boolean = true,
         runtimeDirectory: Path? = null,
+        target: GameLaunchTarget? = null,
     ): LaunchPlan =
         withContext(Dispatchers.IO) {
             val platform = store.platform
@@ -136,6 +137,14 @@ class LaunchPlanner(
                             else -> settings.fullscreen
                         }
                 }
+            val quickPlay = supportsQuickPlay(profile, instance.gameVersion)
+            val recording = runtimeDirectory?.resolve("quick-play.json")
+            val targetArguments =
+                quickPlayArguments(target, quickPlay, recording, instance.gameVersion)
+            if (target?.kind == EntryKind.World) {
+                val world = safePath(game.resolve("saves"), target.key)
+                require(world.resolve("level.dat").isRegularFile()) { "此存档不存在或仍为压缩包，请先解压到 saves" }
+            }
             val values =
                 mapOf(
                     "auth_player_name" to credentials.name,
@@ -160,8 +169,22 @@ class LaunchPlanner(
                     "launcher_version" to LAUNCHER_VERSION,
                     "resolution_width" to width.toString(),
                     "resolution_height" to height.toString(),
+                    "quickPlayPath" to recording?.toAbsolutePath()?.toString().orEmpty(),
+                    "quickPlaySingleplayer" to
+                        target?.takeIf { it.kind == EntryKind.World }?.key.orEmpty(),
+                    "quickPlayMultiplayer" to
+                        target?.takeIf { it.kind == EntryKind.Server }?.key.orEmpty(),
+                    "quickPlayRealms" to "",
                 )
-            val features = mapOf("has_custom_resolution" to true, "is_demo_user" to false)
+            val features =
+                mapOf(
+                    "has_custom_resolution" to true,
+                    "is_demo_user" to false,
+                    "has_quick_plays_support" to (quickPlay && recording != null),
+                    "is_quick_play_singleplayer" to (target?.kind == EntryKind.World),
+                    "is_quick_play_multiplayer" to (target?.kind == EntryKind.Server),
+                    "is_quick_play_realms" to false,
+                )
             val modern = profile.json.obj("arguments")
             val jvm =
                 if (modern.array("jvm").size() > 0)
@@ -256,7 +279,7 @@ class LaunchPlanner(
                     mutableListOf("@${argumentFile.toAbsolutePath()}")
                 } else command
             invocation += profile.mainClass
-            invocation += gameArguments
+            invocation += appendMissingQuickPlay(gameArguments, targetArguments)
             if (!gameArguments.contains("--width"))
                 invocation +=
                     listOf(
@@ -311,7 +334,7 @@ class GameLauncher(
     fun isRunning(instanceId: String): Boolean =
         store.state.value.runningGames.any { it.instanceId == instanceId }
 
-    suspend fun launch(instanceId: String, context: JobContext) {
+    suspend fun launch(instanceId: String, context: JobContext, target: GameLaunchTarget? = null) {
         val runId = UUID.randomUUID().toString()
         val runtimeDirectory = store.temporaryDirectory.resolve("games").resolve(runId)
         val commands = LaunchCommandRunner(store)
@@ -320,7 +343,6 @@ class GameLauncher(
             effectiveLaunchSettings(store.data.settings, instance).let {
                 it.copy(environmentVariables = it.environmentVariables.toMap())
             }
-        val legacyMinimize = store.data.settings.minimizeOnLaunch
         check(instance.installed) { "实例尚未安装完成，请先修复" }
         validateAdvancedLaunchSettings(
             effectiveLaunchSettings(store.data.settings, instance),
@@ -364,6 +386,7 @@ class GameLauncher(
                         runtime,
                         credentials,
                         runtimeDirectory = runtimeDirectory,
+                        target = target,
                     )
             session.prepared(plan, credentials)
             context.progress(.85f, "执行启动前命令…")
@@ -401,10 +424,7 @@ class GameLauncher(
             runCatching { runtimes.attach(runtimeDirectory, process) }
                 .onFailure { store.log("游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}", true) }
             val started = System.currentTimeMillis()
-            val visibility =
-                launchSettings.launcherVisibility.ifBlank {
-                    if (legacyMinimize) "minimize" else "keep"
-                }
+            val visibility = launchSettings.launcherVisibility
             val runEvent =
                 GameRunEvent(
                     runId,
@@ -423,7 +443,18 @@ class GameLauncher(
             store.updateInstance(instanceId) { it.copy(lastPlayed = Instant.now().toString()) }
             store.log("游戏已启动：${instance.name} · Java ${runtime.majorVersion}")
             scope.launch(Dispatchers.IO) {
-                val activity = GameActivityTracker(store, instance)
+                val activity =
+                    GameActivityTracker(
+                        store,
+                        instance,
+                        runtimeDirectory.resolve("quick-play.json"),
+                    )
+                val activityPoller = launch {
+                    while (isActive && process.isAlive) {
+                        activity.pollQuickPlay()
+                        delay(750)
+                    }
+                }
                 val decoder = GameLogDecoder { entry ->
                     store.log(entry.message, error = entry.error, game = true)
                 }
@@ -464,6 +495,11 @@ class GameLauncher(
                 } catch (error: Exception) {
                     session.finish(failure = error)
                 } finally {
+                    withContext(NonCancellable) {
+                        activityPoller.cancelAndJoin()
+                        activity.pollQuickPlay()
+                        activity.finish()
+                    }
                     decoder.flush()
                     processes.remove(runId)
                     runners.remove(runId)

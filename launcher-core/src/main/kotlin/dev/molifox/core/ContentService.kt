@@ -151,9 +151,14 @@ class ContentService(
         )
     }
 
-    suspend fun installContent(hit: ContentHit, instanceId: String?, context: JobContext) {
+    suspend fun installContent(
+        hit: ContentHit,
+        instanceId: String?,
+        context: JobContext,
+        gameDirectoryId: String? = store.data.activeGameDirectoryId,
+    ) {
         if (hit.type == "modpack") {
-            importPack(downloadPack(hit, context), context)
+            importPack(downloadPack(hit, context), context, gameDirectoryId = gameDirectoryId)
         } else {
             val instance = instanceId?.let { store.instance(it) } ?: error("请先选择一个游戏实例")
             require(instance.installed) { "请先完成游戏实例安装" }
@@ -391,6 +396,7 @@ class ContentService(
         repairId: String? = null,
         optionalFiles: Set<String>? = null,
         expectedHash: String? = null,
+        gameDirectoryId: String? = store.data.activeGameDirectoryId,
     ) =
         withPackSnapshot(archive) { snapshot ->
             require(
@@ -442,7 +448,7 @@ class ContentService(
                         )
                 val instance =
                     repairId?.let { store.instance(it) }
-                        ?: installer.createInstance(request).let { created ->
+                        ?: installer.createInstance(request, gameDirectoryId).let { created ->
                             store.updateInstance(created.id) {
                                 it.copy(
                                     isolation = VersionIsolation.Inherit,

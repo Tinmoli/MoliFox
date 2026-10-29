@@ -57,18 +57,18 @@ class GameDirectoryService(private val store: LauncherStore) {
         var added: GameDirectory? = null
         for (root in roots) {
             val existing = registered(root.path)
-            // 同一目录的版本已作为「MoliFox 默认目录」的受管实例存在时不再登记成外部目录，
-            // 否则同一个版本会多出一条实例记录，并把原来的实例挤出当前目录的列表。
-            if (existing == null && defaultRootHasInstances(root.path)) {
-                store.log("启动时识别游戏目录 ${root.path}：${root.versions} 个版本（默认目录已登记，跳过）")
-                continue
-            }
             val instances = register(root.path, activate = false)
             store.log(
                 "启动时识别游戏目录 ${root.path}：${root.versions} 个版本" +
                     if (existing == null) "（新登记）" else "（已登记过，仅刷新实例）"
             )
-            if (existing == null && added == null && instances > 0) added = registered(root.path)
+            if (
+                existing == null &&
+                    added == null &&
+                    instances > 0 &&
+                    !sameDirectory(root.path, store.minecraftRoot)
+            )
+                added = registered(root.path)
         }
         // 新发现的目录自动选中，实例列表立刻可见；已登记目录不会抢占用户的选择。
         added?.let { directory ->
@@ -86,6 +86,7 @@ class GameDirectoryService(private val store: LauncherStore) {
     /** 登记或刷新一个已确认的游戏根；只有 [activate] 时才改动当前目录与选中实例。 */
     private fun register(root: Path, activate: Boolean): Int {
         val existing = registered(root)
+        val isDefault = sameDirectory(root, store.minecraftRoot)
         val directory =
             existing
                 ?: GameDirectory(
@@ -95,9 +96,23 @@ class GameDirectoryService(private val store: LauncherStore) {
                         else root.fileName.toString(),
                     path = root.toString(),
                 )
-        val instances = scan(directory)
+        val directoryId = if (isDefault) null else directory.id
+        val allInstances = scan(directory).map { it.copy(gameDirectoryId = directoryId) }
+        // 组件基础配置不重复显示为实例；保留已有实例自己的设置和目录名。
+        val represented = store.data.instances.filter { it.gameDirectoryId == directoryId }
+        val instances =
+            allInstances.filter { candidate ->
+                represented.none { original ->
+                    original.versionId == candidate.versionId ||
+                        original.gameDirectoryName.ifBlank { original.versionId } ==
+                            candidate.versionId
+                }
+            } +
+                allInstances.filter { candidate ->
+                    represented.any { it.versionId == candidate.versionId }
+                }
         store.mutate { data ->
-            val current = data.instances.filter { it.gameDirectoryId == directory.id }
+            val current = data.instances.filter { it.gameDirectoryId == directoryId }
             val fresh = instances.filter { candidate ->
                 current.none { it.versionId == candidate.versionId }
             }
@@ -118,11 +133,11 @@ class GameDirectoryService(private val store: LauncherStore) {
             val candidates = refreshed + fresh
             data.copy(
                 gameDirectories =
-                    if (existing == null) data.gameDirectories + directory
+                    if (existing == null && !isDefault) data.gameDirectories + directory
                     else data.gameDirectories,
                 instances =
-                    data.instances.filter { it.gameDirectoryId != directory.id } + candidates,
-                activeGameDirectoryId = if (activate) directory.id else data.activeGameDirectoryId,
+                    data.instances.filter { it.gameDirectoryId != directoryId } + candidates,
+                activeGameDirectoryId = if (activate) directoryId else data.activeGameDirectoryId,
                 selectedInstanceId =
                     if (activate)
                         data.selectedInstanceId?.takeIf { id -> candidates.any { it.id == id } }
@@ -153,13 +168,6 @@ class GameDirectoryService(private val store: LauncherStore) {
     private fun registered(root: Path): GameDirectory? =
         store.data.gameDirectories.find { sameDirectory(Path.of(it.path), root) }
 
-    /** 该根目录是否已经以「MoliFox 默认目录」的受管实例存在（默认目录的实例不记录目录 id）。 */
-    private fun defaultRootHasInstances(root: Path): Boolean {
-        val shared = runCatching { store.minecraftRoot }.getOrNull() ?: return false
-        return store.data.instances.any { it.gameDirectoryId == null } &&
-            sameDirectory(shared, root)
-    }
-
     private fun sameDirectory(left: Path, right: Path): Boolean {
         val a = runCatching { left.toRealPath() }.getOrElse { left.toAbsolutePath().normalize() }
         val b = runCatching { right.toRealPath() }.getOrElse { right.toAbsolutePath().normalize() }
@@ -181,8 +189,10 @@ class GameDirectoryService(private val store: LauncherStore) {
     fun refresh(): Int {
         val directory =
             store.data.gameDirectories.find { it.id == store.data.activeGameDirectoryId }
-                ?: return 0
-        return add(Path.of(directory.path))
+        return register(
+            directory?.let { Path.of(it.path) } ?: store.minecraftRoot,
+            activate = false,
+        )
     }
 
     fun remove(id: String) {
