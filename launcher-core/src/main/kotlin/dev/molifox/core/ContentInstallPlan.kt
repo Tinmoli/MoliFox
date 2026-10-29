@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责内容安装前置依赖和目标文件计划。
 
 package dev.molifox.core
@@ -38,12 +41,14 @@ internal fun contentSignature(store: LauncherStore, instance: GameInstance) =
 internal fun contentFileUrl(api: String, url: String): String {
     val source = URI(api)
     val target = URI(url)
-    // Explicit test backend only; production metadata cannot redirect a download to local services.
+    // The configured CurseForge mirror/proxy may serve files itself; official endpoints still
+    // fall through to the CDN allow-list. Explicit local test servers are accepted as well.
+    val configuredService = source.host !in setOf("api.modrinth.com", "api.curseforge.com")
     if (
-        source.host == "127.0.0.1" &&
-            source.scheme == "http" &&
+        target.scheme == source.scheme &&
             target.host == source.host &&
-            target.port == source.port
+            target.port == source.port &&
+            (configuredService || source.host == "127.0.0.1")
     )
         return url
     return validatePackUrl(url)

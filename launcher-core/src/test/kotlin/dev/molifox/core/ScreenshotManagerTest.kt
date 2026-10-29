@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证游戏截图的筛选、导出和回收的行为与边界。
 
 package dev.molifox.core
@@ -106,7 +109,11 @@ class ScreenshotManagerTest {
         assertFailsWith<IllegalArgumentException> { manager.remove(listOf(shot)) }
         assertEquals("changed", original.readText())
         val refreshed = manager.list(instance.id).single()
+        // 全局默认值不再覆盖实例自己的隔离设置：只改全局不会让旧截图失效。
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
+        assertEquals(original.toRealPath(), manager.resolve(refreshed).toRealPath())
+        // 实例自己改成共用目录后目录确实换了，旧选择必须失效。
+        store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
         assertFailsWith<IllegalArgumentException> { manager.resolve(refreshed) }
     }
 

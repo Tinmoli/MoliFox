@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责已安装资源的更新检查、版本锁定和应用。
 
 package dev.molifox.desktop
@@ -265,7 +268,7 @@ fun ModDetailsDialog(mod: ModFile, onDismiss: () -> Unit) {
                 if (entry.dependencies.isNotEmpty())
                     Text("声明的依赖：\n${entry.dependencies.joinToString("\n")}")
             }
-            MutedText("使用「检查更新」按文件哈希识别内容来源，再查看项目详情、选择版本或锁定。")
+            MutedText("使用模组页的「检查更新」查看更新；这里可按文件哈希识别内容来源，再查看项目详情、选择版本或锁定。")
         }
         TextButton(onDismiss) { Text("关闭模组详情") }
     }

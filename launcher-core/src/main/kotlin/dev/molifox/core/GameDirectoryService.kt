@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责游戏目录登记、扫描和现有实例识别。
 
 package dev.molifox.core
@@ -54,6 +57,8 @@ class GameDirectoryService(private val store: LauncherStore) {
      * 选择（只有本次新登记的目录才会被设为当前目录，等价于手动导入一次）。没有发现时保持安静。
      */
     fun discover(roots: List<StartupRoot>): Int {
+        // 发现以磁盘为准：记录还在但版本/游戏目录已被手动删掉的实例先清掉，列表里不再出现点不动的空记录。
+        store.pruneMissingInstanceRecords()
         var added: GameDirectory? = null
         for (root in roots) {
             val existing = registered(root.path)

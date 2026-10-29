@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责「联机」占位页：只有标题和空态，不提供任何看似可用但实际无效的入口。
 
 package dev.molifox.desktop

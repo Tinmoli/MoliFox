@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责正版皮肤档案刷新和皮肤上传。
 
 package dev.molifox.core
@@ -5,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import kotlin.io.path.*
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +20,14 @@ data class MinecraftSkinProfile(
     val textureUrl: String,
     val variant: SkinVariant,
 )
+
+/**
+ * 离线皮肤的实际落盘位置。
+ *
+ * [library] 是启动器皮肤库里的 `MoliFox/skins/<id>.png`（离线角色一直用它做预览）；
+ * [customSkinLoader] 只在当前选中实例下已经存在 CustomSkinLoader 的本地皮肤目录时才非空， 启动器绝不主动创建模组目录。
+ */
+data class OfflineSkinPlacement(val library: Path, val customSkinLoader: Path?)
 
 class SkinService
 internal constructor(
@@ -113,25 +125,98 @@ internal constructor(
             }
         }
 
-    suspend fun useOfflinePreview(accountId: String, skinId: String?) {
+    /**
+     * 把皮肤库中的一项设为离线角色的皮肤，并在存在 CustomSkinLoader 本地皮肤目录时同步一份。
+     *
+     * 离线模式没有皮肤服务器：文件必须由本机目录提供给皮肤模组，启动器不会伪造上传。
+     * 返回实际写入的位置；[skinId] 为 null（恢复默认）时返回 null。
+     */
+    suspend fun useOfflinePreview(accountId: String, skinId: String?): OfflineSkinPlacement? {
         val account = store.data.accounts.find { it.id == accountId } ?: error("账户已移除")
         require(account.type == AccountType.Offline) { "此选项仅设置离线角色的本地预览" }
-        val variant =
-            if (skinId != null) {
-                library.texture(skinId)
-                library.list().first { it.id == skinId }.variant
-            } else SkinVariant.Classic
+        if (skinId == null) {
+            store.mutate { data ->
+                data.copy(
+                    accounts =
+                        data.accounts.map {
+                            if (it.id == accountId)
+                                it.copy(localSkinId = "", skinVariant = SkinVariant.Classic)
+                            else it
+                        }
+                )
+            }
+            return null
+        }
+        val entry =
+            library.list().find { it.id == skinId } ?: error("皮肤已不在皮肤库中")
+        val file = library.texture(skinId)
         store.mutate { data ->
             data.copy(
                 accounts =
                     data.accounts.map {
                         if (it.id == accountId)
-                            it.copy(localSkinId = skinId.orEmpty(), skinVariant = variant)
+                            it.copy(localSkinId = skinId, skinVariant = entry.variant)
                         else it
                     }
             )
         }
+        return OfflineSkinPlacement(
+            file,
+            publishCustomSkinLoaderSkin(account.name, file, entry.variant),
+        )
     }
+
+    /** 当前选中实例下真实存在的 CustomSkinLoader 本地皮肤目录；目录不存在时返回 null，不创建。 */
+    fun customSkinLoaderDirectory(): Path? {
+        val instance =
+            store.data.selectedInstanceId?.let { id ->
+                store.data.instances.find { it.id == id }
+            } ?: return null
+        val game =
+            runCatching { store.gamePath(instance) }.getOrNull()?.toAbsolutePath()?.normalize()
+                ?: return null
+        val directory =
+            game.resolve("CustomSkinLoader").resolve("LocalSkin").resolve("skins").normalize()
+        return directory.takeIf {
+            it.startsWith(game) && it.isDirectory() && !Files.isSymbolicLink(it)
+        }
+    }
+
+    /**
+     * 仅在模组目录已存在时写 `<game>/CustomSkinLoader/LocalSkin/skins/<玩家名>.png`。
+     * 写不进去只记录日志，不影响启动器内的离线预览。
+     */
+    private suspend fun publishCustomSkinLoaderSkin(
+        playerName: String,
+        source: Path,
+        variant: SkinVariant,
+    ): Path? =
+        withContext(Dispatchers.IO) {
+            val directory = customSkinLoaderDirectory() ?: return@withContext null
+            val target = directory.resolve("$playerName.png")
+            if (Files.isSymbolicLink(target)) {
+                store.log("未写入 CustomSkinLoader 本地皮肤：目标文件是符号链接")
+                return@withContext null
+            }
+            try {
+                validateLocalSkinFile(source, variant)
+                val staging = Files.createTempFile(directory, ".molifox-skin-", ".tmp")
+                try {
+                    Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
+                    validateLocalSkinFile(staging, variant)
+                    Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
+                } finally {
+                    staging.deleteIfExists()
+                }
+                store.log("离线皮肤已写入 CustomSkinLoader：$target")
+                target
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                null
+            }
+        }
 
     suspend fun texture(account: Account, refresh: Boolean = false): Path? =
         if (account.type == AccountType.Offline) {

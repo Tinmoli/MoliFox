@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责按服务器原色呈现两行居中的公告，以及完整文本悬停展示。
 
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)

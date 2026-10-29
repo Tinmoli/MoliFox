@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责皮肤库、三维预览和正版上传界面。
 
 package dev.molifox.desktop
@@ -110,7 +113,14 @@ fun SkinManagerDialog(
         width = 640.dp,
         onDismiss = { if (!busy) onDismiss() },
     ) {
-        if (account.type == AccountType.Offline) MutedText("离线皮肤只用于启动器预览，不会改变联网服务器中的角色皮肤。")
+        if (account.type == AccountType.Offline) {
+            val libraryDirectory = service.library.directory
+            val customSkinLoader = remember(account.id, revision) { service.customSkinLoaderDirectory() }
+            MutedText(
+                "离线皮肤不会上传，只写入本地目录（$libraryDirectory），需皮肤模组才会在游戏中显示" +
+                    (customSkinLoader?.let { "；CustomSkinLoader 已同步到 $it" } ?: "")
+            )
+        }
         Row(
             Modifier.fillMaxWidth().height(250.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -184,45 +194,36 @@ fun SkinManagerDialog(
                 }
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CompactTextField(
-                importName,
-                { importName = it.take(100) },
-                Modifier.weight(1f),
-                label = "皮肤名称",
-                placeholder = "留空使用文件名",
-                enabled = !busy,
-            )
-            SimpleDropdown(
-                importVariant.name,
-                SkinVariant.entries.map { it.name to it.title },
-                { importVariant = SkinVariant.valueOf(it) },
-                Modifier.width(140.dp),
-            )
-            SecondaryButton(
-                {
-                    act {
-                        val file =
-                            actions.choose("导入 PNG 皮肤", extensions = listOf("png")).firstOrNull()
-                                ?: return@act
-                        val imported =
-                            service.library.importSkin(
-                                file,
-                                importName.ifBlank { file.nameWithoutExtension },
-                                importVariant,
-                            )
-                        selectedId = imported.id
+        SkinImportRow(
+            name = importName,
+            onNameChange = { importName = it.take(100) },
+            variant = importVariant,
+            onVariantChange = { importVariant = it },
+            enabled = !busy,
+            onImport = {
+                act(refreshAvatar = account.type == AccountType.Offline) {
+                    val file =
+                        actions.choose("导入 PNG 皮肤", extensions = listOf("png")).firstOrNull()
+                            ?: return@act
+                    val imported =
+                        service.library.importSkin(
+                            file,
+                            importName.ifBlank { file.nameWithoutExtension },
+                            importVariant,
+                        )
+                    selectedId = imported.id
+                    if (account.type == AccountType.Offline) {
+                        val placement = service.useOfflinePreview(account.id, imported.id)
+                        message =
+                            "已导入 ${imported.name}" +
+                                (placement?.customSkinLoader?.let { "，已同步 CustomSkinLoader" }
+                                    ?: "")
+                    } else {
                         message = "已导入 ${imported.name}"
                     }
-                },
-                enabled = !busy,
-            ) {
-                Text("导入皮肤")
-            }
-        }
+                }
+            },
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(
                 {
@@ -331,4 +332,75 @@ fun SkinManagerDialog(
             )
         }
     }
+}
+
+/**
+ * 皮肤导入行：名称输入框可伸缩，手臂型号与「导入皮肤」固定宽高。
+ *
+ * 常规宽度下三项同一行并按输入框底边对齐（输入框带 11sp 标签，比 34dp 控件高， 用 `Alignment.Bottom` 让三者控制区真正齐平）；只有弹窗可用宽度低于 420dp
+ * 时才折成「名称一行、型号与按钮一行」，不在常规宽度换行。
+ */
+@Composable
+private fun SkinImportRow(
+    name: String,
+    onNameChange: (String) -> Unit,
+    variant: SkinVariant,
+    onVariantChange: (SkinVariant) -> Unit,
+    enabled: Boolean,
+    onImport: () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 420.dp) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactTextField(
+                    name,
+                    onNameChange,
+                    Modifier.fillMaxWidth(),
+                    label = "皮肤名称",
+                    placeholder = "留空使用文件名",
+                    enabled = enabled,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SkinVariantDropdown(variant, onVariantChange, enabled, Modifier.width(140.dp))
+                    SecondaryButton(onImport, enabled = enabled) { Text("导入皮肤") }
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                CompactTextField(
+                    name,
+                    onNameChange,
+                    Modifier.weight(1f),
+                    label = "皮肤名称",
+                    placeholder = "留空使用文件名",
+                    enabled = enabled,
+                )
+                SkinVariantDropdown(variant, onVariantChange, enabled, Modifier.width(140.dp))
+                SecondaryButton(onImport, enabled = enabled) { Text("导入皮肤") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkinVariantDropdown(
+    variant: SkinVariant,
+    onVariantChange: (SkinVariant) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier,
+) {
+    SimpleDropdown(
+        variant.name,
+        SkinVariant.entries.map { it.name to it.title },
+        { onVariantChange(SkinVariant.valueOf(it)) },
+        modifier,
+        enabled = enabled,
+    )
 }

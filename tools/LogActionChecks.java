@@ -21,8 +21,14 @@ final class LogActionChecks {
         UiSmoke.click(robot, "关闭任务中心");
         UiSmoke.clickRail(robot, "日志");
         UiSmoke.enterText("筛选日志内容", "Java 25");
-        UiSmoke.click(robot, "只看错误");
-        UiSmoke.click(robot, "只看错误");
+        // 级别筛选走多选级别片：选中「错误」后，信息级的任务行必须从列表里消失，切回「全部」再出现。
+        UiSmoke.click(robot, "错误");
+        UiSmoke.waitUntilGone("任务已取消：安装 Java 25");
+        UiSmoke.click(robot, "全部");
+        UiSmoke.waitFor("任务已取消：安装 Java 25");
+        UiFunctionalChecks.record(
+                "logs.levelFilter",
+                "level filter hides INFO lines when ERROR selected and restores them on 全部; search text kept");
         Path log = root.resolve("action-export.log");
         UiSmoke.click(robot, "导出日志");
         UiSmoke.chooseDirectory(log.toFile());
@@ -47,5 +53,13 @@ final class LogActionChecks {
                 "actual log contains cancelled task; diagnostic ZIP is nonempty and excludes credential files");
         UiSmoke.capture(
                 robot, window, new File(output.getParentFile(), "MoliFox-actions-logs.png"), true);
+        // 最小窗口 1000×640：操作行必须换行/收窄而不是裁切。
+        EventQueue.invokeAndWait(() -> window.setSize(1000, 640));
+        Thread.sleep(800);
+        UiSmoke.capture(
+                robot,
+                window,
+                new File(output.getParentFile(), "MoliFox-actions-logs-1000x640.png"),
+                true);
     }
 }

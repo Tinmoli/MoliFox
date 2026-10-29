@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责串行调用系统路径选择器，并将取消和多选结果统一为绝对路径。
 
 package dev.molifox.desktop

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责启动、下载、Java 和通用设置表单。
 
 package dev.molifox.desktop
@@ -13,6 +16,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,14 +28,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
@@ -112,9 +124,18 @@ private fun settingControl(title: String, content: @Composable () -> Unit) =
 /** 只有一行说明的条目：仍可被搜索命中。 */
 private fun settingNote(text: String) = SettingBlock(text, "") { MutedText(text) }
 
+/** 下拉选项：标准值之后补上旧配置里的当前值，避免旧值显示成空白或被悄悄改掉。 */
+private fun legacyOption(
+    value: Int,
+    standard: List<Int>,
+    label: (Int) -> String,
+): List<Pair<String, String>> =
+    standard.map { it.toString() to label(it) } +
+        (if (value in standard) emptyList() else listOf(value.toString() to label(value)))
+
 /**
- * 还原默认配置的取值：设置页负责的选项全部回到出厂值。 游戏目录、游戏目录语义、正版登录身份与 CurseForge Key 不属于本页，保持原样；
- * 已导入的字体、背景图片属于文件资产，只重置它们的选项，不删除文件本身。
+ * 还原默认配置的取值：设置页负责的选项全部回到出厂值。 游戏目录、游戏目录语义与正版登录身份不属于本页，保持原样；
+ * 已导入的字体、背景图片与左上角图标属于文件资产，只重置它们的选项，不删除文件本身。
  */
 private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): LauncherSettings {
     val defaults = LauncherSettings()
@@ -122,10 +143,11 @@ private fun defaultSettings(current: LauncherSettings, maximumMemoryMb: Int): La
     return defaults.copy(
         gameRoot = current.gameRoot,
         microsoftClientId = current.microsoftClientId,
-        curseForgeApiKey = current.curseForgeApiKey,
         customFonts = current.customFonts,
         backgroundPath = current.backgroundPath,
         backgroundRevision = current.backgroundRevision,
+        brandIconPath = current.brandIconPath,
+        brandIconRevision = current.brandIconRevision,
         memoryMb = memory,
         initialMemoryMb = minOf(defaults.initialMemoryMb, memory),
     )
@@ -178,7 +200,7 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
             runtimes,
             detecting,
             detectionError,
-            { refresh++ },
+            { actions.controller.java.invalidate(); refresh++ },
             navigate,
         )
     val gameCards =
@@ -228,16 +250,21 @@ fun ColumnScope.SettingsPage(state: LauncherState, actions: UiActions, navigate:
         )
     }
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-        // 左侧二级列表：项高 34、圆角 6、图标 16、文字 13，选中主题色容器底 + 主题色文字。
-        // 整栏套磨砂面板（宽度与条目尺寸不变，只换背景）；高度撑满，与右侧内容列同高。
-        FrostedPanel(Modifier.width(168.dp).fillMaxHeight()) {
+        // 左侧二级列表与下载页分类栏用同一套条目规格：项高 32、圆角 6、图标 17、内边距 10、
+        // 选中 selectedRowBackground 实底 + onPrimaryContainer 文字，悬停 rowHoverHighlight、按下 pressScale。
+        // 整栏套磨砂面板，上下留 8dp 内边距，条目因此整体缩在面板圆角以内；高度撑满，与右侧内容列同高。
+        FrostedPanel(
+            Modifier.width(168.dp).fillMaxHeight(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
             Column(
-                Modifier.fillMaxWidth(),
+                // 内容超出面板高度时滚动，而不是画到面板圆角外面。
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 SettingsGroupTitle("设置", topPadding = 2.dp)
                 settingsIndex.forEachIndexed { index, (title, icon) ->
-                    NavigationEntry(
+                    SettingsNavItem(
                         title,
                         icon,
                         section == index && query.isBlank(),
@@ -579,6 +606,23 @@ private fun gameSettingCards(
                         },
                     )
                 },
+                settingRow(
+                    "游戏进程优先级",
+                    "仅 Windows 生效；优先级越高越不容易被系统降速，超高可能影响其他程序响应。",
+                ) {
+                    Box(Modifier.width(120.dp)) {
+                        SimpleDropdown(
+                            settings.processPriority.name,
+                            ProcessPriority.entries.map { it.name to it.title },
+                            { value ->
+                                ProcessPriority.entries.find { it.name == value }?.let { priority ->
+                                    writer.commit { it.copy(processPriority = priority) }
+                                }
+                            },
+                            enabled = actions.controller.platform.osName == "windows",
+                        )
+                    }
+                },
             ),
         )
     )
@@ -642,13 +686,13 @@ private fun gameSettingCards(
             "版本隔离",
             "",
             listOf(
-                settingRow("启用版本隔离", "开启时使用游戏目录下 versions/版本名；关闭时共用游戏根目录。") {
+                settingRow("启用版本隔离", "默认值：开启时使用游戏目录下 versions/实例名；关闭时共用游戏根目录。") {
                     CompactSwitch(
                         settings.isolateVersions,
                         { value -> writer.commit { it.copy(isolateVersions = value) } },
                     )
                 },
-                settingNote("所有实例统一遵循此开关。切换后不删除或合并原目录里的存档、模组与配置。"),
+                settingNote("这里是全局默认值；实例设置里的「版本隔离」可选继承全局、强制开启或强制共用。切换后不删除或合并原目录里的存档、模组与配置。"),
             ),
         )
     )
@@ -659,7 +703,7 @@ private fun gameSettingCards(
 internal fun steppedMemory(value: Float, maximum: Int): Int =
     (value.toInt() / 256 * 256).coerceIn(512, maximum)
 
-/** Java 管理：检测结果、Java 路径与运行环境准备。 */
+/** Java 与运行环境：当前使用项、扁平候选列表、添加入口与安装控件。 */
 @Composable
 private fun javaSettingCards(
     actions: UiActions,
@@ -670,112 +714,123 @@ private fun javaSettingCards(
     detectionError: String?,
     onRefresh: () -> Unit,
     navigate: (Page) -> Unit,
-): List<SettingCard> =
-    listOf(
+): List<SettingCard> {
+    val state by actions.controller.state.collectAsState()
+    var installVersion by remember { mutableStateOf("auto") }
+    var installType by remember { mutableStateOf("jre") }
+    var installJob by remember { mutableStateOf<String?>(null) }
+    val job = installJob?.let { id -> state.jobs.find { it.id == id } }
+    val active = job?.status in setOf(JobStatus.Queued, JobStatus.Running)
+    return listOf(
         SettingCard(
-            "Java 运行环境",
-            "自动模式会按游戏要求选择合适版本，缺少时准备对应运行环境。",
+            "Java 与运行环境",
+            "",
             listOf(
-                settingField(
-                    "检测结果",
-                    if (detectionError != null) "检测失败：" + detectionError
-                    else "只检测本机已安装的 Java；不会修改系统环境变量。",
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Tag(
-                            when {
-                                detecting -> "正在检测"
-                                detectionError != null -> "检测失败"
-                                runtimes.isEmpty() -> "尚未检测"
-                                else -> runtimes.size.toString() + " 个运行环境"
+                settingField("游戏 Java") {
+                    JavaPicker(
+                        actions,
+                        settings.javaPath,
+                        runtimes,
+                        { value -> writer.commit { it.copy(javaPath = value) } },
+                        knownCustomPaths = settings.customJavaPaths,
+                        onAddCustom = { path ->
+                            writer.commit { current ->
+                                current.copy(
+                                    customJavaPaths = (current.customJavaPaths + path).distinct()
+                                )
                             }
-                        )
-                        Spacer(Modifier.weight(1f))
-                        SecondaryButton({ onRefresh() }, enabled = !detecting) {
-                            Text(if (detectionError != null) "重试检测" else "检测本机 Java")
-                        }
-                    }
-                    if (detecting) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        },
+                        onRefresh = onRefresh,
+                        detecting = detecting,
+                        detectionError = detectionError,
+                    )
                 },
                 settingField(
-                    "Java 可执行文件路径",
-                    "留空时自动选择匹配的 Java；也可以从检测结果里挑一个。",
+                    "Java 下载源",
+                    "自动会先测速，再从 Azul 与 Adoptium Temurin 官方源中选择。",
                 ) {
                     SimpleDropdown(
-                        settings.javaPath,
-                        listOf("" to "自动选择匹配的 Java") +
-                            runtimes.map {
-                                it.path to
-                                    ("Java " +
-                                        it.majorVersion +
-                                        " · " +
-                                        it.vendor +
-                                        " · " +
-                                        it.path)
-                            },
-                        { value -> writer.commit { it.copy(javaPath = value) } },
+                        settings.effectiveJavaDownloadSource,
+                        listOf(
+                            "auto" to "自动（测速选最快官方源）",
+                            "official" to "官方源",
+                        ),
+                        { value -> writer.commit { it.copy(javaDownloadSource = value) } },
                     )
-                    LiveTextField(
-                        settings.javaPath,
-                        { value -> applySetting(actions) { it.copy(javaPath = value) } },
-                        placeholder = "留空自动选择",
-                    ) {
-                        SmallIconButton(
-                            Icons.Outlined.FolderOpen,
-                            "选择 Java",
-                            {
-                                actions.run {
-                                    val chosen =
-                                        actions
-                                            .choose(
-                                                "选择 Java 可执行文件",
-                                                extensions =
-                                                    if (
-                                                        actions.controller.platform.osName ==
-                                                            "windows"
-                                                    )
-                                                        listOf("exe")
-                                                    else emptyList(),
-                                            )
-                                            .firstOrNull()
-                                    if (chosen != null)
-                                        withContext(Dispatchers.Swing) {
-                                            applySetting(actions) {
-                                                it.copy(javaPath = chosen.toString())
-                                            }
-                                        }
-                                }
-                            },
-                        )
-                    }
                 },
-            ),
-        ),
-        SettingCard(
-            "准备运行环境",
-            "使用 Zulu / Temurin 官方分发，不改变系统现有 Java。",
-            listOf(
-                settingControl("安装 Java 运行时") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        listOf(8, 17, 21, 25).forEach { version ->
-                            SecondaryButton(
-                                {
-                                    actions.run { actions.controller.installJava(version) }
-                                    actions.taskQueued()
-                                },
-                                enabled = !actions.controller.busy,
-                            ) {
-                                Text("Java " + version)
-                            }
+                settingField("安装 Java") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SimpleDropdown(
+                            installVersion,
+                            listOf(
+                                "auto" to "自动（按游戏版本）",
+                                "8" to "Java 8",
+                                "17" to "Java 17",
+                                "21" to "Java 21",
+                                "25" to "Java 25",
+                            ),
+                            { installVersion = it },
+                            Modifier.weight(1f),
+                            enabled = !active,
+                        )
+                        SimpleDropdown(
+                            installType,
+                            listOf("jre" to "JRE", "jdk" to "JDK"),
+                            { installType = it },
+                            Modifier.width(110.dp),
+                            enabled = !active,
+                        )
+                        PrimaryButton("下载并安装", enabled = !active) {
+                            val type = if (installType == "jdk") "jdk" else "jre"
+                            installJob =
+                                if (installVersion == "auto")
+                                    actions.controller.installAutoJava(type)
+                                else actions.controller.installJava(installVersion.toInt(), type)
+                            actions.taskQueued()
                         }
                     }
-                }
+                    if (job != null) {
+                        LinearProgressIndicator(
+                            progress = { job.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                when (job.status) {
+                                    JobStatus.Completed -> "安装完成"
+                                    JobStatus.Failed, JobStatus.Cancelled ->
+                                        "安装未完成：" + (job.error ?: job.detail)
+                                    else -> "${(job.progress * 100).toInt()}% · ${job.detail}"
+                                },
+                                Modifier.weight(1f),
+                                fontSize = 11.sp,
+                                color =
+                                    if (job.status in setOf(JobStatus.Failed, JobStatus.Cancelled))
+                                        MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (active)
+                                SecondaryButton(
+                                    { actions.controller.jobs.cancel(job.id) },
+                                    contentPadding =
+                                        PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                ) {
+                                    Text("取消", fontSize = 12.sp)
+                                }
+                        }
+                    }
+                },
             ),
         ),
     )
+}
 
 /** 通用：更新检查与语言。 */
 @Composable
@@ -787,7 +842,7 @@ private fun generalSettingCards(
     listOf(
         SettingCard(
             "启动器更新",
-            "从茉狐官方 GitHub Releases 检查正式版本。",
+            "从 MoliFox 官方 GitHub Releases 检查正式版本。",
             listOf(
                 settingControl("GitHub Releases") {
                     val state by actions.controller.state.collectAsState()
@@ -832,75 +887,67 @@ private fun downloadSettingCards(
             "下载设置",
             "镜像用于 Minecraft 元数据、本体、资源及依赖。",
             listOf(
-                settingField("游戏文件下载源", "影响本体、资源与依赖的下载地址。") {
+                settingField("版本列表源", "只影响版本清单（manifest）的获取地址。") {
                     SimpleDropdown(
-                        settings.downloadSource,
+                        settings.effectiveVersionListSource,
                         listOf(
                             "auto" to "自动",
-                            "official" to "官方源",
-                            "bmclapi" to "BMCLAPI 镜像源",
-                        ),
-                        { value -> writer.commit { it.copy(downloadSource = value) } },
-                    )
-                },
-                settingField("版本列表源", "只影响版本清单的获取地址。") {
-                    SimpleDropdown(
-                        settings.versionListSource,
-                        listOf(
-                            "auto" to "自动",
-                            "official" to "官方版本列表",
-                            "bmclapi" to "BMCLAPI 镜像版本列表",
+                            "official" to "官方",
+                            "bmclapi" to "国内镜像（BMCLAPI）",
                         ),
                         { value -> writer.commit { it.copy(versionListSource = value) } },
                     )
                 },
-                settingField(
-                    "附加内容下载源",
-                    "Modrinth 可直接使用；CurseForge 需要已获批的 API Key。",
-                ) {
+                settingField("文件下载源", "影响本体、依赖库、资源文件与 Java。") {
                     SimpleDropdown(
-                        settings.contentDownloadSource,
-                        listOf("modrinth" to "Modrinth", "curseforge" to "CurseForge（需 API Key）"),
-                        { value -> writer.commit { it.copy(contentDownloadSource = value) } },
+                        settings.effectiveDownloadSource,
+                        listOf(
+                            "auto" to "自动",
+                            "official" to "官方",
+                            "bmclapi" to "国内镜像（BMCLAPI）",
+                        ),
+                        { value -> writer.commit { it.copy(downloadSource = value) } },
                     )
                 },
-                settingRow("并行下载数", "同时进行的文件下载数量") {
+                // 下载并发：紧跟两个源设置，改动对下一个任务生效。
+                settingRow("并发下载数", "默认 8；过高会更慢") {
                     SimpleDropdown(
                         settings.maxConcurrent.toString(),
-                        listOf(2, 4, 8, 16, 32).map {
-                            it.toString() to (it.toString() + " 个文件")
-                        },
+                        legacyOption(settings.maxConcurrent, listOf(4, 8, 16)) { "$it 个文件" },
                         { value -> writer.commit { it.copy(maxConcurrent = value.toInt()) } },
                         Modifier.width(132.dp),
                     )
                 },
-                settingField("CurseForge API Key", "填写已获批的 Key 后可使用 CurseForge；留空保存可清除。") {
-                    var keyDraft by
-                        remember(settings.curseForgeApiKey) {
-                            mutableStateOf(settings.curseForgeApiKey)
-                        }
-                    OutlinedTextField(
-                        keyDraft,
-                        { keyDraft = it.take(512) },
-                        Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("CurseForge API Key") },
-                        visualTransformation =
-                            androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                settingRow("镜像并发", "镜像站的同时请求数，默认 4") {
+                    SimpleDropdown(
+                        settings.mirrorConcurrency.toString(),
+                        listOf(2, 4, 8).map { it.toString() to "$it 个文件" },
+                        { value -> writer.commit { it.copy(mirrorConcurrency = value.toInt()) } },
+                        Modifier.width(132.dp),
                     )
-                    TextButton(
-                        { writer.commit { it.copy(curseForgeApiKey = keyDraft.trim()) } },
-                        enabled = keyDraft != settings.curseForgeApiKey,
-                    ) {
-                        Text("保存 Key")
-                    }
                 },
-                settingRow("单文件分段数", "有大小与校验摘要的大文件分段下载；服务器不支持时自动回退。") {
+                settingRow("大文件分段", "单个大文件的分段数，默认 4") {
                     SimpleDropdown(
                         settings.downloadSegments.toString(),
-                        listOf("1" to "关闭", "2" to "2 段", "4" to "4 段（默认）", "8" to "8 段"),
+                        listOf("1" to "1（不分段）", "4" to "4（默认）", "8" to "8 段"),
                         { value -> writer.commit { it.copy(downloadSegments = value.toInt()) } },
                         Modifier.width(132.dp),
+                    )
+                },
+                settingField("附加内容下载源", "选择 Modrinth 或 CurseForge。") {
+                    SimpleDropdown(
+                        settings.contentDownloadSource,
+                        listOf("modrinth" to "Modrinth", "curseforge" to "CurseForge"),
+                        { value -> writer.commit { it.copy(contentDownloadSource = value) } },
+                    )
+                },
+                settingField("CurseForge 服务", "公共镜像或自建代理地址；留空使用默认服务。") {
+                    LiveTextField(
+                        settings.curseForgeBaseUrl,
+                        { value ->
+                            applySetting(actions) { it.copy(curseForgeBaseUrl = value.trim()) }
+                        },
+                        placeholder = DEFAULT_CURSE_FORGE_BASE_URL,
                     )
                 },
                 settingRow("失败重试次数", "包含首次请求；只对可恢复的网络错误重试。") {
@@ -1028,25 +1075,93 @@ private fun downloadSettingCards(
 private fun aboutSettingCards(actions: UiActions): List<SettingCard> =
     listOf(
         SettingCard(
-            "关于茉狐",
+            "关于 MoliFox",
             blocks = listOf(settingControl("MoliFox") { LauncherAboutPanel(actions) }),
         )
     )
 
-/** 外观子页条目：缩进在「外观」下面，高 28、圆角 6、文字 12；选中用主题色文字 + 主题色容器底。 */
+/**
+ * 左侧设置条目：与下载页分类条目 ([DownloadKindItem] 同规格) 完全同一套选中态—— 项高 32、圆角 6、图标 17、内边距 10、选中
+ * `selectedRowBackground()` 实底 + `onPrimaryContainer` 文字 + SemiBold，悬停用 `rowHoverHighlight`、按下 `pressScale`。
+ * 没有矩形描边，也没有向外扩张的焦点环：键盘焦点画在条目内侧 2dp 的 1dp 细描边里，因此不会越过磨砂面板的圆角。
+ */
+@Composable
+private fun SettingsNavItem(
+    title: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(Metrics.cardRadius)
+    val contentColor by
+        animateColorAsState(
+            if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+            tween(150),
+            label = "settings-nav-color",
+        )
+    val background by
+        animateColorAsState(
+            if (selected) selectedRowBackground() else Color.Transparent,
+            tween(150),
+            label = "settings-nav-bg",
+        )
+    Row(
+        Modifier.fillMaxWidth()
+            .height(Metrics.navItemHeight)
+            .clip(shape)
+            .background(background)
+            .rowHoverHighlight(shape, enabled = !selected, interactionSource = interaction)
+            .insetFocusRing(
+                focused,
+                Metrics.cardRadius,
+                if (selected) colors.onPrimaryContainer else colors.primary,
+            )
+            .pressScale()
+            .selectable(
+                selected,
+                interaction,
+                LocalIndication.current,
+                role = Role.Tab,
+                onClick = onClick,
+            )
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(17.dp), contentColor)
+        Spacer(Modifier.width(9.dp))
+        Text(
+            title,
+            Modifier.weight(1f),
+            color = contentColor,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 外观子页条目：缩进在「外观」下面，高 28、圆角 6、文字 12；选中与父条目同一套实底与文字色。 */
 @Composable
 private fun SettingSubEntry(title: String, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(Metrics.innerRadius)
+    val shape = RoundedCornerShape(Metrics.cardRadius)
     Row(
         Modifier.fillMaxWidth()
             .height(28.dp)
-            .focusRing(focused, cornerRadius = Metrics.innerRadius)
             .clip(shape)
-            .background(if (selected) colors.primaryContainer else Color.Transparent)
-            .hoverHighlight(shape, interactionSource = interaction)
+            .background(if (selected) selectedRowBackground() else Color.Transparent)
+            .rowHoverHighlight(shape, enabled = !selected, interactionSource = interaction)
+            .insetFocusRing(
+                focused,
+                Metrics.cardRadius,
+                if (selected) colors.onPrimaryContainer else colors.primary,
+            )
             .selectable(
                 selected,
                 interaction,
@@ -1059,10 +1174,35 @@ private fun SettingSubEntry(title: String, selected: Boolean, onClick: () -> Uni
     ) {
         Text(
             title,
-            color = if (selected) colors.primary else colors.onSurfaceVariant,
+            color = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
+
+/**
+ * 键盘焦点提示：在条目内侧 2dp 处描 1dp 主题色圆角边（不向外扩张、也不贴边），
+ * 因此始终被条目的圆角包住，不会像 [focusRing] 那样探出父面板的圆角；无障碍焦点仍然可见。
+ */
+private fun Modifier.insetFocusRing(focused: Boolean, radius: Dp, color: Color): Modifier =
+    if (!focused) this
+    else
+        drawWithContent {
+            drawContent()
+            val stroke = 1.dp.toPx()
+            val inset = 2.dp.toPx()
+            drawRoundRect(
+                color = color.copy(alpha = .6f),
+                topLeft = Offset(inset, inset),
+                size =
+                    Size(
+                        (size.width - inset * 2).coerceAtLeast(0f),
+                        (size.height - inset * 2).coerceAtLeast(0f),
+                    ),
+                cornerRadius = CornerRadius((radius.toPx() - inset).coerceAtLeast(0f)),
+                style = Stroke(width = stroke),
+            )
+        }

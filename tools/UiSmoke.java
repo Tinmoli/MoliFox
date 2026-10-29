@@ -754,7 +754,7 @@ public final class UiSmoke {
               "proxyType": "http",
               "proxyHost": "",
               "proxyPort": 0,
-              "curseForgeApiKey": "",
+              "curseForgeBaseUrl": "https://mod.mcimirror.top/curseforge",
               "gameWindowMode": "custom"
             }
             """
@@ -957,15 +957,15 @@ public final class UiSmoke {
         // 4) 存档页：空态 → 真实世界目录 → 刷新出现行 → 复制对话框 → 备份/恢复/删除。
         clickRail(robot, "存档");
         waitFor("搜索存档名称");
-        waitFor("刷新存档列表");
-        waitFor("打开存档文件夹");
+        waitFor("刷新");
+        waitFor("打开文件夹");
         waitFor("这个实例还没有存档");
         waitFor("0 个存档 · 0 个备份 · " + saves);
         waitFor("还没有备份。存档行末尾的「备份」会把整个世界打包到这里。");
         Files.createDirectories(world);
         Files.writeString(world.resolve("level.dat"), "smoke-original-level");
         Files.writeString(world.resolve("session.lock"), "smoke-session-lock");
-        clickTopButton(robot, "刷新存档列表");
+        clickTopButton(robot, "刷新");
         waitFor("1 个存档 · 0 个备份 · " + saves);
         waitFor("SmokeWorld");
         // 有行以后才能验证搜索过滤：无匹配显示专用空态，清除后行回来。
@@ -2103,7 +2103,7 @@ public final class UiSmoke {
                 waitFor("自动滚动");
                 capture(robot, target, new File(output.getParentFile(), "MoliFox-logs.png"), true);
                 click(robot, "关于 MoliFox");
-                waitFor("MoliFox · 茉狐");
+                waitFor("第三方许可");
                 click(robot, "外观");
                 waitFor("界面主题");
                 click(robot, "深色");

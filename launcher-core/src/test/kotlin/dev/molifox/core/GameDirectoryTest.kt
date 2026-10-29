@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证GameDirectory的行为与边界。
 
 package dev.molifox.core
@@ -109,20 +112,24 @@ class GameDirectoryTest {
     }
 
     @Test
-    fun `only global isolation selects the game directory and old per version flags are ignored`() {
+    fun `per instance isolation overrides the global default and inherit follows it`() {
         val root = temporary.resolve(".minecraft")
         val folder = version(root)
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
         GameDirectoryService(store).add(root)
         val instance = store.data.instances.single()
+        // 扫描登记的版本没有自己的数据 → 继承全局（默认开启版本隔离）。
+        assertEquals(VersionIsolation.Inherit, instance.isolation)
         assertEquals(folder.toRealPath(), store.instancePath(instance.id))
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
         assertEquals(root.toRealPath(), store.instancePath(instance.id))
+        // 实例显式开启：即使全局关闭也用版本目录（实例显式选择优先于全局默认）。
         store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Enabled) }
-        assertEquals(root.toRealPath(), store.instancePath(instance.id))
+        assertEquals(folder.toRealPath(), store.instancePath(instance.id))
+        // 实例显式关闭：即使全局开启也用共用游戏根。
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = true)) }
         store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
-        assertEquals(folder.toRealPath(), store.instancePath(instance.id))
+        assertEquals(root.toRealPath(), store.instancePath(instance.id))
         assertEquals(
             VersionIsolation.Disabled,
             LauncherStore(DesktopPlatform(), store.dataDirectory).data.instances.single().isolation,

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 使用独立验收窗口和真实鼠标点击验证最近游玩、服务器删除、隐藏恢复及任务浮窗计时。
 
 package dev.molifox.desktop

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责外观主题、背景、透明度与动画偏好。
 
 package dev.molifox.desktop
@@ -34,6 +37,7 @@ import dev.molifox.core.*
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.*
+import kotlinx.coroutines.swing.Swing
 import org.jetbrains.skia.Image as SkiaImage
 
 typealias AppearanceChange = ((LauncherSettings) -> LauncherSettings) -> Unit
@@ -291,6 +295,77 @@ private fun ThemePreferences(
                     fontSize = 11.sp,
                 )
         }
+    }
+    // 左上角图标：只改主窗口标题栏左侧的品牌标识，标题栏图标、任务栏与准备窗口仍用内置图标。
+    var brandError by remember { mutableStateOf<String?>(null) }
+    val brandCustom = settings.brandIconPath.isNotBlank()
+    SettingsSection(
+        "左上角图标",
+        "只替换启动器左上角的品牌标识；标题栏与准备窗口仍使用内置图标。",
+        action = { EnabledTag(brandCustom) },
+        contentGap = 0.dp,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.size(38.dp)
+                    .clip(RoundedCornerShape(Metrics.innerRadius))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .07f))
+                    .border(1.dp, hairline(), RoundedCornerShape(Metrics.innerRadius)),
+                contentAlignment = Alignment.Center,
+            ) {
+                BrandMark(Modifier.size(24.dp))
+            }
+            SecondaryButton({
+                brandError = null
+                actions.run {
+                    val source =
+                        actions
+                            .choose("选择左上角图标", extensions = listOf("png", "jpg", "jpeg"))
+                            .firstOrNull() ?: return@run
+                    val result =
+                        runCatching {
+                            importBrandIcon(actions.controller.store.dataDirectory, source)
+                        }
+                    withContext(Dispatchers.Swing) {
+                        val imported = result.getOrNull()
+                        brandError =
+                            if (imported == null)
+                                result.exceptionOrNull()?.message ?: "无法使用这张图片"
+                            else
+                                applySetting(actions) {
+                                    it.copy(
+                                        brandIconPath = imported.toString(),
+                                        brandIconRevision = System.currentTimeMillis(),
+                                    )
+                                }
+                    }
+                }
+            }) {
+                Icon(Icons.Outlined.Image, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("选择图片")
+            }
+            if (brandCustom)
+                SecondaryButton({
+                    brandError = null
+                    actions.run {
+                        val stored = actions.controller.store.data.settings.brandIconPath
+                        applySetting(actions) {
+                            it.copy(brandIconPath = "", brandIconRevision = System.currentTimeMillis())
+                        }
+                        removeBrandIcon(actions.controller.store.dataDirectory, stored)
+                    }
+                }) { Text("恢复默认") }
+        }
+        brandError?.let { message ->
+            Spacer(Modifier.height(6.dp))
+            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        MutedText("支持 PNG / JPEG，最大 2 MB、边长 16–1024 像素；图片副本保存在 MoliFox/appearance/branding。")
     }
     SettingsSection("字体与缩放", "字体、文字大小与界面缩放集中在「字体与缩放」子页。", contentGap = 0.dp) {
         SettingRow("当前字体", fontLabel(settings)) {

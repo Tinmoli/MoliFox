@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责整合包格式识别与清单数据。
 
 package dev.molifox.core
@@ -42,13 +45,13 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
         }
     if (legacy.isNotEmpty()) safePath(root, legacyRoot + "manifest-validation")
     val mcbbsPath = legacy.find { it.endsWith("mcbbs.packmeta") }
-    val hmclPath = legacy.find { it.endsWith("modpack.json") }
+    val legacyPackPath = legacy.find { it.endsWith("modpack.json") }
     val manifestPath = legacy.find { it.endsWith("manifest.json") }
     val generic = manifestPath?.let { packJson(zip, it) }
     val mcbbs = mcbbsPath?.let { packJson(zip, it) } ?: generic?.takeIf { it.has("addons") }
     val curseForge = generic?.takeIf { mcbbs == null }
     val multiMc = findMultiMcManifest(zip)
-    require(listOfNotNull(index, exported, curseForge, multiMc, mcbbs, hmclPath).size <= 1) {
+    require(listOfNotNull(index, exported, curseForge, multiMc, mcbbs, legacyPackPath).size <= 1) {
         "整合包含有冲突的格式清单"
     }
     if (mcbbs != null)
@@ -60,8 +63,14 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
             os,
             if (mcbbsPath == null) null else generic,
         )
-    if (hmclPath != null)
-        return readHmclManifest(requireNotNull(packJson(zip, hmclPath)), zip, legacyRoot, root, os)
+    if (legacyPackPath != null)
+        return readLegacyPackManifest(
+            requireNotNull(packJson(zip, legacyPackPath)),
+            zip,
+            legacyRoot,
+            root,
+            os,
+        )
     if (multiMc != null) return readMultiMcManifest(zip, multiMc, root, os)
     if (curseForge != null)
         return readCurseForgeManifest(

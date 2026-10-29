@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责内容搜索、资源文件管理和日志任务页面。
 
 package dev.molifox.desktop
@@ -310,23 +313,46 @@ fun ColumnScope.ContentBrowser(
     // 首次检索完成前显示骨架，之后刷新只保留旧结果 + 顶部细进度，避免列表整块闪烁。
     var loadedOnce by remember(kind) { mutableStateOf(false) }
     val selected = state.data.instances.find { it.id == state.data.selectedInstanceId }
+    val source = state.data.settings.contentDownloadSource
+    // 实例的版本目录名可能是整合包标识（TwilightMC-26.3v1.0），只把能识别的真实版本用于筛选。
+    val instanceVersion =
+        minecraftVersionTag(selected?.gameVersion.orEmpty())?.takeIf { it.isNotBlank() }
     var projectHit by remember(kind) { mutableStateOf<ContentHit?>(null) }
     // 默认筛选值直接取自当前实例，换实例时重新初始化；不存在单独的实例开关。
     var gameVersion by
         remember(kind, selected?.id) {
-            mutableStateOf(selected?.gameVersion.orEmpty())
+            mutableStateOf(instanceVersion.orEmpty())
         }
     var loader by
         remember(kind, selected?.id) {
             mutableStateOf(selected?.loader.takeIf { kind == "mod" })
         }
-    // 分类是 Modrinth 的 slug 集合，切换类型时重置，避免把模组分类带到光影里。
-    var categories by remember(kind) { mutableStateOf(emptySet<String>()) }
-    val categoryOptions = categoriesFor(kind)
+    // 分类：Modrinth 用内置 slug，CurseForge 用镜像自己的数字编号，换来源/类型都重新取。
+    var categories by remember(kind, source) { mutableStateOf(emptySet<String>()) }
+    var sourceCategories by remember(kind, source) {
+        mutableStateOf(emptyList<ContentCategoryOption>())
+    }
+    LaunchedEffect(kind, source) {
+        if (source != "curseforge") {
+            sourceCategories = emptyList()
+            return@LaunchedEffect
+        }
+        sourceCategories =
+            try {
+                withContext(Dispatchers.IO) {
+                    actions.controller.content.contentCategories(kind)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+    }
+    val categoryOptions =
+        if (source == "curseforge") sourceCategories.map { it.id to it.name }
+        else categoriesFor(kind)
     var gameVersions by remember { mutableStateOf(emptyList<String>()) }
     var versionListError by remember { mutableStateOf<String?>(null) }
-    // 下载源切换被拒绝时的说明（例如 CurseForge 缺少 API Key）。
-    var sourceNotice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         try {
             gameVersions =
@@ -446,8 +472,7 @@ fun ColumnScope.ContentBrowser(
                     { categories = it },
                     Modifier.width(110.dp),
                 )
-                // 游戏版本：默认就是当前实例的版本（没有实例时为「全部游戏版本」）。
-                val instanceVersion = selected?.gameVersion?.takeIf { it.isNotBlank() }
+                // 游戏版本：默认就是当前实例的真实版本（没有实例时为「全部游戏版本」）。
                 SimpleDropdown(
                     gameVersion,
                     buildList<Pair<String, String>> {
@@ -485,26 +510,14 @@ fun ColumnScope.ContentBrowser(
                     )
                 }
                 SimpleDropdown(sort, contentSortOptions, { sort = it }, Modifier.width(105.dp))
-                // 下载源：点一下就能换。没有 API Key 的 CurseForge 不静默切换，先说明原因。
+                // 下载源：点一下就能换。
                 SimpleDropdown(
                     state.data.settings.contentDownloadSource,
                     listOf(
                         "modrinth" to contentSourceName("modrinth"),
-                        "curseforge" to
-                            contentSourceName("curseforge") +
-                                if (state.data.settings.curseForgeApiKey.isBlank()) "（需 API Key）"
-                                else "",
+                        "curseforge" to contentSourceName("curseforge"),
                     ),
-                    { picked ->
-                        if (
-                            picked == "curseforge" && state.data.settings.curseForgeApiKey.isBlank()
-                        ) {
-                            sourceNotice = "CurseForge 需要先在设置里填写 API Key，下载源仍是 Modrinth。"
-                        } else {
-                            sourceNotice = null
-                            actions.run { actions.controller.setContentDownloadSource(picked) }
-                        }
-                    },
+                    { picked -> actions.run { actions.controller.setContentDownloadSource(picked) } },
                     Modifier.width(150.dp),
                 )
             }
@@ -529,11 +542,10 @@ fun ColumnScope.ContentBrowser(
                 }
             val followsInstance =
                 selected != null &&
-                    gameVersion == selected.gameVersion &&
+                    gameVersion == instanceVersion.orEmpty() &&
                     (kind != "mod" || loader == selected.loader)
             val hint =
                 when {
-                    sourceNotice != null -> sourceNotice.orEmpty()
                     versionListError != null -> "游戏版本列表暂不可用；项目详情仍可选择作者提供的版本。"
                     followsInstance -> contentHint(kind, selected)
                     else -> "按所选游戏版本 / 加载器筛选，不会更换安装实例。"
@@ -605,12 +617,20 @@ fun ColumnScope.ContentBrowser(
     Box(Modifier.weight(1f).fillMaxWidth()) {
         when {
             loading && !loadedOnce -> SkeletonResults()
-            error != null ->
+            error != null -> {
+                val failure = error.orEmpty()
                 Panel(Modifier.fillMaxWidth()) {
-                    EmptyState("暂时无法连接资源库", error.orEmpty(), Icons.Outlined.CloudOff) {
+                    // 映射失败不是网络问题：标题要区分，正文保留具体阶段与响应片段。
+                    EmptyState(
+                        if (failure.startsWith("CurseForge")) "资源库返回的数据无法识别"
+                        else "暂时无法连接资源库",
+                        failure,
+                        Icons.Outlined.CloudOff,
+                    ) {
                         TextButton({ refresh++ }) { Text("重试") }
                     }
                 }
+            }
             result.hits.isEmpty() ->
                 Box(
                     Modifier.fillMaxWidth().fillMaxHeight(),
@@ -1001,231 +1021,11 @@ private fun ContentResultCard(
     }
 }
 
+/**
+ * 日志页实现已移到 LogsPage.kt（操作行、级别筛选、搜索与列表）；这里保留原入口，
+ * 主界面与设置页的调用点不变。
+ */
 @Composable
 fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
-    val preferences = state.data.settings.pages.logs
-    var query by remember { mutableStateOf("") }
-    var onlyErrors by remember { mutableStateOf(false) }
-    var onlyGame by remember { mutableStateOf(false) }
-    var autoScroll by remember(preferences.autoScroll) { mutableStateOf(preferences.autoScroll) }
-    // 危险操作先落成确认框状态，确认后才调用原有回调。
-    val clipboard = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
-    // 右上角提供日志导出和停止操作。
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SecondaryButton({ actions.exportLogs() }) { Text("导出日志", fontSize = 12.sp) }
-            SecondaryButton({ actions.exportDiagnostics() }) { Text("导出诊断包", fontSize = 12.sp) }
-            if (state.runningInstanceId != null)
-                SecondaryButton({ actions.run { actions.controller.game.stop() } }) {
-                    Text(
-                        if (state.runningGames.size > 1) "停止所有游戏（${state.runningGames.size}）"
-                        else "停止游戏",
-                        fontSize = 12.sp,
-                    )
-                }
-        }
-    }
-    state.launchIssue?.let { issue ->
-        Panel(Modifier.fillMaxWidth(), padding = 14) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    issue.title,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.weight(1f))
-                val issueInstance = state.data.selectedInstanceId
-                if (issueInstance != null)
-                    SecondaryButton({ actions.previewLaunch(issueInstance) }) {
-                        Text("查看启动参数", fontSize = 12.sp)
-                    }
-            }
-            Text(issue.suggestion, fontSize = 12.sp)
-            if (issue.evidence.isNotBlank())
-                Text(
-                    issue.evidence,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-        }
-    }
-    run {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CompactSearchField(
-                query,
-                { query = it },
-                Modifier.weight(1f),
-                placeholder = "筛选日志内容",
-            )
-            FilterChip(
-                onlyErrors,
-                { onlyErrors = !onlyErrors },
-                { Text("只看错误", fontSize = 11.sp) },
-                modifier = Modifier.height(28.dp),
-            )
-            FilterChip(
-                onlyGame,
-                { onlyGame = !onlyGame },
-                { Text("仅游戏", fontSize = 11.sp) },
-                modifier = Modifier.height(28.dp),
-            )
-        }
-        val logs =
-            state.logs.filter {
-                (!onlyErrors || it.isError) &&
-                    (!onlyGame || it.isGame) &&
-                    it.message.contains(query, true)
-            }
-        val listState = rememberLazyListState()
-        LaunchedEffect(logs.lastOrNull()?.time, autoScroll, query, onlyErrors, onlyGame) {
-            if (autoScroll && logs.isNotEmpty()) listState.scrollToItem(logs.lastIndex)
-        }
-        // 控制台固定深色底，贴近其他启动器与终端的观感；主题色只用于状态标记。
-        val consoleBackground = Color(0xFF171A21)
-        val consoleTimestamp = Color(0xFF7C8798)
-        val consoleText = Color(0xFFD5DCE8)
-        val consoleGame = Color(0xFFA9DCC4)
-        val consoleError = Color(0xFFFFB4BC)
-        Surface(
-            Modifier.fillMaxWidth().weight(1f),
-            color = consoleBackground,
-            shape = RoundedCornerShape(Metrics.cardRadius),
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                Row(
-                    Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (state.runningInstanceId != null) Tag("游戏运行中")
-                    else Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        logs.size.toString() + " 条",
-                        fontSize = 11.sp,
-                        color = consoleTimestamp,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text("自动滚动", fontSize = 11.sp, color = consoleTimestamp)
-                    CompactSwitch(
-                        autoScroll,
-                        { enabled ->
-                            autoScroll = enabled
-                            // 与设置页写回同一偏好字段，保持自动滚动状态一致。
-                            val settings = state.data.settings
-                            actions.run {
-                                actions.controller.saveSettings(
-                                    settings.copy(
-                                        pages =
-                                            settings.pages.copy(
-                                                logs =
-                                                    settings.pages.logs.copy(autoScroll = enabled)
-                                            )
-                                    )
-                                )
-                            }
-                        },
-                    )
-                    SmallIconButton(
-                        Icons.Outlined.KeyboardArrowDown,
-                        "跳到最新一行",
-                        {
-                            scope.launch {
-                                if (logs.isNotEmpty()) listState.animateScrollToItem(logs.lastIndex)
-                            }
-                        },
-                        tint = consoleTimestamp,
-                    )
-                    SmallIconButton(
-                        Icons.Outlined.ContentCopy,
-                        "复制当前日志",
-                        {
-                            clipboard.setText(
-                                AnnotatedString(
-                                    logs.joinToString("\n") {
-                                        it.time.substringAfter('T').take(8) + " " + it.message
-                                    }
-                                )
-                            )
-                        },
-                        tint = consoleTimestamp,
-                    )
-                }
-                SelectionContainer {
-                    LazyColumn(
-                        Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp),
-                        state = listState,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        if (logs.isEmpty())
-                            item(key = "log-empty") {
-                                Box(Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
-                                    Column(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Outlined.Subject,
-                                            null,
-                                            Modifier.size(24.dp),
-                                            consoleTimestamp,
-                                        )
-                                        Text(
-                                            "等待日志输出…",
-                                            color = consoleTimestamp,
-                                            fontFamily = LocalLauncherFont.current,
-                                            fontSize = 12.sp,
-                                        )
-                                        Text(
-                                            "启动游戏后这里会显示运行输出",
-                                            color = consoleTimestamp.copy(alpha = .8f),
-                                            fontSize = 11.sp,
-                                        )
-                                    }
-                                }
-                            }
-                        items(
-                            count = logs.size,
-                            // 日志行没有全局 id：用「时间戳 + 下标」做稳定 key。
-                            // 追加新行时下标不变，同一毫秒写入相同正文也不会撞 key。
-                            key = { index -> logs[index].time + "#" + index },
-                        ) { index ->
-                            val line = logs[index]
-                            Row(Modifier.heightIn(min = 20.dp)) {
-                                Text(
-                                    line.time.substringAfter('T').take(8),
-                                    Modifier.width(64.dp),
-                                    color = consoleTimestamp,
-                                    fontFamily = LocalLauncherFont.current,
-                                    fontSize = (preferences.fontSize - 1).sp,
-                                    lineHeight = (preferences.fontSize + 8).sp,
-                                )
-                                Text(
-                                    line.message,
-                                    color =
-                                        if (line.isError) consoleError
-                                        else if (line.isGame) consoleGame else consoleText,
-                                    fontFamily = LocalLauncherFont.current,
-                                    fontSize = preferences.fontSize.sp,
-                                    lineHeight = (preferences.fontSize + 8).sp,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Text(
-            logs.size.toString() + " 条记录 · 已知登录令牌会自动隐藏",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    // 清除历史与取消运行中任务都不可撤销，统一用 AlertDialog 二次确认
+    LogsPage(state, actions)
 }

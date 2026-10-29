@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责游戏版本、平台规则和版本清单转换。
 
 package dev.molifox.core
@@ -27,4 +30,28 @@ fun compareLoaderVersions(left: String, right: String): Int {
         if (compared != 0) return compared
     }
     return 0
+}
+
+/**
+ * 可升级到的同加载器版本：只保留比当前加载器版本更新的条目，按从新到旧排列。
+ *
+ * [available] 必须已经是「同一 Minecraft 版本」的列表（来自 `loaderVersions(loader, gameVersion)`）；
+ * 原版、未安装与整合包实例没有可升级项，因此不会出现换加载器或换游戏版本的入口。
+ * 外部目录实例也在这里出现；它能否真正升级由 `MinecraftInstaller.externalLoaderUpgradeBlocker`
+ * 按原 JSON 的继承链预检决定。
+ */
+fun loaderUpgradeCandidates(
+    instance: GameInstance,
+    available: List<LoaderVersion>,
+): List<LoaderVersion> {
+    if (
+        instance.loader == LoaderType.Vanilla ||
+            !instance.installed ||
+            instance.packFile.isNotBlank() ||
+            instance.loaderVersion.isBlank()
+    )
+        return emptyList()
+    return available
+        .filter { compareLoaderVersions(it.version, instance.loaderVersion) > 0 }
+        .sortedWith { left, right -> compareLoaderVersions(right.version, left.version) }
 }

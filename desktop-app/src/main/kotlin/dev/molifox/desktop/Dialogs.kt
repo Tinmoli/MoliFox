@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责实例维护、整合包升级与目录迁移对话框。
 
 package dev.molifox.desktop
@@ -36,6 +39,7 @@ import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -567,404 +571,6 @@ fun TidyReportDialog(instanceName: String, report: TidyReport, onDismiss: () -> 
     }
 }
 
-/** 校验实例：按 文件账本比对。没有账本时如实说明无法校验； 有账本时列出缺失核心文件、哈希不一致、未登记文件三组问题，缺文件可跳转「修复实例」。 */
-@Composable
-fun VerifyInstanceDialog(
-    instance: GameInstance,
-    actions: UiActions,
-    onDismiss: () -> Unit,
-    onRepair: () -> Unit,
-) {
-    var report by remember(instance.id) { mutableStateOf<VerifyReport?>(null) }
-    var loading by remember(instance.id) { mutableStateOf(true) }
-    var error by remember(instance.id) { mutableStateOf<String?>(null) }
-    var attempt by remember(instance.id) { mutableIntStateOf(0) }
-    LaunchedEffect(instance.id, attempt) {
-        loading = true
-        error = null
-        try {
-            report = withContext(Dispatchers.IO) { actions.controller.verifyInstance(instance.id) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            error = failure.message ?: "无法校验这个实例"
-        } finally {
-            loading = false
-        }
-    }
-    val result = report
-    val repairable = result != null && result.hasLedger && result.missingCoreFiles.isNotEmpty()
-    Modal("校验实例", instance.name, onDismiss = onDismiss) {
-        when {
-            loading ->
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    MutedText("正在按整合包账本比对文件哈希…")
-                }
-            error != null ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        "无法校验这个实例",
-                        error.orEmpty(),
-                        Icons.Outlined.CloudOff,
-                    ) {
-                        TextButton({ attempt++ }) { Text("重试") }
-                    }
-                }
-            result == null -> MutedText("没有取得校验结果。")
-            !result.hasLedger ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        "该实例没有整合包账本，无法校验",
-                        "只有通过整合包导入的实例才有文件账本；可以改用「整理实例目录」检查冗余文件。",
-                        Icons.Outlined.Shield,
-                    )
-                }
-            else -> {
-                val clean = result.missingCoreFiles.isEmpty() && result.ledgerMismatches.isEmpty()
-                Column(
-                    Modifier.fillMaxWidth()
-                        .heightIn(max = 400.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    SettingsSection("校验结果", "按账本比对文件哈希；只报告，不修改任何文件。") {
-                        SettingRow("缺失的核心文件", "账本登记但磁盘上不存在") {
-                            Text("${result.missingCoreFiles.size} 个", fontSize = 13.sp)
-                        }
-                        SettingRow("内容不一致", "账本登记但哈希与记录不符") {
-                            Text("${result.ledgerMismatches.size} 个", fontSize = 13.sp)
-                        }
-                        SettingRow("未登记文件", "账本之外、由用户或其他工具添加") {
-                            Text("${result.unknownFiles.size} 个", fontSize = 13.sp)
-                        }
-                    }
-                    if (clean) {
-                        Panel(Modifier.fillMaxWidth()) {
-                            EmptyState(
-                                "核心文件校验通过",
-                                "整合包账本中的文件都存在且哈希一致。",
-                                Icons.Outlined.CheckCircle,
-                            )
-                        }
-                    } else {
-                        SettingsSection(
-                            "缺失的核心文件（${result.missingCoreFiles.size} 个）",
-                            "可用「修复实例」按整合包重新补齐。",
-                        ) {
-                            val missing = result.missingCoreFiles.visible(50)
-                            if (missing.isEmpty()) MutedText("没有缺失的核心文件。")
-                            else
-                                missing.forEach { path ->
-                                    ReportFileRow(
-                                        path,
-                                        "缺失",
-                                        MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            if (result.missingCoreFiles.size > missing.size)
-                                MutedText("还有 ${result.missingCoreFiles.size - missing.size} 条未显示。")
-                        }
-                        SettingsSection(
-                            "内容不一致（${result.ledgerMismatches.size} 个）",
-                            "账本记录的哈希与磁盘文件不符，游戏可能无法正常启动。",
-                        ) {
-                            val mismatched = result.ledgerMismatches.visible(50)
-                            if (mismatched.isEmpty()) MutedText("没有内容不一致的文件。")
-                            else
-                                mismatched.forEach { path ->
-                                    ReportFileRow(
-                                        path,
-                                        "不一致",
-                                        MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            if (result.ledgerMismatches.size > mismatched.size)
-                                MutedText(
-                                    "还有 ${result.ledgerMismatches.size - mismatched.size} 条未显示。"
-                                )
-                        }
-                    }
-                    SettingsSection(
-                        "未登记文件（${result.unknownFiles.size} 个）",
-                        "账本之外的文件，可能来自手动安装或游戏运行，只报告。",
-                    ) {
-                        val unknown = result.unknownFiles.visible(50)
-                        if (unknown.isEmpty()) MutedText("没有未登记文件。")
-                        else
-                            unknown.forEach { path ->
-                                ReportFileRow(
-                                    path,
-                                    "未登记",
-                                    MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        if (result.unknownFiles.size > unknown.size)
-                            MutedText("还有 ${result.unknownFiles.size - unknown.size} 条未显示。")
-                    }
-                }
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(top = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (repairable)
-                Text(
-                    "修复会按整合包重新校验并补齐缺失文件。",
-                    Modifier.weight(1f),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            else Spacer(Modifier.weight(1f))
-            if (repairable)
-                SecondaryButton(onRepair, enabled = !actions.controller.busy) {
-                    Icon(Icons.Outlined.Build, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("修复实例", fontSize = 12.sp)
-                }
-            PrimaryButton("关闭", onClick = onDismiss)
-        }
-    }
-}
-
-/** 升级变更的动词；与 [PackFileAction] 一一对应。 */
-private fun packActionLabel(action: PackFileAction): String =
-    when (action) {
-        PackFileAction.Add -> "新增"
-        PackFileAction.Replace -> "替换"
-        PackFileAction.Remove -> "移除"
-        PackFileAction.Keep -> "保留"
-    }
-
-/** 变更标签颜色：新增主题色、替换第三色、移除错误色、保留辅助色。 */
-@Composable
-private fun packActionColor(action: PackFileAction): Color =
-    when (action) {
-        PackFileAction.Add -> MaterialTheme.colorScheme.primary
-        PackFileAction.Replace -> MaterialTheme.colorScheme.tertiary
-        PackFileAction.Remove -> MaterialTheme.colorScheme.error
-        PackFileAction.Keep -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-/** 文件在旧账本/磁盘上的用户状态说明；未变化的文件不重复说明。 */
-private fun packUserStateLabel(state: PackUserState): String =
-    when (state) {
-        PackUserState.Unchanged -> ""
-        PackUserState.UserModified -> "你修改过"
-        PackUserState.UserAdded -> "你自行添加"
-        PackUserState.UserDeleted -> "你已删除"
-    }
-
-/** 升级明细里的一行：动作标签 + 路径 + 原因/用户状态说明。 */
-@Composable
-private fun PackChangeRow(change: PackFileChange) {
-    val note =
-        listOf(
-                packUserStateLabel(change.userState),
-                change.reason,
-                if (change.optional) "可选" else "",
-            )
-            .filter { it.isNotBlank() }
-            .joinToString(" · ")
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Tag(packActionLabel(change.action), packActionColor(change.action))
-        Column(Modifier.weight(1f)) {
-            Text(
-                change.path,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (note.isNotBlank())
-                Text(
-                    note,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-        }
-    }
-}
-
-/**
- * 整合包升级预览：展示 from→to、新增/替换/移除/保留计数、受保护文件与文件变更明细。 升级会改写实例文件，因此确认按钮为危险色并给出影响说明；
- * 计划涉及游戏版本或加载器变化时，必须勾选「我已知晓需要先切换游戏版本/加载器」才能确认。
- */
-@Composable
-fun PackUpgradeDialog(
-    instance: GameInstance,
-    archive: Path,
-    actions: UiActions,
-    onDismiss: () -> Unit,
-    onStarted: () -> Unit = {},
-) {
-    var plan by remember(instance.id, archive) { mutableStateOf<PackUpgradePlan?>(null) }
-    var loading by remember(instance.id, archive) { mutableStateOf(true) }
-    var error by remember(instance.id, archive) { mutableStateOf<String?>(null) }
-    var acknowledged by remember(instance.id, archive) { mutableStateOf(false) }
-    var confirmationError by remember(instance.id, archive) { mutableStateOf<String?>(null) }
-    LaunchedEffect(instance.id, archive) {
-        loading = true
-        error = null
-        try {
-            plan =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.previewPackUpgrade(instance.id, archive)
-                }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            error = failure.message ?: "无法预览这次升级"
-        } finally {
-            loading = false
-        }
-    }
-    val prepared = plan
-    val requiresComponent = prepared?.requiresComponentChange == true
-    val canConfirm =
-        prepared != null &&
-            !loading &&
-            !actions.controller.busy &&
-            (!requiresComponent || acknowledged)
-    Modal("升级整合包", "${instance.name} · ${archive.fileName}", onDismiss = onDismiss) {
-        when {
-            loading ->
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    MutedText("正在读取新整合包并比对文件…")
-                }
-            error != null ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        "无法预览这次升级",
-                        error.orEmpty(),
-                        Icons.Outlined.ErrorOutline,
-                    )
-                }
-            prepared == null -> MutedText("没有生成升级计划。")
-            else -> {
-                Column(
-                    Modifier.fillMaxWidth()
-                        .heightIn(max = 430.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    SettingsSection("版本变化", "按新旧整合包账本比对，只改动账本管理的文件。") {
-                        SettingRow(
-                            "整合包版本",
-                            if (prepared.fromVersionId == prepared.toVersionId) "版本号未变化，仅文件内容有差异"
-                            else "从旧版本升级到新版本",
-                        ) {
-                            Text(
-                                "${prepared.fromVersionId.ifBlank { "未记录" }} → " +
-                                    prepared.toVersionId.ifBlank { "未记录" },
-                                fontSize = 12.sp,
-                            )
-                        }
-                        SettingRow("受保护文件", "你修改过或自行添加的文件不会被覆盖") {
-                            Text("${prepared.protectedPaths.size} 个", fontSize = 13.sp)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Tag("新增 ${prepared.adds}", MaterialTheme.colorScheme.primary)
-                            Tag("替换 ${prepared.replaces}", MaterialTheme.colorScheme.tertiary)
-                            Tag("移除 ${prepared.removes}", MaterialTheme.colorScheme.error)
-                            Tag("保留 ${prepared.keeps}", MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    if (requiresComponent)
-                        Panel(
-                            Modifier.fillMaxWidth(),
-                            title = "需要先切换游戏版本或加载器",
-                            detail = "新整合包的组件与当前实例不一致。",
-                        ) {
-                            Text(
-                                "升级只会替换整合包文件，不会自动切换游戏版本或加载器。" +
-                                    "请先在「组件维护」里切换组件，再执行升级，否则实例可能无法启动；" +
-                                    "实例原有文件会被改写，升级前会自动备份，失败时回滚。",
-                                fontSize = 12.sp,
-                            )
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(Metrics.innerRadius))
-                                    .clickable { acknowledged = !acknowledged }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(acknowledged, { acknowledged = it })
-                                Text(
-                                    "我已知晓需要先切换游戏版本/加载器",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                            }
-                        }
-                    SettingsSection(
-                        "文件变更（${prepared.changes.size} 条）",
-                        "最多先显示 50 条；升级只处理这里列出的文件。",
-                    ) {
-                        val shown = prepared.changes.take(50)
-                        if (shown.isEmpty()) MutedText("新旧整合包之间没有文件差异。")
-                        else shown.forEach { change -> PackChangeRow(change) }
-                        if (prepared.changes.size > shown.size)
-                            MutedText("还有 ${prepared.changes.size - shown.size} 条未显示。")
-                    }
-                    Text(
-                        "升级会改写实例内的整合包文件：替换为新版本、移除新包已删除的文件并按新账本记录。" +
-                            "受保护文件会保留；升级前的旧文件与新归档都有备份，任何失败都会自动回滚。",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        confirmationError?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-        }
-        DialogActions(
-            confirmText = "开始升级",
-            danger = true,
-            enabled = canConfirm,
-            onCancel = onDismiss,
-            onConfirm = {
-                val current = plan
-                if (current != null) {
-                    try {
-                        actions.controller.upgradePack(
-                            instance.id,
-                            archive,
-                            current.archiveSha256,
-                            allowComponentChange = requiresComponent && acknowledged,
-                        )
-                        onStarted()
-                        onDismiss()
-                    } catch (failure: Exception) {
-                        confirmationError = failure.message ?: "无法开始升级，请稍后重试"
-                    }
-                }
-            },
-            hint =
-                when {
-                    prepared == null -> ""
-                    requiresComponent && !acknowledged -> "请先勾选知晓组件变化"
-                    else -> "升级会改动实例文件，任务可在日志页取消。"
-                },
-        )
-    }
-}
-
 /** 实例名转成安全的导出文件名：替换 Windows 不允许的字符，避免导出时才失败。 */
 private fun exportFileStem(name: String): String =
     name
@@ -974,29 +580,79 @@ private fun exportFileStem(name: String): String =
         .trim('.')
         .ifBlank { "instance" }
 
-/** 需要用户确认后才能按本地文件分发的资源：只统计模组/资源包/光影目录， 存档与截图等目录即使带资源扩展名也不会被意外打包。 */
-private fun localDistributionPaths(plan: MrpackExportPlan): Set<String> =
-    plan.files
-        .filter {
-            it.requiresPermission &&
-                it.path.substringBefore('/') in setOf("mods", "resourcepacks", "shaderpacks")
+/** 一行导出开关：标题、说明与复选框，点整行都能切换。 */
+@Composable
+private fun ExportOptionRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(Metrics.innerRadius))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked, { onCheckedChange(it) }, enabled = enabled)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            if (detail.isNotBlank())
+                Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        .map { it.path }
-        .toSet()
+    }
+}
 
-private fun distributionPaths(plan: MrpackExportPlan, format: PackExportFormat): Set<String> =
-    if (format == PackExportFormat.Modrinth) localDistributionPaths(plan)
-    else
-        plan.files
-            .filter {
-                it.path.substringBefore('/') in setOf("mods", "resourcepacks", "shaderpacks")
-            }
-            .map { it.path }
-            .toSet()
+/** 「选择内容」的一行：复选框 + 顶层条目名 + 文件数与磁盘体积；扫描中显示 `…`。 */
+@Composable
+private fun ExportEntryRow(
+    entry: PackExportEntry,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val size =
+        when {
+            entry.scanning -> "…"
+            entry.directory -> "${entry.fileCount} 个文件 · ${reportBytes(entry.totalBytes)}"
+            else -> reportBytes(entry.totalBytes)
+        }
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(Metrics.innerRadius))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Checkbox(checked, { onCheckedChange(it) }, enabled = enabled)
+        Column(Modifier.weight(1f)) {
+            Text(
+                entry.name,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color =
+                    if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!enabled)
+                Text(
+                    if (entry.unavailable) "共用游戏目录，不写入导出包" else "仅完整备份可导出日志",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+        }
+        Text(size, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 
 /**
- * 导出标准整合包（.mrpack）：先只读预览，再由任务队列写文件，进度与取消都在日志页。 文件数、需联网下载数与本地分发数全部来自 `MrpackExportPlan` 的真实字段，
- * 不提供后端不支持的选项；取消不会产生文件。
+ * 导出整合包或完整备份：先只读预览，再由任务队列写文件，进度与取消都在日志页。
+ * 「选择内容」按实例目录的真实顶层条目勾选（文件夹整段写入或整段排除），
+ * 默认只勾 mods/config/resourcepacks/shaderpacks/options.txt；取消不会留下半写文件。
  */
 @Composable
 fun ExportMrpackDialog(
@@ -1006,6 +662,9 @@ fun ExportMrpackDialog(
     onStarted: () -> Unit = {},
 ) {
     var format by remember(instance.id) { mutableStateOf(PackExportFormat.Modrinth) }
+    var options by remember(instance.id) {
+        mutableStateOf(PackExportOptions.defaultsFor(PackExportFormat.Modrinth))
+    }
     val stem = remember(instance.name) { exportFileStem(instance.name) }
     val defaultTarget =
         remember(stem) {
@@ -1019,12 +678,18 @@ fun ExportMrpackDialog(
         }
     var target by remember(instance.id) { mutableStateOf(defaultTarget) }
     var version by remember(instance.id) { mutableStateOf("1.0.0") }
-    var includeLocal by remember(instance.id) { mutableStateOf(true) }
     var plan by remember(instance.id) { mutableStateOf<MrpackExportPlan?>(null) }
     var loading by remember(instance.id) { mutableStateOf(true) }
     var error by remember(instance.id) { mutableStateOf<String?>(null) }
     var attempt by remember(instance.id) { mutableIntStateOf(0) }
     var exporting by remember(instance.id) { mutableStateOf(false) }
+    // 顶层内容扫描：先列出条目，再逐步补全文件数与体积；关闭对话框即取消。
+    var scan by remember(instance.id) { mutableStateOf<PackExportScan?>(null) }
+    var scanError by remember(instance.id) { mutableStateOf<String?>(null) }
+    var scanAttempt by remember(instance.id) { mutableIntStateOf(0) }
+    // 勾选只按条目键保存；touched 记录用户手动改过的行，切换格式时不重置。
+    var checked by remember(instance.id) { mutableStateOf<Set<String>>(emptySet()) }
+    var touched by remember(instance.id) { mutableStateOf<Set<String>>(emptySet()) }
     // 资源管理器「复制路径」会带引号，先去掉再解析，避免把合法路径判成无效。
     val destination = runCatching { Path.of(target.trim().trim('"').trim()) }.getOrNull()
     val fileName = destination?.fileName?.toString().orEmpty()
@@ -1038,8 +703,40 @@ fun ExportMrpackDialog(
     val validTarget =
         destination != null && fileName.endsWith(".${format.extension}", true) && validName
     val busy = actions.controller.busy
+    LaunchedEffect(instance.id, scanAttempt) {
+        scanError = null
+        try {
+            actions.controller.content.exportEntries(instance.id).collect { scan = it }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            scanError = failure.message ?: "无法读取实例目录"
+        }
+    }
+    // 条目第一次到达时套用默认勾选（mods/config/resourcepacks/shaderpacks/options.txt）；
+    // 之后扫描只更新数字，不会覆盖用户手动改动。默认值与格式无关，切换格式时保持勾选。
+    val entryKeys = scan?.entries?.map { it.key }
+    LaunchedEffect(entryKeys) {
+        val entries = scan?.entries ?: return@LaunchedEffect
+        val next = defaultExportEntries(entries).toMutableSet()
+        for (key in touched) if (key in checked) next += key else next -= key
+        checked = next
+    }
+    val selectableEntries =
+        remember(scan?.entries, format) {
+            scan?.entries.orEmpty().filter {
+                it.selectable && (format == PackExportFormat.Backup || !it.backupOnly)
+            }
+        }
+    val selectableKeys =
+        remember(selectableEntries) { selectableEntries.mapTo(mutableSetOf()) { it.key } }
+    val selectedEntries = checked.filterTo(mutableSetOf()) { it in selectableKeys }
+    // 勾选日志行本身就是显式同意：只有完整备份会带着它重新预览。
+    val includeLogs =
+        format == PackExportFormat.Backup &&
+            scan?.entries.orEmpty().any { it.backupOnly && it.key in selectedEntries }
     // 打开即预览：只读扫描实例目录，并按哈希查询可用的下载来源（网络失败只记为警告）。
-    LaunchedEffect(instance.id, attempt, format) {
+    LaunchedEffect(instance.id, attempt, format, includeLogs) {
         loading = true
         error = null
         try {
@@ -1049,6 +746,8 @@ fun ExportMrpackDialog(
                         instance.id,
                         MrpackExportMetadata(stem, "1.0.0"),
                         resolveDownloads = format == PackExportFormat.Modrinth,
+                        resolveCurseForge = format == PackExportFormat.CurseForge,
+                        includeLogs = includeLogs,
                     )
                 }
         } catch (cancelled: CancellationException) {
@@ -1061,25 +760,55 @@ fun ExportMrpackDialog(
     }
     val prepared = plan
     val localPaths =
-        remember(prepared, format) { prepared?.let { distributionPaths(it, format) }.orEmpty() }
+        remember(prepared, format) {
+            prepared?.let { exportLocalResourcePaths(it, format) }.orEmpty()
+        }
     val downloads =
         if (format == PackExportFormat.Modrinth)
             prepared?.files.orEmpty().count { it.downloadUrl != null }
         else 0
+    val managedFiles =
+        if (format == PackExportFormat.CurseForge)
+            prepared?.files.orEmpty().count { it.curseForgeProjectId != null }
+        else 0
     val selection =
-        ((prepared?.defaultSelection ?: emptySet()) - localPaths) +
-            if (includeLocal) localPaths else emptySet()
+        remember(prepared, format, options, selectedEntries) {
+            prepared?.let { exportSelectedPaths(it, format, options, selectedEntries) }.orEmpty()
+        }
+    val disabledMods = remember(prepared) {
+        prepared?.files.orEmpty().count {
+            it.path.startsWith("mods/", true) &&
+                it.path.substringAfterLast('/').endsWith(".disabled", true)
+        }
+    }
+    // 清单里的开关按实际勾选写入，完整备份的记录与归档内容保持一致。
+    fun effectiveOptions(): PackExportOptions =
+        options.copy(
+            includeSaves = "saves" in selectedEntries,
+            includeScreenshots = "screenshots" in selectedEntries,
+            includeOptionsTxt =
+                selectedEntries.any {
+                    it == "options.txt" || it == "optionsof.txt" || it == "optionsshaders.txt"
+                },
+            includeLogs = includeLogs,
+        )
+    fun toggleEntry(key: String, on: Boolean) {
+        touched = touched + key
+        checked = if (on) checked + key else checked - key
+    }
     val canConfirm =
         prepared != null &&
             prepared.files.isNotEmpty() &&
+            selection.isNotEmpty() &&
             !loading &&
             !exporting &&
             !busy &&
             validTarget &&
             validVersion
+    val currentScan = scan
     Modal(
-        "导出整合包",
-        "${instance.name} · ${if (format == PackExportFormat.Modrinth) "标准 mrpack，按链接获取资源" else "MCBBS 标准 ZIP，兼容 PCL / HMCL"}",
+        "导出整合包 / 完整备份",
+        "${instance.name} · ${format.title}",
         width = 640.dp,
         onDismiss = onDismiss,
     ) {
@@ -1100,11 +829,17 @@ fun ExportMrpackDialog(
                                 .toString()
                         }
                         .getOrDefault(target)
-                includeLocal = false
+                // 默认勾选与格式无关：保留用户当前选择，只丢弃已不存在的条目；选项也不重置。
+                checked = scan?.let { retainExportSelection(it.entries, checked) } ?: checked
                 format = chosen
             },
             Modifier.fillMaxWidth(),
             enabled = !exporting,
+        )
+        Text(
+            format.purpose,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(
             Modifier.fillMaxWidth(),
@@ -1145,11 +880,57 @@ fun ExportMrpackDialog(
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        // 预览内容可能比弹窗更高（本地资源说明与警告），单独滚动，底部按钮始终可见。
+        // 中间区域单独滚动，底部按钮始终可见；顶层条目很多时也只在这里滚动。
         Column(
             Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 顶层内容扫描与归档预览互相独立：预览联网时也能先勾选。
+            when {
+                currentScan == null && scanError != null ->
+                    Panel(Modifier.fillMaxWidth()) {
+                        EmptyState(
+                            "无法读取实例目录",
+                            scanError.orEmpty(),
+                            Icons.Outlined.ErrorOutline,
+                        ) {
+                            TextButton({ scanAttempt++ }) { Text("重试") }
+                        }
+                    }
+                currentScan == null ->
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        MutedText("正在读取实例目录的顶层内容…")
+                    }
+                else -> {
+                    SettingsSection(
+                        "选择内容",
+                        "只列出实例目录的真实顶层条目；数量与体积按磁盘文件统计，勾选决定写入包里的内容。",
+                    ) {
+                        if (selectableEntries.isEmpty())
+                            MutedText("实例目录里没有可勾选的内容。")
+                        selectableEntries.forEach { entry ->
+                            ExportEntryRow(
+                                entry = entry,
+                                checked = entry.key in selectedEntries,
+                                enabled = !exporting,
+                            ) { toggleEntry(entry.key, it) }
+                        }
+                    }
+                    if (currentScan.omitted.isNotEmpty())
+                        Text(
+                            "不导出：${currentScan.omitted.take(8).joinToString("、")}" +
+                                if (currentScan.omitted.size > 8)
+                                    " 等 ${currentScan.omitted.size} 项"
+                                else "",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
+            }
             when {
                 loading ->
                     Column(
@@ -1158,8 +939,11 @@ fun ExportMrpackDialog(
                     ) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         MutedText(
-                            if (format == PackExportFormat.Mcbbs) "正在读取实例文件…"
-                            else "正在读取实例文件并匹配下载来源…"
+                            when (format) {
+                                PackExportFormat.Modrinth -> "正在读取实例文件并匹配下载来源…"
+                                PackExportFormat.CurseForge -> "正在读取实例文件并匹配 CurseForge 编号…"
+                                else -> "正在读取实例文件…"
+                            }
                         )
                     }
                 prepared == null ->
@@ -1176,70 +960,83 @@ fun ExportMrpackDialog(
                     Panel(Modifier.fillMaxWidth()) {
                         EmptyState(
                             "实例目录没有可导出的文件",
-                            "日志、缓存和启动器私有文件不会进入整合包；请先安装游戏内容。",
+                            "日志默认不写入；启动器私有文件与实例版本文件不会进入导出包；请先安装游戏内容。",
                             Icons.Outlined.FolderOpen,
                         )
                     }
                 else -> {
                     SettingsSection(
                         "预览",
-                        if (format == PackExportFormat.Mcbbs) "只读扫描实例目录；导出时复核文件哈希，将选中内容写入整合包。"
-                        else "只读扫描实例目录并联网核对下载地址；导出时按同一份快照复核文件哈希。",
+                        when (format) {
+                            PackExportFormat.Backup ->
+                                "只读扫描实例目录；日志与崩溃报告仅在勾选后写入，疑似含登录凭据的日志会跳过。"
+                            PackExportFormat.CurseForge ->
+                                "只读扫描实例目录并联网匹配 CurseForge 文件编号；导出时复核文件哈希。"
+                            PackExportFormat.Modrinth ->
+                                "只读扫描实例目录并联网核对下载地址；导出时按同一份快照复核文件哈希。"
+                            else -> "只读扫描实例目录；导出时复核文件哈希，将选中内容写入包内。"
+                        },
                     ) {
-                        SettingRow("将包含的文件", "默认选择 + 已确认的本地资源；存档与截图不打包") {
-                            Text(
-                                "${selection.size} / ${prepared.files.size} 个",
-                                fontSize = 13.sp,
-                            )
-                        }
-                        SettingRow("导入时联网下载", "只写入下载链接，包里不含这些文件的内容") {
-                            Text("$downloads 个", fontSize = 13.sp)
-                        }
                         SettingRow(
-                            "按本地文件分发",
-                            if (localPaths.isEmpty()) "模组、资源包和光影都匹配到了下载来源"
-                            else if (format == PackExportFormat.Mcbbs) "已确认分发的资源会原样写入 overrides"
-                            else "未匹配来源的资源会原样写入 client-overrides",
+                            "将包含的文件",
+                            "按上方勾选的顶层内容写入；未勾选的文件夹整段不写入",
                         ) {
-                            Text(
-                                "${if (includeLocal) localPaths.size else 0} 个",
-                                fontSize = 13.sp,
-                            )
+                            Text("${selection.size} / ${prepared.files.size} 个", fontSize = 13.sp)
                         }
-                    }
-                    if (localPaths.isNotEmpty())
-                        Column(
-                            Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(Metrics.innerRadius))
-                                    .clickable(enabled = !exporting) {
-                                        includeLocal = !includeLocal
-                                    }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                        if (format == PackExportFormat.Modrinth)
+                            SettingRow("导入时联网下载", "只写入下载链接，包里不含这些文件的内容") {
+                                Text("$downloads 个", fontSize = 13.sp)
+                            }
+                        if (format == PackExportFormat.CurseForge)
+                            SettingRow(
+                                "写入受管清单",
+                                if (managedFiles == 0) "没有匹配到 CurseForge 编号；全部内容放进 overrides/，不会自动更新"
+                                else "已匹配 projectID/fileID；未匹配内容放进 overrides/",
                             ) {
-                                Checkbox(
-                                    includeLocal,
-                                    { includeLocal = it },
-                                    enabled = !exporting,
-                                )
+                                Text("$managedFiles 个", fontSize = 13.sp)
+                            }
+                        if (format != PackExportFormat.Backup)
+                            SettingRow(
+                                "按本地文件分发",
+                                if (localPaths.isEmpty()) "模组、资源包和光影都匹配到了下载来源"
+                                else "这些模组、资源包或光影会原样写入包内",
+                            ) {
                                 Text(
-                                    (if (format == PackExportFormat.Mcbbs) "确认有权将这些资源打包分发"
-                                    else "未匹配来源的资源按本地文件分发") + "（${localPaths.size} 个）",
+                                    "${if (options.includeLocalResources) localPaths.size else 0} 个",
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
                                 )
                             }
-                            Text(
-                                (if (format == PackExportFormat.Mcbbs) "MCBBS 格式会将这些模组、资源包或光影直接打包；"
-                                else "这些模组、资源包或光影按哈希查不到官方下载地址；") + "请确认你有权分发它们，取消勾选则不会写进整合包。",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    }
+                    SettingsSection("导出选项", "在已勾选内容的基础上进一步筛选写入的文件。") {
+                        ExportOptionRow(
+                            "仅保留已启用的模组",
+                            if (disabledMods > 0)
+                                "勾选后不打包 $disabledMods 个 .disabled 模组（不会改名为启用）"
+                            else "勾选后不打包 .disabled 模组（不会改名为启用）",
+                            options.enabledModsOnly,
+                            !exporting,
+                        ) { options = options.copy(enabledModsOnly = it) }
+                    }
+                    if (format == PackExportFormat.Backup)
+                        Text(
+                            "这是完整备份，不是可导入的整合包：其他启动器不会把它识别成整合包，只用于还原或留档。" +
+                                "游戏运行库（assets / libraries / versions）与启动器私有数据不会写入。",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    else if (localPaths.isNotEmpty())
+                        ExportOptionRow(
+                            "确认有权打包这些本地资源（${localPaths.size} 个）",
+                            "未走下载清单的模组、资源包或光影会原样写入包内；取消勾选则不含。",
+                            options.includeLocalResources,
+                            !exporting,
+                        ) { options = options.copy(includeLocalResources = it) }
+                    if (options.enabledModsOnly && disabledMods > 0)
+                        Text(
+                            "已排除 $disabledMods 个禁用的模组文件。",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     prepared.warnings.forEach { warning ->
                         Text(
                             warning,
@@ -1253,7 +1050,12 @@ fun ExportMrpackDialog(
         if (prepared != null)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         DialogActions(
-            confirmText = if (exporting) "正在导出…" else "开始导出",
+            confirmText =
+                when {
+                    exporting -> if (format == PackExportFormat.Backup) "正在备份…" else "正在导出…"
+                    format == PackExportFormat.Backup -> "生成备份"
+                    else -> "开始导出"
+                },
             enabled = canConfirm,
             onCancel = onDismiss,
             onConfirm = {
@@ -1265,25 +1067,30 @@ fun ExportMrpackDialog(
                     actions.run {
                         try {
                             val metadata = MrpackExportMetadata(packName, versionText)
-                            // 名称或版本改过时重新预览，确保清单与当前输入一致。
+                            val wantsLogs = includeLogs
+                            // 名称、版本或日志勾选改过时重新预览，确保清单与当前输入一致。
                             val fresh =
-                                if (current.metadata == metadata) current
+                                if (current.metadata == metadata && current.includesLogs == wantsLogs)
+                                    current
                                 else
                                     withContext(Dispatchers.IO) {
                                         actions.controller.content.previewMrpackExport(
                                             instance.id,
                                             metadata,
                                             resolveDownloads = format == PackExportFormat.Modrinth,
+                                            resolveCurseForge = format == PackExportFormat.CurseForge,
+                                            includeLogs = wantsLogs,
                                         )
                                     }
-                            val local = distributionPaths(fresh, format)
+                            val chosen = effectiveOptions()
+                            val local = exportLocalResourcePaths(fresh, format)
                             actions.controller.exportMrpack(
                                 fresh,
                                 destinationPath,
-                                (fresh.defaultSelection - local) +
-                                    if (includeLocal) local else emptySet(),
-                                if (includeLocal) local else emptySet(),
+                                exportSelectedPaths(fresh, format, chosen, selectedEntries),
+                                if (chosen.includeLocalResources) local else emptySet(),
                                 format,
+                                chosen,
                             )
                             onStarted()
                             onDismiss()
@@ -1298,10 +1105,14 @@ fun ExportMrpackDialog(
             },
             hint =
                 when {
+                    loading -> "正在读取导出内容…"
                     prepared == null -> ""
                     !validTarget -> "目标文件需要是 .${format.extension} 路径"
                     !validVersion -> "版本号需要 1–100 个字符"
                     busy -> "请等待当前任务结束再导出"
+                    selection.isEmpty() && selectedEntries.isNotEmpty() ->
+                        "勾选的内容没有可写入的文件；本地资源需先确认分发权限"
+                    selection.isEmpty() -> "请至少选择一项要写入的内容"
                     else -> "取消不会留下文件。"
                 },
         )

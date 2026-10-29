@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责颜色、字号、间距和动态效果的统一主题。
 
 package dev.molifox.desktop
@@ -308,8 +311,8 @@ val LocalLauncherFont = staticCompositionLocalOf<FontFamily> { FontFamily.Defaul
 
 /**
  * 输入框 / 下拉框 / 搜索框的**实色填充**：surfaceVariant 掺入少量主题色。 浅色主题下比白卡片深一档（#ECDBE3 级别），深色主题下比页面底色亮一档（#4F404B
- * 级别）； 悬停与聚焦时再向主题色靠 6%–18%，不改变尺寸与圆角。PCL2 用半透明白 + 浅主题色边框（Application.xaml:243/259），HMCL 用
- * surface-container-highest 实色填充 （root.css:951/1531）；这里取 HMCL 的「实色、比页面深一档」，边框取 PCL2 的可见细边。
+ * 级别）； 悬停与聚焦时再向主题色靠 6%–18%，不改变尺寸与圆角。取「实色、比页面深一档」的填充，
+ * 配可见细边，既压得住白卡片又保留樱花粉的柔和。
  */
 @Composable
 fun controlBackground(focused: Boolean = false, hovered: Boolean = false): Color {
@@ -350,9 +353,8 @@ fun rowHoverColor(): Color =
     MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) .12f else .07f)
 
 /**
- * 选中行（下拉项、选择器行、已选分类 chip）的实色底色：surfaceVariant 向主题色推进 34%（浅）/ 30%（深），对应 HMCL 的
- * `-monet-secondary-container` 选中态（blue.css:12）与 `secondary-container-transparent-50`
- * 悬停态（root.css:149/1567）。
+ * 选中行（下拉项、选择器行、已选分类 chip）的实色底色：surfaceVariant 向主题色推进 34%（浅）/ 30%（深），
+ * 悬停态再淡一档，保证与未选中行有明确区分。
  */
 @Composable
 fun selectedRowBackground(): Color {
@@ -536,7 +538,7 @@ fun EmptyState(
     }
 }
 
-/** 统一尺寸令牌：标题栏、页面、卡片、行与控件都从这里取。 参考 HMCL 的紧凑密度（标题栏 52、行 44、控件 34、卡片圆角 6），保留樱花粉的柔和观感。 */
+/** 统一尺寸令牌：标题栏、页面、卡片、行与控件都从这里取。 采用紧凑密度（标题栏 52、行 44、控件 34、卡片圆角 6），保留樱花粉的柔和观感。 */
 object Metrics {
     val titlebarHeight = 52.dp
     val pageHorizontal = 20.dp

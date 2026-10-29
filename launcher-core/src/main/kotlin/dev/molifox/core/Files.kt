@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责文件路径、原子写入、校验与 JSON 访问辅助。
 
 package dev.molifox.core

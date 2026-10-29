@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证网络请求、下载校验、重试和断点续传的行为与边界。
 
 package dev.molifox.core

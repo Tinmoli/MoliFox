@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责完整存档/服务器列表的分类、搜索、隐藏项恢复及共用列表滚动。
 
 package dev.molifox.desktop

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责结合官方 Quick Play 记录和客户端日志追踪每个游戏进程的实际进入与离开。
 
 package dev.molifox.core

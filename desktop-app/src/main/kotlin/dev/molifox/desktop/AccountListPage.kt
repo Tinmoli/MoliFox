@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责账户列表、账户切换和账户操作入口。
 
 package dev.molifox.desktop
@@ -510,7 +513,7 @@ private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
             label = "玩家名称",
             placeholder = "例如 Steve",
         )
-        // 与 HMCL 一致：输入不合法时就地给错误色说明，而不是只把按钮置灰。
+        // 输入不合法时就地给错误色说明，而不是只把按钮置灰。
         Text(
             if (playerName.isNotEmpty() && !validName) "只能使用 3–16 位字母、数字或下划线"
             else "3–16 位字母、数字或下划线",

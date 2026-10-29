@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责MCBBS 整合包格式的读取与导出。
 
 package dev.molifox.core
@@ -226,9 +229,9 @@ internal fun readMcbbsManifest(
 }
 
 /**
- * Legacy HMCL archives have no standard component manifest; never discard a custom launch profile.
+ * Legacy plain archives have no standard component manifest; never discard a custom launch profile.
  */
-internal fun readHmclManifest(
+internal fun readLegacyPackManifest(
     info: JsonObject,
     zip: ZipFile,
     prefix: String,

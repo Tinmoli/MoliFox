@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责磨砂（毛玻璃）面板：把背后画面换成模糊版，再叠与卡片相同的 surface，合成结果不比卡片更暗或更亮。
 
 package dev.molifox.desktop

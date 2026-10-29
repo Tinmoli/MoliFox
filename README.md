@@ -2,7 +2,7 @@
 
 面向 **Windows / Linux x64** 的 Minecraft Java 版桌面启动器，使用 **Kotlin + Compose Multiplatform** 开发。
 
-茉狐以游戏实例、内容管理和启动配置为核心，采用统一的樱花粉界面，支持字体、背景、透明度与磨砂效果设置。布局与操作参考 PCL、HMCL、SJMCL、Prism Launcher 和 Modrinth App，代码与视觉素材独立实现。
+茉狐以游戏实例、内容管理和启动配置为核心，采用统一的樱花粉界面，支持字体、背景、透明度与磨砂效果设置。布局与操作遵循同类启动器的通用习惯，代码与视觉素材独立实现。
 
 **当前版本：0.4.0-beta（测试版）。** 项目仍在开发中；macOS、Android 及其他 CPU 架构暂不交付。本文状态核对日期为 **2026-10-29**，详细实测边界见 [验证记录](docs/VALIDATION.md)。
 
@@ -51,7 +51,7 @@ chmod +x MoliFox-linux-x64.run
 | 整合包 | 多格式导入、预览、校验、隔离、失败回滚、升级预览、自有 ZIP 与标准 mrpack 导出向导 | 特殊组件、CurseForge 包升级、新格式真实游戏样本仍有边界，见格式文档和最新交接 |
 | 网络与日志 | 官方源 / BMCLAPI、下载并发、系统 / 直连 / 手动代理、游戏日志与诊断导出 | 下载镜像与内容站点分别设置 |
 | 个性化 | 浅色 / 深色 / 系统主题、主题色、背景、字体、缩放、玻璃与页面选项 | 整窗透明需重启；磨砂作用于启动器自己的背景层 |
-| CurseForge | 检索、详情/版本、依赖、指纹更新和 manifest 包核心及桌面来源接线 | 真实服务需要获批 API Key，目前仍未完成真实 Key 验收 |
+| CurseForge | 检索、详情/版本、依赖、指纹更新和 manifest 包核心及桌面来源接线 | 公开镜像无需 API Key；真实镜像服务已探测可用，完整下载闭环仍待验收 |
 | 实例与存档维护 | 实例复制/整理/校验、目录移动、存档备份恢复与跨实例复制 | Windows 关键操作有实际点击证据，Linux 桌面实测仍待补 |
 | 下载恢复 | 大文件分段、网络中断续传、重试与校验、显式取消清理 | 共享目录修改会排队；跨进程锁及无哈希资源的版本变化识别仍有限制 |
 | 实例图标与截图 | 图片/自绘预设/自动图标、图库/日期/导出/回收、图片剪贴板与设背景 | 关键用例和 Windows 定向 GUI 通过，Linux 本批未实机 |
@@ -105,11 +105,11 @@ Microsoft Client ID 已内置，普通用户无需填写，也不需要在桌面
 
 按用户选择，刷新令牌以便携 AES-GCM 封装保存在 `MoliFox/credentials/`。格式密钥内置，持有程序与凭据文件的人仍可能还原令牌，因此不要公开分享整个数据文件夹。旧 Windows DPAPI / Linux Secret Service 凭据会先读取并迁移，成功写入新文件后才清旧项；旧数据应先在原系统用户下迁移，无法读取时重新登录。详见 [凭据保存说明](docs/CREDENTIAL_STORAGE.md)。
 
-`config/launcher.json` 不保存微软令牌，但设置中可能包含用户填写的 CurseForge API Key；分享配置或诊断资料前需要移除它。
+`config/launcher.json` 不保存微软令牌，也不保存 CurseForge API Key；CurseForge 只使用可在设置中修改的公共镜像地址。
 
 ## 验证进度与已知限制
 
-上一完整核心回归为 **239 项（238 通过、1 权限跳过）**。晚间修复只验证实质改动的 **34 项关键检查（33 通过、1 权限跳过）**，没有重复跑全量。用户目录的四个实际 Fabric 版本搜索、兼容版本及官方皮肤 CDN 通过，真实 Java 自动内存参数与工作目录通过；定向 GUI 和新 Windows EXE 离线打开通过。两个单文件均已重建；Linux 本轮运行、CurseForge 真实 Key 与完整正版进游戏仍未验收。详见 [本轮审查](docs/REVIEW_2026-10-27.md)。
+上一完整核心回归为 **239 项（238 通过、1 权限跳过）**。晚间修复只验证实质改动的 **34 项关键检查（33 通过、1 权限跳过）**，没有重复跑全量。用户目录的四个实际 Fabric 版本搜索、兼容版本及官方皮肤 CDN 通过，真实 Java 自动内存参数与工作目录通过；定向 GUI 和新 Windows EXE 离线打开通过。两个单文件均已重建；Linux 本轮运行、CurseForge 真实镜像检索与完整正版进游戏仍未验收。详见 [本轮审查](docs/REVIEW_2026-10-27.md)。
 
 | 验证项 | 已记录结果 |
 | --- | --- |
@@ -123,7 +123,7 @@ Microsoft Client ID 已内置，普通用户无需填写，也不需要在桌面
 | Modrinth 实际内容 | Sodium 历史版本、识别、更新、锁定与禁用状态保留通过，未执行下载的模组 |
 | 完整 GUI 回归 | 新内容版本弹窗流程待收尾，不将独立开窗检查视为完整 GUI 通过 |
 
-主要待办包括披风与动作动画、离线游戏内皮肤、程序更新替换与回滚、网络缓存维护、更多组件、第三方认证、CurseForge 真实 API 与新界面的更多真机验证。可拖动三维皮肤已实现。[HMCL 功能对照](docs/HMCL_FUNCTION_PARITY.md) 明确记录已有、部分和缺项，不宣称当前已经覆盖 HMCL 全部功能。
+主要待办包括披风与动作动画、离线游戏内皮肤、程序更新替换与回滚、网络缓存维护、更多组件、第三方认证、CurseForge 真实 API 与新界面的更多真机验证。可拖动三维皮肤已实现。[功能覆盖对照](docs/FUNCTION_COVERAGE.md) 明确记录已有、部分和缺项，不宣称当前已经覆盖完整功能。
 
 用户已确认按顺序实施核心功能；UI 细节由独立任务按参考与确认流程推进。实施顺序见 [功能路线图](docs/FUNCTION_ROADMAP.md)，具体缺口、参考与估算见 [功能差距清单](docs/FEATURE_AUDIT.md)。
 
@@ -190,7 +190,7 @@ chmod +x gradlew
 
 类型与 Compose 函数使用大驼峰，普通函数、变量和参数使用小驼峰。新增设置必须连接实际行为，文件操作需保留失败、取消与回滚边界。
 
-测试统一放在 `.work/tests/`，成功或失败后自动清理，不删除用户的 `MoliFox/`、游戏或外部目录。可复用依赖保留在项目内。GUI 测试顺序运行，只操作测试窗口；界面截图最多保留一套，第三方参考截图与缓存源码仅放在已忽略的 `docs/ui-reference/`，不提交到公开仓库。
+测试统一放在 `.work/tests/`，成功或失败后自动清理，不删除用户的 `MoliFox/`、游戏或外部目录。可复用依赖保留在项目内。GUI 测试顺序运行，只操作测试窗口；界面截图最多保留一套，不保留第三方截图或缓存源码，也不提交到公开仓库。
 
 ## 文档索引
 
@@ -207,7 +207,7 @@ chmod +x gradlew
 | [MRPACK_EXPORT](docs/MRPACK_EXPORT.md) | 标准整合包导出接口、选择与分发权限、验证边界 |
 | [NEXT_AI_HANDOFF](docs/NEXT_AI_HANDOFF.md) | 当前全量交接、停工位置、接续顺序与晚间审查清单 |
 | [REVIEW_2026-10-27](docs/REVIEW_2026-10-27.md) | 用户反馈修复、代码审查、真实服务与定向验证 |
-| [HMCL_FUNCTION_PARITY](docs/HMCL_FUNCTION_PARITY.md) | HMCL 功能入口级对照、独立实现进度和剩余缺项 |
+| [FUNCTION_COVERAGE](docs/FUNCTION_COVERAGE.md) | 功能入口级对照、独立实现进度和剩余缺项 |
 | [SKIN_MANAGEMENT](docs/SKIN_MANAGEMENT.md) | 皮肤库、预览、正版上传和离线预览边界 |
 | [INSTANCE_ICONS](docs/INSTANCE_ICONS.md) | 实例图片/预设、自动识别和资产归属 |
 | [SCREENSHOT_GALLERY](docs/SCREENSHOT_GALLERY.md) | 图库、导出回收、图片复制与背景 |
@@ -218,8 +218,12 @@ chmod +x gradlew
 | [CLEANUP](docs/CLEANUP.md) | 临时数据与目录清理规则 |
 | [AGENTS](AGENTS.md) | 项目工作约定 |
 
-## 许可与参考
+## 许可 / License 与参考
 
-项目自身源码采用 [GNU GPLv3](LICENSE)，并附加第 7(b)/(c) 节允许的保留署名及修改版明确区分条款，详见 [NOTICE](NOTICE)。第三方依赖及其许可见 [THIRD_PARTY](THIRD_PARTY.md)；Minecraft、游戏资源与作者作品保持各自归属。源代码、发布版本及问题反馈见 [Tinmoli/MoliFox](https://github.com/Tinmoli/MoliFox)。
+MoliFox 以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布，仅适用第 3 版、不适用任何后续版本；完整条款见 [LICENSE](LICENSE)，随包署名与第 7(b)/(c) 节附加条款见 [NOTICE](NOTICE)。
 
-参考项目：[PCL](https://github.com/Meloong-Git/PCL)、[HMCL](https://github.com/HMCL-dev/HMCL)、[SJMCL](https://github.com/UNIkeEN/SJMCL)、[Prism Launcher](https://github.com/PrismLauncher/PrismLauncher)、[Modrinth App](https://github.com/modrinth/code)。参考用于理解布局、操作与格式，未复制其源码、图标、截图或宣传素材作为茉狐的产品资源。
+Copyright (C) 2026 Tinmoli and MoliFox Contributors。源代码在本仓库中公开：[Tinmoli/MoliFox](https://github.com/Tinmoli/MoliFox)，发布版本与问题反馈也在该仓库。
+
+第三方依赖及其许可见 [THIRD_PARTY](THIRD_PARTY.md)；Minecraft、游戏资源与作者作品保持各自归属。
+
+界面布局、操作习惯与包格式遵循同类产品的通用做法，独立实现；未复制任何第三方源码、图标、截图或宣传素材作为茉狐的产品资源。

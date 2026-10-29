@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责桌面导航状态、顶部导航和通用交互效果。
 
 package dev.molifox.desktop
@@ -138,7 +141,8 @@ fun AppHeader(
                         ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FoxMark(Modifier.size(22.dp))
+                    // 左上角品牌位：用户设置过自定义图标就显示自定义图片，否则用内置狐狸图。
+                    BrandMark(Modifier.size(22.dp))
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text(

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责更新发布说明、官方下载入口和关于页中的运行与许可信息。
 
 package dev.molifox.desktop
@@ -87,12 +90,13 @@ fun LauncherUpdatePanel(update: LauncherUpdateState, actions: UiActions) {
 @Composable
 fun LauncherAboutPanel(actions: UiActions) {
     var document by remember { mutableStateOf<String?>(null) }
+    var licensesOpen by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row {
             FoxMark(Modifier.size(46.dp))
             Spacer(Modifier.width(14.dp))
             Column {
-                Text("MoliFox · 茉狐", style = MaterialTheme.typography.titleLarge)
+                Text("MoliFox", style = MaterialTheme.typography.titleLarge)
                 MutedText("$LAUNCHER_VERSION · Minecraft Java Edition Launcher")
             }
         }
@@ -112,13 +116,13 @@ fun LauncherAboutPanel(actions: UiActions) {
                     }
                 }
         }
-        Text(MoliFoxIdentity.license, style = MaterialTheme.typography.titleSmall)
-        MutedText("Copyright © 2026 MoliFox contributors。分发时保留署名，修改版须明确标识。")
+        MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors · GPL-3.0-only")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("GPLv3 全文" to "LICENSE", "附加条款" to "NOTICE", "第三方许可" to "THIRD_PARTY.md")
+            listOf("许可全文" to "LICENSE", "附加条款" to "NOTICE")
                 .forEach { (label, name) ->
                     SecondaryButton({ document = name }) { Text(label) }
                 }
+            SecondaryButton({ licensesOpen = true }) { Text("第三方许可") }
         }
         SecondaryButton({
             val summary =
@@ -128,19 +132,35 @@ fun LauncherAboutPanel(actions: UiActions) {
         }) {
             Text("复制版本信息")
         }
-        MutedText("感谢 Kotlin、Compose、OpenJDK 及各开源依赖。功能和操作体验参考 HMCL、PCL 等成熟启动器，独立实现。")
+        MutedText("感谢 Kotlin、Compose、OpenJDK 及各开源依赖。")
         MutedText("Minecraft 是 Mojang 的商标。本项目与 Mojang、Microsoft 没有关联。")
     }
     document?.let { name ->
         val text = remember(name) { BundledLegalDocuments.load(name) }
         Modal(name, "随程序分发的许可声明", 760.dp, { document = null }) {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
+                Text(
+                    "MoliFox — Minecraft Launcher",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors")
+                MutedText(
+                    if (name == "LICENSE") "本程序以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布；以下为许可全文。"
+                    else "以下为本项目附加条款原文。",
+                )
+                Text("", style = MaterialTheme.typography.bodySmall)
                 androidx.compose.foundation.text.selection.SelectionContainer {
                     Text(text, style = MaterialTheme.typography.bodySmall)
                 }
             }
             TextButton({ document = null }) { Text("关闭") }
         }
+    }
+    if (licensesOpen) {
+        ThirdPartyLicensesDialog(
+            onOpenUrl = { url -> actions.run { actions.controller.platform.openUrl(url) } },
+            onDismiss = { licensesOpen = false },
+        )
     }
 }
 

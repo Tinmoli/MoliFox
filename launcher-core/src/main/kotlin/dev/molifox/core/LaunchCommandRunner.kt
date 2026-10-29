@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责启动前后命令的执行与环境准备。
 
 package dev.molifox.core
@@ -87,7 +90,7 @@ internal class LaunchCommandRunner(private val store: LauncherStore) {
                             .lineSequence()
                             .filter { it.isNotBlank() }
                             .take(500)
-                            .forEach { store.log("[${phase.title}] $it") }
+                            .forEach { store.log("[${phase.title}] $it", level = LogLevel.Trace) }
                     }
                 }
                     .onFailure { store.log("${phase.title}命令日志暂时无法整理：${it.message}", true) }

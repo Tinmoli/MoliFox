@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责为测试构造 NBT 二进制样例。
 
 package dev.molifox.core
@@ -85,6 +88,11 @@ internal class TestNbtWriter {
         header(12, name)
         i32(value.size)
         value.forEach(::i64)
+    }
+
+    /** 列表元素没有名字：直接写修改版 UTF-8 文本，供字符串列表使用。 */
+    fun stringElement(value: String) {
+        text(value)
     }
 
     fun compoundElement(block: TestNbtWriter.() -> Unit) {

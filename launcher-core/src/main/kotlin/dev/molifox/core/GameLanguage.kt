@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 在启用语言跟随时更新实例的游戏语言，保留 options.txt 中其他选项。
 
 package dev.molifox.core

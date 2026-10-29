@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责配置核心模块依赖、测试和功能验收任务。
 
 import java.time.Duration
@@ -127,23 +130,6 @@ tasks.register<JavaExec>("contentSmoke") {
     systemProperty(
         "molifox.content.report",
         rootProject.file("docs/validation/content-online.json").absolutePath,
-    )
-}
-
-tasks.register<JavaExec>("mrpackSmoke") {
-    group = "verification"
-    description =
-        "Opt-in public mrpack round trip and local HMCL parser check; never starts a GUI or game"
-    dependsOn(tasks.testClasses)
-    classpath = sourceSets.test.get().runtimeClasspath
-    mainClass.set("dev.molifox.core.MrpackOnlineSmokeKt")
-    systemProperty("java.net.useSystemProxies", "true")
-    systemProperty("stdout.encoding", "UTF-8")
-    systemProperty("stderr.encoding", "UTF-8")
-    systemProperty("molifox.mrpack.hmcl", providers.gradleProperty("hmclReference").getOrElse(""))
-    systemProperty(
-        "molifox.mrpack.report",
-        rootProject.file("docs/validation/mrpack-online.json").absolutePath,
     )
 }
 

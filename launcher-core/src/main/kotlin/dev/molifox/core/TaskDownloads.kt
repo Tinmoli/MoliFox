@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 记录任务新下载的文件，取消时清理，并保护已存在或被其他实例使用的内容。
 
 package dev.molifox.core

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责最近游玩面板的磁盘快照、历史合并和有界服务器状态缓存。
 
 package dev.molifox.desktop

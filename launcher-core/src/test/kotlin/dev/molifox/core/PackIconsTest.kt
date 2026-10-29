@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证整合包内图标的读取与导出的行为与边界。
 
 package dev.molifox.core
@@ -44,7 +47,19 @@ class PackIconsTest {
         val instance =
             GameInstance(name = "Pack", gameVersion = "26.3", versionId = "26.3", installed = true)
         store.mutate { it.copy(instances = listOf(instance)) }
-        store.instancePath(instance.id).createDirectories()
+        val folder = store.instancePath(instance.id).apply { createDirectories() }
+        folder.resolve("26.3.json").writeText(
+            gson.toJson(
+                mapOf(
+                    "id" to "26.3",
+                    "type" to "release",
+                    "mainClass" to "fixture.Main",
+                    "libraries" to emptyList<Any>(),
+                )
+            )
+        )
+        folder.resolve("26.3.jar").writeBytes(byteArrayOf())
+        store.refreshInstances()
         action(store, instance, InstanceIcons(store))
     }
 
@@ -78,7 +93,7 @@ class PackIconsTest {
             assertEquals(
                 packId,
                 LauncherStore(DesktopPlatform(), store.dataDirectory)
-                    .instance(instance.id)
+                    .instance("26.3")
                     .packIconId,
             )
         }

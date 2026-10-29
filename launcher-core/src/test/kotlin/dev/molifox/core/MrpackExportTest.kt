@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证Modrinth 标准整合包的导出与文件识别的行为与边界。
 
 package dev.molifox.core
@@ -208,7 +211,7 @@ class MrpackExportTest {
                             val request = server.takeRequest()
                             assertEquals("/v2/version_files", request.path)
                             assertEquals("POST", request.method)
-                            assertNull(request.getHeader("x-api-key"))
+                            assertNull(request.getHeader("Authorization"))
                         }
                         assertTrue(plan.warnings.isEmpty())
                         assertEquals(102, plan.defaultSelection.size)
@@ -431,6 +434,7 @@ class MrpackExportTest {
     fun `all four loader dependencies and vanilla round trip without launcher specific metadata`() =
         runBlocking {
             fixture { store, service, instance, _ ->
+                write(store.instancePath(instance.id), "config/example.txt")
                 for (loader in LoaderType.entries) {
                     store.updateInstance(instance.id) {
                         it.copy(
@@ -440,7 +444,12 @@ class MrpackExportTest {
                     }
                     val plan = service.previewMrpackExport(instance.id, metadata, false)
                     val target = temporary.resolve("${loader.name}.mrpack")
-                    service.exportMrpack(plan, target, JobContext(store, "test"))
+                    service.exportMrpack(
+                        plan,
+                        target,
+                        JobContext(store, "test"),
+                        selected = plan.files.map { it.path }.toSet(),
+                    )
                     val preview = service.previewPack(target)
                     assertEquals(loader, preview.loader)
                     assertEquals(
@@ -455,7 +464,10 @@ class MrpackExportTest {
     fun `shared directory exports user content and external standard loaders with explicit versions`() =
         runBlocking {
             fixture { store, service, instance, _ ->
-                store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
+                // 共用游戏目录：只有实例自己把隔离设为「关闭」才会落到游戏根；全局开关不再覆盖实例值。
+                store.updateInstance(instance.id) {
+                    it.copy(isolation = VersionIsolation.Disabled)
+                }
                 val root = store.instancePath(instance.id)
                 write(root, "config/a.txt")
                 write(root, "OtherLauncher/settings.json")

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责创建测试用目录链接，在 Windows 普通账户下使用目录联接。
 
 package dev.molifox.core

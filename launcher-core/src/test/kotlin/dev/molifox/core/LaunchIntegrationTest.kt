@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证实际 Java 子进程与启动配置的集成的行为与边界。
 
 package dev.molifox.core
@@ -263,8 +266,11 @@ class LaunchIntegrationTest {
                         store.state.value.jobs.first().error,
                     )
                     assertTrue(store.instance(instance.id).installed)
-                    val gameJar = store.minecraftRoot.resolve("versions/fixture/fixture.jar")
+                    // 安装只发布实例自己的目录：配置与客户端 JAR 都在 versions/我的测试世界/ 里。
+                    assertEquals("我的测试世界", store.instance(instance.id).versionId)
+                    val gameJar = store.instancePath(instance.id).resolve("我的测试世界.jar")
                     assertEquals(sha1(clientJar), digest(gameJar))
+                    assertFalse(store.minecraftRoot.resolve("versions/fixture").exists())
                     gameJar.writeText("corrupted cache")
                     jobs.enqueue("repair fixture") { installer.install(instance.id, this) }
                     withTimeout(45000) { jobs.awaitIdle() }
@@ -435,7 +441,7 @@ class LaunchIntegrationTest {
                                     extraJvmArgs = "",
                                 ),
                                 VersionResolver(store.minecraftRoot, store.platform)
-                                    .resolve("fixture"),
+                                    .resolve(configured.versionId),
                                 runtime,
                                 GameCredentials("MoliFox", offlineUuid("MoliFox")),
                             )

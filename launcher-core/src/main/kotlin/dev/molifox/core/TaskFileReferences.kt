@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 按其他实例实际引用的版本、依赖和资源保护共享文件，避免把整个游戏根误判为不可清理。
 
 package dev.molifox.core
@@ -29,6 +32,10 @@ internal class TaskFileReferences(store: LauncherStore, ownedIds: Set<String>) {
                     (it.installed ||
                         store.state.value.runningGames.any { game -> game.instanceId == it.id })
             }
+            // 只被扫描出来、没有任何实例设置的版本目录不是「另一个实例」：安装器新建的基础
+            // 版本目录常常同时被扫描成这样一个条目，否则它永远无法回收（用户装过原版时它
+            // 有设置，仍然受保护）。
+            .filter { store.instanceSettings(it.instanceFolderName()) != null }
             .map { instance ->
                 val root = store.minecraftRoot(instance).toAbsolutePath().normalize()
                 runCatching {

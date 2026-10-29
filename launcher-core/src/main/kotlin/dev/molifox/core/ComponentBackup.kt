@@ -1,4 +1,7 @@
-// 保存组件变更前的版本配置链，并在失败或用户回退时恢复原配置。
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 保存组件变更前的版本配置链，并在加载器升级失败时恢复原配置。
 
 package dev.molifox.core
 
@@ -67,11 +70,6 @@ internal class ComponentBackup(private val store: LauncherStore) {
         return id
     }
 
-    fun previous(id: String, current: GameInstance): GameInstance {
-        val manifest = manifest(id, current)
-        return gson.fromJson(manifest.get("instance"), GameInstance::class.java)
-    }
-
     fun restore(id: String, current: GameInstance) {
         val manifest = manifest(id, current)
         val folder = directory(id)
@@ -94,6 +92,17 @@ internal class ComponentBackup(private val store: LauncherStore) {
             require(!target.isSymbolicLink())
             target.parent.createDirectories()
             Files.copy(source, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    /** 升级成功或回滚完成后丢弃备份，避免 `backups/components/` 随升级次数无限增长。 */
+    fun discard(id: String) {
+        val folder = directory(id)
+        if (!folder.isDirectory(NOFOLLOW_LINKS) || folder.isSymbolicLink()) return
+        runCatching {
+            Files.walk(folder).use { paths ->
+                paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
         }
     }
 

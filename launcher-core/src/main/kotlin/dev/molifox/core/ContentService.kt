@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责内容搜索、安装和整合包管理的服务入口。
 
 package dev.molifox.core
@@ -12,18 +15,47 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
 
 class ContentService(
     private val store: LauncherStore,
     private val network: NetworkClient,
     private val installer: MinecraftInstaller,
     private val api: String = "https://api.modrinth.com/v2",
-    curseForgeApi: String = "https://api.curseforge.com/v1",
 ) {
     private val metadataReader = ModMetadataReader()
-    private val curseForge = CurseForgeBackend(store, network, curseForgeApi)
+    // CurseForge 的根地址来自设置（默认社区镜像），不内置任何 API Key。
+    private val curseForge = CurseForgeBackend(store, network)
     private val backend = ContentBackends(ModrinthBackend(network, api), curseForge)
     val catalog = ContentCatalog(store, network, api, backend, curseForge)
+    // 模组更新：指纹优先匹配 Modrinth，CurseForge 走现有公共镜像后端（跟随设置），不需要 API Key。
+    val modUpdates =
+        ModUpdateService(
+            store,
+            metadataReader,
+            defaultModUpdateSources(network, api, curseForge),
+            defaultModDownloader(network, api) { curseForge.api },
+        )
+    // 资源包与光影的更新检查：与模组同样的内容源与镜像设置，只读，不下载文件。
+    val packUpdates =
+        PackUpdateService(store, defaultPackUpdateSources(network, api, curseForge))
+    private val localPacks = LocalPackStore(store)
+
+    /** 列出 `resourcepacks/` / `shaderpacks/` 的直接子项（zip 或文件夹）。 */
+    fun listPacks(id: String, folder: PackFolder): List<LocalPackEntry> =
+        localPacks.list(id, folder)
+
+    /** 把 `.zip` 或文件夹导入资源包/光影目录；重名加序号，不覆盖、失败不留残留。 */
+    suspend fun importPacks(
+        id: String,
+        folder: PackFolder,
+        sources: List<Path>,
+        context: JobContext? = null,
+    ): List<LocalPackEntry> = localPacks.import(id, folder, sources, context)
+
+    /** 删除一个资源包/光影（移入回收站）。 */
+    fun deletePack(id: String, folder: PackFolder, filename: String): Boolean =
+        localPacks.delete(id, folder, filename)
 
     suspend fun installDatapack(
         hit: ContentHit,
@@ -122,8 +154,12 @@ class ContentService(
                         }
                     }
                 ?: ContentFilter()
+        // 版本筛选只发送真实版本号：实例目录名（TwilightMC-26.3v1.0）解析成 26.3，解析不到就不筛。
+        val gameVersion = minecraftVersionTag(selection.gameVersion)
         if (selection.gameVersion.isNotBlank()) {
-            facets += listOf("versions:${gson.toJson(selection.gameVersion)}")
+            if (gameVersion == null)
+                store.log("Modrinth 已忽略无法识别的游戏版本筛选：${selection.gameVersion}", true)
+            else facets += listOf("versions:${gson.toJson(gameVersion)}")
         }
         if (kind == "mod" && selection.loader != null && selection.loader != LoaderType.Vanilla)
             facets += listOf("categories:${selection.loader.name.lowercase()}")
@@ -150,6 +186,11 @@ class ContentService(
             result.int("total_hits"),
         )
     }
+
+    /** 内容源的分类列表：CurseForge 用镜像自己的编号与名称，Modrinth 由界面内置的 slug 列表提供。 */
+    suspend fun contentCategories(kind: String): List<ContentCategoryOption> =
+        if (store.data.settings.contentDownloadSource == "curseforge") curseForge.categories(kind)
+        else emptyList()
 
     suspend fun installContent(
         hit: ContentHit,
@@ -283,6 +324,7 @@ class ContentService(
             .filter {
                 it.isRegularFile() &&
                     !Files.isSymbolicLink(it) &&
+                    !it.name.startsWith(".molifox-") &&
                     Regex("(?i).*\\.jar(?:\\.disabled)?").matches(it.name)
             }
             .map {
@@ -717,12 +759,22 @@ class ContentService(
             }
         }
 
+    /**
+     * 导出对话框的顶层内容扫描：列出实例目录的直接子项并按实际文件统计数量与体积。
+     * 边扫描边发快照，界面可先显示 `…` 再逐步更新；取消收集即停止扫描。
+     */
+    fun exportEntries(id: String): Flow<PackExportScan> =
+        MrpackExporter(store, network, api, curseForge).entries(id)
+
     suspend fun previewMrpackExport(
         id: String,
         metadata: MrpackExportMetadata,
         resolveDownloads: Boolean = true,
+        resolveCurseForge: Boolean = false,
+        includeLogs: Boolean = false,
     ): MrpackExportPlan =
-        MrpackExporter(store, network, api).preview(id, metadata, resolveDownloads)
+        MrpackExporter(store, network, api, curseForge)
+            .preview(id, metadata, resolveDownloads, resolveCurseForge, includeLogs)
 
     suspend fun exportMrpack(
         plan: MrpackExportPlan,
@@ -731,9 +783,10 @@ class ContentService(
         selected: Set<String> = plan.defaultSelection,
         permittedLocalFiles: Set<String> = emptySet(),
         format: PackExportFormat = PackExportFormat.Modrinth,
+        options: PackExportOptions = PackExportOptions(),
     ) =
-        MrpackExporter(store, network, api)
-            .export(plan, destination, selected, permittedLocalFiles, context, format)
+        MrpackExporter(store, network, api, curseForge)
+            .export(plan, destination, selected, permittedLocalFiles, context, format, options)
 
     fun exportInstance(id: String, destination: Path) {
         val instance = store.instance(id)

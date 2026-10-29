@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证模块化加载器的继承参数与类路径的行为与边界。
 
 // Verifies that modular loader exclusions refer to the actual game JAR after profile renaming.

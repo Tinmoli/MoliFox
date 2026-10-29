@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责内容版本筛选、兼容性判断与推荐。
 
 package dev.molifox.core
@@ -28,6 +31,9 @@ data class ContentFilter(
         }
     }
 }
+
+/** 一个可选的资源分类。[id] 是内容源自己的数字分类编号（CurseForge），界面只显示 [name]。 */
+data class ContentCategoryOption(val id: String, val name: String, val slug: String = "")
 
 data class ContentLink(val title: String, val url: String)
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责配置测试临时目录、验收摘要和测试数据清理。
 
 import java.nio.file.Files
@@ -15,7 +18,6 @@ val smokeNames =
     setOf(
         "onlineSmoke",
         "contentSmoke",
-        "mrpackSmoke",
         "reportedIssuesSmoke",
         "accountSmoke",
         "uiSmoke",

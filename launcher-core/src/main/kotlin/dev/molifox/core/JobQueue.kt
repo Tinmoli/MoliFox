@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责后台任务调度、进度和取消。
 
 package dev.molifox.core
@@ -95,6 +98,14 @@ internal constructor(
         publishTransfers()
     }
 
+    /** 阶段推进时追加预计文件数（不清空已统计的传输），任务中心的「剩余文件」才准。 */
+    @Synchronized
+    internal fun expectFiles(count: Int) {
+        if (count <= 0) return
+        transferCount += count
+        publishTransfers()
+    }
+
     /** 读取实际下载回调；首个偏移是已有断点，不计入本次网络速度。 */
     @Synchronized
     fun transfer(key: String, bytes: Long, total: Long, completed: Boolean = false) {
@@ -135,16 +146,33 @@ internal constructor(
         coroutineContext.ensureActive()
     }
 
+    /** 测试与诊断用的观察点：进度模型每次提交都回调（早于节流，便于验证单调性）。 */
+    internal var progressObserver: ((Float, String) -> Unit)? = null
+
     fun progress(value: Float, detail: String) {
+        val clamped = value.coerceIn(0f, 1f)
+        progressObserver?.invoke(clamped, detail)
         val now = System.currentTimeMillis()
-        if (now - lastUpdate < 80 && value < 1f) return
+        // 约 10 次/秒的节流；完成（1.0）永远立即上报。
+        if (now - lastUpdate < 100 && value < 1f) return
         lastUpdate = now
+        publish(clamped, detail)
+    }
+
+    /** 阶段切换与最终完成：不参与节流，避免长任务收尾时进度条停在旧值。 */
+    internal fun progressImmediate(value: Float, detail: String) {
+        val clamped = value.coerceIn(0f, 1f)
+        progressObserver?.invoke(clamped, detail)
+        lastUpdate = System.currentTimeMillis()
+        publish(clamped, detail)
+    }
+
+    private fun publish(value: Float, detail: String) {
         store.updateState { state ->
             state.copy(
                 jobs =
                     state.jobs.map {
-                        if (it.id == id) it.copy(progress = value.coerceIn(0f, 1f), detail = detail)
-                        else it
+                        if (it.id == id) it.copy(progress = value, detail = detail) else it
                     }
             )
         }
@@ -210,11 +238,11 @@ class JobQueue(private val store: LauncherStore, private val scope: CoroutineSco
                     gate.acquire(id)
                     coroutineContext.ensureActive()
                     update(id, JobStatus.Running, "准备中…")
-                    store.log("任务开始：$title")
+                    store.log("任务开始：$title", level = LogLevel.Debug)
                     withContext(TaskDownloadContext(context)) { context.action() }
                     coroutineContext.ensureActive()
                     update(id, JobStatus.Completed, "已完成")
-                    store.log("任务完成：$title")
+                    store.log("任务完成：$title", level = LogLevel.Debug)
                 } catch (_: CancellationException) {
                     cancelled = true
                     val cleaned =

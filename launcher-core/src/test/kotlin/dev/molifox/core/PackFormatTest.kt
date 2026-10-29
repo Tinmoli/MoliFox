@@ -1,4 +1,7 @@
-// 负责验证HMCL 整合包格式兼容行为的行为与边界。
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 负责验证整合包清单格式（MCBBS、CurseForge 与旧版纯归档）兼容行为的行为与边界。
 
 package dev.molifox.core
 
@@ -23,7 +26,7 @@ import okio.Buffer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
-class HmclPackTest {
+class PackFormatTest {
     @TempDir lateinit var temporary: Path
 
     private fun hash(bytes: ByteArray) =
@@ -66,9 +69,10 @@ class HmclPackTest {
             )
             .asJsonObject
 
-    private fun hmcl() =
+    /** 旧版纯归档的清单：只有名字、游戏版本和包版本。 */
+    private fun legacyManifest() =
         gson
-            .toJsonTree(mapOf("name" to "Old HMCL", "gameVersion" to "1.20.1", "version" to "1.0"))
+            .toJsonTree(mapOf("name" to "Old pack", "gameVersion" to "1.20.1", "version" to "1.0"))
             .asJsonObject
 
     private fun companion(version: String = "1.20.1", loader: String = "") =
@@ -326,7 +330,7 @@ class HmclPackTest {
                 mapOf("../escape" to "bad"),
             )) assertFails { parsed(pack(files = files)) {} }
         assertFails { parsed(pack(prefix = "../")) {} }
-        assertFails { parsed(pack(extra = mapOf("Other/modpack.json" to gson.toJson(hmcl())))) {} }
+        assertFails { parsed(pack(extra = mapOf("Other/modpack.json" to gson.toJson(legacyManifest())))) {} }
     }
 
     @Test
@@ -393,12 +397,12 @@ class HmclPackTest {
     }
 
     @Test
-    fun `old HMCL plain archives support offline preview and game content staging`() = runBlocking {
+    fun `old plain archives support offline preview and game content staging`() = runBlocking {
         val store = store()
         for (prefix in listOf("", "Old pack/")) {
             val source =
                 pack(
-                    hmcl(),
+                    legacyManifest(),
                     "modpack.json",
                     prefix,
                     files = mapOf("options.txt" to "options", "saves/world/level.dat" to "world"),
@@ -408,7 +412,7 @@ class HmclPackTest {
             try {
                 ZipFile(source.toFile()).use { zip ->
                     val manifest = readPackManifest(zip, root, "windows")
-                    assertEquals("Old HMCL", manifest.request.name)
+                    assertEquals("Old pack", manifest.request.name)
                     assertEquals(LoaderType.Vanilla, manifest.request.loader)
                     stagePackFiles(
                         manifest,
@@ -431,13 +435,13 @@ class HmclPackTest {
     }
 
     @Test
-    fun `old HMCL custom launch profiles cannot silently become vanilla`() {
+    fun `old custom launch profiles cannot silently become vanilla`() {
         for (path in
             listOf("pack.json", "custom.json", "versions/custom/custom.json", "custom.jar")) {
             assertFails {
                 parsed(
                     pack(
-                        hmcl(),
+                        legacyManifest(),
                         "modpack.json",
                         files =
                             mapOf(
@@ -450,7 +454,7 @@ class HmclPackTest {
         }
         assertFails {
             parsed(
-                pack(hmcl().apply { addProperty("mainClass", "custom.Main") }, "modpack.json")
+                pack(legacyManifest().apply { addProperty("mainClass", "custom.Main") }, "modpack.json")
             ) {}
         }
     }
@@ -497,7 +501,7 @@ class HmclPackTest {
         }
 
     @Test
-    fun `MCBBS full install with CurseForge files supports failure and repair without leaking keys`() =
+    fun `MCBBS full install with CurseForge files supports failure and repair without credentials`() =
         runBlocking {
             val store = store()
             store.mutate {
@@ -505,7 +509,6 @@ class HmclPackTest {
                     settings =
                         it.settings.copy(
                             isolateVersions = false,
-                            curseForgeApiKey = "fixture-key",
                             memoryMb = 512,
                             initialMemoryMb = 128,
                             javaPath =
@@ -522,6 +525,10 @@ class HmclPackTest {
             }
             MockWebServer().use { server ->
                 val requests = CopyOnWriteArrayList<RecordedRequest>()
+                val serverBase = server.loopbackUrl("").toString().trimEnd('/')
+                store.mutate {
+                    it.copy(settings = it.settings.copy(curseForgeBaseUrl = serverBase))
+                }
                 val client = zipBytes(mapOf("fixture.txt" to "fixture"))
                 val resource = "resource".toByteArray()
                 val base = server.loopbackUrl("/").toString().trimEnd('/')
@@ -638,7 +645,6 @@ class HmclPackTest {
                                 JavaService(store, network),
                                 "$base/manifest.json",
                             ),
-                            curseForgeApi = "$base/v1",
                         )
                     val source =
                         pack(
@@ -723,16 +729,7 @@ class HmclPackTest {
                         service.importPack(wrongPack, JobContext(store, "test"), instance.id)
                     }
                     assertEquals("1.20.1", store.instance(instance.id).gameVersion)
-                    assertTrue(
-                        requests
-                            .filter { it.requestUrl!!.encodedPath.startsWith("/v1/") }
-                            .all { it.getHeader("x-api-key") == "fixture-key" }
-                    )
-                    assertTrue(
-                        requests
-                            .filter { !it.requestUrl!!.encodedPath.startsWith("/v1/") }
-                            .all { it.getHeader("x-api-key") == null }
-                    )
+                    assertTrue(requests.all { it.getHeader("Authorization") == null })
                     checkRealJavaArguments(store, network, instance.id)
                 }
             }

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责配置桌面编译、依赖清单、单文件打包与 GUI 验收任务。
 
 import groovy.json.JsonOutput
@@ -163,6 +166,8 @@ tasks.processResources {
     from(rootProject.files("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
         into("META-INF/molifox")
     }
+    // 第三方许可清单的唯一来源；关于页弹窗从同一份随包文件读取。
+    from(rootProject.file("docs/THIRD_PARTY_LICENSES.md")) { into("META-INF/molifox") }
 }
 
 tasks.register<Jar>("portableJar") {

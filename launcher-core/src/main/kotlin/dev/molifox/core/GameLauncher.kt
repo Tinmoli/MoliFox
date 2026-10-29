@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责游戏启动计划、参数组装和 Java 子进程管理。
 
 package dev.molifox.core
@@ -8,6 +11,7 @@ import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import kotlin.io.path.*
 import kotlinx.coroutines.*
@@ -17,6 +21,10 @@ data class LaunchPlan(
     val arguments: List<String>,
     val gameDirectory: Path,
     val environment: Map<String, String> = emptyMap(),
+    /** 启动日志里的一行有效值摘要，例如「启动参数：内存 4096 MB，窗口 1920×1080，额外 JVM -XX…」。 */
+    val summary: String = "",
+    /** 启动时被回退的实例设置；只记警告，不阻止启动。 */
+    val warnings: List<String> = emptyList(),
 )
 
 class LaunchPlanner(
@@ -112,31 +120,23 @@ class LaunchPlanner(
             val settings = store.data.settings
             val advanced = effectiveLaunchSettings(settings, instance)
             validateAdvancedLaunchSettings(advanced, platform.osName)
-            // 全局默认游戏窗口：launcher = 与启动器一样大（界面实时上报）、fullscreen = 全屏、
-            // custom = 使用下方自定义分辨率；实例自身的分辨率设置仍然优先。
-            val launcherSize = store.launcherWindowSize
-            val width =
-                instance.width.takeIf { it > 0 }
-                    ?: (if (settings.gameWindowMode == "launcher") launcherSize?.first else null)
-                    ?: settings.width
-            val height =
-                instance.height.takeIf { it > 0 }
-                    ?: (if (settings.gameWindowMode == "launcher") launcherSize?.second else null)
-                    ?: settings.height
-            val memory = effectiveGameMemory(settings, instance, platform, runtime.architecture)
+            // 实例自己的启动设置优先；0 / 空值跟随全局，无效值回退并记警告，不阻止启动。
+            val launchOptions =
+                resolveInstanceLaunchOptions(
+                    settings,
+                    instance,
+                    store.launcherWindowSize,
+                    platform.totalMemoryMb,
+                    platform.availableMemoryMb,
+                    runtime.architecture,
+                    advanced,
+                )
+            val width = launchOptions.width
+            val height = launchOptions.height
+            val memory = launchOptions.memory
             val maxMemory = memory.maximumMb
             val initialMemory = memory.initialMb
-            val fullscreen =
-                when (instance.windowMode) {
-                    "fullscreen" -> true
-                    "windowed" -> false
-                    else ->
-                        when (settings.gameWindowMode) {
-                            "fullscreen" -> true
-                            "launcher" -> false
-                            else -> settings.fullscreen
-                        }
-                }
+            val fullscreen = launchOptions.fullscreen
             val quickPlay = supportsQuickPlay(profile, instance.gameVersion)
             val recording = runtimeDirectory?.resolve("quick-play.json")
             val targetArguments =
@@ -186,40 +186,32 @@ class LaunchPlanner(
                     "is_quick_play_realms" to false,
                 )
             val modern = profile.json.obj("arguments")
+            // 实例/全局解析出的内存始终是唯一的 -Xmx/-Xms 来源；模板里的同名参数会被去掉，避免重复。
             val jvm =
-                if (modern.array("jvm").size() > 0)
-                    expandArguments(modern.array("jvm"), values, platform, features).map { argument
-                        ->
-                        // Modular loaders must ignore the actual inherited JAR, even for renamed
-                        // profiles.
-                        if (argument.startsWith("-DignoreList=")) {
-                            "-DignoreList=" +
-                                argument.removePrefix("-DignoreList=").split(',').joinToString(
-                                    ","
-                                ) { entry ->
-                                    if (entry == "${profile.id}.jar") jar.fileName.toString()
-                                    else entry
-                                }
-                        } else argument
-                    }
-                else listOf("-Djava.library.path=$natives", "-cp", classpathValue)
+                (if (modern.array("jvm").size() > 0)
+                        expandArguments(modern.array("jvm"), values, platform, features).map {
+                            argument ->
+                            // Modular loaders must ignore the actual inherited JAR, even for
+                            // renamed profiles.
+                            if (argument.startsWith("-DignoreList=")) {
+                                "-DignoreList=" +
+                                    argument.removePrefix("-DignoreList=").split(',').joinToString(
+                                        ","
+                                    ) { entry ->
+                                        if (entry == "${profile.id}.jar") jar.fileName.toString()
+                                        else entry
+                                    }
+                            } else argument
+                        }
+                    else listOf("-Djava.library.path=$natives", "-cp", classpathValue))
+                    .filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
             val gameArguments =
                 if (profile.json.string("minecraftArguments").isNotBlank())
                     splitArguments(profile.json.string("minecraftArguments")).map {
                         substitute(it, values)
                     }
                 else expandArguments(modern.array("game"), values, platform, features)
-            val extras = splitArguments(instance.extraJvmArgs.ifBlank { settings.extraJvmArgs })
-            require(
-                extras.none {
-                    it.startsWith('@') ||
-                        it in listOf("-cp", "-classpath", "--class-path", "-jar") ||
-                        it.startsWith("-Xmx") ||
-                        it.startsWith("-Xms")
-                }
-            ) {
-                "附加参数不能覆盖游戏入口、classpath 或内存，请使用对应设置"
-            }
+            val extras = splitArguments(launchOptions.extraJvmArgs)
             val command =
                 mutableListOf(
                     "-Xms${initialMemory}M",
@@ -289,7 +281,8 @@ class LaunchPlanner(
                         height.toString(),
                     )
             if (fullscreen && "--fullscreen" !in gameArguments) invocation += "--fullscreen"
-            invocation += extraGameArguments(advanced)
+            // 额外游戏参数最后追加，位于标准参数（宽度/高度/全屏）之后。
+            invocation += launchOptions.extraGameArgs
             if (prepareFiles && platform.osName == "windows")
                 require(invocation.sumOf { it.length + 3 } + runtime.path.length < 30_000) {
                     "启动命令过长，请缩短附加游戏参数或游戏目录"
@@ -305,7 +298,14 @@ class LaunchPlanner(
                         .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
                         .toString()
                 } else runtime.path
-            LaunchPlan(executable, invocation, game, advanced.environmentVariables.toMap())
+            LaunchPlan(
+                executable,
+                invocation,
+                game,
+                advanced.environmentVariables.toMap(),
+                summary = launchOptions.summary,
+                warnings = launchOptions.warnings,
+            )
         }
 }
 
@@ -317,6 +317,82 @@ internal fun quoteJavaArgument(value: String): String =
             .replace("\r", "\\r")
             .replace("\n", "\\n") +
         "\""
+
+/** 优先级到 Windows PriorityClass 名称的映射；最高只到 High，绝不使用 RealTime。 */
+internal fun windowsProcessPriorityName(priority: ProcessPriority): String =
+    when (priority) {
+        ProcessPriority.Low -> "BelowNormal"
+        ProcessPriority.Normal -> "Normal"
+        ProcessPriority.High -> "AboveNormal"
+        ProcessPriority.VeryHigh -> "High"
+    }
+
+/** [message] 是要写进日志的一行（非 Windows 为 null），[warning] 表示设置失败但启动不受影响。 */
+internal data class ProcessPriorityOutcome(val message: String?, val warning: Boolean = false)
+
+/**
+ * 给已启动的游戏进程设置优先级：只处理 Windows，先试 wmic，失败后回退 PowerShell。
+ * 任何失败都只变成一条警告文本，不影响已经开始的游戏进程。
+ */
+internal fun applyGameProcessPriority(
+    priority: ProcessPriority,
+    processId: Long,
+    osName: String = System.getProperty("os.name").orEmpty(),
+    execute: (List<String>) -> Unit = ::runPriorityCommand,
+): ProcessPriorityOutcome {
+    if (!osName.startsWith("Windows", ignoreCase = true)) return ProcessPriorityOutcome(null)
+    if (processId <= 0) return ProcessPriorityOutcome("设置优先级失败：无效的进程号 $processId", true)
+    val name = windowsProcessPriorityName(priority)
+    var reason = "未知原因"
+    for (command in priorityCommands(processId, name)) {
+        try {
+            execute(command)
+            return ProcessPriorityOutcome("游戏进程优先级：${priority.title}（pid $processId）")
+        } catch (failure: Exception) {
+            reason = failure.message?.takeIf { it.isNotBlank() } ?: failure.javaClass.simpleName
+        }
+    }
+    return ProcessPriorityOutcome("设置优先级失败：$reason", true)
+}
+
+/** wmic 输出简单、进程启动快；Windows 11 已移除 wmic 时退回 PowerShell 的 PriorityClass 赋值。 */
+private fun priorityCommands(processId: Long, name: String): List<List<String>> =
+    listOf(
+        listOf("wmic", "process", "where", "processid=$processId", "CALL", "setpriority", name),
+        listOf(
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Process -Id $processId).PriorityClass='$name'",
+        ),
+    )
+
+/** 执行外部命令；退出码非 0 或超时都抛异常，由 [applyGameProcessPriority] 转成一条警告。 */
+private fun runPriorityCommand(command: List<String>) {
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    // 输出必须边跑边读，命令卡住或输出偏多时不会堵在管道上。
+    val output = StringBuilder()
+    val reader =
+        Thread {
+                runCatching {
+                        process.inputStream.bufferedReader().forEachLine { output.appendLine(it) }
+                    }
+                    .onFailure { output.append(it.javaClass.simpleName) }
+            }
+            .apply {
+                isDaemon = true
+                start()
+            }
+    if (!process.waitFor(15, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        error("命令超时")
+    }
+    reader.join(500)
+    check(process.exitValue() == 0) {
+        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(300) ?: "退出码 ${process.exitValue()}"
+    }
+}
 
 class GameLauncher(
     private val store: LauncherStore,
@@ -389,6 +465,13 @@ class GameLauncher(
                         target = target,
                     )
             session.prepared(plan, credentials)
+            // 一行有效参数摘要，便于对照日志确认实例设置真的进入了命令；坏值回退单独记警告。
+            plan.warnings.forEach { store.log(it, level = LogLevel.Warn) }
+            if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
+            // 工作目录就是解析后的有效隔离结果；来源写进日志，推断值不冒充用户选择。
+            store.log(
+                "工作目录：${plan.gameDirectory}（来源：${store.isolationSource(instance).logTitle}）"
+            )
             context.progress(.85f, "执行启动前命令…")
             commands.run(
                 launchSettings.preLaunchCommand,
@@ -421,8 +504,21 @@ class GameLauncher(
                     .start()
             processes[runId] = instanceId to process
             runners[runId] = commands
+            // 进程已经跑起来，优先级只是尽力而为：失败也只记一条警告。
+            val priority = applyGameProcessPriority(store.data.settings.processPriority, process.pid())
+            priority.message?.let { message ->
+                store.log(
+                    message,
+                    level = if (priority.warning) LogLevel.Warn else LogLevel.Info,
+                )
+            }
             runCatching { runtimes.attach(runtimeDirectory, process) }
-                .onFailure { store.log("游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}", true) }
+                .onFailure {
+                    store.log(
+                        "游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}",
+                        level = LogLevel.Warn,
+                    )
+                }
             val started = System.currentTimeMillis()
             val visibility = launchSettings.launcherVisibility
             val runEvent =
@@ -532,6 +628,11 @@ class GameLauncher(
         } catch (error: Exception) {
             session.finish(failure = error)
             if (!processes.containsKey(runId)) runCatching { runtimes.release(runtimeDirectory) }
+            // 启动中止：本次启动不会再有后续输出，档位记为 FATAL，与可继续的操作失败区分。
+            store.log(
+                "启动中止：${error.message ?: error.javaClass.simpleName}",
+                level = LogLevel.Fatal,
+            )
             throw error
         }
     }

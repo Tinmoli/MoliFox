@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责临时启动目标、版本能力判断和每个游戏进程的进入记录参数。
 
 package dev.molifox.core

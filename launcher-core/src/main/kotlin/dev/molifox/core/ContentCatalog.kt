@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责内容文件索引、更新检查和版本锁定。
 
 package dev.molifox.core
@@ -304,7 +307,7 @@ internal constructor(
             if (registered != null && registered.startsWith("curseforge:") != useCurseForge)
                 ContentUpdate(file.filename, file.folder, warning = "此文件登记在另一内容源，请切换下载来源后检查")
             else if (current == null)
-                ContentUpdate(file.filename, file.folder, warning = "未识别来源，无法判断更新")
+                ContentUpdate(file.filename, file.folder, warning = "未识别来源，无法确认更新")
             else {
                 val projectId = current.string("project_id")
                 val record = registry.obj(projectId)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责字体选择、导入、搜索与字号设置。
 
 package dev.molifox.desktop
@@ -80,7 +83,7 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
         }
         SettingDivider()
         Panel(Modifier.fillMaxWidth(), padding = 18) {
-            Text("MoliFox Minecraft 启动器", style = MaterialTheme.typography.titleLarge)
+            Text("MoliFox Minecraft Launcher", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(10.dp))
             Text("Minecraft Java Edition  Aa Bb Cc  0123456789", fontSize = 15.sp)
             MutedText("这是一段界面字体预览。字体缺少的字符会使用系统回退字体。")

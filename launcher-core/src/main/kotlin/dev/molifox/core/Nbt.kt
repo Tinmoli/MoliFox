@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责 NBT 二进制标签的有界读取和保留根名称的文档描述。
 
 package dev.molifox.core

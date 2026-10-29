@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责准备界面运行时依赖并加载桌面程序。
 
 package dev.molifox.bootstrap
@@ -6,11 +9,18 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import dev.molifox.core.LauncherLocation
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.GridLayout
+import java.awt.Image
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
@@ -26,13 +36,17 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 import javax.swing.BorderFactory
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.ImageIcon
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JFrame
 import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
-import javax.swing.JProgressBar
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.SwingConstants
@@ -51,6 +65,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 
 /** 清单中的一个运行时依赖：Maven 坐标、落盘文件名与校验值。 */
 data class RuntimeDependency(
@@ -206,6 +221,7 @@ fun main() {
             }
         }
         // 全部文件已校验完成，写入标记；下次启动直接进界面。
+        window.markVerifying()
         Files.writeString(
             marker,
             "version=${manifest.version}\nverified=${LocalDateTime.now()}\nfiles=${manifest.dependencies.size}\n",
@@ -214,7 +230,7 @@ fun main() {
         log("运行时组件准备完成，启动界面")
         launchUi(manifest, cache)
     } catch (error: Throwable) {
-        preparation?.let { SwingUtilities.invokeLater { it.close() } }
+        preparation?.let { SwingUtilities.invokeLater { it.close(completed = false) } }
         val cause =
             (error as? java.lang.reflect.InvocationTargetException)?.targetException ?: error
         if (cause is CancellationException) kotlin.system.exitProcess(0)
@@ -535,51 +551,395 @@ private enum class RecoveryAction {
     SwitchMirror,
 }
 
-/** 准备窗口：镜像与延迟、文件数、字节数、实时速度，以及失败时的每条错误与两个按钮。 只用 Swing，不加载 Compose（Compose 依赖正是在这一步下载的）。 */
-private class BootstrapWindow(private val installer: RuntimeInstaller) {
-    private val frame = JFrame("MoliFox · 准备启动")
-    private val progress =
-        JProgressBar(0, installer.totalFiles.coerceAtLeast(1)).apply {
-            isStringPainted = true
-            string = "正在准备运行时组件"
-            foreground = Color(0xE67D4A)
+// ---------- 准备窗口的视觉令牌：与桌面端主题（樱花粉、浅色底、1dp 细边）对应 ----------
+
+private object BootstrapPalette {
+    val background = Color(0xFBF7F9)
+    val surface = Color(0xFFFFFF)
+    val border = Color(0xEADFE5)
+    val accent = Color(0xB94E7B)
+    val accentHover = Color(0xC75C89)
+    val accentPressed = Color(0xA64470)
+    val track = Color(0xF2E6EC)
+    val heading = Color(0xB94E7B)
+    val onSurface = Color(0x3A333A)
+    val muted = Color(0x6B646B)
+    val faint = Color(0x948A92)
+    val error = Color(0xB3384A)
+    val errorFill = Color(0xFDF3F0)
+    val errorBorder = Color(0xE8C4C4)
+}
+
+/** 与桌面端一致的中文字体：优先系统 UI 字体，找不到时退回逻辑字体（Swing 会自动补中文字形）。 */
+private val bootstrapFontFamily: String by lazy {
+    val preferred =
+        listOf(
+            "Microsoft YaHei UI",
+            "Microsoft YaHei",
+            "PingFang SC",
+            "Noto Sans CJK SC",
+            "Source Han Sans SC",
+            "WenQuanYi Micro Hei",
+        )
+    val available =
+        runCatching {
+                java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames
+                    .toSet()
+            }
+            .getOrDefault(emptySet())
+    preferred.firstOrNull { it in available } ?: Font.SANS_SERIF
+}
+
+private fun uiFont(size: Int, style: Int = Font.PLAIN) = Font(bootstrapFontFamily, style, size)
+
+/** 圆角实色面板：白卡片、错误卡片与按钮共用同一套绘制方式（无新依赖，只用 Java2D）。 */
+private open class RoundedSurface(
+    private val fill: Color,
+    private val stroke: Color? = null,
+    private val radius: Int = 12,
+) : JPanel() {
+    init {
+        isOpaque = false
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = fill
+            g2.fillRoundRect(0, 0, width - 1, height - 1, radius, radius)
+            if (stroke != null) {
+                g2.color = stroke
+                g2.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)
+            }
+        } finally {
+            g2.dispose()
         }
-    private val mirrorLabel = JLabel("正在选择最快的镜像…")
-    private val filesLabel = JLabel("文件 0/${installer.totalFiles}")
-    private val bytesLabel = JLabel("已下载 0 B / ${formatBytes(installer.totalBytes)}")
-    private val speedLabel = JLabel("速度 0 B/s")
+        super.paintComponent(g)
+    }
+}
+
+/** 8dp 圆角进度条：浅色底轨 + 主题色填充；还没有镜像/总量时画一段循环扫过的指示条。 */
+private class RoundedProgressBar : JComponent() {
+    var progress: Float = 0f
+    var indeterminate: Boolean = false
+    private var phase = 0f
+    private val barHeight = 8
+
+    init {
+        isOpaque = false
+        preferredSize = Dimension(320, barHeight)
+        minimumSize = Dimension(80, barHeight)
+    }
+
+    /** 由 250ms 的刷新定时器推动扫动动画；确定进度时不做多余重绘。 */
+    fun tick() {
+        if (!indeterminate) return
+        phase = (phase + 0.014f) % 1f
+        repaint()
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val height = barHeight.coerceAtMost(this.height).coerceAtLeast(1)
+            val top = (this.height - height) / 2
+            g2.color = BootstrapPalette.track
+            g2.fillRoundRect(0, top, width, height, height, height)
+            val fillWidth =
+                if (indeterminate) (width * 0.34f)
+                else (width * progress.coerceIn(0f, 1f)).coerceAtLeast(if (progress > 0f) height.toFloat() else 0f)
+            if (fillWidth >= 1f) {
+                g2.clipRect(0, 0, width, this.height)
+                val left =
+                    if (indeterminate) -fillWidth + (width + fillWidth) * phase
+                    else 0f
+                g2.color = BootstrapPalette.accent
+                g2.fillRoundRect(
+                    left.roundToInt(),
+                    top,
+                    fillWidth.roundToInt(),
+                    height,
+                    height,
+                    height,
+                )
+            }
+        } finally {
+            g2.dispose()
+        }
+    }
+}
+
+/** 与主界面主/次按钮同高（34dp）的圆角按钮：主按钮实色主题色，次按钮白底细边。 */
+private class RoundedButton(text: String, private val primary: Boolean) : JButton(text) {
+    init {
+        isFocusPainted = false
+        isContentAreaFilled = false
+        isBorderPainted = false
+        isOpaque = false
+        isRolloverEnabled = true
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = uiFont(12, Font.BOLD)
+        border = BorderFactory.createEmptyBorder(7, 16, 7, 16)
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val enabled = isEnabled
+            val rollover = model.isRollover && enabled
+            val pressed = model.isArmed && model.isPressed && enabled
+            val fill =
+                when {
+                    !primary -> BootstrapPalette.surface
+                    pressed -> BootstrapPalette.accentPressed
+                    rollover -> BootstrapPalette.accentHover
+                    else -> BootstrapPalette.accent
+                }
+            g2.color = fill
+            g2.fillRoundRect(0, 0, width - 1, height - 1, 8, 8)
+            g2.color =
+                when {
+                    !primary -> BootstrapPalette.border
+                    !enabled -> BootstrapPalette.track
+                    else -> fill
+                }
+            g2.drawRoundRect(0, 0, width - 1, height - 1, 8, 8)
+        } finally {
+            g2.dispose()
+        }
+        foreground =
+            when {
+                !isEnabled -> BootstrapPalette.faint
+                primary -> Color.WHITE
+                else -> BootstrapPalette.onSurface
+            }
+        super.paintComponent(g)
+    }
+}
+
+/** 内置狐狸图标：标题栏、任务栏与左上角品牌图共用同一张 icons/app/icon.png；缺失时窗口仍可打开。 */
+private val launcherIconBytes: ByteArray? by lazy {
+    runCatching {
+            BootstrapMainMarker::class
+                .java
+                .getResourceAsStream("/icons/app/icon.png")
+                ?.use { it.readBytes() }
+        }
+        .getOrNull()
+}
+
+private fun launcherIcon(size: Int): BufferedImage? {
+    val bytes = launcherIconBytes ?: return null
+    return runCatching {
+            val source = ImageIO.read(java.io.ByteArrayInputStream(bytes)) ?: return@runCatching null
+            val scaled = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+            val g = scaled.createGraphics()
+            try {
+                g.setRenderingHint(
+                    RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC,
+                )
+                g.setRenderingHint(
+                    RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON,
+                )
+                g.drawImage(source, 0, 0, size, size, null)
+            } finally {
+                g.dispose()
+            }
+            scaled
+        }
+        .getOrNull()
+}
+
+/**
+ * 准备窗口：品牌标题 + 一行副标题 + 紧凑统计卡片（状态、圆角进度条、镜像/文件/已下载/速度）， 以及失败时的每条错误与两个按钮。
+ *
+ * 只用 Swing，不加载 Compose（Compose 依赖正是在这一步下载的）。窗口固定大小、不可缩放； 文案与配色与桌面端一致，状态行随准备阶段切换动词（准备 / 下载 / 校验 / 完成）。
+ */
+private class BootstrapWindow(private val installer: RuntimeInstaller) {
+    private enum class Phase { Preparing, Downloading, Verifying, Done }
+
+    private val frame = JFrame("MoliFox · 准备启动")
+    @Volatile private var phase = Phase.Preparing
+
+    private val progressBar = RoundedProgressBar()
+    private val statusLabel =
+        JLabel("正在准备运行时组件").apply {
+            font = uiFont(14, Font.BOLD)
+            foreground = BootstrapPalette.onSurface
+        }
+    private val percentLabel =
+        JLabel("—").apply {
+            font = uiFont(13, Font.BOLD)
+            foreground = BootstrapPalette.accent
+            horizontalAlignment = SwingConstants.RIGHT
+            preferredSize = Dimension(48, 18)
+        }
+    private val mirrorValue = statValue("正在选择最快的镜像…")
+    private val filesValue = statValue("0 / ${installer.totalFiles}")
+    private val bytesValue = statValue("0 B / ${formatBytes(installer.totalBytes)}")
+    private val speedValue = statValue("0 B/s")
+
     private val errorArea =
         JTextArea(3, 40).apply {
             isEditable = false
             lineWrap = true
             wrapStyleWord = true
-            background = Color(0xFDF3F0)
-            foreground = Color(0x8C2F2F)
-        }
-    private val errorPanel =
-        JPanel(BorderLayout(0, 6)).apply {
             isOpaque = false
-            isVisible = false
+            foreground = BootstrapPalette.error
+            border = BorderFactory.createEmptyBorder(2, 4, 2, 2)
+            font = uiFont(12)
+        }
+    private val errorScroll =
+        JScrollPane(errorArea).apply {
+            isOpaque = false
+            viewport.isOpaque = false
+            border = BorderFactory.createEmptyBorder()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        }
+    private val retryButton = RoundedButton("重试", primary = true)
+    private val switchButton = RoundedButton("更换镜像", primary = false)
+    private val actionsPanel =
+        JPanel(FlowLayout(FlowLayout.RIGHT, 10, 0)).apply {
+            isOpaque = false
+            add(retryButton)
+            add(switchButton)
+        }
+    private val errorCard =
+        RoundedSurface(BootstrapPalette.errorFill, BootstrapPalette.errorBorder, 12).apply {
+            layout = BorderLayout(0, 10)
+            border = BorderFactory.createEmptyBorder(14, 16, 14, 16)
             add(
-                JLabel("以下文件没有下载成功（其余文件已就绪）："),
+                JLabel("以下文件没有下载成功，其余文件已就绪").apply {
+                    font = uiFont(12, Font.BOLD)
+                    foreground = BootstrapPalette.error
+                },
                 BorderLayout.NORTH,
             )
             add(
-                JScrollPane(errorArea).apply {
-                    border = BorderFactory.createLineBorder(Color(0xE8C4C4))
+                RoundedSurface(BootstrapPalette.surface, BootstrapPalette.errorBorder, 8).apply {
+                    layout = BorderLayout()
+                    border = BorderFactory.createEmptyBorder(3, 4, 3, 4)
+                    add(errorScroll, BorderLayout.CENTER)
+                },
+                BorderLayout.CENTER,
+            )
+            add(actionsPanel, BorderLayout.SOUTH)
+        }
+    private val progressCard =
+        RoundedSurface(BootstrapPalette.surface, BootstrapPalette.border, 12).apply {
+            border = BorderFactory.createEmptyBorder(14, 18, 16, 18)
+            layout = java.awt.GridBagLayout()
+            // 错误卡片与进度卡片共用同一块区域：固定一块高度，切换时窗口不跳动。
+            preferredSize = Dimension(520, 200)
+            val statusRow =
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(statusLabel, BorderLayout.WEST)
+                }
+            val barRow =
+                JPanel(BorderLayout(12, 0)).apply {
+                    isOpaque = false
+                    add(progressBar, BorderLayout.CENTER)
+                    add(percentLabel, BorderLayout.EAST)
+                }
+            val separator =
+                object : JComponent() {
+                    init {
+                        isOpaque = false
+                        preferredSize = Dimension(1, 1)
+                        minimumSize = Dimension(1, 1)
+                    }
+
+                    override fun paintComponent(g: Graphics) {
+                        g.color = BootstrapPalette.border
+                        g.fillRect(0, 0, width, 1)
+                    }
+                }
+            val stats =
+                JPanel(GridLayout(2, 2, 18, 10)).apply {
+                    isOpaque = false
+                    add(statCell("镜像", mirrorValue))
+                    add(statCell("文件", filesValue))
+                    add(statCell("已下载", bytesValue))
+                    add(statCell("速度", speedValue))
+                }
+            val constraints =
+                java.awt.GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    weightx = 1.0
+                    fill = java.awt.GridBagConstraints.HORIZONTAL
+                    anchor = java.awt.GridBagConstraints.NORTHWEST
+                }
+            add(statusRow, constraints)
+            constraints.gridy = 1
+            constraints.insets = java.awt.Insets(10, 0, 0, 0)
+            add(barRow, constraints)
+            constraints.gridy = 2
+            constraints.insets = java.awt.Insets(16, 0, 0, 0)
+            add(separator, constraints)
+            constraints.gridy = 3
+            constraints.insets = java.awt.Insets(12, 0, 0, 0)
+            add(stats, constraints)
+            constraints.gridy = 4
+            constraints.weighty = 1.0
+            constraints.fill = java.awt.GridBagConstraints.VERTICAL
+            add(JPanel().apply { isOpaque = false }, constraints)
+        }
+    private val bodyCards =
+        JPanel(CardLayout()).apply {
+            isOpaque = false
+            add(progressCard, CARD_PROGRESS)
+            add(errorCard, CARD_ERROR)
+        }
+    private val header =
+        JPanel(BorderLayout(14, 0)).apply {
+            isOpaque = false
+            val mark = launcherIcon(44)
+            add(
+                JLabel().apply {
+                    icon = mark?.let { ImageIcon(it) }
+                    preferredSize = Dimension(44, 44)
+                    minimumSize = preferredSize
+                    horizontalAlignment = SwingConstants.LEFT
+                    verticalAlignment = SwingConstants.CENTER
+                },
+                BorderLayout.WEST,
+            )
+            add(
+                JPanel().apply {
+                    isOpaque = false
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    add(
+                        JLabel("MoliFox").apply {
+                            font = uiFont(26, Font.BOLD)
+                            foreground = BootstrapPalette.heading
+                        }
+                    )
+                    add(Box.createVerticalStrut(3))
+                    add(
+                        JLabel("正在为启动器准备运行环境").apply {
+                            font = uiFont(12)
+                            foreground = BootstrapPalette.muted
+                        }
+                    )
                 },
                 BorderLayout.CENTER,
             )
         }
-    private val retryButton = JButton("重试")
-    private val switchButton = JButton("更换镜像")
-    private val actionsPanel =
-        JPanel(FlowLayout(FlowLayout.RIGHT, 10, 0)).apply {
-            isOpaque = false
-            isVisible = false
-            add(retryButton)
-            add(switchButton)
-        }
+    private val footer =
+        JLabel("首次启动需要联网下载运行时组件，网络较慢时可能需要几分钟；完成后不再重复校验。")
+            .apply {
+                font = uiFont(11)
+                foreground = BootstrapPalette.muted
+            }
+
     private val actions = LinkedBlockingQueue<RecoveryAction>()
     private var lastBytes = 0L
     private var lastSampleAt = System.nanoTime()
@@ -589,37 +949,22 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         retryButton.addActionListener { actions.offer(RecoveryAction.Retry) }
         switchButton.addActionListener { actions.offer(RecoveryAction.SwitchMirror) }
         frame.defaultCloseOperation = JFrame.DO_NOTHING_ON_CLOSE
-        frame.contentPane.background = Color(0xF4F5F0)
-        frame.add(
-            JLabel("MoliFox", SwingConstants.LEFT).apply {
-                font = Font("Dialog", Font.BOLD, 26)
-                foreground = Color(0x285848)
-                border = BorderFactory.createEmptyBorder(22, 25, 4, 25)
-            },
-            BorderLayout.NORTH,
-        )
-        frame.add(
-            JPanel(BorderLayout(0, 10)).apply {
-                isOpaque = false
-                border = BorderFactory.createEmptyBorder(4, 25, 18, 25)
-                add(
-                    JPanel(GridLayout(0, 1, 0, 6)).apply {
-                        isOpaque = false
-                        add(JLabel("首次启动需要联网下载运行时组件；完成后不再重复校验。"))
-                        add(mirrorLabel)
-                        add(filesLabel)
-                        add(bytesLabel)
-                        add(speedLabel)
-                        add(progress)
-                    },
-                    BorderLayout.NORTH,
-                )
-                add(errorPanel, BorderLayout.CENTER)
-                add(actionsPanel, BorderLayout.SOUTH)
-            },
-            BorderLayout.CENTER,
-        )
-        frame.size = Dimension(580, 330)
+        frame.isResizable = false
+        frame.contentPane =
+            JPanel(BorderLayout(0, 16)).apply {
+                isOpaque = true
+                background = BootstrapPalette.background
+                border = BorderFactory.createEmptyBorder(22, 26, 20, 26)
+                add(header, BorderLayout.NORTH)
+                add(bodyCards, BorderLayout.CENTER)
+                add(footer, BorderLayout.SOUTH)
+            }
+        // 窗口图标与左上角品牌图同源：就是启动器自己的 icon.png，不再显示 Java 默认图标。
+        frame.iconImages =
+            listOf(16, 24, 32, 48, 64, 128, 256)
+                .mapNotNull { launcherIcon(it) }
+                .map { it as Image }
+        frame.pack()
         frame.setLocationRelativeTo(null)
     }
 
@@ -630,26 +975,53 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         }
     }
 
-    fun close() {
+    /** 全部文件已下载校验完成：状态行切到「校验」，随后由 [close] 显示「完成」。 */
+    fun markVerifying() {
+        phase = Phase.Verifying
+        SwingUtilities.invokeLater {
+            renderPhase()
+            percentLabel.text = "100%"
+            progressBar.indeterminate = false
+            progressBar.progress = 1f
+        }
+        // 让「校验」这一步在窗口里可见（只在首次下载完成时出现一次）。
+        runCatching { Thread.sleep(180) }
+    }
+
+    /** 关闭窗口；[completed] 为 true 时先短暂显示「完成」，再从准备窗口进入主界面。 */
+    fun close(completed: Boolean = true) {
         timer.stop()
-        SwingUtilities.invokeLater { frame.dispose() }
+        if (completed) {
+            val done =
+                Runnable {
+                    phase = Phase.Done
+                    renderPhase()
+                    progressBar.indeterminate = false
+                    progressBar.progress = 1f
+                    percentLabel.text = "100%"
+                    speedValue.text = "—"
+                }
+            if (SwingUtilities.isEventDispatchThread()) done.run()
+            else runCatching { SwingUtilities.invokeAndWait(done) }
+            if (!SwingUtilities.isEventDispatchThread()) runCatching { Thread.sleep(420) }
+        }
+        if (SwingUtilities.isEventDispatchThread()) frame.dispose()
+        else SwingUtilities.invokeLater { frame.dispose() }
     }
 
     fun showError(messages: List<String>, canSwitchMirror: Boolean) {
         SwingUtilities.invokeLater {
             errorArea.text = messages.joinToString("\n")
             errorArea.caretPosition = 0
-            errorPanel.isVisible = true
             switchButton.isEnabled = canSwitchMirror
-            actionsPanel.isVisible = true
+            (bodyCards.layout as CardLayout).show(bodyCards, CARD_ERROR)
             frame.validate()
         }
     }
 
     fun clearError() {
         SwingUtilities.invokeLater {
-            errorPanel.isVisible = false
-            actionsPanel.isVisible = false
+            (bodyCards.layout as CardLayout).show(bodyCards, CARD_PROGRESS)
             frame.validate()
         }
     }
@@ -663,28 +1035,74 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         }
     }
 
+    private fun renderPhase() {
+        statusLabel.text =
+            when (phase) {
+                Phase.Preparing -> "正在准备运行时组件"
+                Phase.Downloading -> "正在下载运行时组件"
+                Phase.Verifying -> "正在校验运行时组件"
+                Phase.Done -> "运行时组件已就绪"
+            }
+    }
+
     private fun refresh() {
         val done = installer.filesDone
         val bytes = installer.bytesDone
-        progress.maximum = installer.totalFiles.coerceAtLeast(1)
-        progress.value = done
-        progress.string = "文件 $done/${installer.totalFiles}"
-        filesLabel.text = "文件 $done/${installer.totalFiles}"
-        bytesLabel.text = "已下载 ${formatBytes(bytes)} / ${formatBytes(installer.totalBytes)}"
+        if (phase == Phase.Preparing && installer.mirror != null) {
+            phase = Phase.Downloading
+            renderPhase()
+        }
+        val totalBytes = installer.totalBytes
+        val fraction =
+            if (totalBytes > 0) bytes.toFloat() / totalBytes
+            else done.toFloat() / installer.totalFiles.coerceAtLeast(1)
+        progressBar.progress = fraction.coerceIn(0f, 1f)
+        progressBar.indeterminate = phase == Phase.Preparing && installer.mirror == null
+        progressBar.tick()
+        percentLabel.text = if (progressBar.indeterminate) "—" else "${(fraction * 100).toInt()}%"
+        filesValue.text = "$done / ${installer.totalFiles}"
+        bytesValue.text = "${formatBytes(bytes)} / ${formatBytes(totalBytes)}"
         installer.mirror?.let { mirror ->
-            mirrorLabel.text = "镜像：${mirror.name}（${mirror.latencyMillis} ms）"
+            mirrorValue.text =
+                if (mirror.latencyMillis > 0) "${mirror.name} · ${mirror.latencyMillis} ms"
+                else mirror.name
         }
         val now = System.nanoTime()
         val seconds = (now - lastSampleAt) / 1_000_000_000.0
         if (seconds >= 0.5) {
             val speed = ((bytes - lastBytes) / seconds).toLong().coerceAtLeast(0)
-            speedLabel.text = "速度 ${formatBytes(speed)}/s"
+            speedValue.text = "${formatBytes(speed)}/s"
             lastBytes = bytes
             lastSampleAt = now
         }
     }
+
+    private companion object {
+        const val CARD_PROGRESS = "progress"
+        const val CARD_ERROR = "error"
+    }
 }
 
+/** 统计卡片里的一格：11sp 灰色标签 + 13sp 深色数值。 */
+private fun statValue(text: String): JLabel =
+    JLabel(text).apply {
+        font = uiFont(13)
+        foreground = BootstrapPalette.onSurface
+    }
+
+private fun statCell(title: String, value: JLabel): JPanel =
+    JPanel().apply {
+        isOpaque = false
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        add(
+            JLabel(title).apply {
+                font = uiFont(11)
+                foreground = BootstrapPalette.faint
+            }
+        )
+        add(Box.createVerticalStrut(3))
+        add(value)
+    }
 private fun formatBytes(bytes: Long): String =
     when {
         bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / 1024.0 / 1024 / 1024)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责设置页面的通用输入控件。
 
 package dev.molifox.desktop
@@ -35,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -395,7 +399,10 @@ fun NumberField(
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     hint: String? = null,
+    placeholder: String = "",
     enabled: Boolean = true,
+    // 可选：失焦回调，用于把非法输入回退到上一次有效值。
+    onFocusChange: ((Boolean) -> Unit)? = null,
 ) {
     CompactTextField(
         value = value,
@@ -403,7 +410,9 @@ fun NumberField(
         modifier = modifier,
         label = label,
         hint = hint,
+        placeholder = placeholder,
         enabled = enabled,
+        onFocusChange = onFocusChange,
     )
 }
 
@@ -420,6 +429,8 @@ fun CompactTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     // 可选的外部聚焦入口：例如「添加认证服务器」入口打开对话框后直接落焦在地址框上。
     focusRequester: FocusRequester? = null,
+    // 可选的失焦回调：设置页用它把非法输入回退到上一次有效值。
+    onFocusChange: ((Boolean) -> Unit)? = null,
     // 可选的 IME 动作：例如认证服务器登录框的密码栏用 Done，让软键盘「完成」与回车都走同一个提交函数。
     imeAction: ImeAction = ImeAction.Default,
     onImeAction: (() -> Unit)? = null,
@@ -497,6 +508,10 @@ fun CompactTextField(
                         .then(
                             if (focusRequester == null) Modifier
                             else Modifier.focusRequester(focusRequester)
+                        )
+                        .then(
+                            if (onFocusChange == null) Modifier
+                            else Modifier.onFocusChanged { onFocusChange(it.isFocused) }
                         )
                         .then(
                             if (label.isBlank()) Modifier

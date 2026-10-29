@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责高级启动参数的校验、继承和合并。
 
 package dev.molifox.core
@@ -24,6 +27,11 @@ fun effectiveLaunchSettings(
 
 internal fun validateExtraJvmArguments(value: String) {
     require(value.length <= 4096) { "JVM 参数过长" }
+    extraJvmArguments(value)
+}
+
+/** 解析并拒绝会覆盖入口/内存的 JVM 参数；长度上限只在保存设置时检查。 */
+internal fun extraJvmArguments(value: String): List<String> {
     val arguments = splitArguments(value)
     require(
         arguments.none {
@@ -35,6 +43,7 @@ internal fun validateExtraJvmArguments(value: String) {
     ) {
         "内存请通过内存设置调整；附加参数不能覆盖游戏入口或 classpath"
     }
+    return arguments
 }
 
 private val managedGameFlags =

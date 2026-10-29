@@ -21,13 +21,11 @@ the upstream notices. Downloaded Java runtime notices remain in runtimes/*/legal
 
 ## Implementation references
 
-These projects and protocol documents were consulted. MoliFox does not vendor,
-modify, or link HMCL's GPL-licensed implementation. No HMCL binaries, logo,
-assets, branding, or Java source files are included in the Kotlin application.
+These public specifications, services and format documents were consulted.
+MoliFox does not vendor, modify, or link third-party launcher implementations,
+and includes no third-party launcher binaries, logos, assets, branding or
+source files in the Kotlin application.
 
-- HMCL launcher and install architecture: https://github.com/HMCL-dev/HMCL
-- PCL UI workflow reference: https://github.com/Meloong-Git/PCL
-- PCL Community Edition UI and storage reference: https://github.com/PCL-Community/PCL-CE
 - Mojang version manifest: https://piston-meta.mojang.com/mc/game/version_manifest_v2.json
 - Fabric Meta: https://meta.fabricmc.net/
 - Quilt Meta v3: https://github.com/QuiltMC/update-quilt-meta
@@ -38,9 +36,10 @@ assets, branding, or Java source files are included in the Kotlin application.
 - Temurin runtime distribution: https://api.adoptium.net/
 - BMCLAPI mirror: https://bmclapidoc.bangbang93.com/
 
-PCL and PCL-CE were consulted for account, launch, version-management, download
-and navigation placement. Their source files, XAML, images, icons and branding
-are not included. Their licenses remain separate from MoliFox's own code.
+MoliFox's interface layout and workflows follow common conventions of desktop
+Minecraft launchers. No third-party launcher source files, XAML, images, icons
+or branding are included, and their licenses remain separate from MoliFox's own
+code.
 
 Minecraft is a trademark of Mojang. MoliFox is an independent project and is not
 affiliated with Mojang or Microsoft. Minecraft game files are downloaded on

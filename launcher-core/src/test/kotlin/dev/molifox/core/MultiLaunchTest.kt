@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 使用受控 Java 子进程验证双开、并行任务、独立运行目录与退出回收。
 
 package dev.molifox.core

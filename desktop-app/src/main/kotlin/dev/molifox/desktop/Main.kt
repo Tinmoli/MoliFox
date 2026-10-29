@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责桌面程序入口、窗口生命周期与页面协调。
 
 package dev.molifox.desktop
@@ -131,17 +134,6 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
         }
     }
 
-    fun exportInstance(instance: GameInstance) = run {
-        choose(
-                "完整实例备份（包含存档、模组和配置）",
-                save = true,
-                extensions = listOf("zip"),
-                defaultName = instance.name.replace(Regex("[<>:\"/\\\\|?*]"), "_") + ".zip",
-            )
-            .firstOrNull()
-            ?.let { controller.exportInstance(instance.id, it) }
-    }
-
     fun exportLogs() = run {
         choose("保存启动器日志", save = true, extensions = listOf("log"), defaultName = "MoliFox.log")
             .firstOrNull()
@@ -161,6 +153,9 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
 }
 
 fun main() {
+    // 启动计时：只用来看清启动各阶段的耗时，不改变任何行为。
+    val startupStartedAt = System.nanoTime()
+    fun startupMillis() = (System.nanoTime() - startupStartedAt) / 1_000_000
     System.setProperty("java.net.useSystemProxies", "true")
     val controller =
         try {
@@ -175,8 +170,10 @@ fun main() {
             // 启动即按启动器自身位置发现旁边/内部的现有 .minecraft 或游戏根并发起登记；
             // 扫描失败只写日志，不阻止启动。
             val created = LauncherController(platform, storage)
+            created.store.log("启动：store ready，用时 ${startupMillis()} ms")
             runCatching { created.discoverStartupGameDirectories() }
                 .onFailure { created.store.log("自动识别游戏目录失败：${it.message}", true) }
+            created.store.log("启动：discovery done，用时 ${startupMillis()} ms")
             created
         } catch (error: Exception) {
             error.printStackTrace()
@@ -199,6 +196,17 @@ fun main() {
     try {
         application {
             val launcherState by controller.state.collectAsState()
+            // 自定义左上角图标缺失或损坏时只记一行日志并回退内置图标（BrandMark 内部同样回退），启动不受影响。
+            LaunchedEffect(
+                launcherState.data.settings.brandIconPath,
+                launcherState.data.settings.brandIconRevision,
+            ) {
+                val stored = launcherState.data.settings.brandIconPath
+                if (stored.isBlank()) return@LaunchedEffect
+                val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
+                if (problem != null)
+                    controller.store.log("自定义品牌图标不可用（$problem），已回退内置图标")
+            }
             // 默认 1180×720（最小 1000×640），对应 1280×720 游戏画面留出窗口边框。
             val windowState = rememberWindowState(width = 1180.dp, height = 720.dp)
             // 标题栏双击与最大化按钮共用同一段切换逻辑。
@@ -273,6 +281,11 @@ fun main() {
             ) {
                 window.minimumSize = Dimension(1000, 640)
                 SideEffect { mainWindow = window }
+                // 首帧真正提交后再记一次启动耗时，作为「窗口可见」的可测量时间点。
+                LaunchedEffect(Unit) {
+                    withFrameNanos { }
+                    controller.store.log("启动：first frame，用时 ${startupMillis()} ms")
+                }
                 val actions = remember(window) { UiActions(controller, window) }
                 MoliTheme(launcherState.data.settings) {
                     Box(
@@ -358,11 +371,8 @@ fun main() {
 fun MoliApp(state: LauncherState, actions: UiActions) {
     val navigation = actions.navigation
     var deleting by remember { mutableStateOf<GameInstance?>(null) }
-    // 实例详情页的工具与升级弹窗：复制 / 整理报告 / 校验 / 整合包升级预览。
-    var copyingInstance by remember { mutableStateOf<GameInstance?>(null) }
+    // 实例详情页的工具弹窗：整理报告 / 目录移动。
     var tidyReport by remember { mutableStateOf<Pair<String, TidyReport>?>(null) }
-    var verifyingInstance by remember { mutableStateOf<GameInstance?>(null) }
-    var upgradingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
     // 目录移动对话框挂在根级，避免任务更新实例记录时打断预览。
     var movingInstance by remember { mutableStateOf<Pair<GameInstance, Path>?>(null) }
     var pendingMove by remember { mutableStateOf<Pair<String, String?>?>(null) }
@@ -447,7 +457,6 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                                 { navigation.closeInstance() },
                                 { deleting = instance },
                                 navigate,
-                                onCopyInstance = { target -> copyingInstance = target },
                                 onTidyInstance = { target ->
                                     // 整理会删除空目录，放到后台线程执行；结果只报告，不提供删除入口。
                                     actions.controller.store.notify("正在整理「${target.name}」的目录…")
@@ -459,23 +468,6 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                                         withContext(Dispatchers.Swing) {
                                             tidyReport = target.name to report
                                         }
-                                    }
-                                },
-                                onVerifyInstance = { target -> verifyingInstance = target },
-                                onUpgradePack = { target ->
-                                    // 先选新整合包归档，再打开预览对话框；选择与预览都不阻塞界面。
-                                    actions.run {
-                                        val archive =
-                                            actions
-                                                .choose(
-                                                    "选择新版本的整合包（.mrpack / .zip）",
-                                                    extensions = listOf("mrpack", "zip"),
-                                                )
-                                                .firstOrNull()
-                                        if (archive != null)
-                                            withContext(Dispatchers.Swing) {
-                                                upgradingInstance = target to archive
-                                            }
                                     }
                                 },
                                 onMoveInstance = { target ->
@@ -576,34 +568,11 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     actions.launchPreview?.let { plan ->
         LaunchPreviewDialog(plan) { actions.launchPreview = null }
     }
+    // 启动检查：实例缺少兼容 Java 时给出安装/选择入口；显式路径或已存在兼容 Java 时不出现。
+    state.javaPrompt?.let { prompt -> JavaRuntimePromptDialog(prompt, actions) }
     if (actions.taskCenterOpen) TaskCenterDialog(state, actions)
-    copyingInstance?.let { instance ->
-        CopyInstanceDialog(instance, actions) { copyingInstance = null }
-    }
     tidyReport?.let { (name, report) ->
         TidyReportDialog(name, report) { tidyReport = null }
-    }
-    verifyingInstance?.let { instance ->
-        VerifyInstanceDialog(
-            instance,
-            actions,
-            { verifyingInstance = null },
-            {
-                // 修复走后台任务队列，进度从右下角任务入口查看。
-                actions.run { actions.controller.repair(instance.id) }
-                verifyingInstance = null
-                actions.taskQueued()
-            },
-        )
-    }
-    upgradingInstance?.let { (instance, archive) ->
-        PackUpgradeDialog(
-            instance,
-            archive,
-            actions,
-            { upgradingInstance = null },
-            { actions.taskQueued() },
-        )
     }
     movingInstance?.let { (instance, destination) ->
         InstanceMoveDialog(

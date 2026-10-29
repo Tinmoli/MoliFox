@@ -1,9 +1,21 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责网络请求、下载校验、重试和断点续传。
 
 package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.net.CandidateSource
+import dev.molifox.core.net.DOWNLOAD_BUDGET_BYTES
+import dev.molifox.core.net.DownloadConcurrency
+import dev.molifox.core.net.DownloadSourceCatalog
+import dev.molifox.core.net.DownloadSourceFailureException
+import dev.molifox.core.net.SourceAttempt
+import dev.molifox.core.net.SourceHealth
+import dev.molifox.core.net.SourceThrottle
+import dev.molifox.core.net.TransferBudget
 import java.io.IOException
 import java.net.ConnectException
 import java.net.Proxy
@@ -17,16 +29,13 @@ import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -40,7 +49,7 @@ data class DownloadArtifact(
 )
 
 /** 下载收到非 2xx 状态码：5xx/408/429 可重试，其它 4xx 直接失败。 */
-internal class DownloadHttpException(val code: Int, host: String) :
+internal class DownloadHttpException(val code: Int, val host: String) :
     IOException("下载失败 ($code)：$host")
 
 /** 大小或哈希不符：内容不可用，必须删除 `.part` 后重下，不能留下坏文件。 */
@@ -65,6 +74,18 @@ class NetworkClient(
     private val downloadSegments: () -> Int = { 4 },
     private val downloadAttempts: () -> Int = { 3 },
     private val requestTimeoutSeconds: () -> Int = { 45 },
+    /** 文件级并发数（设置项「并发下载数」）：只用来换算传输许可，派发仍由调度器决定。 */
+    private val maxConcurrent: () -> Int = { 8 },
+    /** 镜像类主机的并发上限（设置项「镜像并发」）。 */
+    private val mirrorConcurrency: () -> Int = { 4 },
+    /** 单任务下载预算：并发数 × 文件大小超过它时按大小分配传输许可。 */
+    private val downloadBudgetBytes: Long = DOWNLOAD_BUDGET_BYTES,
+    /** 源登记表：官方、BMCLAPI 与各 Maven 镜像。 */
+    private val catalog: DownloadSourceCatalog = DownloadSourceCatalog.DEFAULT,
+    /** 本轮任务的源健康度：连续失败禁用、403/429 退避。 */
+    val health: SourceHealth = SourceHealth(),
+    /** 源被禁用、限流等需要留痕的事件。 */
+    private val logger: (String, Boolean) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     internal val client =
         OkHttpClient.Builder()
@@ -131,10 +152,44 @@ class NetworkClient(
     @Volatile private var autoProbeSetting: String? = null
     @Volatile private var autoProbeAt = 0L
 
+    /** 任意地址测速缓存（Java 镜像）：地址组、时间戳、顺序。 */
+    private val latencyLock = Mutex()
+    @Volatile private var latencyOrder: Triple<List<String>, Long, List<String>>? = null
+
     /** 按目标路径分片的下载锁，避免同一文件被并发写入同一份 `.part`。 */
     private val downloadLocks = List(16) { Mutex() }
     private val downloadJournals =
         java.util.concurrent.ConcurrentHashMap<String, TaskDownloadJournal>()
+
+    /** 传输闸门：并发数按任务快照，设置改动只影响下一个任务。 */
+    private val transferBudgetLock = Mutex()
+    @Volatile private var transferBudget: TransferBudget? = null
+    @Volatile private var transferBudgetKey: Pair<Int, String>? = null
+
+    private suspend fun transferBudget(): TransferBudget {
+        val units = maxConcurrent().coerceIn(1, 32)
+        val taskId = coroutineContext[TaskDownloadContext]?.task?.id ?: ""
+        val key = units to taskId
+        if (transferBudgetKey == key) transferBudget?.let { return it }
+        return transferBudgetLock.withLock {
+            if (transferBudgetKey == key) transferBudget?.let { return@withLock it }
+            TransferBudget(units, downloadBudgetBytes).also {
+                transferBudget = it
+                transferBudgetKey = key
+            }
+        }
+    }
+
+    private fun logClampedConcurrency(value: DownloadConcurrency) {
+        value.note?.let { logger(it, false) }
+    }
+
+    /** 新一轮安装开始时调用：清空上一轮的源禁用与限流状态，并让预算重新记一次日志。 */
+    fun resetSourceHealth() {
+        health.reset()
+        transferBudget = null
+        transferBudgetKey = null
+    }
 
     private suspend fun execute(
         request: Request,
@@ -215,11 +270,13 @@ class NetworkClient(
             )
         }
 
-    private fun builder(url: String): Request.Builder {
+    private fun builder(url: String, allowInsecureHttp: Boolean = false): Request.Builder {
         val uri = URI(url)
+        val scheme = uri.scheme?.lowercase()
         require(
-            uri.scheme == "https" ||
-                (uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1"))
+            scheme == "https" ||
+                (scheme == "http" &&
+                    (allowInsecureHttp || uri.host in setOf("localhost", "127.0.0.1")))
         ) {
             "只允许 HTTPS 请求"
         }
@@ -228,24 +285,43 @@ class NetworkClient(
             .header("User-Agent", "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)")
     }
 
-    internal fun downloadCandidates(url: String, selection: String = source()): List<String> {
-        return if (selection == "auto")
-            listOf(mirrorUrl(url, "official"), mirrorUrl(url, "bmclapi")).distinct()
-        else listOf(mirrorUrl(url, selection))
-    }
+    /** 某个地址的候选源；自动模式给多个，手动模式只给选中的源。 */
+    internal fun candidateSources(
+        url: String,
+        selection: String = source(),
+    ): List<CandidateSource> = catalog.candidates(url, selection)
+
+    internal fun downloadCandidates(url: String, selection: String = source()): List<String> =
+        candidateSources(url, selection).map { it.url }.distinct()
 
     /**
-     * 实际请求用的地址顺序：自动模式按测速结果（最快优先），其余模式与 [downloadCandidates] 一致。
-     * 官方与镜像地址相同的主机（本地测试服务器、非镜像仓库）不测速，也不会多发探测请求。
+     * 实际请求用的源与地址顺序：自动模式先按测速结果（最快优先），再按本轮源健康度重排
+     * （禁用的源剔除、限流的排到末尾）。官方与镜像地址相同的主机不测速，也不会多发探测请求。
      */
+    internal suspend fun orderedSources(
+        url: String,
+        selection: String = source(),
+    ): List<CandidateSource> {
+        val base = candidateSources(url, selection)
+        if (base.isEmpty()) return base
+        val ordered = if (selection == DownloadSourceCatalog.AUTO) orderByProbe(base) else base
+        return health.arrange(ordered)
+    }
+
+    /** 自动模式：只对官方/BMCLAPI 这一对做测速，Maven 镜像仍排在回退位。 */
+    private suspend fun orderByProbe(candidates: List<CandidateSource>): List<CandidateSource> {
+        if (candidates.none { it.source.key == DownloadSourceCatalog.BMCLAPI }) return candidates
+        val rank = autoMirrorOrder()
+        val primary =
+            candidates.filter { it.source.key in rank }.sortedBy { rank.indexOf(it.source.key) }
+        if (primary.isEmpty()) return candidates
+        return primary + candidates.filter { it.source.key !in rank }
+    }
+
     internal suspend fun orderedCandidates(
         url: String,
         selection: String = source(),
-    ): List<String> {
-        val plain = downloadCandidates(url, selection)
-        if (selection != "auto" || plain.size < 2) return plain
-        return autoMirrorOrder().map { mirrorUrl(url, it) }.distinct()
-    }
+    ): List<String> = orderedSources(url, selection).map { it.url }.distinct()
 
     /** 自动模式的真实含义：官方与 BMCLAPI 并发测速（短超时），按耗时升序决定优先顺序； 探测失败的源排到最后，仍保留作下载失败时的回退。结果缓存，下载源设置一变就清空。 */
     private suspend fun autoMirrorOrder(): List<String> = autoProbeLock.withLock {
@@ -272,9 +348,45 @@ class NetworkClient(
     }
 
     /** 单源测速：取版本清单开头的一小段确认真的能取到内容，返回毫秒；不可达返回 null。 */
-    private suspend fun measureSource(source: String): Long? {
-        val url = mirrorUrl(AUTO_PROBE_URL, source)
-        return withContext(Dispatchers.IO) {
+    private suspend fun measureSource(source: String): Long? =
+        measureUrl(mirrorUrl(AUTO_PROBE_URL, source))
+
+    /**
+     * 给一组任意地址测速并升序返回（不可达的排最后）。与 [autoMirrorOrder] 共用同一个探测客户端、 短超时与结果缓存；
+     * 供 Java 两个官方源（Azul / Adoptium）之间的自动排序使用，不另造探测逻辑。
+     */
+    internal suspend fun fastestFirst(
+        urls: List<String>,
+        cacheMillis: Long = AUTO_PROBE_CACHE_MILLIS,
+    ): List<String> {
+        val distinct = urls.distinct()
+        if (distinct.size < 2) return distinct
+        return latencyLock.withLock {
+            val now = System.currentTimeMillis()
+            latencyOrder
+                ?.takeIf { it.first == distinct && now - it.second < cacheMillis }
+                ?.third
+                ?: coroutineScope {
+                        val measured =
+                            distinct.map { url ->
+                                    async(Dispatchers.IO) { url to measureUrl(url) }
+                                }
+                                .awaitAll()
+                        measured
+                            .sortedWith(
+                                compareBy(
+                                    { it.second == null },
+                                    { it.second ?: Long.MAX_VALUE },
+                                )
+                            )
+                            .map { it.first }
+                            .also { latencyOrder = Triple(distinct, now, it) }
+                    }
+        }
+    }
+
+    private suspend fun measureUrl(url: String): Long? =
+        withContext(Dispatchers.IO) {
             val started = System.nanoTime()
             try {
                 probeClient
@@ -291,7 +403,6 @@ class NetworkClient(
                 null
             }
         }
-    }
 
     /** 下载源设置变更时调用：丢弃测速结果，下一次自动下载重新挑最快的源。 */
     fun resetAutoMirrorOrder() {
@@ -364,43 +475,36 @@ class NetworkClient(
             }
         }
 
-    /** Never attach a project API key to CDN requests, mirrors, or redirect targets. */
-    internal suspend fun curseForgeJson(
-        url: String,
-        key: String,
-        body: JsonObject? = null,
-    ): JsonObject =
+    /** CurseForge 公共镜像与自建代理都不需要凭据，因此请求不携带任何认证头。 */
+    internal suspend fun curseForgeJson(url: String, body: JsonObject? = null): JsonObject =
         withContext(Dispatchers.IO) {
             val uri = URI(url)
+            val scheme = uri.scheme?.lowercase()
             require(
-                (uri.scheme == "https" &&
-                    uri.host == "api.curseforge.com" &&
-                    uri.port in listOf(-1, 443) ||
-                    uri.scheme == "http" && uri.host == "127.0.0.1") &&
+                (scheme == "https" || scheme == "http") &&
+                    !uri.host.isNullOrBlank() &&
                     uri.userInfo == null &&
-                    uri.fragment == null &&
-                    uri.path.startsWith("/v1/")
+                    uri.rawFragment == null
             ) {
-                "无效的 CurseForge API 地址"
+                "无效的 CurseForge 服务地址"
             }
-            require(key.isNotBlank() && key.length <= 512 && key.all { it.code in 33..126 }) {
-                "请在「设置 → 下载」填写有效的 CurseForge API Key"
-            }
-            val request = builder(url).header("x-api-key", key).header("Accept", "application/json")
+            val request =
+                builder(url, allowInsecureHttp = true).header("Accept", "application/json")
             body?.let {
                 request.post(it.toString().toRequestBody("application/json".toMediaType()))
             }
             try {
                 execute(request.build(), redirects = false).use { response ->
-                    check(response.isSuccessful) {
-                        when (response.code) {
-                            401,
-                            403 -> "CurseForge API Key 无效或尚未获得访问权限"
-                            429 -> "CurseForge 请求过于频繁，请稍后重试"
-                            in 300..399 -> "CurseForge API 返回重定向，已停止请求以保护 API Key"
-                            else -> "CurseForge 请求失败 (${response.code})"
-                        }
-                    }
+                    if (!response.isSuccessful)
+                        throw CurseForgeHttpException(
+                            response.code,
+                            when (response.code) {
+                                404 -> "CurseForge 项目或文件不存在"
+                                429 -> "CurseForge 请求过于频繁，请稍后重试"
+                                in 300..399 -> "CurseForge 服务返回重定向，已停止请求"
+                                else -> "CurseForge 请求失败 (${response.code})"
+                            },
+                        )
                     val bytes =
                         response.body?.byteStream()?.use { it.readNBytes(8 * 1024 * 1024 + 1) }
                             ?: error("CurseForge 响应为空")
@@ -583,13 +687,52 @@ class NetworkClient(
                     discardPartial(target)
                     return@withTargetLock
                 }
-                val candidates = orderedCandidates(artifact.url)
-                val tries = attempts.coerceIn(1, 8)
+                val candidates = orderedSources(artifact.url)
                 try {
-                    for (attempt in 1..tries) {
-                        coroutineContext.ensureActive()
-                        try {
-                            val candidate = candidates[(attempt - 1) % candidates.size]
+                    fetchFromCandidates(
+                        artifact,
+                        partial,
+                        candidates,
+                        attempts.coerceIn(1, 8),
+                        progress,
+                    )
+                    if (!existed) journal?.completed(path)
+                } catch (cancelled: CancellationException) {
+                    discardPartial(target)
+                    throw cancelled
+                } finally {
+                    if (!existed && target.isRegularFile()) journal?.completed(path)
+                    if (!coroutineContext.isActive) discardPartial(target)
+                }
+            }
+        }
+
+    /**
+     * 依次尝试候选源：一个源失败立刻换下一个；403/429 不是失败，按 1→2→4s 退避后重试
+     * 同一个源，且不计入禁用。所有源都失败时抛出带「每个源尝试的 URL 与状态码」的异常。
+     */
+    private suspend fun fetchFromCandidates(
+        artifact: DownloadArtifact,
+        partial: Path,
+        candidates: List<CandidateSource>,
+        attempts: Int,
+        progress: (Long, Long) -> Unit,
+    ) {
+        val failures = mutableListOf<SourceAttempt>()
+        if (candidates.isEmpty()) throw DownloadSourceFailureException(artifact.target.toString(), failures)
+        val perSource = if (candidates.size > 1) 1 else attempts
+        val budget = transferBudget()
+        var lastError: Exception? = null
+        for (candidate in candidates) {
+            var attempt = 0
+            var rateLimitRetries = 0
+            while (true) {
+                coroutineContext.ensureActive()
+                attempt++
+                try {
+                    // 传输闸门（内存预算）在外、源闸门（镜像并发与间隔）在内，覆盖整次文件传输。
+                    budget.run(artifact.size, ::logClampedConcurrency) {
+                        SourceThrottle.run(candidate.source, mirrorConcurrency()) {
                             val segmented = SegmentedDownloader { url, range ->
                                 execute(builder(url).header("Range", range).build(), attempts = 1)
                             }
@@ -597,38 +740,74 @@ class NetworkClient(
                                 !segmented.download(
                                     artifact,
                                     partial,
-                                    candidate,
+                                    candidate.url,
                                     downloadSegments(),
                                     progress,
                                 )
                             )
-                                fetch(
-                                    artifact,
-                                    partial,
-                                    candidate,
-                                    progress,
-                                )
-                            if (!existed) journal?.completed(path)
-                            return@withTargetLock
-                        } catch (cancelled: CancellationException) {
-                            discardPartial(target)
-                            throw cancelled
-                        } catch (error: Exception) {
-                            coroutineContext.ensureActive()
-                            val mirrorFallback = candidates.size > 1
-                            if (
-                                attempt == tries ||
-                                    !isRecoverableDownloadFailure(error, mirrorFallback)
-                            )
-                                throw error
-                            delay(minOf(500L shl (attempt - 1), 8_000L))
+                                fetch(artifact, partial, candidate.url, progress)
                         }
                     }
-                } finally {
-                    if (!existed && target.isRegularFile()) journal?.completed(path)
-                    if (!coroutineContext.isActive) discardPartial(target)
+                    health.recordSuccess(candidate.source.key)
+                    return
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    coroutineContext.ensureActive()
+                    lastError = error
+                    val status = (error as? DownloadHttpException)?.code
+                    val rateLimited = status != null && status in RATE_LIMIT_STATUSES
+                    if (rateLimited && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+                        rateLimitRetries++
+                        val wait = health.recordRateLimited(candidate.source.key)
+                        logger("源 ${candidate.source.title} 返回 $status，${wait}ms 后重试同一源", false)
+                        delay(wait)
+                        attempt--
+                        continue
+                    }
+                    failures +=
+                        SourceAttempt(
+                            candidate.source.key,
+                            candidate.source.title,
+                            candidate.url,
+                            status,
+                            error.message ?: error.javaClass.simpleName,
+                        )
+                    if (!rateLimited && health.recordFailure(candidate.source.key)) {
+                        val count = health.state(candidate.source.key).consecutiveFailures
+                        logger("源 ${candidate.source.title} 已禁用：连续 $count 次失败", true)
+                    }
+                    if (attempt < perSource && isRecoverableDownloadFailure(error, candidates.size > 1)) {
+                        delay(minOf(500L shl (attempt - 1), 8_000L))
+                        continue
+                    }
+                    break
                 }
             }
+        }
+        // 只有一个候选源时保留原来的异常类型与中文消息（调用方按状态码分类）；
+        // 多个源都失败时汇总，逐个列出尝试过的 URL 与状态码。
+        if (candidates.size == 1) throw lastError ?: DownloadSourceFailureException(artifact.target.toString(), failures)
+        throw DownloadSourceFailureException(artifact.target.toString(), failures)
+    }
+
+    /**
+     * 可选文件：所有候选源都失败时只警告并跳过，不中断整批任务。
+     * 必需文件仍用 [download]，失败时消息里列出每个源尝试的 URL 与状态码。
+     */
+    suspend fun downloadOptional(
+        artifact: DownloadArtifact,
+        attempts: Int = downloadAttempts().coerceIn(1, 8),
+        progress: (Long, Long) -> Unit = { _, _ -> },
+    ): Boolean =
+        try {
+            download(artifact, attempts, progress)
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            logger("可选文件下载失败，已跳过：${artifact.target.fileName}（${error.message}）", false)
+            false
         }
 
     /** 单次尝试：请求一次（416 时再请求一次），成功即完成改名，失败抛异常交给重试。 */
@@ -649,7 +828,7 @@ class NetworkClient(
             if (!restart) return
         }
         // 第二次仍未成功：断点或服务器状态异常，交给重试策略。
-        throw DownloadHttpException(416, URI(artifact.url).host)
+        throw DownloadHttpException(416, URI(url).host)
     }
 
     /** 处理一次响应：写完并校验后改名成功返回 `false`；需要清空 `.part` 重新请求时返回 `true`。 */
@@ -678,7 +857,8 @@ class NetworkClient(
             }
         }
         if (!response.isSuccessful)
-            throw DownloadHttpException(response.code, URI(artifact.url).host)
+            // 报告实际请求的源（可能是镜像），否则失败信息会把镜像 404 说成官方地址。
+            throw DownloadHttpException(response.code, response.request.url.host)
         val body = response.body ?: throw IOException("下载内容为空")
         val total = totalBytes(artifact, response, start)
         val digest = MessageDigest.getInstance(artifact.hashAlgorithm)
@@ -774,6 +954,10 @@ class NetworkClient(
         return downloadLocks[index].withLock { block() }
     }
 
+    /**
+     * 兼容旧调用方的批量下载：文件级并发交给 [DownloadScheduler]，逐文件失败在整批结束后
+     * 一次性抛 [DownloadBatchException]（不在第一个 404 就放弃其余文件）。
+     */
     suspend fun downloadAll(
         artifacts: List<DownloadArtifact>,
         concurrency: Int,
@@ -781,29 +965,10 @@ class NetworkClient(
         label: String,
         from: Float = 0f,
         to: Float = 1f,
-    ) = coroutineScope {
-        val semaphore = Semaphore(concurrency.coerceIn(1, 32))
-        val finished = AtomicInteger()
-        val unique = artifacts.distinctBy { it.target }
-        context.beginTransfers(unique.size)
-        unique
-            .map { artifact ->
-                async(Dispatchers.IO) {
-                    semaphore.withPermit {
-                        download(artifact) { bytes, total ->
-                            context.transfer(artifact.target.toString(), bytes, total)
-                        }
-                        val size = artifact.target.fileSize()
-                        context.transfer(artifact.target.toString(), size, size, completed = true)
-                        val count = finished.incrementAndGet()
-                        context.progress(
-                            from + (to - from) * count / maxOf(unique.size, 1),
-                            "$label $count/${unique.size}",
-                        )
-                    }
-                }
-            }
-            .awaitAll()
+    ) {
+        val progress = BatchRangeProgress(context, label, from, to)
+        val failures = DownloadScheduler(this).run(artifacts, context, concurrency, progress)
+        if (failures.isNotEmpty()) throw DownloadBatchException(failures)
     }
 
     fun mirror(url: String): String = mirrorUrl(url, source())
@@ -820,6 +985,12 @@ class NetworkClient(
 
         /** 自动源只在官方与 BMCLAPI 之间挑，和设置里的两个手动源一一对应。 */
         private val AUTO_PROBE_SOURCES = listOf("official", "bmclapi")
+
+        /** 403/429：限流而不是失败，退避后重试同一源，不计入禁用。 */
+        private val RATE_LIMIT_STATUSES = setOf(403, 429)
+
+        /** 单个文件对同一源的限流重试次数；1s→2s→4s 之后仍被拒就换下一个源。 */
+        private const val MAX_RATE_LIMIT_RETRIES = 3
 
         /** 探测用的短超时：慢就当作不可用，不能拖住真正的下载。 */
         const val AUTO_PROBE_TIMEOUT_MILLIS = 1_500L

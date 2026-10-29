@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责存档和服务器共用行布局，固定地址与时间列、状态操作区及条目菜单。
 
 package dev.molifox.desktop

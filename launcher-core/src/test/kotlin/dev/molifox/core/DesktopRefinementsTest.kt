@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 验证版本目录迁移、全局隔离、语言跟随、内容图标与组件备份。
 
 package dev.molifox.core
@@ -73,17 +76,30 @@ class DesktopRefinementsTest {
     }
 
     @Test
-    fun `global isolation overrides all old per instance flags and uses versions directory`() {
+    fun `per instance isolation wins over the global default and inherit follows it`() {
         val store = store()
         val instance = instance(store)
+        store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
+        // 实例显式开启：全局关闭时仍使用 versions 目录。
         assertEquals(
             store.minecraftRoot.resolve("versions/1.21.1").toAbsolutePath(),
+            store.gamePath(instance.copy(isolation = VersionIsolation.Enabled)),
+        )
+        store.mutate { it.copy(settings = it.settings.copy(isolateVersions = true)) }
+        // 实例显式关闭：全局开启时仍使用游戏根。
+        assertEquals(
+            store.minecraftRoot,
             store.gamePath(instance.copy(isolation = VersionIsolation.Disabled)),
+        )
+        // 继承：跟随全局开关。
+        assertEquals(
+            store.minecraftRoot.resolve("versions/1.21.1").toAbsolutePath(),
+            store.gamePath(instance.copy(isolation = VersionIsolation.Inherit)),
         )
         store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
         assertEquals(
             store.minecraftRoot,
-            store.gamePath(instance.copy(isolation = VersionIsolation.Enabled)),
+            store.gamePath(instance.copy(isolation = VersionIsolation.Inherit)),
         )
     }
 
@@ -133,6 +149,34 @@ class DesktopRefinementsTest {
         assertContentEquals(png, localContentIcon(pack, false))
         world.resolve("icon.png").writeText("invalid")
         assertNull(localContentIcon(world, true))
+    }
+
+    @Test
+    fun `shader pack previews use icon preview screenshot or shaders png`() {
+        val png =
+            ByteArrayOutputStream().use { output ->
+                ImageIO.write(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), "png", output)
+                output.toByteArray()
+            }
+        // 文件夹光影包：没有 icon / preview 时退回 shaders/ 下的 PNG。
+        val folder = directory.resolve("ShaderPack").apply { createDirectories() }
+        folder.resolve("shaders").createDirectories()
+        folder.resolve("shaders/pack.png").writeBytes(png)
+        assertContentEquals(png, shaderPackIcon(folder))
+        folder.resolve("preview.png").writeBytes(png)
+        assertContentEquals(png, shaderPackIcon(folder))
+        // zip 光影包：根目录候选之后才看 shaders/*.png。
+        val zip = directory.resolve("Shader.zip")
+        ZipOutputStream(zip.outputStream()).use { out ->
+            fun put(name: String) {
+                out.putNextEntry(ZipEntry(name))
+                out.write(png)
+                out.closeEntry()
+            }
+            put("shaders/only.png")
+        }
+        assertContentEquals(png, shaderPackIcon(zip))
+        assertNull(shaderPackIcon(directory.resolve("missing")))
     }
 
     @Test

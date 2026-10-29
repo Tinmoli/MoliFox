@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责右下角任务进度入口与独立的下载、处理任务管理面板。
 
 package dev.molifox.desktop
@@ -84,8 +87,13 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    if (active.isNotEmpty()) "${(progress * 100).toInt()}% · 点击查看进度" else "即将自动收起",
+                    if (active.isNotEmpty())
+                        // 长阶段（数千个资源文件）必须露出阶段名，否则看起来像卡死。
+                        "${(progress * 100).toInt()}% · ${active.first().detail}"
+                    else "即将自动收起",
                     fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

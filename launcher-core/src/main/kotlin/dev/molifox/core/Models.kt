@@ -1,10 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责账户、实例、配置和任务的公共数据模型。
 
 package dev.molifox.core
 
+import com.google.gson.TypeAdapter
+import com.google.gson.annotations.JsonAdapter
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.google.gson.stream.JsonWriter
+import java.net.URI
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
+import kotlin.jvm.Transient
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
 const val LAUNCHER_VERSION = "0.4.0-beta"
@@ -30,6 +40,54 @@ enum class VersionIsolation(val title: String) {
     Disabled("共用游戏目录"),
 }
 
+/**
+ * 有效隔离值的来源：用户显式选择（版本隔离 / 共用游戏目录）、目录证据推断、或全局默认。
+ * 推断值不能冒充用户选择：界面与日志都要说明来源，且显式选择永远优先于推断。
+ */
+enum class IsolationSource(val title: String) {
+    Explicit("显式设置"),
+    Inferred("推断"),
+    GlobalDefault("全局默认"),
+}
+
+/** 启动日志里的来源名称：显式设置读作「实例设置」，与推断、全局默认并列。 */
+val IsolationSource.logTitle: String
+    get() =
+        when (this) {
+            IsolationSource.Explicit -> "实例设置"
+            IsolationSource.Inferred -> "推断"
+            IsolationSource.GlobalDefault -> "全局默认"
+        }
+
+/**
+ * 游戏进程优先级：界面四档，Windows 上分别对应 BelowNormal / Normal / AboveNormal / High。
+ * 不使用 RealTime，避免游戏抢占系统输入与音频线程。
+ */
+@JsonAdapter(ProcessPriorityAdapter::class)
+enum class ProcessPriority(val title: String) {
+    Low("低"),
+    Normal("中"),
+    High("高"),
+    VeryHigh("超高"),
+}
+
+/** 配置里出现未知优先级（手改配置、旧版本写入）时按 Normal 读入，绝不让整份配置读取失败。 */
+class ProcessPriorityAdapter : TypeAdapter<ProcessPriority>() {
+    override fun write(out: JsonWriter, value: ProcessPriority?) {
+        if (value == null) out.nullValue() else out.value(value.name)
+    }
+
+    override fun read(reader: JsonReader): ProcessPriority {
+        if (reader.peek() == JsonToken.NULL) {
+            reader.nextNull()
+            return ProcessPriority.Normal
+        }
+        val raw = reader.nextString()
+        return ProcessPriority.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+            ?: ProcessPriority.Normal
+    }
+}
+
 data class GameDirectory(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
@@ -47,6 +105,13 @@ enum class JobStatus {
 data class LauncherSettings(
     val gameRoot: String = "",
     val javaPath: String = "",
+    /** 用户手动「添加」过的 Java 可执行文件；检测时与系统 Java 一起列出，删除前一直保留。 */
+    val customJavaPaths: List<String> = emptyList(),
+    /**
+     * Java 下载源：auto（测速选最快官方源）/ official（Azul 官方，Temurin 走 Adoptium）。
+     * 旧的 mirror（国内镜像站）已移除；读到该值时按 official 处理，保存时自动迁移。
+     */
+    val javaDownloadSource: String = "auto",
     val memoryMb: Int = 4096,
     val autoMemory: Boolean = false,
     val width: Int = 1280,
@@ -54,6 +119,8 @@ data class LauncherSettings(
     val extraJvmArgs: String = "",
     val advancedLaunch: AdvancedLaunchSettings = AdvancedLaunchSettings(),
     val downloadSource: String = "auto",
+    /** 镜像类主机的并发上限（设置项「镜像并发」）：2 / 4 / 8。 */
+    val mirrorConcurrency: Int = 4,
     val maxConcurrent: Int = 8,
     val downloadSegments: Int = 4,
     val downloadAttempts: Int = 3,
@@ -66,6 +133,13 @@ data class LauncherSettings(
     val uiScale: Float = 1f,
     val backgroundPath: String = "",
     val backgroundRevision: Long = 0,
+    /**
+     * 用户自定义的左上角品牌图标：只替换主窗口标题栏左侧的品牌标识。
+     * 为空表示使用内置图标；文件副本保存在 MoliFox/appearance/branding，标题栏、任务栏与准备窗口仍用内置图标。
+     */
+    val brandIconPath: String = "",
+    /** 自定义图标的内容版本：同一路径重新选择图片时更新，界面据此重新读取。 */
+    val brandIconRevision: Long = 0,
     val backgroundOpacity: Float = .7f,
     /** crop / fit / stretch；旧配置保留居中裁切。 */
     val backgroundFit: String = "crop",
@@ -108,11 +182,68 @@ data class LauncherSettings(
     val proxyType: String = "http",
     val proxyHost: String = "",
     val proxyPort: Int = 0,
-    /** CurseForge 开发者 API Key，由用户自行申请后填入。 */
-    val curseForgeApiKey: String = "",
+    /** CurseForge 服务地址；默认社区镜像，可改为自建代理。请求始终追加 `/v1/`。 */
+    val curseForgeBaseUrl: String = DEFAULT_CURSE_FORGE_BASE_URL,
     /** 全局游戏窗口模式：launcher（与启动器一样大）/ fullscreen / custom。 */
     val gameWindowMode: String = "custom",
+    /** 游戏进程优先级：仅 Windows 生效，启动游戏后尽力设置，失败只记警告。 */
+    val processPriority: ProcessPriority = ProcessPriority.Normal,
 )
+
+/**
+ * 把 Java 下载源收敛到当前支持的两种取值：official 与 auto。
+ * 旧配置里的 mirror（TUNA 等国内镜像）按 official 读取，未知值按 auto，绝不因为旧值崩溃。
+ */
+fun normalizedJavaDownloadSource(value: String): String =
+    if (value == "official" || value == "mirror") "official" else "auto"
+
+/** 设置里实际的 Java 下载源；UI 与安装流程都读这个，旧 mirror 配置自动显示为官方源。 */
+val LauncherSettings.effectiveJavaDownloadSource: String
+    get() = normalizedJavaDownloadSource(javaDownloadSource)
+
+/** 版本列表源与文件下载源共用的三种取值；旧值（mirror、未知字符串）一律按自动处理。 */
+fun normalizedDownloadSource(value: String): String =
+    if (value == "official" || value == "bmclapi") value else "auto"
+
+/** 版本清单（manifest）用的源，独立于文件下载源。 */
+val LauncherSettings.effectiveVersionListSource: String
+    get() = normalizedDownloadSource(versionListSource)
+
+/** 本体、依赖库、资源文件与 Java 用的源。 */
+val LauncherSettings.effectiveDownloadSource: String
+    get() = normalizedDownloadSource(downloadSource)
+
+/**
+ * CurseForge 的默认社区镜像（公开可读、不需要 API Key）。 自建代理只需在设置里替换地址。
+ */
+const val DEFAULT_CURSE_FORGE_BASE_URL = "https://mod.mcimirror.top/curseforge"
+
+/** 服务地址必须是绝对 http(s) URL；查询串、片段和用户信息不属于服务根地址。 */
+fun isValidCurseForgeBaseUrl(value: String): Boolean {
+    val text = value.trim()
+    if (text.isEmpty()) return false
+    val uri = runCatching { URI(text) }.getOrNull() ?: return false
+    return (uri.scheme?.lowercase() == "http" || uri.scheme?.lowercase() == "https") &&
+        !uri.host.isNullOrBlank() &&
+        uri.userInfo == null &&
+        uri.rawQuery == null &&
+        uri.rawFragment == null
+}
+
+/**
+ * 实际请求使用的服务根地址：空值或非法值回落到默认镜像，末尾斜杠会被去掉。
+ * 调用方（CurseForgeBackend）在回落时写一条日志，避免静默使用非预期服务。
+ */
+fun normalizedCurseForgeBaseUrl(value: String): String =
+    if (isValidCurseForgeBaseUrl(value)) value.trim().trimEnd('/')
+    else DEFAULT_CURSE_FORGE_BASE_URL
+
+/** 设置里实际生效的 CurseForge 服务地址；UI 与请求层都读这个。 */
+val LauncherSettings.effectiveCurseForgeBaseUrl: String
+    get() = normalizedCurseForgeBaseUrl(curseForgeBaseUrl.orEmpty())
+
+/** 镜像并发只接受 2 / 4 / 8，其余值回落到默认 4。 */
+fun normalizedMirrorConcurrency(value: Int): Int = if (value in setOf(2, 4, 8)) value else 4
 
 data class Account(
     val id: String = UUID.randomUUID().toString(),
@@ -139,13 +270,17 @@ data class AuthlibServer(
 )
 
 /**
- * 内置的默认外置认证服务器。PCL 的「使用 LittleSkin 登录」与 HMCL 的 `AuthlibInjectorServerList.createDefault()` 都把
- * LittleSkin 作为默认项， 这里同样预置一条，用户可在账户页直接选它登录，也可以删掉或添加别的服务器。
+ * 内置的默认外置认证服务器。LittleSkin 是公开的 Yggdrasil 兼容服务，预置一条可让用户
+ * 不必自己找地址，账户页可直接选它登录，也可以删掉或添加别的服务器。
  */
 val DEFAULT_AUTHLIB_SERVER =
     AuthlibServer(url = "https://littleskin.cn/api/yggdrasil", name = "LittleSkin")
 
 data class GameInstance(
+    /**
+     * 运行时标识。它由扫描时按游戏目录 + 文件夹名生成（见 [InstanceCatalog.instanceId]），不是配置里的记录；
+     * 重启后同一目录得到同一 id。旧配置迁移时沿用原 id 一次，之后的扫描再收敛到稳定值。
+     */
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val iconStyle: InstanceIconStyle = InstanceIconStyle.Auto,
@@ -155,7 +290,6 @@ data class GameInstance(
     val gameVersion: String = "",
     val versionId: String = "",
     val gameDirectoryName: String = "",
-    val componentBackupId: String = "",
     val loader: LoaderType = LoaderType.Vanilla,
     val loaderVersion: String = "",
     val createdAt: String = Instant.now().toString(),
@@ -165,6 +299,8 @@ data class GameInstance(
     val memoryMb: Int = 0,
     val autoMemory: Boolean? = null,
     val javaPath: String = "",
+    /** 用户点过「不再提示」后不再主动弹缺 Java 的窗口；手动指定 Java 路径不受影响。 */
+    val suppressJavaPrompt: Boolean = false,
     val externalProfile: Boolean = false,
     val packFile: String = "",
     val gameDirectoryId: String? = null,
@@ -174,37 +310,144 @@ data class GameInstance(
     val height: Int = 0,
     val windowMode: String = "inherit",
     val extraJvmArgs: String = "",
+    /** 实例自己的额外游戏参数，追加在标准参数之后；空串表示不追加。 */
+    val extraGameArgs: String = "",
     val notes: String = "",
     val favorite: Boolean = false,
+    /** 恢复存档时用备份替换原世界（默认关闭，关闭时只解压成同级的新世界，不碰原存档）。 */
+    val replaceSaveOnRestore: Boolean = false,
     val managedGameDirectory: Boolean = false,
     val packOptionalFiles: List<String>? = null,
     val advancedLaunch: AdvancedLaunchSettings? = null,
-    val previousComponents: ComponentSelection? = null,
+    /** 扫描时发现版本配置缺失/损坏或 inheritsFrom 断链：仍显示，但不可启动。 */
+    val broken: Boolean = false,
+    val brokenReason: String = "",
 )
 
-data class ComponentSelection(
-    val loader: LoaderType,
-    val loaderVersion: String,
-    val versionId: String,
+/**
+ * 按实例目录名保存的持久设置。实例列表本身不再写入配置，`versions/` 是唯一事实来源；
+ * 这里只保留必须跨重启保留、又无法从版本 JSON 推导的字段；都按「每个实例一份」保存，
+ * 而不是塞进全局设置里。
+ *
+ * 前五项是本次架构要求的最小集合：隔离模式、指定 Java、图标、收藏、最近游玩；
+ * 其余字段是现有版本设置页已经在用的启动参数，继续放在同一张表里，避免这次重构丢失用户设置。
+ */
+data class InstanceSettings(
+    val isolation: VersionIsolation = VersionIsolation.Inherit,
+    val javaPath: String = "",
+    val iconId: String = "",
+    val favorite: Boolean = false,
+    val lastPlayed: String? = null,
+    // 用户给实例起的显示名；为空时直接显示目录名。
+    val displayName: String = "",
+    val packIconId: String = "",
+    val playTimeSeconds: Long = 0,
+    val memoryMb: Int = 0,
+    val autoMemory: Boolean? = null,
+    val initialMemoryMb: Int = 0,
+    val width: Int = 0,
+    val height: Int = 0,
+    val windowMode: String = "inherit",
+    val extraJvmArgs: String = "",
+    val extraGameArgs: String = "",
+    val notes: String = "",
+    val suppressJavaPrompt: Boolean = false,
+    val advancedLaunch: AdvancedLaunchSettings? = null,
+    // 整合包来源：修复时需要重新导入同一文件；不是版本 JSON 能推导的信息。
+    val packFile: String = "",
+    val packOptionalFiles: List<String>? = null,
+    val managedGameDirectory: Boolean = false,
+    val replaceSaveOnRestore: Boolean = false,
 ) {
-    val title: String
-        get() = loader.title + if (loaderVersion.isBlank()) "" else " $loaderVersion"
+    companion object {
+        fun of(instance: GameInstance): InstanceSettings =
+            InstanceSettings(
+                isolation = instance.isolation,
+                javaPath = instance.javaPath,
+                iconId = instance.iconId,
+                favorite = instance.favorite,
+                lastPlayed = instance.lastPlayed,
+                displayName = instance.name,
+                packIconId = instance.packIconId,
+                playTimeSeconds = instance.playTimeSeconds,
+                memoryMb = instance.memoryMb,
+                autoMemory = instance.autoMemory,
+                initialMemoryMb = instance.initialMemoryMb,
+                width = instance.width,
+                height = instance.height,
+                windowMode = instance.windowMode,
+                extraJvmArgs = instance.extraJvmArgs,
+                extraGameArgs = instance.extraGameArgs,
+                notes = instance.notes,
+                suppressJavaPrompt = instance.suppressJavaPrompt,
+                advancedLaunch = instance.advancedLaunch,
+                packFile = instance.packFile,
+                packOptionalFiles = instance.packOptionalFiles,
+                managedGameDirectory = instance.managedGameDirectory,
+                replaceSaveOnRestore = instance.replaceSaveOnRestore,
+            )
+    }
+
+    /** 把设置覆盖到扫描出的实例上；扫描结果负责名称、版本、加载器、安装与损坏状态。 */
+    fun applyTo(instance: GameInstance): GameInstance =
+        instance.copy(
+            name = displayName.ifBlank { instance.name },
+            isolation = isolation,
+            javaPath = javaPath,
+            iconId = iconId,
+            favorite = favorite,
+            lastPlayed = lastPlayed,
+            packIconId = packIconId,
+            playTimeSeconds = playTimeSeconds,
+            memoryMb = memoryMb,
+            autoMemory = autoMemory,
+            initialMemoryMb = initialMemoryMb,
+            width = width,
+            height = height,
+            windowMode = windowMode,
+            extraJvmArgs = extraJvmArgs,
+            extraGameArgs = extraGameArgs,
+            notes = notes,
+            suppressJavaPrompt = suppressJavaPrompt,
+            advancedLaunch = advancedLaunch,
+            packFile = packFile,
+            packOptionalFiles = packOptionalFiles,
+            managedGameDirectory = managedGameDirectory,
+            replaceSaveOnRestore = replaceSaveOnRestore,
+        )
 }
 
-internal fun GameInstance.componentSelection() =
-    ComponentSelection(loader, loaderVersion, versionId)
+/** 实例在 `versions/` 下的目录名；新模型里这就是实例身份。 */
+fun GameInstance.instanceFolderName(): String =
+    gameDirectoryName.ifBlank { versionId.ifBlank { name } }
+
+/** 设置表的键：实例目录名（实例身份就是文件夹名）。 */
+fun GameInstance.instanceSettingsKey(): String = instanceFolderName()
+
+/**
+ * 正在构造、尚未写出 `<name>/<name>.json` 的安装目标。只存在内存里，不写入配置；
+ * 扫描时跳过它的空目录，避免安装期间闪出一个「无法识别」实例。
+ */
+data class PendingInstall(
+    val name: String,
+    val gameVersion: String,
+    val loaderId: String = "",
+)
 
 data class LauncherData(
     val schemaVersion: Int = 2,
     val settings: LauncherSettings = LauncherSettings(),
     val accounts: List<Account> = emptyList(),
-    val instances: List<GameInstance> = emptyList(),
+    // 运行时投影，不写入配置：每次扫描 versions/*/ 重建。它不再是实例记录列表。
+    @Transient val instances: List<GameInstance> = emptyList(),
     val activeAccountId: String? = null,
     val selectedInstanceId: String? = null,
     /** 用户添加过的外置认证服务器列表（仅 URL 与显示名，令牌在凭据库中）。 */
     val authlibServers: List<AuthlibServer> = listOf(DEFAULT_AUTHLIB_SERVER),
     val gameDirectories: List<GameDirectory> = emptyList(),
     val activeGameDirectoryId: String? = null,
+    /** 按实例目录名索引的持久设置；不存在的目录留下的条目是惰性的，不参与列表。 */
+    val instanceSettings: Map<String, InstanceSettings> = emptyMap(),
 )
 
 data class DownloadJob(
@@ -222,11 +465,35 @@ data class DownloadJob(
     val resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
 )
 
+/**
+ * 日志级别：档位与 log4j / java.util.logging 一致，界面筛选与 `logs/launcher.log` 使用同一套名字。
+ * 每一级都必须有真实产出点（见 LauncherStore.log 的调用方），否则界面不提供对应筛选项：
+ * TRACE = 命令输出逐行；DEBUG = 后台任务开始/完成；WARN = 尽力而为的步骤失败；
+ * ERROR = 操作失败但启动器可继续；FATAL = 启动中止。
+ */
+enum class LogLevel(val title: String) {
+    Trace("详细"),
+    Debug("调试"),
+    Info("信息"),
+    Warn("警告"),
+    Error("错误"),
+    Fatal("严重");
+
+    /** 写进日志文件与导出文件的档位名。 */
+    val label: String
+        get() = name.uppercase()
+
+    /** 达到「警告」及以上：界面用更醒目的颜色。 */
+    val isProblem: Boolean
+        get() = ordinal >= Warn.ordinal
+}
+
 data class LogLine(
     val time: String = Instant.now().toString(),
     val message: String,
     val isError: Boolean = false,
     val isGame: Boolean = false,
+    val level: LogLevel = if (isError) LogLevel.Error else LogLevel.Info,
 )
 
 data class LauncherState(
@@ -240,6 +507,8 @@ data class LauncherState(
     val gameRun: GameRunEvent? = null,
     val recentUsageRevision: Long = 0,
     val update: LauncherUpdateState = LauncherUpdateState(),
+    /** 当前实例缺少兼容 Java 时的安装/选择入口；为空表示无需提示。 */
+    val javaPrompt: JavaPrompt? = null,
 )
 
 data class ReleaseVersion(
@@ -259,11 +528,52 @@ data class InstallRequest(
     val loaderVersion: String = "",
 )
 
+/** Java 来源：启动器自己安装（bundled）/ 系统（system）/ 用户显式指定（custom）。 */
+enum class JavaRuntimeSource(val title: String) {
+    Custom("自定义"),
+    Bundled("启动器安装"),
+    System("系统"),
+}
+
 data class JavaRuntime(
     val path: String,
     val majorVersion: Int,
     val vendor: String,
     val architecture: String = "",
+    /** 完整版本号，例如 21.0.5 或 1.8.0_512。 */
+    val version: String = "",
+    /** 32 / 64；0 表示未知。 */
+    val bits: Int = 0,
+    val source: JavaRuntimeSource = JavaRuntimeSource.System,
+    /** jre / jdk；仅启动器安装的条目有值。 */
+    val imageType: String = "",
+    val installedAt: String = "",
+    val sizeBytes: Long = 0,
+    /** 不可用原因：「路径不存在」/「无效」；空串表示可用。无效条目保留在列表里，不自动清除。 */
+    val invalidReason: String = "",
+) {
+    val managed: Boolean
+        get() = source == JavaRuntimeSource.Bundled
+
+    val usable: Boolean
+        get() = invalidReason.isBlank()
+
+    /** 用户可读名称，例如「Zulu OpenJDK 21（JRE）」。 */
+    val displayName: String
+        get() {
+            val type = imageType.uppercase()
+            return if (vendor.isBlank()) "Java $majorVersion"
+            else "$vendor Java $majorVersion" + if (type.isBlank()) "" else "（$type）"
+        }
+}
+
+/** 启动检查发现当前实例缺少可用的 Java；[requiredMajor] 已按 gameJavaMajor 的版本表换算。 */
+data class JavaPrompt(
+    val instanceId: String,
+    val instanceName: String,
+    val gameVersion: String,
+    val requiredMajor: Int,
+    val candidates: List<JavaRuntime> = emptyList(),
 )
 
 data class ModFile(

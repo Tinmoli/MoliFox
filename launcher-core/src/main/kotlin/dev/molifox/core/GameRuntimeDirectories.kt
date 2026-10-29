@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责为每个游戏进程准备独立原生库和参数目录，并回收已退出进程的缓存。
 
 package dev.molifox.core

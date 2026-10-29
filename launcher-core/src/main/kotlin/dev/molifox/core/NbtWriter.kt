@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责保留所有 NBT 类型、根名称和压缩形式的服务器列表写回编码。
 
 package dev.molifox.core

@@ -1,14 +1,19 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责存档列表、备份、恢复、复制和回收。
 
 package dev.molifox.core
 
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import java.time.ZoneId
@@ -40,51 +45,68 @@ data class SaveEntry(
     val backup: Boolean,
 )
 
-/** 备份区里的一个存档压缩包。 */
+/**
+ * `backups/` 里的一个存档压缩包：可能是 MoliFox 写的，也可能是原版游戏写的。
+ *
+ * 原版命名是 `yyyy-MM-dd_HH-mm-ss_<世界名>.zip`，世界名与时间都从文件名解析； 不满足该命名的压缩包按文件名显示，时间退回文件修改时间。
+ */
 data class SaveBackupInfo(
     /** 备份标识，等于压缩包去掉 `.zip` 的文件名；恢复与删除都以它为句柄。 */
     val id: String,
-    /** 备份时的存档名称（已做文件名安全化处理）。 */
+    /** 世界名：原版命名里最后一段，其他命名直接取去掉后缀的文件名。 */
     val saveName: String,
     val archive: Path,
     val createdAt: Instant,
     val size: Long,
-    val sha1: String,
+    /** 压缩包根目录是否有 `level.dat`；false 时不在界面提供恢复。 */
+    val restorable: Boolean,
 )
 
-/** 备份区目录名；`.molifox-` 前缀不会被整合包覆盖（[packPath] 拒绝），也不在世界目录里。 */
-private const val SAVE_BACKUP_DIRECTORY = ".molifox-saves-backups"
+/** 原版备份目录名：`<游戏目录>/backups/`，与原版游戏共用同一个目录。 */
+private const val SAVE_BACKUP_DIRECTORY = "backups"
 
 /** 临时目录前缀：解压与复制都先落在 `saves/` 内的隐藏目录，成功后一次改名。 */
 private const val SAVE_STAGING_PREFIX = ".molifox-saves-"
-
-/** 恢复时 `.molifox-saves-backups/<时间戳>-<名称>.replaced.zip` 的后缀标记。 */
-private const val REPLACED_SUFFIX = ".replaced"
 
 private const val MAX_SAVE_ENTRIES = 100_000
 private const val MAX_SAVE_BYTES = 64L * 1024 * 1024 * 1024
 private const val MAX_SAVE_ENTRY_BYTES = 32L * 1024 * 1024 * 1024
 
-/** 备份文件名的时间戳：`yyyyMMdd-HHmmss-SSS`，可读且精确到毫秒，便于按名称解析创建时间。 */
+/** 原版备份文件名：`yyyy-MM-dd_HH-mm-ss_<世界名>.zip`。 */
 private val saveBackupStamp =
-    DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneId.systemDefault())
+    DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss").withZone(ZoneId.systemDefault())
 
-/** 备份标识 = `<时间戳>-<安全化名称>[.replaced]`；第 1 组是名称部分。 */
-private val saveBackupIdPattern = Regex("^\\d{8}-\\d{6}-\\d{3}-(.+)$")
+/** 备份标识 = `<时间戳>_<世界名>`；第 1 组是时间戳、第 2 组是世界名。 */
+private val saveBackupIdPattern = Regex("^(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})_(.+)$")
 
-/** 反向解析备份创建时间用的同一套格式。 */
-private val parseBackupStamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
-private val saveBackupParsePattern = Regex("^\\d{8}-\\d{6}-\\d{3}$")
+/** 反向解析备份创建时间用的同一套格式（本地时区）。 */
+private val parseBackupStamp = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss")
+
+/**
+ * 恢复出来的同级世界目录后缀：`<世界名>（备份 yyyy-MM-dd HH-mm）`。
+ *
+ * Windows 文件名不允许冒号，所以时间用 `HH-mm` 而不是 `HH:mm`；界面展示与实际目录名保持一致。
+ */
+private val restoreSuffixFormat =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm").withZone(ZoneId.systemDefault())
+
+/** 替换时保留的旧世界后缀：`<世界名>（替换前 HH-mm）`，同样避开冒号。 */
+private val replaceSuffixFormat =
+    DateTimeFormatter.ofPattern("HH-mm").withZone(ZoneId.systemDefault())
 
 /**
  * 存档管理：列出、备份、恢复与跨实例复制 `saves/` 下的世界。
  *
  * 约定：
  * - 只操作实例 `saves/` 的直接子项，目录与 `.zip` 都算存档；不跟随符号链接/目录联接， 损坏或不可读的子项只跳过，不抛异常。
- * - 备份写到实例目录下的 `.molifox-saves-backups/<时间戳>-<安全化名称>.zip`，先写 `.part` 再原子改名；备份**保留原存档**，不移动、不删除用户内容。
- * - 恢复先解压到 `saves/` 内的隐藏临时目录，校验通过后才改名到最终位置；`overwrite=false` 时目标已存在直接拒绝，`overwrite=true` 时先把现有存档打成
- *   `.replaced.zip` 再替换， 任一步失败都回滚（删除临时目录、把旧存档搬回原位、删除本次生成的 replaced 备份）。
+ * - 备份写到 `<游戏目录>/backups/<yyyy-MM-dd_HH-mm-ss>_<世界名>.zip`（与原版游戏同名同目录）， 先写 `.part` 再原子改名；备份**保留原存档**，不移动、不删除用户内容。
+ * - 恢复默认是**非破坏性复制**：解压到 `saves/<世界名>（备份 时间）/`，跳过 `session.lock`， 已存在同名目录时加数字后缀，从不改动现有世界。
+ * - 开启实例设置「恢复时替换原世界」后走替换流程：先备份当前世界 → 解压到 `saves/` 内的临时目录 → 校验 level.dat 与非空区域文件 →
+ *   把当前世界改名为 `<世界名>（替换前 HH-mm）` 保留 → 临时目录改名就位；任一步失败都删除临时目录并把旧世界放回原位。
+ * - 世界目录里 `session.lock` 被占用（游戏正在打开该世界）时拒绝恢复与替换。
  * - 跨实例复制只接受 MoliFox 自建的版本隔离实例；目标已有同名存档时**自动加序号** （`World` → `World 2`），从不覆盖目标实例的现有存档。
+ * - 导入外部存档（[importSave]）只接受带 `level.dat` 的 `.zip` 或世界文件夹；ZIP 允许唯一一层包装目录，
+ *   重名加 ` (2)` 序号，先校验后解压，失败不留残留。
  * - 删除备份与删除存档走 [PlatformServices.moveToTrash]，不做不可恢复的硬删除。
  */
 class SaveManager(private val store: LauncherStore) {
@@ -111,9 +133,10 @@ class SaveManager(private val store: LauncherStore) {
     }
 
     /**
-     * 列出备份区的全部压缩包，按创建时间从新到旧。
+     * 列出 `backups/` 里的全部压缩包，按创建时间从新到旧。
      *
-     * [SaveBackupInfo.sha1] 在列出时现算，超大存档的首次列举会有明显耗时；只读，不修改磁盘。
+     * 与原版游戏共用同一个目录，因此原版游戏自己写的备份也会出现在这里；世界名与时间从 原版文件名
+     * `yyyy-MM-dd_HH-mm-ss_<世界名>.zip` 解析，不符合命名的压缩包按文件名显示、时间退回 修改时间。只读，不修改磁盘。
      */
     fun listBackups(instanceId: String): List<SaveBackupInfo> {
         store.instance(instanceId)
@@ -137,9 +160,10 @@ class SaveManager(private val store: LauncherStore) {
     }
 
     /**
-     * 把 `saves/<saveName>` 打包到实例的备份区，返回备份信息。
+     * 把 `saves/<saveName>` 打包到 `<游戏目录>/backups/`，返回备份信息。
      *
-     * 世界目录按内容打包（跳过符号链接与越界路径），`saves/` 下现成的 `.zip` 存档直接复制； 成功与否都保留原存档。取消或失败时删除 `.part`，不留下半个压缩包。
+     * 文件名用原版命名 `yyyy-MM-dd_HH-mm-ss_<世界名>.zip`；世界目录按内容打包（跳过符号链接与越界路径）， `saves/`
+     * 下现成的 `.zip` 存档直接复制；成功与否都保留原存档。取消或失败时删除 `.part`，不留下半个压缩包。
      */
     suspend fun backupSave(
         instanceId: String,
@@ -154,116 +178,143 @@ class SaveManager(private val store: LauncherStore) {
                 "存档目录不存在，无法备份"
             }
             val source = saveSource(saves, saveName)
-            val directory = backupDirectory(instanceId)
-            directory.createDirectories()
-            val isZip = !source.isDirectory(LinkOption.NOFOLLOW_LINKS)
             val label = safeSaveLabel(source.name.removeSuffixIgnoreCase(".zip"))
-            val (archive, createdAt) = allocateArchive(directory, label)
             context?.progress(0f, "备份存档 · $saveName")
-            // 目录按内容打包；`saves/` 里现成的 `.zip` 直接整包复制，不嵌套压缩。
-            if (isZip) copyIntoArchive(source, archive)
-            else packDirectory(source, archive, context, "备份存档")
-            val info =
-                SaveBackupInfo(
-                    id = archive.name.removeSuffix(".zip"),
-                    saveName = label,
-                    archive = archive,
-                    createdAt = createdAt,
-                    size = archive.fileSize(),
-                    sha1 = digest(archive),
-                )
-            context?.progress(1f, "备份存档完成 · ${archive.name}")
-            store.log("已备份存档：${instance.name} / $saveName → ${archive.name}")
+            val info = packSave(instanceId, source, label, context, "备份存档")
+            context?.progress(1f, "备份存档完成 · ${info.archive.name}")
+            store.log("已备份存档：${instance.name} / $saveName → ${info.archive.name}")
             info
         }
 
     /**
-     * 把备份解压回 `saves/<备份时的名称>`，返回恢复后的路径。
+     * 把备份解压成 `saves/` 下的**新世界目录**，返回新目录路径；从不改动现有世界。
      *
-     * [overwrite] 为 false 且目标已存在时拒绝（中文错误，不做任何修改）；为 true 时先把现有 存档打包成
-     * `.molifox-saves-backups/<时间戳>-<名称>.replaced.zip` 再替换。解压只允许落在 `saves/` 之内，拒绝
-     * `..`、绝对路径、盘符与符号链接条目。
+     * 目录名是 `<世界名>（备份 yyyy-MM-dd HH-mm）`，已存在时加数字后缀；解压跳过 `session.lock`，
+     * 解压后校验根目录的 `level.dat` 存在且非空，失败则删除临时目录。压缩包没有 `level.dat`、 或该世界正被游戏打开时拒绝。
      */
     suspend fun restoreSave(
         instanceId: String,
         backupId: String,
-        overwrite: Boolean = false,
         context: JobContext? = null,
     ): Path =
         withContext(Dispatchers.IO) {
             val instance = store.instance(instanceId)
             requireGameStopped(instanceId)
-            val root = store.instancePath(instanceId)
-            require(root.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "实例目录不存在，无法恢复存档" }
             val saves = savesDirectory(instanceId)
-            val archive = resolveBackup(instanceId, backupId)
-            val name = backupSaveName(backupId) ?: error("备份文件名无法识别，不能自动恢复：$backupId")
-            val target = saveTarget(saves, name)
-            val existed = target.exists(LinkOption.NOFOLLOW_LINKS)
-            require(!existed || overwrite) {
-                "存档「$name」已存在；如需用备份覆盖，请明确确认覆盖"
+            require(saves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(saves)) {
+                "存档目录不存在，无法恢复"
             }
-            require(!isLink(target)) { "目标存档是符号链接或目录联接，未覆盖：$name" }
-            saves.createDirectories()
+            requireSavesNotLocked(instanceId)
+            val archive = resolveBackup(instanceId, backupId)
+            val info = describeBackup(archive) ?: error("备份文件名无法识别，不能自动恢复：$backupId")
+            require(info.restorable) { "备份包里没有 level.dat，无法恢复：${archive.name}" }
+            val base =
+                safeSaveLabel(info.saveName).take(40) +
+                    "（备份 " +
+                    restoreSuffixFormat.format(info.createdAt) +
+                    "）"
+            val name = uniqueSaveName(saves, base, isZip = false)
+            val target = saveTarget(saves, name)
+            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$name" }
             val staging = safePath(saves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
-            var replaced: Path? = null
-            var hold: Path? = null
             try {
-                extractArchive(archive, staging, context)
-                if (existed) {
-                    val directory = backupDirectory(instanceId)
-                    directory.createDirectories()
-                    val (replacedArchive, _) = allocateArchive(directory, "$name$REPLACED_SUFFIX")
-                    replaced = replacedArchive
-                    if (target.isDirectory(LinkOption.NOFOLLOW_LINKS))
-                        packDirectory(target, replacedArchive, context, "备份被替换的存档")
-                    else copyIntoArchive(target, replacedArchive)
-                    // 旧存档先同样本地改名搬到备份目录，成功后连同 replaced.zip 一起收尾。
-                    val holding = safePath(directory, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
-                    Files.move(target, holding)
-                    hold = holding
-                }
+                extractArchive(archive, staging, context, skipSessionLock = true)
+                requireRestorableWorld(staging, "备份包")
                 moveIntoPlace(staging, target)
-                hold?.let { holding ->
-                    runCatching { deleteTree(holding) }
-                        .onFailure {
-                            store.log("旧存档已备份到 ${replaced?.name}，临时副本保留在 $holding", true)
-                        }
-                }
-                hold = null
-                context?.progress(1f, "恢复存档完成 · $name")
-                store.log("已恢复存档：${instance.name} / $name ← ${archive.name}")
-                target
+            } catch (error: Throwable) {
+                runCatching { deleteTree(staging) }
+                throw error
+            }
+            context?.progress(1f, "恢复存档完成 · $name")
+            store.log("已恢复存档：${instance.name} / $name ← ${archive.name}")
+            target
+        }
+
+    /**
+     * 用备份**替换**现有世界（实例设置「恢复时替换原世界」开启时使用），返回新世界路径。
+     *
+     * 步骤：先把当前世界备份到 `backups/` → 解压到 `saves/` 内的临时目录 → 校验 level.dat 与非空区域文件 →
+     * 当前世界改名为 `<世界名>（替换前 HH-mm）` 保留 → 临时目录改名就位。任一步失败都删除临时目录， 并把已改名的旧世界放回原位；原世界数据不会丢。
+     */
+    suspend fun replaceWorldWithBackup(
+        instanceId: String,
+        backupId: String,
+        context: JobContext? = null,
+    ): Path =
+        withContext(Dispatchers.IO) {
+            val instance = store.instance(instanceId)
+            requireGameStopped(instanceId)
+            val saves = savesDirectory(instanceId)
+            require(saves.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(saves)) {
+                "存档目录不存在，无法恢复"
+            }
+            val archive = resolveBackup(instanceId, backupId)
+            val info = describeBackup(archive) ?: error("备份文件名无法识别，不能自动恢复：$backupId")
+            require(info.restorable) { "备份包里没有 level.dat，无法恢复：${archive.name}" }
+            val name = safeSaveLabel(info.saveName)
+            val target = saveTarget(saves, name)
+            require(!isLink(target)) { "目标存档是符号链接或目录联接，未处理：$name" }
+            // 原世界不存在时「替换」没有意义，直接按非破坏性复制走一遍。
+            if (!target.exists(LinkOption.NOFOLLOW_LINKS)) {
+                return@withContext restoreSave(instanceId, backupId, context)
+            }
+            require(target.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "存档「$name」不是目录，未替换" }
+            requireWorldClosed(target)
+            // 1) 先备份当前世界；备份失败时后面一步都还没做，原世界保持原样。
+            context?.progress(0f, "替换前备份存档 · $name")
+            val previous =
+                packSave(instanceId, target, safeSaveLabel(name), context, "替换前备份存档")
+            store.log("替换前已备份当前世界：${instance.name} / $name → ${previous.archive.name}")
+            // 2) 解压到 saves/ 内的临时目录。
+            val staging = safePath(saves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
+            var kept: Path? = null
+            try {
+                extractArchive(archive, staging, context, skipSessionLock = true)
+                requireReplaceableWorld(staging)
+                // 3) 当前世界改名保留，名字带「替换前 HH:mm」，不删除。
+                val keptName =
+                    uniqueSaveName(
+                        saves,
+                        "$name（替换前 ${replaceSuffixFormat.format(Instant.now())}）",
+                        isZip = false,
+                    )
+                val keptPath = saveTarget(saves, keptName)
+                moveIntoPlace(target, keptPath)
+                kept = keptPath
+                // 4) 临时目录改名就位。
+                moveIntoPlace(staging, target)
             } catch (error: Throwable) {
                 val failures = mutableListOf<Throwable>()
-                var holdingRestored = true
                 runCatching { deleteTree(staging) }.onFailure { failures += it }
-                if (hold != null) {
+                val previousWorld = kept
+                if (previousWorld != null) {
                     runCatching {
                         if (target.exists(LinkOption.NOFOLLOW_LINKS)) deleteTree(target)
-                        Files.move(checkNotNull(hold), target)
+                        moveIntoPlace(previousWorld, target)
                     }
                         .onFailure {
                             failures += it
-                            holdingRestored = false
+                            val failure =
+                                IOException(
+                                    "替换存档失败，且旧世界没有放回原位：请手动把 ${previousWorld.fileName} 改回 $name，备份在 ${previous.archive.name}",
+                                    error,
+                                )
+                            failures.forEach { failure.addSuppressed(it) }
+                            throw failure
                         }
                 }
-                // 旧存档已经回到原位时 replaced 备份是多余副本，删掉；没回原位时保留它作为退路。
-                if (holdingRestored)
-                    replaced?.let { path ->
-                        runCatching { path.deleteIfExists() }.onFailure { failures += it }
-                    }
-                if (failures.isNotEmpty() || !holdingRestored) {
-                    val failure =
-                        IOException(
-                            "恢复存档未完成，且回滚失败：请检查 $target，旧存档副本在 $hold，备份在 $replaced",
-                            error,
-                        )
+                if (failures.isNotEmpty()) {
+                    val failure = IOException("替换存档失败，清理未完成：请检查 $saves", error)
                     failures.forEach { failure.addSuppressed(it) }
                     throw failure
                 }
                 throw error
             }
+            context?.progress(1f, "恢复存档完成 · $name")
+            store.log(
+                "已用备份替换存档：${instance.name} / $name ← ${archive.name}；旧世界保留为 ${kept.fileName}"
+            )
+            target
         }
 
     /**
@@ -322,6 +373,70 @@ class SaveManager(private val store: LauncherStore) {
             }
             context?.progress(1f, "复制存档完成 · $finalName")
             store.log("已复制存档：${source.name} / $saveName → ${destination.name} / $finalName")
+            target
+        }
+
+    /**
+     * 导入一个外部存档：`.zip` 或世界文件夹，返回 `saves/` 下的新世界路径。
+     *
+     * ZIP 必须在根目录或唯一一层包装目录里有 `level.dat`（[SaveArchive] 先只读校验，无效输入不写盘），
+     * 解压时跳过 `session.lock` 并剥掉包装目录；文件夹直接复制。目标重名时加序号（`World (2)`）， 从不覆盖现有世界；解压先落 `saves/` 内的隐藏临时目录，失败删除，不留残留。
+     */
+    suspend fun importSave(
+        instanceId: String,
+        source: Path,
+        context: JobContext? = null,
+    ): Path =
+        withContext(Dispatchers.IO) {
+            val instance = store.instance(instanceId)
+            requireGameStopped(instanceId)
+            val saves = savesDirectory(instanceId)
+            require(!isLink(saves)) { "存档目录是符号链接或目录联接，无法导入" }
+            saves.createDirectories()
+            val incoming = source.toAbsolutePath().normalize()
+            require(incoming.exists(LinkOption.NOFOLLOW_LINKS) && !isLink(incoming)) {
+                "找不到要导入的存档：${source.fileName}"
+            }
+            val isDirectory = incoming.isDirectory(LinkOption.NOFOLLOW_LINKS)
+            val prefix: String
+            val base: String
+            if (isDirectory) {
+                val level = incoming.resolve("level.dat")
+                require(level.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLink(level)) {
+                    "文件夹里没有 level.dat，不是有效的世界：${incoming.fileName}"
+                }
+                prefix = ""
+                base = safeSaveLabel(incoming.name)
+            } else {
+                require(incoming.isRegularFile(LinkOption.NOFOLLOW_LINKS) && incoming.name.endsWith(".zip", true)) {
+                    "存档只能导入 .zip 或世界文件夹：${incoming.fileName}"
+                }
+                prefix = SaveArchive.inspect(incoming).prefix
+                base = safeSaveLabel(incoming.name.removeSuffixIgnoreCase(".zip"))
+            }
+            context?.progress(0f, "导入存档 · ${incoming.fileName}")
+            val name = uniqueChildName(saves, base)
+            val target = saveTarget(saves, name)
+            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$name" }
+            val staging = safePath(saves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
+            try {
+                if (isDirectory) copySaveTree(incoming, staging, context)
+                else
+                    extractArchive(
+                        incoming,
+                        staging,
+                        context,
+                        skipSessionLock = true,
+                        stripPrefix = prefix,
+                    )
+                requireRestorableWorld(staging, "导入的存档")
+                moveIntoPlace(staging, target)
+            } catch (error: Throwable) {
+                runCatching { deleteTree(staging) }
+                throw error
+            }
+            context?.progress(1f, "导入存档完成 · $name")
+            store.log("已导入存档：${instance.name} / $name ← ${incoming.fileName}")
             target
         }
 
@@ -415,19 +530,21 @@ class SaveManager(private val store: LauncherStore) {
         }
     }
 
+    /** 备份压缩包 -> 展示信息：优先按原版文件名解析世界名与时间，否则退回文件名与修改时间。 */
     private fun describeBackup(archive: Path): SaveBackupInfo? {
         val id = archive.name.removeSuffixIgnoreCase(".zip")
-        val name = backupSaveName(id) ?: return null
+        require(id.isNotBlank())
+        val parsed = parseBackupId(id)
         return SaveBackupInfo(
             id = id,
-            saveName = name,
+            saveName = parsed?.second ?: id,
             archive = archive,
             createdAt =
-                parseBackupInstant(id)
+                parsed?.first
                     ?: runCatching { archive.getLastModifiedTime().toInstant() }.getOrNull()
                     ?: Instant.EPOCH,
             size = runCatching { archive.fileSize() }.getOrDefault(0L),
-            sha1 = runCatching { digest(archive) }.getOrDefault(""),
+            restorable = zipHasRootLevelDat(archive),
         )
     }
 
@@ -528,37 +645,142 @@ class SaveManager(private val store: LauncherStore) {
         return archive
     }
 
-    /** 备份标识里的存档名称；`.replaced` 后缀表示它是覆盖前自动生成的旧存档备份。 */
-    private fun backupSaveName(backupId: String): String? {
-        val match = saveBackupIdPattern.find(backupId) ?: return null
-        return match.groupValues[1].removeSuffix(REPLACED_SUFFIX).ifBlank { null }
+    /** 原版备份文件名里的 `(创建时间, 世界名)`；不符合命名时返回 null，不因此隐藏备份。 */
+    private fun parseBackupId(id: String): Pair<Instant, String>? {
+        val match = saveBackupIdPattern.matchEntire(id) ?: return null
+        val name = match.groupValues[2].trim()
+        if (name.isBlank()) return null
+        val instant =
+            runCatching {
+                java.time.LocalDateTime.parse(match.groupValues[1], parseBackupStamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+            }
+                .getOrNull() ?: return null
+        return instant to name
     }
 
-    /** 从备份标识的时间戳还原创建时间；名称被手工改坏时返回 null。 */
-    private fun parseBackupInstant(backupId: String): Instant? {
-        // 标识形如 20261027-173000-123-World，前 19 个字符是时间戳。
-        val prefix = backupId.take(19)
-        if (!saveBackupParsePattern.matches(prefix)) return null
-        return runCatching {
-            java.time.LocalDateTime.parse(prefix, parseBackupStamp)
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
-        }
-            .getOrNull()
-    }
-
-    /** 分配一个不冲突的备份文件名与对应时间：同一毫秒内连续备份时把时间戳顺延 1 毫秒。 */
+    /** 分配一个不冲突的原版备份文件名：同一秒内连续备份时把秒数顺延 1 秒。 */
     private fun allocateArchive(directory: Path, label: String): Pair<Path, Instant> {
-        var instant = Instant.now()
-        var archive = directory.resolve("${saveBackupStamp.format(instant)}-$label.zip")
+        var instant = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+        var archive = directory.resolve("${saveBackupStamp.format(instant)}_$label.zip")
         var attempt = 0
         while (archive.exists(LinkOption.NOFOLLOW_LINKS)) {
             attempt++
             require(attempt < 1000) { "备份文件名冲突，请稍后重试" }
-            instant = instant.plusMillis(1)
-            archive = directory.resolve("${saveBackupStamp.format(instant)}-$label.zip")
+            instant = instant.plusSeconds(1)
+            archive = directory.resolve("${saveBackupStamp.format(instant)}_$label.zip")
         }
         return archive to instant
+    }
+
+    /** 把存档打包进 `backups/`：目录按内容打包，`saves/` 里的 `.zip` 直接整包复制。 */
+    private suspend fun packSave(
+        instanceId: String,
+        source: Path,
+        label: String,
+        context: JobContext?,
+        progressLabel: String,
+    ): SaveBackupInfo {
+        val directory = backupDirectory(instanceId)
+        if (directory.exists(LinkOption.NOFOLLOW_LINKS)) requireOrdinaryDirectory(directory)
+        directory.createDirectories()
+        val (archive, createdAt) = allocateArchive(directory, label)
+        if (!source.isDirectory(LinkOption.NOFOLLOW_LINKS)) copyIntoArchive(source, archive)
+        else packDirectory(source, archive, context, progressLabel)
+        return SaveBackupInfo(
+            id = archive.name.removeSuffix(".zip"),
+            saveName = label,
+            archive = archive,
+            createdAt = createdAt,
+            size = archive.fileSize(),
+            restorable = zipHasRootLevelDat(archive),
+        )
+    }
+
+    /** 备份目录必须是普通目录：不能是文件、符号链接或目录联接。 */
+    private fun requireOrdinaryDirectory(path: Path) {
+        val attributes =
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        require(attributes.isDirectory && !attributes.isSymbolicLink && !attributes.isOther) {
+            "备份路径不是普通目录：$path"
+        }
+    }
+
+    /** 压缩包根目录是否有 `level.dat`：决定这个备份能否被还原成一个世界。 */
+    private fun zipHasRootLevelDat(archive: Path): Boolean = runCatching {
+        ZipFile(archive.toFile()).use { zip ->
+            Collections.list(zip.entries()).any { entry ->
+                !entry.isDirectory && entry.name.trimEnd('/').equals("level.dat", true)
+            }
+        }
+    }
+        .getOrDefault(false)
+
+    /** 解压后的世界必须带非空的 `level.dat`，否则不是可恢复的存档。 */
+    private fun requireRestorableWorld(directory: Path, source: String) {
+        val level = directory.resolve("level.dat")
+        require(level.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLink(level)) {
+            "$source 缺少 level.dat，未恢复"
+        }
+        require(level.fileSize() > 0) { "$source 的 level.dat 是空文件，未恢复" }
+        runCatching { Files.newInputStream(level).use { it.read() } }
+            .getOrElse { error("$source 的 level.dat 无法读取，未恢复") }
+    }
+
+    /** 替换前的额外校验：除 level.dat 外还要有非空的区域文件，避免把空壳目录换进世界位置。 */
+    private fun requireReplaceableWorld(directory: Path) {
+        requireRestorableWorld(directory, "备份包")
+        var regions = 0
+        Files.walkFileTree(
+            directory,
+            object : SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(
+                    dir: Path,
+                    attrs: BasicFileAttributes,
+                ): FileVisitResult =
+                    if (dir != directory && (attrs.isOther || attrs.isSymbolicLink))
+                        FileVisitResult.SKIP_SUBTREE
+                    else FileVisitResult.CONTINUE
+
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (
+                        attrs.isRegularFile &&
+                            !attrs.isOther &&
+                            file.name.endsWith(".mca", true) &&
+                            attrs.size() > 0
+                    )
+                        regions++
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, error: IOException): FileVisitResult =
+                    FileVisitResult.CONTINUE
+            },
+        )
+        require(regions > 0) { "备份包没有非空的区域文件，未替换" }
+    }
+
+    /** `saves/` 下有没有世界正被游戏打开：`session.lock` 被占用即视为打开。 */
+    private fun requireSavesNotLocked(instanceId: String) {
+        val saves = savesDirectory(instanceId)
+        if (!saves.isDirectory(LinkOption.NOFOLLOW_LINKS) || isLink(saves)) return
+        val open =
+            runCatching {
+                    saves.listDirectoryEntries()
+                        .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(it) }
+                        .firstOrNull { sessionLockHeld(it) }
+                }
+                .getOrNull()
+        require(open == null) {
+            "世界「${open?.fileName}」正在游戏中打开，请先退出游戏再恢复存档"
+        }
+    }
+
+    private fun requireWorldClosed(world: Path) {
+        require(!sessionLockHeld(world)) {
+            "世界「${world.fileName}」正在游戏中打开，请先退出游戏"
+        }
     }
 
     /** 把世界目录打包成 zip：按相对路径排序，跳过符号链接与越出世界目录的路径，先写 `.part`。 */
@@ -651,8 +873,14 @@ class SaveManager(private val store: LauncherStore) {
         return files.sortedBy { it.first }
     }
 
-    /** 解压到 [destination]：拒绝 `..`、绝对路径、盘符与符号链接条目，体积与条目数受限。 */
-    private suspend fun extractArchive(archive: Path, destination: Path, context: JobContext?) {
+    /** 解压到 [destination]：拒绝 `..`、绝对路径、盘符与符号链接条目，体积与条目数受限；可跳过 `session.lock`。 */
+    private suspend fun extractArchive(
+        archive: Path,
+        destination: Path,
+        context: JobContext?,
+        skipSessionLock: Boolean = false,
+        stripPrefix: String = "",
+    ) {
         destination.createDirectories()
         ArchiveZipFile.builder().setPath(archive).get().use { zip ->
             val entries =
@@ -674,7 +902,20 @@ class SaveManager(private val store: LauncherStore) {
                 require(!entry.isUnixSymlink) { "备份包包含符号链接条目：${entry.name}" }
                 if (entry.size > 0) declared += entry.size
                 require(declared <= MAX_SAVE_BYTES) { "备份包解压后体积超出限制" }
-                val target = safePath(realRoot, name)
+                // 导入的压缩包可能多出一层世界目录：只解压这一层里面的内容。
+                val relative =
+                    if (stripPrefix.isBlank()) name
+                    else {
+                        require(name.startsWith(stripPrefix, ignoreCase = true)) {
+                            "压缩包条目不在世界目录内：${entry.name}"
+                        }
+                        name.substring(stripPrefix.length)
+                    }
+                if (relative.isBlank()) continue
+                // session.lock 是游戏打开世界时持有的锁文件；复制出来只会让新世界一启动就报「世界正在使用」。
+                if (skipSessionLock && relative.substringAfterLast('/').equals("session.lock", true))
+                    continue
+                val target = safePath(realRoot, relative)
                 target.parent.createDirectories()
                 var actual = 0L
                 target.outputStream().use { output ->
@@ -693,7 +934,7 @@ class SaveManager(private val store: LauncherStore) {
                 }
                 written++
                 context?.progress(
-                    written.toFloat() / entries.size,
+                    if (entries.isEmpty()) 1f else written.toFloat() / entries.size,
                     "恢复存档 · 文件 $written/${entries.size}",
                 )
             }
@@ -734,8 +975,10 @@ class SaveManager(private val store: LauncherStore) {
     private fun isPlainName(name: String): Boolean {
         if (name.isBlank() || name.length > 80) return false
         if ('/' in name || '\\' in name || ':' in name) return false
-        return runCatching { safePath(Path.of(System.getProperty("java.io.tmpdir")), name) }
-            .isSuccess
+        if (name.any { it < ' ' }) return false
+        if (name.endsWith('.') || name.endsWith(' ')) return false
+        // 用“当前目录 + 相对名称”做合法路径校验，不依赖 java.io.tmpdir（构建环境可能把它设成非法值）。
+        return runCatching { safePath(Path.of("").toAbsolutePath(), name) }.isSuccess
     }
 
     /** 文件名安全化：去掉各平台的非法字符与结尾的点/空格，限制长度，空名称回退为 `save`。 */
@@ -805,4 +1048,27 @@ class SaveManager(private val store: LauncherStore) {
 
     private fun String.removeSuffixIgnoreCase(suffix: String): String =
         if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this
+}
+
+/**
+ * 世界是否正被游戏打开：对 `session.lock` 尝试独占锁，拿不到就认为被占用。
+ *
+ * 原版游戏打开世界时会独占 `session.lock`；文件存在但不被锁是上次退出的残留，不算占用。 读不到/打不开锁文件时保守地按「占用」处理，宁可不写
+ * `level.dat` 也不冒损坏世界的风险。
+ */
+internal fun sessionLockHeld(world: Path): Boolean {
+    val lock = world.resolve("session.lock")
+    if (!lock.exists(LinkOption.NOFOLLOW_LINKS)) return false
+    if (!lock.isRegularFile(LinkOption.NOFOLLOW_LINKS)) return false
+    return runCatching {
+        FileChannel.open(lock, StandardOpenOption.WRITE).use { channel ->
+            val held = channel.tryLock()
+            if (held == null) true
+            else {
+                runCatching { held.release() }
+                false
+            }
+        }
+    }
+        .getOrElse { true }
 }

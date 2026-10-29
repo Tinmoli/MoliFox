@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责通过 Windows Common Item Dialog 选择文件、目录和保存位置。
 
 package dev.molifox.desktop

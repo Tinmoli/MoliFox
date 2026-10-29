@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责把单文件下载的实际字节与完成状态汇入后台任务。
 
 package dev.molifox.core

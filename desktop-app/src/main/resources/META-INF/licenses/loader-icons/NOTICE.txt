@@ -15,4 +15,3 @@ Minecraft client. Copyright Mojang/Microsoft; https://www.minecraft.net/en-us/us
 Images and trademarks remain their respective owners' property. Used for
 identification; no official affiliation or endorsement is claimed.
 Repository code licenses do not imply a separate trademark license.
-MoliFox's own implementation does not include HMCL or PCL source or artwork.

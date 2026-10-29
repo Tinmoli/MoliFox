@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 验证直达启动参数、真实进入会话、隐藏持久化及服务器列表删除的数据保护。
 
 package dev.molifox.core

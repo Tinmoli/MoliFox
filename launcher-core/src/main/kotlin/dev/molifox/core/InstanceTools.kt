@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责实例复制、整理和文件账本校验。
 
 package dev.molifox.core
@@ -319,11 +322,13 @@ class InstanceTools(private val store: LauncherStore) {
         return relative.startsWith(".fabric/remappedJars") || relative.contains("/remappedJars/")
     }
 
-    /** 账本之外的实例文件里，日志、缓存、存档和启动器自身文件不算「未知文件」。 */
+    /** 账本之外的实例文件里，日志、缓存、存档、原版备份和启动器自身文件不算「未知文件」。 */
     private fun skipForVerify(relative: String): Boolean {
         val first = relative.substringBefore('/')
         if (first == ".molifox-saves-backups") return true
         if (first in tidySkipRoots || first == "saves") return true
+        // 备份与原版游戏共用 `backups/`，不属于整合包账本。
+        if (first == "backups") return true
         if (first.startsWith(".molifox-pack-upgrade-")) return true
         if (relative == PACK_OWNERSHIP_FILE || relative in internalInstanceFiles) return true
         return relative.startsWith(".fabric/remappedJars") || relative.contains("/remappedJars/")

@@ -1,9 +1,16 @@
-// 负责验证存档列表、备份、恢复、复制和回收的行为与边界。
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 负责验证存档列表、原版备份命名、非破坏恢复、替换流程、跨实例复制和回收。
 
 package dev.molifox.core
 
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipEntry
@@ -13,12 +20,18 @@ import kotlin.io.path.*
 import kotlin.random.Random
 import kotlin.test.*
 import kotlinx.coroutines.*
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
 
 class SaveManagerTest {
-    @TempDir lateinit var temporary: Path
+    /** 本次测试的数据目录：项目 `.work/` 下，测试结束（含失败）递归删除。 */
+    private val temporary: Path = workTestDirectory("launcher-core-saves")
+
+    @AfterEach
+    fun cleanUp() {
+        removeTestTree(temporary)
+    }
 
     private fun store() = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
 
@@ -85,16 +98,35 @@ class SaveManagerTest {
         }
     }
 
+    /** 与原版游戏共用的备份目录 `<游戏目录>/backups/`。 */
     private fun backupDirectory(store: LauncherStore, instance: GameInstance): Path =
-        store.instancePath(instance.id).resolve(".molifox-saves-backups")
+        store.instancePath(instance.id).resolve("backups")
 
     private fun backupIds(store: LauncherStore, instance: GameInstance): List<String> =
         SaveManager(store).listBackups(instance.id).map { it.id }
 
-    /** 备份区里本次操作留下的临时文件（`.part` 或未完成的半成品）。 */
+    /** 备份目录里本次操作留下的临时文件（`.part` 或未完成的半成品）。 */
     private fun leftovers(directory: Path): List<String> =
         if (!directory.exists()) emptyList()
         else directory.listDirectoryEntries().map { it.name }.filter { it.endsWith(".part") }
+
+    /** 原版命名：`yyyy-MM-dd_HH-mm-ss_<世界名>.zip`。 */
+    private val vanillaBackupName =
+        Regex("^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_.+\\.zip$")
+
+    /** 在独立线程池里持有一个世界的 `session.lock`，模拟游戏正在打开该世界。 */
+    private suspend fun <T> withSessionLock(world: Path, block: suspend () -> T): T {
+        world.createDirectories()
+        val lockFile = world.resolve("session.lock").apply { writeText("locked") }
+        return FileChannel.open(lockFile, StandardOpenOption.WRITE).use { channel ->
+            val lock = channel.lock()
+            try {
+                block()
+            } finally {
+                runCatching { lock.release() }
+            }
+        }
+    }
 
     // ---- 列出 ----
 
@@ -193,35 +225,42 @@ class SaveManagerTest {
     // ---- 备份 ----
 
     @Test
-    fun `backup writes a readable archive and keeps the original save`() = runBlocking {
-        val store = store()
-        val manager = SaveManager(store)
-        val fixture = instance(store)
-        val root = store.instancePath(fixture.id)
-        world(root, "World")
-        val original = root.resolve("saves/World")
+    fun `backup writes a vanilla named archive into backups and keeps the original save`() =
+        runBlocking {
+            val store = store()
+            val manager = SaveManager(store)
+            val fixture = instance(store)
+            val root = store.instancePath(fixture.id)
+            world(root, "World")
+            val original = root.resolve("saves/World")
 
-        val info = manager.backupSave(fixture.id, "World", JobContext(store, "fixture"))
+            val info = manager.backupSave(fixture.id, "World", JobContext(store, "fixture"))
 
-        assertTrue(info.archive.startsWith(backupDirectory(store, fixture)))
-        assertTrue(info.archive.name.endsWith("-World.zip"))
-        assertEquals("World", info.saveName)
-        assertEquals(info.archive.fileName.toString().removeSuffix(".zip"), info.id)
-        assertEquals(info.archive.fileSize(), info.size)
-        assertEquals(digest(info.archive), info.sha1)
-        assertEquals(
-            mapOf(
-                "level.dat" to "level",
-                "playerdata/player.dat" to "level-player",
-                "region/r.0.0.mca" to "level-region",
-            ),
-            zipEntries(info.archive),
-        )
-        assertTrue(original.isDirectory(), "备份必须保留原存档")
-        assertEquals("level", original.resolve("level.dat").readText())
-        assertEquals(listOf(info.id), backupIds(store, fixture))
-        assertTrue(leftovers(backupDirectory(store, fixture)).isEmpty())
-    }
+            assertTrue(info.archive.startsWith(backupDirectory(store, fixture)))
+            assertTrue(
+                vanillaBackupName.matches(info.archive.name),
+                "备份文件名必须是原版命名：${info.archive.name}",
+            )
+            assertTrue(info.archive.name.endsWith("_World.zip"))
+            assertEquals("World", info.saveName)
+            assertTrue(info.restorable)
+            assertEquals(info.archive.fileName.toString().removeSuffix(".zip"), info.id)
+            assertEquals(info.archive.fileSize(), info.size)
+            assertEquals(
+                mapOf(
+                    "level.dat" to "level",
+                    "playerdata/player.dat" to "level-player",
+                    "region/r.0.0.mca" to "level-region",
+                ),
+                zipEntries(info.archive),
+            )
+            assertTrue(original.isDirectory(), "备份必须保留原存档")
+            assertEquals("level", original.resolve("level.dat").readText())
+            assertEquals(listOf(info.id), backupIds(store, fixture))
+            assertTrue(leftovers(backupDirectory(store, fixture)).isEmpty())
+            // 旧隐藏目录不再被写入，也不会被创建。
+            assertFalse(root.resolve(".molifox-saves-backups").exists())
+        }
 
     @Test
     fun `backup twice in a row does not collide`() = runBlocking {
@@ -308,61 +347,162 @@ class SaveManagerTest {
         assertTrue(world.resolve("level.dat").isRegularFile(), "取消不得改动原存档")
     }
 
-    // ---- 恢复 ----
-
     @Test
-    fun `restore refuses to overwrite an existing save`() = runBlocking {
+    fun `list shows vanilla made backups with world name and time from the file name`() {
         val store = store()
         val manager = SaveManager(store)
         val fixture = instance(store)
-        val root = store.instancePath(fixture.id)
-        world(root, "World")
-        val info = manager.backupSave(fixture.id, "World")
-        write(root.resolve("saves/World/level.dat"), "changed")
+        val directory = backupDirectory(store, fixture)
+        val vanilla = directory.resolve("2026-10-29_18-45-41_喵.zip")
+        writeZip(vanilla, listOf("level.dat" to "vanilla", "region/r.0.0.mca" to "r"))
+        // 原版自己写的备份和启动器写的备份共用 backups/，一起列出。
+        val ours = directory.resolve("2026-10-28_09-00-00_World.zip")
+        writeZip(ours, listOf("level.dat" to "ours"))
 
-        val error =
-            assertFailsWith<IllegalArgumentException> {
-                manager.restoreSave(fixture.id, info.id, overwrite = false)
-            }
+        val backups = manager.listBackups(fixture.id)
 
-        assertTrue(error.message.orEmpty().contains("已存在"))
-        assertEquals("changed", root.resolve("saves/World/level.dat").readText())
-        assertEquals(listOf(info.id), backupIds(store, fixture))
+        assertEquals(
+            listOf("2026-10-29_18-45-41_喵", "2026-10-28_09-00-00_World"),
+            backups.map { it.id },
+        )
+        val cat = backups.first()
+        assertEquals("喵", cat.saveName)
+        assertEquals(
+            LocalDateTime.of(2026, 10, 29, 18, 45, 41)
+                .atZone(ZoneId.systemDefault())
+                .toInstant(),
+            cat.createdAt,
+        )
+        assertEquals(vanilla.fileSize(), cat.size)
+        assertTrue(cat.restorable)
+        assertTrue(backups.last().restorable)
     }
 
     @Test
-    fun `restore with overwrite keeps the replaced save as a backup`() = runBlocking {
+    fun `list keeps a non world zip but marks it as not restorable`() {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val directory = backupDirectory(store, fixture)
+        val notes = directory.resolve("随便起名.zip")
+        writeZip(notes, listOf("a.png" to "png"))
+        val altered = LocalDateTime.of(2026, 10, 1, 8, 30).atZone(ZoneId.systemDefault()).toInstant()
+        Files.setLastModifiedTime(notes, java.nio.file.attribute.FileTime.from(altered))
+
+        val backup = manager.listBackups(fixture.id).single()
+
+        assertEquals("随便起名", backup.saveName)
+        assertFalse(backup.restorable, "没有 level.dat 的压缩包不能提供恢复")
+        assertEquals(altered, backup.createdAt, "不符合原版命名时退回文件修改时间")
+    }
+
+    // ---- 恢复（非破坏性复制） ----
+
+    @Test
+    fun `restore creates a sibling world and leaves the original untouched`() = runBlocking {
         val store = store()
         val manager = SaveManager(store)
         val fixture = instance(store)
         val root = store.instancePath(fixture.id)
         world(root, "World")
         val info = manager.backupSave(fixture.id, "World")
-        write(root.resolve("saves/World/level.dat"), "changed")
-        write(root.resolve("saves/World/extra.txt"), "user content")
+        val original = root.resolve("saves/World")
+        write(original.resolve("level.dat"), "changed")
+        write(original.resolve("extra.txt"), "user content")
 
-        val restored = manager.restoreSave(fixture.id, info.id, overwrite = true)
+        val restored = manager.restoreSave(fixture.id, info.id)
 
+        assertNotEquals(original.fileName, restored.fileName, "恢复必须新建同级目录")
         assertEquals(
-            root.resolve("saves/World").toAbsolutePath().normalize(),
-            restored.toAbsolutePath().normalize(),
+            root.resolve("saves").toAbsolutePath().normalize(),
+            restored.parent.toAbsolutePath().normalize(),
+        )
+        assertTrue(
+            restored.fileName.toString().startsWith("World（备份 "),
+            "恢复目录名应为「世界名（备份 时间）」：${restored.fileName}",
         )
         assertEquals("level", restored.resolve("level.dat").readText())
         assertEquals("level-region", restored.resolve("region/r.0.0.mca").readText())
-        assertFalse(restored.resolve("extra.txt").exists(), "恢复后不应残留被替换的内容")
-        val backups = manager.listBackups(fixture.id)
-        val replaced = backups.single { it.id.endsWith(".replaced") }
-        assertEquals("World", replaced.saveName)
-        assertEquals(
-            mapOf(
-                "level.dat" to "changed",
-                "extra.txt" to "user content",
-                "playerdata/player.dat" to "level-player",
-                "region/r.0.0.mca" to "level-region",
-            ),
-            zipEntries(replaced.archive),
+        // 原世界一个字节都不动。
+        assertEquals("changed", original.resolve("level.dat").readText())
+        assertEquals("user content", original.resolve("extra.txt").readText())
+        assertEquals("level-player", original.resolve("playerdata/player.dat").readText())
+        assertFalse(restored.resolve("extra.txt").exists())
+        assertEquals(1, manager.listBackups(fixture.id).size, "恢复不得新增或删除备份")
+    }
+
+    @Test
+    fun `restore skips session lock`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        world(root, "World")
+        write(root.resolve("saves/World/session.lock"), "stale")
+        val info = manager.backupSave(fixture.id, "World")
+
+        val restored = manager.restoreSave(fixture.id, info.id)
+
+        assertFalse(restored.resolve("session.lock").exists(), "复制出来的世界不得带 session.lock")
+        assertEquals("level", restored.resolve("level.dat").readText())
+    }
+
+    @Test
+    fun `restore adds a numeric suffix when the sibling name is taken`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        world(store.instancePath(fixture.id), "World")
+        val info = manager.backupSave(fixture.id, "World")
+
+        val first = manager.restoreSave(fixture.id, info.id)
+        val second = manager.restoreSave(fixture.id, info.id)
+
+        assertNotEquals(first, second)
+        assertEquals("${first.fileName} 2", second.fileName.toString())
+        assertTrue(first.isDirectory() && second.isDirectory())
+        assertEquals("level", second.resolve("level.dat").readText())
+    }
+
+    @Test
+    fun `restore refuses an archive without level dat`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        root.resolve("saves").createDirectories()
+        writeZip(backupDirectory(store, fixture).resolve("2026-10-29_10-00-00_NoWorld.zip"), listOf("a.png" to "png"))
+
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                manager.restoreSave(fixture.id, "2026-10-29_10-00-00_NoWorld")
+            }
+
+        assertTrue(error.message.orEmpty().contains("level.dat"))
+        assertTrue(manager.listSaves(fixture.id).isEmpty())
+        assertTrue(
+            root.resolve("saves").listDirectoryEntries().none { it.name.startsWith(".molifox-") },
+            "失败后不得留下临时目录",
         )
-        assertEquals(2, backups.size)
+    }
+
+    @Test
+    fun `restore refuses while a world is held by the game`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        world(root, "World")
+        val info = manager.backupSave(fixture.id, "World")
+
+        withSessionLock(root.resolve("saves/World")) {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    manager.restoreSave(fixture.id, info.id)
+                }
+            assertTrue(error.message.orEmpty().contains("正在游戏中打开"))
+        }
+        assertEquals(listOf("World"), manager.listSaves(fixture.id).map { it.name })
     }
 
     @Test
@@ -372,7 +512,7 @@ class SaveManagerTest {
         val fixture = instance(store)
         val root = store.instancePath(fixture.id)
         root.resolve("saves").createDirectories()
-        val archive = backupDirectory(store, fixture).resolve("20261027-120000-000-Evil.zip")
+        val archive = backupDirectory(store, fixture).resolve("2026-10-27_12-00-00_Evil.zip")
         writeZip(
             archive,
             listOf("level.dat" to "evil", "../escape.txt" to "escaped", "region/r.0.0.mca" to "r"),
@@ -380,7 +520,7 @@ class SaveManagerTest {
 
         val error =
             assertFailsWith<IllegalArgumentException> {
-                manager.restoreSave(fixture.id, "20261027-120000-000-Evil")
+                manager.restoreSave(fixture.id, "2026-10-27_12-00-00_Evil")
             }
 
         assertTrue(error.message.orEmpty().contains("向上跳转"))
@@ -391,29 +531,6 @@ class SaveManagerTest {
             root.resolve("saves").listDirectoryEntries().none { it.name.startsWith(".molifox-") },
             "失败后不得留下临时目录",
         )
-    }
-
-    @Test
-    fun `restore rolls back when the archive is damaged`() = runBlocking {
-        val store = store()
-        val manager = SaveManager(store)
-        val fixture = instance(store)
-        val root = store.instancePath(fixture.id)
-        world(root, "World")
-        val info = manager.backupSave(fixture.id, "World")
-        write(root.resolve("saves/World/level.dat"), "changed")
-        info.archive.writeBytes("not a zip anymore".toByteArray())
-
-        assertFailsWith<Exception> { manager.restoreSave(fixture.id, info.id, overwrite = true) }
-
-        val restored = root.resolve("saves/World")
-        assertEquals("changed", restored.resolve("level.dat").readText(), "失败后原存档必须完好")
-        assertEquals("level-player", restored.resolve("playerdata/player.dat").readText())
-        assertTrue(
-            root.resolve("saves").listDirectoryEntries().none { it.name.startsWith(".molifox-") },
-            "失败后不得留下半解压目录",
-        )
-        assertEquals(listOf(info.id), backupIds(store, fixture), "回滚不得留下 replaced 备份")
     }
 
     @Test
@@ -436,24 +553,108 @@ class SaveManagerTest {
         assertTrue(entries.keys.contains("level.dat"))
     }
 
+    // ---- 替换流程 ----
+
     @Test
-    fun `restore extracts a zip backup as a world directory`() = runBlocking {
+    fun `replace keeps the old world renamed and puts the backup in place`() = runBlocking {
         val store = store()
         val manager = SaveManager(store)
         val fixture = instance(store)
         val root = store.instancePath(fixture.id)
-        writeZip(
-            root.resolve("saves/Legacy.zip"),
-            listOf("level.dat" to "legacy", "region/r.0.0.mca" to "r"),
+        world(root, "World", content = "level")
+        val info = manager.backupSave(fixture.id, "World")
+        write(root.resolve("saves/World/level.dat"), "changed")
+
+        val replaced = manager.replaceWorldWithBackup(fixture.id, info.id)
+
+        assertEquals(
+            root.resolve("saves/World").toAbsolutePath().normalize(),
+            replaced.toAbsolutePath().normalize(),
         )
-        val info = manager.backupSave(fixture.id, "Legacy.zip")
+        assertEquals("level", replaced.resolve("level.dat").readText())
+        assertEquals("level-region", replaced.resolve("region/r.0.0.mca").readText())
+        val kept = root.resolve("saves").listDirectoryEntries().single {
+            it.name.startsWith("World（替换前 ")
+        }
+        assertTrue(kept.isDirectory())
+        assertEquals("changed", kept.resolve("level.dat").readText(), "旧世界必须保留")
+        // 替换前会把当时的世界再备份一份。
+        val backups = manager.listBackups(fixture.id)
+        assertTrue(backups.size >= 2)
+        assertTrue(backups.any { it.restorable })
+        assertTrue(
+            root.resolve("saves").listDirectoryEntries().none { it.name.startsWith(".molifox-") },
+            "替换成功后不得留下临时目录",
+        )
+    }
 
-        val restored = manager.restoreSave(fixture.id, info.id)
+    @Test
+    fun `replace rolls back without touching the world when the archive is damaged`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        world(root, "World")
+        val info = manager.backupSave(fixture.id, "World")
+        write(root.resolve("saves/World/level.dat"), "changed")
+        info.archive.writeBytes("not a zip anymore".toByteArray())
 
-        assertTrue(restored.isDirectory())
-        assertEquals("Legacy", restored.fileName.toString())
-        assertEquals("legacy", restored.resolve("level.dat").readText())
-        assertEquals("r", restored.resolve("region/r.0.0.mca").readText())
+        assertFailsWith<Exception> { manager.replaceWorldWithBackup(fixture.id, info.id) }
+
+        assertEquals("changed", root.resolve("saves/World/level.dat").readText(), "失败后原存档必须完好")
+        assertEquals("level-player", root.resolve("saves/World/playerdata/player.dat").readText())
+        assertTrue(
+            root.resolve("saves").listDirectoryEntries().none { it.name.startsWith(".molifox-") },
+            "失败后不得留下临时目录",
+        )
+        assertTrue(
+            root.resolve("saves").listDirectoryEntries().none { it.name.contains("（替换前") },
+            "失败后不得改名旧世界",
+        )
+    }
+
+    @Test
+    fun `replace rejects a backup without non empty region files`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        world(root, "World")
+        writeZip(
+            backupDirectory(store, fixture).resolve("2026-10-29_11-00-00_World.zip"),
+            listOf("level.dat" to "level", "region/r.0.0.mca" to ""),
+        )
+
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                manager.replaceWorldWithBackup(fixture.id, "2026-10-29_11-00-00_World")
+            }
+
+        assertTrue(error.message.orEmpty().contains("区域文件"))
+        assertEquals("level", root.resolve("saves/World/level.dat").readText())
+        assertTrue(
+            root.resolve("saves").listDirectoryEntries().none { it.name.contains("（替换前") },
+            "校验失败不得改名旧世界",
+        )
+    }
+
+    @Test
+    fun `replace refuses while the world is held by the game`() = runBlocking {
+        val store = store()
+        val manager = SaveManager(store)
+        val fixture = instance(store)
+        val root = store.instancePath(fixture.id)
+        world(root, "World")
+        val info = manager.backupSave(fixture.id, "World")
+
+        withSessionLock(root.resolve("saves/World")) {
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    manager.replaceWorldWithBackup(fixture.id, info.id)
+                }
+            assertTrue(error.message.orEmpty().contains("正在游戏中打开"))
+        }
+        assertEquals("level", root.resolve("saves/World/level.dat").readText())
     }
 
     // ---- 跨实例复制 ----
@@ -518,10 +719,21 @@ class SaveManagerTest {
         val copied = manager.copySaveToInstance(source.id, "World", external.id)
         assertTrue(copied.resolve("level.dat").isRegularFile())
 
+        // 隔离开启的源 → 共用游戏目录的目标：两者是不同物理目录，允许复制，存档落在游戏根的 saves。
         val shared = instance(store, "Shared", isolate = false)
+        val intoShared = manager.copySaveToInstance(source.id, "World", shared.id)
+        assertEquals(
+            store.minecraftRoot.resolve("saves").toAbsolutePath().normalize(),
+            intoShared.parent.toAbsolutePath().normalize(),
+        )
+
+        // 两个共用实例实际指向同一个存档目录，必须拒绝。
+        val sharedSource = instance(store, "Shared Source", isolate = false)
+        world(store.instancePath(sharedSource.id), "World")
+        val sharedTarget = instance(store, "Shared Target", isolate = false)
         val sharedError =
             assertFailsWith<IllegalArgumentException> {
-                manager.copySaveToInstance(source.id, "World", shared.id)
+                manager.copySaveToInstance(sharedSource.id, "World", sharedTarget.id)
             }
         assertTrue(sharedError.message.orEmpty().contains("同一个存档目录"))
 
@@ -560,7 +772,7 @@ class SaveManagerTest {
         world(store.instancePath(fixture.id), "World")
         val info = manager.backupSave(fixture.id, "World")
 
-        // 测试 JVM 通常是无头的，回收站会退回到启动器数据目录；把它限制在 @TempDir 内。
+        // 测试 JVM 通常是无头的，回收站会退回到启动器数据目录；把它限制在临时目录内。
         val previous = System.getProperty("molifox.data.dir")
         System.setProperty("molifox.data.dir", temporary.resolve("platform").toString())
         val deleted =

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证启动器个性化与页面偏好的保存的行为与边界。
 
 package dev.molifox.core
@@ -16,9 +19,21 @@ class LauncherPreferencesTest {
     @Test
     fun `instance launch preferences persist atomically and reject invalid overrides`() {
         LauncherController(dataDirectory = directory).use { controller ->
-            val instance =
-                GameInstance(name = "Fixture", gameVersion = "fixture", versionId = "fixture")
-            controller.store.mutate { it.copy(instances = listOf(instance)) }
+            // 新架构下实例来自 versions/ 扫描；先放一个最小可识别版本。
+            val folder =
+                controller.store.minecraftRoot.resolve("versions/Fixture").createDirectories()
+            writeJson(
+                folder.resolve("Fixture.json"),
+                mapOf(
+                    "id" to "Fixture",
+                    "type" to "release",
+                    "mainClass" to "fixture.Main",
+                    "libraries" to emptyList<Any>(),
+                ),
+            )
+            folder.resolve("Fixture.jar").writeBytes(byteArrayOf())
+            controller.store.refreshInstances()
+            val instance = controller.store.instance("Fixture")
             val configured =
                 instance.copy(
                     memoryMb = 2048,
@@ -41,8 +56,18 @@ class LauncherPreferencesTest {
                     pages = PagePreferences(versions = VersionsPagePreferences(view = "grid")),
                 )
             )
-            val loaded = LauncherStore(controller.platform, directory).data
-            assertEquals(configured.copy(favorite = true), loaded.instances.single())
+            val reloadedStore = LauncherStore(controller.platform, directory)
+            val loaded = reloadedStore.data
+            val reloaded = reloadedStore.instance("Fixture")
+            assertEquals(2048, reloaded.memoryMb)
+            assertEquals(768, reloaded.initialMemoryMb)
+            assertEquals(1600, reloaded.width)
+            assertEquals(900, reloaded.height)
+            assertEquals("fullscreen", reloaded.windowMode)
+            assertEquals("-Dfixture.option=value", reloaded.extraJvmArgs)
+            assertEquals("A personal version", reloaded.notes)
+            assertTrue(reloaded.favorite)
+            assertEquals(configured.name, reloaded.name)
             assertEquals("dark", loaded.settings.themeMode)
             assertEquals(1.1f, loaded.settings.uiScale)
             assertEquals(.78f, loaded.settings.surfaceOpacity)

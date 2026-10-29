@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 使用本地下载服务验证原版与整合包的真实安装落点和提交时目录快照。
 
 package dev.molifox.core
@@ -103,11 +106,13 @@ class SelectedDirectoryInstallTest {
                     val vanilla = installer.createInstance(InstallRequest("Vanilla", "1.20.1"))
                     installer.install(vanilla.id, context)
                     assertTrue(store.instance(vanilla.id).installed)
+                    // 原版安装同样只发布一个目录：配置与 JAR 都在实例目录里，基础版本目录被回收。
                     assertContentEquals(
                         jar,
-                        selected.resolve("versions/1.20.1/1.20.1.jar").readBytes(),
+                        selected.resolve("versions/Vanilla/Vanilla.jar").readBytes(),
                     )
                     assertTrue(selected.resolve("versions/Vanilla/Vanilla.json").isRegularFile())
+                    assertFalse(selected.resolve("versions/1.20.1").exists())
                     directories.add(later)
                     val index =
                         gson.toJson(

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责接收窗口上的整合包文件拖放，并复用现有预览与安装入口。
 
 package dev.molifox.desktop

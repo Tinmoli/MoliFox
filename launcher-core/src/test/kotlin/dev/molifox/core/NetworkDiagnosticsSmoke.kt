@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 只读检查公开更新与游戏元数据服务，记录直连和系统代理下的真实 TLS 结果。
 
 package dev.molifox.core

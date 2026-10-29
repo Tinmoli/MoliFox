@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责按任务使用的资源排队，让不冲突的实例操作并行执行。
 
 package dev.molifox.core

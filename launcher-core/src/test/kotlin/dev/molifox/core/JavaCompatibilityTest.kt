@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证游戏及加载器与 Java 版本的兼容判断的行为与边界。
 
 package dev.molifox.core

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 验证默认目录按真实路径唯一登记，当前选择决定新安装实例的持久落点。
 
 package dev.molifox.core

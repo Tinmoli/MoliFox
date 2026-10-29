@@ -1,15 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责实例设置、组件、模组、存档和原理图页面。
 
 package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.*
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,21 +25,35 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.awtTransferable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.*
+import java.awt.datatransfer.DataFlavor
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.*
@@ -42,7 +61,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
 import org.jetbrains.skia.Image as SkiaImage
 
-/** 实例详情页签：左侧二级列表的 5 个页签。 */
+/** 实例详情页签：左侧二级列表的 7 个页签。 */
 private data class InstanceTab(val title: String, val icon: ImageVector)
 
 private val instanceTabs =
@@ -50,11 +69,100 @@ private val instanceTabs =
         InstanceTab("设置", Icons.Outlined.Tune),
         InstanceTab("模组", Icons.Outlined.Extension),
         InstanceTab("资源包", Icons.Outlined.Palette),
+        InstanceTab("光影", Icons.Outlined.AutoAwesome),
         InstanceTab("存档", Icons.Outlined.Save),
+        InstanceTab("数据包", Icons.Outlined.FolderZip),
         InstanceTab("原理图", Icons.Outlined.Architecture),
     )
 
-/** 实例详情：页头 + 左侧页签栏与右侧内容区，页签为设置 / 模组 / 资源包 / 存档 / 原理图。 */
+/**
+ * 本次进入实例详情页时的更新检查结果：模组一份，资源包与光影一份（同一次检查）。
+ *
+ * 所有页签共用同一份结果，切换页签不会重复检查；离开页面时 [cancelAll] 取消还没结束的请求。
+ * 打开页面时自动检查一次；左栏「检查更新」[checkAll] 会同时重查模组、资源包与光影三部分。
+ */
+private class InstanceUpdateCenter(
+    private val controller: LauncherController,
+    private val instanceId: String,
+) {
+    var mods by mutableStateOf<ModUpdateReport?>(null)
+    var modsChecking by mutableStateOf(false)
+    var modsError by mutableStateOf<String?>(null)
+    var packs by mutableStateOf<PackUpdateReport?>(null)
+    var packsChecking by mutableStateOf(false)
+    var packsError by mutableStateOf<String?>(null)
+    private var modsJob: Job? = null
+    private var packsJob: Job? = null
+
+    /** 是否有任一检查在进行中：左栏进度与按钮状态都看这个值。 */
+    val checking: Boolean
+        get() = modsChecking || packsChecking
+
+    /** 打开页面时自动检查一次：模组与资源包/光影并行，互不阻塞；[refresh] 为 true 时强制重查三部分。 */
+    fun checkAll(scope: CoroutineScope, refresh: Boolean = false) {
+        if (refresh || mods == null) checkMods(scope)
+        if (refresh || packs == null) checkPacks(scope)
+    }
+
+    fun checkMods(scope: CoroutineScope) {
+        modsJob?.cancel()
+        modsJob = scope.launch {
+            modsChecking = true
+            modsError = null
+            try {
+                mods =
+                    withContext(Dispatchers.IO) {
+                        controller.content.modUpdates.check(instanceId)
+                    }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                modsError = failure.message ?: "检查模组更新失败"
+            } finally {
+                if (modsJob == coroutineContext[Job]) modsChecking = false
+            }
+        }
+    }
+
+    fun checkPacks(scope: CoroutineScope) {
+        packsJob?.cancel()
+        packsJob = scope.launch {
+            packsChecking = true
+            packsError = null
+            try {
+                packs =
+                    withContext(Dispatchers.IO) {
+                        controller.content.packUpdates.check(instanceId)
+                    }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                packsError = failure.message ?: "检查资源包与光影更新失败"
+            } finally {
+                if (packsJob == coroutineContext[Job]) packsChecking = false
+            }
+        }
+    }
+
+    fun cancelMods() {
+        modsJob?.cancel()
+        modsJob = null
+        modsChecking = false
+    }
+
+    fun cancelPacks() {
+        packsJob?.cancel()
+        packsJob = null
+        packsChecking = false
+    }
+
+    fun cancelAll() {
+        cancelMods()
+        cancelPacks()
+    }
+}
+
+/** 实例详情：页头 + 左侧页签栏与右侧内容区，页签为设置 / 模组 / 资源包 / 光影 / 存档 / 数据包 / 原理图。 */
 @Composable
 fun ColumnScope.InstanceDetailsPage(
     instance: GameInstance,
@@ -63,25 +171,37 @@ fun ColumnScope.InstanceDetailsPage(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     navigate: (Page) -> Unit,
-    onCopyInstance: (GameInstance) -> Unit = {},
     onTidyInstance: (GameInstance) -> Unit = {},
-    onVerifyInstance: (GameInstance) -> Unit = {},
-    onUpgradePack: (GameInstance) -> Unit = {},
     onMoveInstance: (GameInstance) -> Unit = {},
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var draft by remember(instance.id) { mutableStateOf(instance) }
     var syncedInstance by remember(instance.id) { mutableStateOf(instance) }
-    var memory by remember(instance.id) { mutableStateOf(instance.memoryMb.toString()) }
+    // 内存改为与设置页同款的滑块；只有「手动分配」策略才保存显式值，其它策略存 0（跟随全局）。
+    var memoryMb by remember(instance.id) {
+        mutableIntStateOf(
+            if (instanceMemoryPolicy(instance) == InstanceMemoryPolicy.Manual) instance.memoryMb
+            else 0
+        )
+    }
     var initial by remember(instance.id) { mutableStateOf(instance.initialMemoryMb.toString()) }
-    var width by remember(instance.id) { mutableStateOf(instance.width.toString()) }
-    var height by remember(instance.id) { mutableStateOf(instance.height.toString()) }
+    // 窗口宽高留空表示跟随全局：0 不显示成字面 0，输入 0 也归一化成空。
+    var width by remember(instance.id) { mutableStateOf(instanceLaunchNumberField(instance.width)) }
+    var height by remember(instance.id) { mutableStateOf(instanceLaunchNumberField(instance.height)) }
     var foldersOpen by remember { mutableStateOf(false) }
-    var manageOpen by remember { mutableStateOf(false) }
+    // 「管理」每次进入页面都从收起开始，不持久化展开状态。
+    var manageOpen by remember(instance.id) { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var exportingMrpack by remember { mutableStateOf(false) }
     var editingIcon by remember(instance.id) { mutableStateOf(false) }
     var screenshotGallery by remember(instance.id) { mutableStateOf(false) }
+    // 每次进入页面自动检查一次模组、资源包与光影更新；离开页面取消未完成的请求。
+    val updateCenter = remember(instance.id) { InstanceUpdateCenter(actions.controller, instance.id) }
+    val updateScope = rememberCoroutineScope()
+    LaunchedEffect(instance.id) { updateCenter.checkAll(updateScope) }
+    DisposableEffect(instance.id) {
+        onDispose { updateCenter.cancelAll() }
+    }
     if (screenshotGallery) ScreenshotGallery(instance, actions) { screenshotGallery = false }
     if (editingIcon) InstanceIconDialog(instance, actions) { editingIcon = false }
     LaunchedEffect(instance) {
@@ -98,60 +218,197 @@ fun ColumnScope.InstanceDetailsPage(
         syncedInstance = instance
     }
     var advancedValid by remember { mutableStateOf(true) }
-    val effectiveMemory =
-        if (
-            draft.autoMemory == true ||
-                (draft.autoMemory == null && memory == "0" && state.data.settings.autoMemory)
+    // 实例页的 Java 单选列表与设置页共用 JavaService 检测结果；只在「设置」页签打开时检测。
+    var javaRuntimes by remember(instance.id) { mutableStateOf<List<JavaRuntime>>(emptyList()) }
+    var javaDetecting by remember(instance.id) { mutableStateOf(false) }
+    // Java 选择改为紧凑行 + 底部抽屉；选择后立即写入实例配置，启动时直接生效。
+    var javaSheetOpen by remember(instance.id) { mutableStateOf(false) }
+    var javaSaveError by remember(instance.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(tab, instance.id) {
+        if (tab != 0) return@LaunchedEffect
+        javaDetecting = true
+        try {
+            javaRuntimes =
+                withContext(Dispatchers.IO) {
+                    runCatching { actions.controller.java.detect() }.getOrDefault(emptyList())
+                }
+        } finally {
+            javaDetecting = false
+        }
+    }
+    val memoryPolicy = instanceMemoryPolicy(draft)
+    val memoryLimit = instanceMemoryLimitMb(actions.controller.platform.totalMemoryMb)
+    // 只有手动分配会持久化显式值；继承全局/自动分配一律按「没有显式值」解析。
+    val savedMemoryMb = if (memoryPolicy == InstanceMemoryPolicy.Manual) memoryMb else 0
+    val memoryAllocation =
+        effectiveGameMemory(
+            state.data.settings,
+            draft.copy(memoryMb = savedMemoryMb),
+            actions.controller.platform.totalMemoryMb,
+            actions.controller.platform.availableMemoryMb,
+            actions.controller.platform.architecture,
         )
-            maxOf(512, actions.controller.platform.totalMemoryMb - 512)
-        else memory.toIntOrNull()?.takeIf { it > 0 } ?: state.data.settings.memoryMb
-    val valid =
-        advancedValid &&
-            draft.name.isNotBlank() &&
-            (memory.toIntOrNull() ?: -1).let {
-                it == 0 || it in 512..maxOf(512, actions.controller.platform.totalMemoryMb - 512)
-            } &&
-            (initial.toIntOrNull() ?: -1).let { it == 0 || it in 128..effectiveMemory } &&
-            (width.toIntOrNull() ?: -1).let { it == 0 || it in 640..7680 } &&
-            (height.toIntOrNull() ?: -1).let { it == 0 || it in 480..4320 }
-    val dirty =
-        draft != instance ||
-            memory != instance.memoryMb.toString() ||
-            initial != instance.initialMemoryMb.toString() ||
-            width != instance.width.toString() ||
-            height != instance.height.toString()
-    val launchEnabled = instance.installed && !actions.controller.isInstanceBusy(instance.id)
-    // 实例工具与整合包升级的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
+    val effectiveMemory = memoryAllocation.maximumMb
+    val widthValue = parseInstanceLaunchNumberInput(width)
+    val heightValue = parseInstanceLaunchNumberInput(height)
+    // 自动保存：设置页的任何改动立即写盘。名称单独在离开输入框时提交，避免每敲一个字就重命名目录。
+    // 非法值一律不写盘：对应输入框失焦时回退到上一次有效值，并保留内联错误。
+    var saveError by remember(instance.id) { mutableStateOf<String?>(null) }
+    var nameNotice by remember(instance.id) { mutableStateOf<String?>(null) }
+    // 名称提交（可能移动目录）进行中：期间不发起自动保存，避免把旧名称写回记录。
+    var nameCommitting by remember(instance.id) { mutableStateOf(false) }
+    val settingsScope = rememberCoroutineScope()
+    val instanceBusy = actions.controller.isInstanceBusy(instance.id)
+    // 只有真的改名才会移动目录，因此只在名称变化时校验目录名；旧显示名里的特殊字符不影响其它设置。
+    val nameError =
+        if (draft.name.trim() != instance.name)
+            runCatching { validateInstanceDirectoryName(draft.name.trim()) }
+                .exceptionOrNull()
+                ?.message
+        else null
+    // 实例启动设置与启动路径共用同一套校验；非法值给出内联错误且不会被写入。
+    val launchError: String? =
+        runCatching {
+                validateInstanceLaunchOptions(
+                    memoryMb = savedMemoryMb,
+                    width = widthValue ?: -1,
+                    height = heightValue ?: -1,
+                    windowMode = draft.windowMode,
+                    extraJvmArgs = draft.extraJvmArgs,
+                    extraGameArgs = draft.extraGameArgs,
+                    totalMemoryMb = actions.controller.platform.totalMemoryMb,
+                )
+            }
+            .exceptionOrNull()
+            ?.message
+    // 单项校验：失焦时只回退自己这一格，不误伤其它已经改好的字段。
+    fun invalidWindowField(value: Int?): Boolean =
+        value == null ||
+            (value != 0 && value !in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE)
+    fun extraArgumentError(jvm: String, game: String): String? =
+        runCatching {
+                validateInstanceLaunchOptions(
+                    memoryMb = 0,
+                    width = 0,
+                    height = 0,
+                    windowMode = "inherit",
+                    extraJvmArgs = jvm,
+                    extraGameArgs = game,
+                )
+            }
+            .exceptionOrNull()
+            ?.message
+    // 名称是目录名，只有离开输入框时才提交；其余字段组成自动保存快照。
+    val editSnapshot =
+        draft.copy(
+            name = instance.name,
+            memoryMb = savedMemoryMb,
+            initialMemoryMb = initial.toIntOrNull() ?: 0,
+            width = widthValue ?: 0,
+            height = heightValue ?: 0,
+        )
+    LaunchedEffect(instance.id, editSnapshot, instanceBusy, nameCommitting) {
+        if (instanceBusy || nameCommitting || editSnapshot == instance) return@LaunchedEffect
+        // 连续输入合并成一次写盘；核心会再次校验，非法值不会落盘。
+        delay(300)
+        if (nameCommitting) return@LaunchedEffect
+        val failure =
+            runCatching {
+                    withContext(Dispatchers.IO) {
+                        // 名称以记录当前值为准：重命名进行中也不会把旧名称写回去。
+                        val currentName = actions.controller.store.instance(instance.id).name
+                        actions.controller.saveInstanceConfiguration(
+                            editSnapshot.copy(name = currentName),
+                            notify = false,
+                        )
+                    }
+                }
+                .exceptionOrNull()
+                ?.message
+        saveError = failure
+    }
+    // 离开页面时补写还没到防抖时间的有效改动；非法值仍由核心拒绝，不会落盘。
+    val latestEdit by rememberUpdatedState(editSnapshot)
+    val latestInstance by rememberUpdatedState(instance)
+    DisposableEffect(instance.id) {
+        onDispose {
+            val snapshot = latestEdit
+            if (!actions.controller.isInstanceBusy(snapshot.id) && snapshot != latestInstance) {
+                actions.controller.scope.launch {
+                    runCatching {
+                        val currentName = actions.controller.store.instance(snapshot.id).name
+                        actions.controller.saveInstanceConfiguration(
+                            snapshot.copy(name = currentName),
+                            notify = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    // 提交名称：只有真的变化才调用 renameInstance，失败或非法时回退到目录当前名称。
+    fun commitName() {
+        if (nameCommitting) return
+        val trimmed = draft.name.trim()
+        if (trimmed == instance.name) {
+            if (draft.name != trimmed) draft = draft.copy(name = trimmed)
+            nameNotice = null
+            return
+        }
+        val problem =
+            runCatching { validateInstanceDirectoryName(trimmed) }.exceptionOrNull()?.message
+        if (problem != null || instanceBusy) {
+            draft = draft.copy(name = instance.name)
+            nameNotice =
+                if (problem != null) "名称无效，已恢复为「${instance.name}」：$problem"
+                else "请等待当前任务结束后再重命名。"
+            return
+        }
+        val candidate = editSnapshot.copy(name = trimmed)
+        nameCommitting = true
+        settingsScope.launch {
+            var renamed = false
+            val failure =
+                runCatching {
+                        withContext(Dispatchers.IO) {
+                            actions.controller.renameInstance(instance.id, trimmed)
+                            renamed = true
+                            actions.controller.saveInstanceConfiguration(candidate, notify = false)
+                        }
+                    }
+                    .exceptionOrNull()
+                    ?.message
+            withContext(Dispatchers.Swing) {
+                nameCommitting = false
+                if (failure == null) {
+                    nameNotice = null
+                    saveError = null
+                } else {
+                    nameNotice =
+                        if (renamed) "名称已改为「$trimmed」，但其它设置未能保存：$failure"
+                        else "重命名失败，已恢复为「${instance.name}」：$failure"
+                    if (!renamed) draft = draft.copy(name = instance.name)
+                    saveError = null
+                }
+            }
+        }
+    }
+    // 离开「设置」页签时，把仍停留在名称输入框里的有效改名提交掉。
+    LaunchedEffect(tab) {
+        if (tab != 0) commitName()
+    }
+    // 实例工具的可用性：共用游戏目录、外部目录由原目录维护，不提供这些入口。
     val isolated = actions.controller.store.isolated(instance)
-    val canCopyInstance =
-        isolated && !instance.externalProfile && !actions.controller.isInstanceBusy(instance.id)
-    val canMaintainInstance = isolated && !actions.controller.isInstanceBusy(instance.id)
-    val canUpgradePack =
-        instance.packFile.isNotBlank() &&
-            instance.installed &&
-            !actions.controller.isInstanceBusy(instance.id)
+    val canMaintainInstance = isolated && !instanceBusy
     // 跨游戏目录移动：外部目录由原启动器维护，共用游戏目录没有独立目录可搬。
-    val canMoveInstance =
-        isolated && !instance.externalProfile && !actions.controller.isInstanceBusy(instance.id)
+    val canMoveInstance = isolated && !instance.externalProfile && !instanceBusy
     val moveBlockedNote =
         when {
             instance.externalProfile -> "外部游戏目录的实例由原启动器维护，不能移动"
-            !isolated -> "共用游戏目录没有独立目录，请先启用版本隔离"
-            actions.controller.isInstanceBusy(instance.id) -> "请等待当前任务结束"
+            !isolated -> "共用游戏目录没有独立目录，请先把此实例设为「版本隔离」"
+            instanceBusy -> "请等待当前任务结束"
             else -> ""
         }
-    val launch: () -> Unit = {
-        if (state.data.activeAccountId == null) {
-            actions.controller.store.notify("请先添加一个游戏账户")
-            navigate(Page.Home)
-        } else {
-            actions.run {
-                actions.controller.selectInstance(instance.id)
-                actions.controller.launch(instance.id)
-            }
-            actions.taskQueued()
-        }
-    }
     // ---------------- 页头 ----------------
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // 返回目标由导航状态决定（实例列表或开始页的版本设置），所以标签保持中性。
@@ -182,7 +439,13 @@ fun ColumnScope.InstanceDetailsPage(
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 Spacer(Modifier.width(8.dp))
-                Tag(if (instance.installed) "已安装" else "需要修复")
+                Tag(
+                    when {
+                        instance.broken -> "无法识别"
+                        instance.installed -> "已安装"
+                        else -> "需要修复"
+                    }
+                )
             }
             Text(
                 "Minecraft " +
@@ -198,185 +461,25 @@ fun ColumnScope.InstanceDetailsPage(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (dirty)
-            Text(
-                if (valid) "有未保存的修改" else "设置未通过校验",
-                fontSize = 11.sp,
-                color =
-                    if (valid) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.error,
-            )
-        Spacer(Modifier.width(10.dp))
-        SecondaryButton(
-            {
-                actions.run {
-                    actions.controller.saveInstanceConfiguration(
-                        draft.copy(
-                            memoryMb = memory.toInt(),
-                            initialMemoryMb = initial.toInt(),
-                            width = width.toInt(),
-                            height = height.toInt(),
-                        )
-                    )
-                    withContext(Dispatchers.Swing) { onBack() }
-                }
-            },
-            enabled = valid && !actions.controller.isInstanceBusy(instance.id) && dirty,
-        ) {
-            Icon(Icons.Outlined.Check, null, Modifier.size(15.dp))
-            Spacer(Modifier.width(5.dp))
-            Text("保存设置", fontSize = 12.sp)
-        }
-        Spacer(Modifier.width(8.dp))
-        PrimaryButton("启动", Icons.Outlined.PlayArrow, launchEnabled, launch)
-        Spacer(Modifier.width(4.dp))
-        var menu by remember { mutableStateOf(false) }
-        Box {
-            HeaderIconButton(Icons.Outlined.MoreHoriz, "更多操作") { menu = true }
-            DropdownMenu(menu, { menu = false }, Modifier.heightIn(max = 380.dp)) {
-                DropdownMenuItem(
-                    { Text("查看启动参数", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        actions.previewLaunch(instance.id)
-                    },
-                    enabled = instance.installed && !actions.controller.isInstanceBusy(instance.id),
-                )
-                DropdownMenuItem(
-                    { Text("打开游戏目录", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        actions.run { actions.controller.openFolder(instance.id) }
-                    },
-                )
-                DropdownMenuItem(
-                    { Text("导出整合包…", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        exportingMrpack = true
-                    },
-                    enabled = !actions.controller.isInstanceBusy(instance.id),
-                )
-                DropdownMenuItem(
-                    { Text("更换实例图标…", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        editingIcon = true
-                    },
-                    enabled = !actions.controller.isInstanceBusy(instance.id),
-                )
-                DropdownMenuItem(
-                    { Text("管理游戏截图…", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        screenshotGallery = true
-                    },
-                )
-                DropdownMenuItem(
-                    { Text("完整实例备份 ZIP…", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        actions.exportInstance(instance)
-                    },
-                    enabled = instance.installed && !actions.controller.isInstanceBusy(instance.id),
-                )
-                DropdownMenuItem(
-                    { Text("复制实例", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        onCopyInstance(instance)
-                    },
-                    enabled = canCopyInstance,
-                )
-                DropdownMenuItem(
-                    { Text("整理实例目录", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        onTidyInstance(instance)
-                    },
-                    enabled = canMaintainInstance,
-                )
-                DropdownMenuItem(
-                    { Text("校验实例", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        onVerifyInstance(instance)
-                    },
-                    enabled = canMaintainInstance,
-                )
-                DropdownMenuItem(
-                    { Text("升级整合包…", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        onUpgradePack(instance)
-                    },
-                    enabled = canUpgradePack,
-                )
-                // 移动实例需要独立的实例目录；不可用时在条目里直接说明原因，而不是静默禁用。
-                DropdownMenuItem(
-                    {
-                        Column {
-                            Text("移动到其他游戏目录…", fontSize = 13.sp)
-                            if (moveBlockedNote.isNotBlank())
-                                Text(
-                                    moveBlockedNote,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                        }
-                    },
-                    {
-                        menu = false
-                        onMoveInstance(instance)
-                    },
-                    enabled = canMoveInstance,
-                )
-                DropdownMenuItem(
-                    { Text("重命名实例", fontSize = 13.sp) },
-                    {
-                        menu = false
-                        renaming = true
-                    },
-                )
-                DropdownMenuItem(
-                    {
-                        Text(
-                            "删除实例",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    },
-                    {
-                        menu = false
-                        onDelete()
-                    },
-                )
-            }
-        }
     }
     // ---------------- 左侧页签 + 右侧内容 ----------------
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 左侧页签整栏套磨砂面板：宽度、条目尺寸与点击行为都不变。
+        // 左侧页签整栏套磨砂面板：宽度统一 158dp，条目 32dp 高、间距 4dp；内容超出时整栏滚动。
         FrostedPanel(Modifier.width(158.dp).fillMaxHeight()) {
-            ScrollColumn(Modifier.fillMaxSize(), gap = 3.dp) {
+            ScrollColumn(Modifier.fillMaxSize(), gap = 4.dp) {
                 instanceTabs.forEachIndexed { index, item ->
                     InstanceRailItem(item.title, item.icon, tab == index) { tab = index }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(2.dp))
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(2.dp))
                 InstanceRailItem(
                     "游戏文件夹",
                     Icons.Outlined.FolderOpen,
                     foldersOpen,
-                    onClick = {
-                        foldersOpen = !foldersOpen
-                        if (foldersOpen) manageOpen = false
-                    },
+                    onClick = { foldersOpen = !foldersOpen },
                 )
                 if (foldersOpen)
                     listOf(
@@ -412,19 +515,42 @@ fun ColumnScope.InstanceDetailsPage(
                                 }
                             }
                         }
-                InstanceRailItem(
-                    "管理",
-                    Icons.Outlined.MoreHoriz,
-                    manageOpen,
-                    onClick = {
-                        manageOpen = !manageOpen
-                        if (manageOpen) foldersOpen = false
-                    },
+                Spacer(Modifier.height(2.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)
                 )
+                Spacer(Modifier.height(2.dp))
+                // 「管理」默认收起：标题行可点、可聚焦，箭头随展开状态旋转；展开后每项仍是一行直接执行。
+                InstanceRailSectionHeader("管理", manageOpen) { manageOpen = !manageOpen }
                 if (manageOpen) {
-                    RailSubEntry("重命名实例") { renaming = true }
-                    RailSubEntry("删除实例") { onDelete() }
-                    RailSubEntry("导出整合包") { exportingMrpack = true }
+                    InstanceRailAction(
+                        "查看启动参数",
+                        Icons.Outlined.Terminal,
+                        enabled =
+                            instance.installed && !actions.controller.isInstanceBusy(instance.id),
+                    ) { actions.previewLaunch(instance.id) }
+                    InstanceRailAction("打开游戏目录", Icons.Outlined.FolderOpen) {
+                        actions.run { actions.controller.openFolder(instance.id) }
+                    }
+                    InstanceRailAction(
+                        "导出整合包",
+                        Icons.Outlined.Archive,
+                        enabled = !actions.controller.isInstanceBusy(instance.id),
+                    ) { exportingMrpack = true }
+                    InstanceRailAction("游戏截图", Icons.Outlined.PhotoLibrary) {
+                        screenshotGallery = true
+                    }
+                    InstanceRailAction(
+                        "整理实例目录",
+                        Icons.Outlined.CleaningServices,
+                        enabled = canMaintainInstance,
+                    ) { onTidyInstance(instance) }
+                    
+                    InstanceRailAction(
+                        "删除实例",
+                        Icons.Outlined.DeleteOutline,
+                        danger = true,
+                    ) { onDelete() }
                 }
             }
         }
@@ -433,19 +559,29 @@ fun ColumnScope.InstanceDetailsPage(
                 Column(Modifier.fillMaxSize()) {
                     when (index) {
                         1 ->
-                            InstanceMods(instance, actions, Modifier.weight(1f)) {
+                            InstanceMods(instance, actions, updateCenter, Modifier.weight(1f)) {
                                 actions.run { actions.controller.selectInstance(instance.id) }
                                 navigate(Page.Discover)
                             }
                         2 ->
-                            InstanceFolderBrowser(
+                            InstancePackTab(
                                 instance,
                                 actions,
-                                "resourcepacks",
+                                updateCenter,
+                                PackFolder.ResourcePacks,
                                 Modifier.weight(1f),
                             )
-                        3 -> InstanceSavesTab(instance, actions, Modifier.weight(1f))
-                        4 ->
+                        3 ->
+                            InstancePackTab(
+                                instance,
+                                actions,
+                                updateCenter,
+                                PackFolder.ShaderPacks,
+                                Modifier.weight(1f),
+                            )
+                        4 -> InstanceSavesTab(instance, actions, Modifier.weight(1f))
+                        5 -> InstanceDatapacksTab(instance, actions, Modifier.weight(1f))
+                        6 ->
                             InstanceFolderBrowser(
                                 instance,
                                 actions,
@@ -457,53 +593,74 @@ fun ColumnScope.InstanceDetailsPage(
                             )
                         else ->
                             ScrollColumn(Modifier.weight(1f).fillMaxHeight()) {
-                                CompactSettingsSection("Java 与内存", "数值 0 或空路径表示使用全局设置。") {
+                                // 名称与图标放在设置页最上方：图标在左、名称在右，与其余设置卡同款排版。
+                                CompactSettingsSection(
+                                    "名称与图标",
+                                    "名称离开输入框时生效并重命名实例目录；图标默认跟随原版或加载器，整合包自带图标优先。",
+                                ) {
                                     Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Bottom,
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
                                     ) {
-                                        CompactTextField(
-                                            draft.javaPath,
-                                            { draft = draft.copy(javaPath = it) },
+                                        InstanceArtwork(instance, actions, Modifier.size(40.dp))
+                                        Column(
                                             Modifier.weight(1f),
-                                            label = "此版本的 Java 路径",
-                                            placeholder = "留空使用全局设置",
-                                        )
-                                        SmallIconButton(
-                                            Icons.Outlined.FolderOpen,
-                                            "选择版本 Java",
-                                            {
-                                                actions.run {
-                                                    val selected =
-                                                        actions
-                                                            .choose(
-                                                                "选择 Java 可执行文件",
-                                                                extensions =
-                                                                    if (
-                                                                        actions.controller.platform
-                                                                            .osName == "windows"
-                                                                    )
-                                                                        listOf("exe")
-                                                                    else emptyList(),
-                                                            )
-                                                            .firstOrNull()
-                                                    if (selected != null)
-                                                        withContext(Dispatchers.Swing) {
-                                                            draft =
-                                                                draft.copy(
-                                                                    javaPath = selected.toString()
-                                                                )
-                                                        }
-                                                }
-                                            },
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            CompactTextField(
+                                                draft.name,
+                                                {
+                                                    draft = draft.copy(name = it.take(80))
+                                                    nameNotice = null
+                                                },
+                                                Modifier.fillMaxWidth(),
+                                                label = "实例名称（离开输入框时同时重命名目录）",
+                                                onFocusChange = { focused ->
+                                                    if (!focused) commitName()
+                                                },
+                                            )
+                                            val nameHint = nameError ?: nameNotice
+                                            if (nameHint != null)
+                                                Text(
+                                                    nameHint,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                )
+                                            SecondaryButton(
+                                                { editingIcon = true },
+                                                enabled = !instanceBusy,
+                                            ) {
+                                                Text("更换实例图标…", fontSize = 12.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                                CompactSettingsSection("Java 与内存", "实例可单独指定 Java；内存数值与窗口在下方「启动设置」。") {
+                                    // 紧凑行：继承时右侧显示全局实际解析到的运行时，点击打开抽屉。
+                                    JavaPickerRow(
+                                        value = draft.javaPath,
+                                        runtimes = javaRuntimes,
+                                        inheritedPath = state.data.settings.javaPath,
+                                        ignoreCase = actions.controller.platform.osName == "windows",
+                                        detecting = javaDetecting,
+                                        onClick = {
+                                            javaSaveError = null
+                                            javaSheetOpen = true
+                                        },
+                                    )
+                                    javaSaveError?.let {
+                                        Text(
+                                            it,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.error,
                                         )
                                     }
                                     SimpleDropdown(
-                                        when {
-                                            draft.autoMemory == true -> "automatic"
-                                            draft.autoMemory == false ||
-                                                (memory.toIntOrNull() ?: 0) > 0 -> "manual"
-                                            else -> "inherit"
+                                        when (memoryPolicy) {
+                                            InstanceMemoryPolicy.Inherit -> "inherit"
+                                            InstanceMemoryPolicy.Automatic -> "automatic"
+                                            InstanceMemoryPolicy.Manual -> "manual"
                                         },
                                         listOf(
                                             "inherit" to "继承全局内存策略",
@@ -511,85 +668,228 @@ fun ColumnScope.InstanceDetailsPage(
                                             "manual" to "手动分配",
                                         ),
                                         { mode ->
-                                            draft =
-                                                draft.copy(
-                                                    autoMemory =
-                                                        when (mode) {
-                                                            "automatic" -> true
-                                                            "manual" -> false
-                                                            else -> null
-                                                        }
+                                            val next =
+                                                applyInstanceMemoryPolicy(
+                                                    draft.copy(
+                                                        memoryMb =
+                                                            if (
+                                                                memoryPolicy ==
+                                                                    InstanceMemoryPolicy.Manual
+                                                            )
+                                                                memoryMb
+                                                            else 0
+                                                    ),
+                                                    when (mode) {
+                                                        "automatic" -> InstanceMemoryPolicy.Automatic
+                                                        "manual" -> InstanceMemoryPolicy.Manual
+                                                        else -> InstanceMemoryPolicy.Inherit
+                                                    },
+                                                    state.data.settings.memoryMb,
                                                 )
-                                            if (mode == "inherit") memory = "0"
-                                            else if (mode == "manual" && memory == "0")
-                                                memory = state.data.settings.memoryMb.toString()
+                                            draft = next
+                                            memoryMb = next.memoryMb
                                         },
                                     )
-                                    if (draft.autoMemory == true)
-                                        MutedText("启动时根据系统可用内存分配；保留手动值，切回手动时继续使用。")
+                                    if (memoryPolicy == InstanceMemoryPolicy.Automatic)
+                                        MutedText("启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。")
+                                }
+                                CompactSettingsSection(
+                                    "启动设置",
+                                    "最大内存只在「手动分配」时可调；窗口宽高留空表示跟随全局，参数留空表示不追加。",
+                                ) {
+                                    val fullscreenNow =
+                                        when (draft.windowMode) {
+                                            "fullscreen" -> true
+                                            "windowed" -> false
+                                            else ->
+                                                when (state.data.settings.gameWindowMode) {
+                                                    "fullscreen" -> true
+                                                    "launcher" -> false
+                                                    else -> state.data.settings.fullscreen
+                                                }
+                                        }
+                                    val memoryLabel =
+                                        when (memoryPolicy) {
+                                            InstanceMemoryPolicy.Inherit ->
+                                                "跟随全局（当前 $effectiveMemory MB）"
+                                            InstanceMemoryPolicy.Automatic ->
+                                                "自动分配（当前 $effectiveMemory MB）"
+                                            InstanceMemoryPolicy.Manual ->
+                                                "$memoryMb MB（%.1f GB）".format(memoryMb / 1024f)
+                                        }
+                                    val memoryHint =
+                                        when (memoryPolicy) {
+                                            InstanceMemoryPolicy.Inherit ->
+                                                "当前继承全局内存策略；切换到「手动分配」后才能调整。"
+                                            InstanceMemoryPolicy.Automatic ->
+                                                "启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。"
+                                            InstanceMemoryPolicy.Manual ->
+                                                "拖动滑块按 256 MB 步进；初始内存会自动收窄到最大值以内。"
+                                        }
+                                    // 非手动策略滑块只显示解析后的有效值，不接受拖动。
+                                    val sliderValue =
+                                        if (memoryPolicy == InstanceMemoryPolicy.Manual)
+                                            memoryMb.coerceIn(
+                                                    MIN_INSTANCE_MEMORY_MB,
+                                                    memoryLimit,
+                                                )
+                                                .toFloat()
+                                        else
+                                            effectiveMemory
+                                                .coerceIn(MIN_INSTANCE_MEMORY_MB, memoryLimit)
+                                                .toFloat()
                                     Row(
+                                        Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     ) {
-                                        val maximum =
-                                            maxOf(
-                                                512,
-                                                actions.controller.platform.totalMemoryMb - 512,
-                                            )
-                                        val current =
-                                            memory.toIntOrNull()?.takeIf { it > 0 }
-                                                ?: state.data.settings.memoryMb
                                         CompactSlider(
-                                            current.toFloat().coerceIn(512f, maximum.toFloat()),
-                                            { dragged ->
-                                                val value = steppedMemory(dragged, maximum)
-                                                memory = value.toString()
-                                                if ((initial.toIntOrNull() ?: 0) > value)
-                                                    initial = value.toString()
+                                            sliderValue,
+                                            { raw ->
+                                                val next =
+                                                    instanceMemorySliderValue(
+                                                        raw,
+                                                        actions.controller.platform.totalMemoryMb,
+                                                    )
+                                                memoryMb = next
+                                                if ((initial.toIntOrNull() ?: 0) > next)
+                                                    initial = next.toString()
                                             },
                                             Modifier.weight(1f).semantics {
-                                                contentDescription = "实例内存滑块"
+                                                contentDescription = "实例最大内存滑块"
                                             },
-                                            valueRange = 512f..maximum.toFloat(),
-                                            enabled = draft.autoMemory != true && memory != "0",
+                                            valueRange =
+                                                MIN_INSTANCE_MEMORY_MB.toFloat()..
+                                                    memoryLimit.toFloat(),
+                                            enabled = memoryPolicy == InstanceMemoryPolicy.Manual,
                                         )
-                                        Tag("%.1f GB".format(current / 1024f))
+                                        Tag(memoryLabel)
                                     }
-                                }
-                                CompactSettingsSection("游戏窗口") {
-                                    SimpleDropdown(
-                                        draft.windowMode,
-                                        listOf(
-                                            "inherit" to "继承全局窗口设置",
-                                            "windowed" to "窗口模式",
-                                            "fullscreen" to "全屏模式",
-                                        ),
-                                        { draft = draft.copy(windowMode = it) },
-                                    )
+                                    MutedText(memoryHint)
                                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         NumberField(
-                                            width,
-                                            "窗口宽度（px）",
-                                            { width = it },
-                                            Modifier.weight(1f),
-                                            "0 = 继承全局",
+                                            value = width,
+                                            label = "窗口宽度（px）",
+                                            onChange = {
+                                                width = normalizeInstanceLaunchNumberInput(it)
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            placeholder = "—",
+                                            hint =
+                                                "留空表示跟随全局（当前 ${state.data.settings.width} px）",
+                                            onFocusChange = { focused ->
+                                                if (!focused && invalidWindowField(widthValue))
+                                                    width = instanceLaunchNumberField(instance.width)
+                                            },
                                         )
                                         NumberField(
-                                            height,
-                                            "窗口高度（px）",
-                                            { height = it },
-                                            Modifier.weight(1f),
-                                            "0 = 继承全局",
+                                            value = height,
+                                            label = "窗口高度（px）",
+                                            onChange = {
+                                                height = normalizeInstanceLaunchNumberInput(it)
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            placeholder = "—",
+                                            hint =
+                                                "留空表示跟随全局（当前 ${state.data.settings.height} px）",
+                                            onFocusChange = { focused ->
+                                                if (!focused && invalidWindowField(heightValue))
+                                                    height = instanceLaunchNumberField(instance.height)
+                                            },
+                                        )
+                                    }
+                                    SettingRow("全屏", "关闭时按窗口尺寸显示") {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (draft.windowMode != "inherit")
+                                                TextButton({
+                                                    draft = draft.copy(windowMode = "inherit")
+                                                }) {
+                                                    Text("跟随全局", fontSize = 11.sp)
+                                                }
+                                            CompactSwitch(
+                                                checked = fullscreenNow,
+                                                onCheckedChange = { checked ->
+                                                    draft =
+                                                        draft.copy(
+                                                            windowMode =
+                                                                if (checked) "fullscreen"
+                                                                else "windowed"
+                                                        )
+                                                },
+                                            )
+                                        }
+                                    }
+                                    OutlinedTextField(
+                                        draft.extraJvmArgs,
+                                        { draft = draft.copy(extraJvmArgs = it.take(4096)) },
+                                        Modifier.fillMaxWidth().onFocusChanged { focus ->
+                                            // 非法 JVM 参数不写盘；离开输入框时回退到上一次有效值。
+                                            if (
+                                                !focus.isFocused &&
+                                                    extraArgumentError(draft.extraJvmArgs, "") !=
+                                                        null
+                                            )
+                                                draft =
+                                                    draft.copy(
+                                                        extraJvmArgs = instance.extraJvmArgs
+                                                    )
+                                        },
+                                        label = { Text("额外 JVM 参数（留空跟随全局）") },
+                                        placeholder = {
+                                            Text(
+                                                "-XX:+UseG1GC",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp,
+                                            )
+                                        },
+                                        textStyle =
+                                            MaterialTheme.typography.bodyMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp,
+                                            ),
+                                        minLines = 2,
+                                        maxLines = 4,
+                                    )
+                                    OutlinedTextField(
+                                        draft.extraGameArgs,
+                                        { draft = draft.copy(extraGameArgs = it.take(4096)) },
+                                        Modifier.fillMaxWidth().onFocusChanged { focus ->
+                                            // 非法游戏参数不写盘；离开输入框时回退到上一次有效值。
+                                            if (
+                                                !focus.isFocused &&
+                                                    extraArgumentError("", draft.extraGameArgs) !=
+                                                        null
+                                            )
+                                                draft =
+                                                    draft.copy(
+                                                        extraGameArgs = instance.extraGameArgs
+                                                    )
+                                        },
+                                        label = { Text("额外游戏参数（追加在标准参数之后）") },
+                                        placeholder = {
+                                            Text(
+                                                "--skipMultiplayerWarning",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp,
+                                            )
+                                        },
+                                        textStyle =
+                                            MaterialTheme.typography.bodyMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 12.sp,
+                                            ),
+                                        minLines = 2,
+                                        maxLines = 4,
+                                    )
+                                    launchError?.let {
+                                        Text(
+                                            it,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.error,
                                         )
                                     }
                                 }
                                 CompactSettingsSection("基本信息") {
-                                    CompactTextField(
-                                        draft.name,
-                                        { draft = draft.copy(name = it.take(80)) },
-                                        Modifier.fillMaxWidth(),
-                                        label = "实例名称",
-                                    )
                                     OutlinedTextField(
                                         draft.notes,
                                         { draft = draft.copy(notes = it.take(2000)) },
@@ -599,20 +899,65 @@ fun ColumnScope.InstanceDetailsPage(
                                         maxLines = 4,
                                     )
                                 }
-                                CompactSettingsSection("图标", "默认跟随原版或加载器；整合包自带图标优先，也可以手动替换。") {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                CompactSettingsSection("目录与隔离", "目录名就是实例名；名称离开输入框后自动生效。") {
+                                    val isolationSource =
+                                        actions.controller.store.isolationSource(draft)
+                                    val isolationEvidence =
+                                        actions.controller.store.isolationEvidence(draft)
+                                    SettingRow(
+                                        "版本隔离",
+                                        when (isolationSource) {
+                                            IsolationSource.Inferred ->
+                                                actions.controller.store.isolationTitle(draft) +
+                                                    "：目录内有 " +
+                                                    (isolationEvidence ?: "游戏数据") +
+                                                    "，按独立目录处理；选择下拉项可覆盖"
+                                            IsolationSource.Explicit ->
+                                                when (draft.isolation) {
+                                                    VersionIsolation.Enabled ->
+                                                        "使用实例自己的目录，存档、Mod 与其他实例互不影响"
+                                                    VersionIsolation.Disabled ->
+                                                        "与其他关闭隔离的实例共用游戏根目录"
+                                                    VersionIsolation.Inherit -> ""
+                                                }
+                                            IsolationSource.GlobalDefault ->
+                                                "跟随全局设置（当前为" +
+                                                    (if (state.data.settings.isolateVersions) "版本隔离"
+                                                    else "共用游戏目录") +
+                                                    "）"
+                                        },
                                     ) {
-                                        InstanceArtwork(instance, actions, Modifier.size(40.dp))
-                                        SecondaryButton(
-                                            { editingIcon = true },
-                                            enabled =
-                                                !actions.controller.isInstanceBusy(instance.id),
-                                        ) {
-                                            Text("更换实例图标…")
+                                        Box(Modifier.width(190.dp)) {
+                                            SimpleDropdown(
+                                                draft.isolation.name,
+                                                VersionIsolation.entries.map {
+                                                    it.name to
+                                                        if (
+                                                            it == VersionIsolation.Inherit &&
+                                                                isolationSource ==
+                                                                    IsolationSource.Inferred
+                                                        )
+                                                            "继承全局设置（自动推断为版本隔离）"
+                                                        else it.title
+                                                },
+                                                { key ->
+                                                    draft =
+                                                        draft.copy(
+                                                            isolation = VersionIsolation.valueOf(key)
+                                                        )
+                                                },
+                                            )
                                         }
                                     }
+                                    SettingRow(
+                                        "实际游戏目录",
+                                        runCatching {
+                                                actions.controller.store
+                                                    .gamePath(draft)
+                                                    .toString()
+                                            }
+                                            .getOrDefault("目录暂不可用"),
+                                    ) {}
                                 }
                                 CompactSettingsSection("版本信息") {
                                     SettingRow("Minecraft", instance.gameVersion) {
@@ -650,7 +995,19 @@ fun ColumnScope.InstanceDetailsPage(
                                         OutlinedTextField(
                                             draft.extraJvmArgs,
                                             { draft = draft.copy(extraJvmArgs = it) },
-                                            Modifier.fillMaxWidth(),
+                                            Modifier.fillMaxWidth().onFocusChanged { focus ->
+                                                if (
+                                                    !focus.isFocused &&
+                                                        extraArgumentError(
+                                                            draft.extraJvmArgs,
+                                                            "",
+                                                        ) != null
+                                                )
+                                                    draft =
+                                                        draft.copy(
+                                                            extraJvmArgs = instance.extraJvmArgs
+                                                        )
+                                            },
                                             label = { Text("此版本的附加 JVM 参数") },
                                             minLines = 1,
                                             maxLines = 4,
@@ -681,24 +1038,35 @@ fun ColumnScope.InstanceDetailsPage(
                                             )
                                         }
                                     }
-                                InstanceInstallSections(instance, actions, navigate)
+                                InstanceInstallSections(instance, actions)
                                 TextButton({
-                                    memory = "0"
+                                    memoryMb = 0
                                     initial = "0"
-                                    width = "0"
-                                    height = "0"
+                                    width = ""
+                                    height = ""
                                     draft =
-                                        draft.copy(
-                                            javaPath = "",
-                                            windowMode = "inherit",
-                                            extraJvmArgs = "",
+                                        applyInstanceMemoryPolicy(
+                                            draft,
+                                            InstanceMemoryPolicy.Inherit,
+                                            state.data.settings.memoryMb,
                                         )
+                                            .copy(
+                                                javaPath = "",
+                                                windowMode = "inherit",
+                                                extraJvmArgs = "",
+                                                extraGameArgs = "",
+                                            )
                                 }) {
                                     Text("恢复全局启动设置", fontSize = 12.sp)
                                 }
-                                if (!valid)
+                                val problem =
+                                    launchError
+                                        ?: saveError
+                                        ?: if (!advancedValid) "高级启动参数未通过校验。"
+                                        else null
+                                if (problem != null)
                                     Text(
-                                        "请检查名称、内存和窗口尺寸。",
+                                        problem,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.error,
                                     )
@@ -716,28 +1084,64 @@ fun ColumnScope.InstanceDetailsPage(
     }
     if (renaming) {
         var name by remember { mutableStateOf(instance.name) }
+        var renameError by remember { mutableStateOf("") }
+        val trimmed = name.trim()
+        val validation =
+            if (trimmed == instance.name) null
+            else runCatching { validateInstanceDirectoryName(trimmed) }.exceptionOrNull()?.message
+        val currentDirectory =
+            runCatching {
+                    actions.controller.store.versionGamePath(instance).fileName.toString()
+                }
+                .getOrDefault(instance.gameDirectoryName)
         AlertDialog(
             onDismissRequest = { renaming = false },
             title = { Text("重命名实例") },
             text = {
-                OutlinedTextField(
-                    name,
-                    { name = it.take(80) },
-                    Modifier.fillMaxWidth(),
-                    label = { Text("实例名称") },
-                    singleLine = true,
-                )
+                Column {
+                    OutlinedTextField(
+                        name,
+                        {
+                            name = it.take(80)
+                            renameError = ""
+                        },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("实例名称") },
+                        singleLine = true,
+                        isError = validation != null || renameError.isNotBlank(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        when {
+                            validation != null -> validation
+                            renameError.isNotBlank() -> renameError
+                            trimmed == instance.name -> "输入新的名称；保存时会把 versions/$currentDirectory 一并改名。"
+                            actions.controller.isInstanceBusy(instance.id) ->
+                                "请等待当前任务结束后再重命名。"
+                            else ->
+                                "会把 versions/$currentDirectory 重命名为 versions/$trimmed，并同步同名 JSON/JAR、" +
+                                    "版本配置和其他版本对它的引用。"
+                        },
+                        fontSize = 11.sp,
+                        color =
+                            if (validation != null || renameError.isNotBlank())
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
-                    enabled = name.isNotBlank() && name.trim() != instance.name,
+                    enabled =
+                        trimmed != instance.name &&
+                            validation == null &&
+                            !actions.controller.isInstanceBusy(instance.id),
                     onClick = {
-                        actions.run {
-                            actions.controller.saveInstanceConfiguration(
-                                instance.copy(name = name.trim())
-                            )
-                        }
-                        renaming = false
+                        val failure =
+                            runCatching { actions.controller.renameInstance(instance.id, trimmed) }
+                                .exceptionOrNull()
+                        if (failure == null) renaming = false
+                        else renameError = failure.message ?: "重命名失败"
                     },
                 ) {
                     Text("保存")
@@ -752,6 +1156,28 @@ fun ColumnScope.InstanceDetailsPage(
             actions,
             { exportingMrpack = false },
             { actions.taskQueued() },
+        )
+    if (javaSheetOpen)
+        JavaPickerSheet(
+            value = draft.javaPath,
+            runtimes = javaRuntimes,
+            inheritedPath = state.data.settings.javaPath,
+            ignoreCase = actions.controller.platform.osName == "windows",
+            detecting = javaDetecting,
+            onSelect = { path ->
+                draft = draft.copy(javaPath = path)
+                // 立即写入实例配置：启动读取的是已保存值，无需重启启动器。
+                javaSaveError =
+                    runCatching {
+                            if (!actions.controller.isInstanceBusy(instance.id))
+                                actions.controller.saveInstanceConfiguration(
+                                    instance.copy(javaPath = path)
+                                )
+                        }
+                        .exceptionOrNull()
+                        ?.message
+            },
+            onDismiss = { javaSheetOpen = false },
         )
 }
 
@@ -775,7 +1201,7 @@ private fun HeaderIconButton(
     }
 }
 
-/** 二级页签条目：高 34、圆角 6、图标 17、文字 13，选中用主题底 + 主题色。 */
+/** 二级栏条目（页签与「管理」动作共用）：高 32、圆角 6、左右 10dp，图标 17 与 13sp 文字同一行。 */
 @Composable
 private fun InstanceRailItem(
     title: String,
@@ -813,6 +1239,123 @@ private fun InstanceRailItem(
     }
 }
 
+/**
+ * 「管理」分区标题：整行可点击/可聚焦，Enter 与空格切换展开，右侧箭头随状态旋转。
+ *
+ * 高度与动作行一致，展开后列表仍按 4dp 间距对齐；默认收起由调用方的状态决定。
+ */
+@Composable
+private fun InstanceRailSectionHeader(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val shape = RoundedCornerShape(Metrics.cardRadius)
+    val chevron by
+        animateFloatAsState(
+            targetValue = if (expanded) 180f else 0f,
+            animationSpec = tween(if (LocalReducedMotion.current) 0 else Motion.fast),
+            label = "railSectionChevron",
+        )
+    Row(
+        Modifier.fillMaxWidth()
+            .height(Metrics.navItemHeight)
+            .clip(shape)
+            .hoverHighlight(shape, alpha = .05f)
+            .pressScale()
+            .clickable(role = Role.Button, onClick = onToggle)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false
+                else
+                    when (event.key) {
+                        Key.Enter,
+                        Key.NumPadEnter,
+                        Key.Spacebar -> {
+                            onToggle()
+                            true
+                        }
+                        else -> false
+                    }
+            }
+            .focusable()
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            Modifier.weight(1f),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Icon(
+            Icons.Outlined.ExpandMore,
+            if (expanded) "折叠$title" else "展开$title",
+            Modifier.size(14.dp).rotate(chevron),
+            MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * 「管理」区的动作行：与页签同宽、同 32dp 高、同排版，只把选中态换成可禁用。
+ *
+ * [hint] 在不可用时说明原因，直接显示在行内，而不是静默禁用。
+ */
+@Composable
+private fun InstanceRailAction(
+    title: String,
+    icon: ImageVector,
+    enabled: Boolean = true,
+    danger: Boolean = false,
+    hint: String = "",
+    // 行尾附加内容（例如检查更新的进度圈）；不改变 32dp 行高与图标文字排版。
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(Metrics.cardRadius)
+    val contentColor =
+        when {
+            !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .38f)
+            danger -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    val showHint = hint.isNotBlank() && !enabled
+    Row(
+        Modifier.fillMaxWidth()
+            .heightIn(min = Metrics.navItemHeight)
+            .clip(shape)
+            .hoverHighlight(shape, enabled = enabled, alpha = .05f)
+            .pressScale()
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(17.dp), contentColor)
+        Spacer(Modifier.width(9.dp))
+        if (showHint)
+            Column(Modifier.weight(1f)) {
+                Text(title, color = contentColor, fontSize = 13.sp, maxLines = 1)
+                Text(
+                    hint,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f),
+                    fontSize = 10.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        else
+            Text(
+                title,
+                Modifier.weight(1f),
+                color = contentColor,
+                fontSize = 13.sp,
+                maxLines = 1,
+            )
+        trailing?.invoke()
+    }
+}
+
 private fun packSourceOf(instance: GameInstance): String =
     when {
         instance.packFile.isNotBlank() -> "整合包：" + instance.packFile.substringAfterLast('/')
@@ -820,55 +1363,58 @@ private fun packSourceOf(instance: GameInstance): String =
         else -> "启动器安装"
     }
 
-/** 设置页签的「当前安装」与「更换加载器」卡片：展示当前组件，并提交更换 / 回退请求。 */
+/** 设置页签的「当前安装」与「升级加载器」卡片：只展示当前组件，并提供同加载器的小版本升级。 */
 @Composable
 private fun ColumnScope.InstanceInstallSections(
     instance: GameInstance,
     actions: UiActions,
-    navigate: (Page) -> Unit,
 ) {
-    var targetLoader by remember(instance.id) { mutableStateOf(instance.loader) }
-    var targetVersion by remember(instance.id) { mutableStateOf(instance.loaderVersion) }
-    var versions by remember { mutableStateOf<List<LoaderVersion>>(emptyList()) }
-    var loadingVersions by remember { mutableStateOf(false) }
-    var versionError by remember { mutableStateOf<String?>(null) }
-    var versionRetry by remember { mutableIntStateOf(0) }
-    val editable = instance.installed
-    var pending by remember { mutableStateOf<ComponentSelection?>(null) }
-    var restoring by remember { mutableStateOf(false) }
-    var enabledMods by remember { mutableIntStateOf(0) }
-    val applyChange: (ComponentSelection, Boolean) -> Unit = { selection, restore ->
-        actions.run {
-            if (restore) actions.controller.restoreInstanceComponents(instance.id)
-            else
-                actions.controller.changeInstanceLoader(
-                    instance.id,
-                    selection.loader,
-                    selection.loaderVersion,
-                )
-        }
-        actions.taskQueued()
+    var versions by remember(instance.id) { mutableStateOf<List<LoaderVersion>>(emptyList()) }
+    var loadingVersions by remember(instance.id) { mutableStateOf(false) }
+    var versionError by remember(instance.id) { mutableStateOf<String?>(null) }
+    var versionRetry by remember(instance.id) { mutableIntStateOf(0) }
+    // 外部实例能否合并进原 JSON（继承链缺失等）由核心预检给出具体原因；只读，不改文件。
+    var externalBlocker by remember(instance.id) { mutableStateOf<String?>(null) }
+    // 只有已安装、非整合包且有加载器的实例才能升级；外部实例额外要求原 JSON 可安全合并。
+    val upgradeable =
+        instance.installed && instance.packFile.isBlank() && instance.loader != LoaderType.Vanilla
+    val canUpgrade = upgradeable && externalBlocker == null
+    LaunchedEffect(
+        instance.id,
+        instance.externalProfile,
+        instance.versionId,
+        instance.loaderVersion,
+    ) {
+        externalBlocker =
+            if (instance.externalProfile)
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                            actions.controller.installer.externalLoaderUpgradeBlocker(instance)
+                        }
+                        .getOrElse { it.message ?: "外部版本配置无法读取" }
+                }
+            else null
     }
-    val requestChange: (ComponentSelection, Boolean) -> Unit = { selection, restore ->
-        actions.run {
-            enabledMods = actions.controller.content.listMods(instance.id).count { it.enabled }
-            if (enabledMods == 0 && !instance.externalProfile && instance.packFile.isBlank())
-                applyChange(selection, restore)
-            else {
-                pending = selection
-                restoring = restore
-            }
-        }
-    }
-    LaunchedEffect(targetLoader, instance.gameVersion, editable, versionRetry) {
+    LaunchedEffect(
+        instance.id,
+        instance.loader,
+        instance.loaderVersion,
+        instance.gameVersion,
+        canUpgrade,
+        externalBlocker,
+        versionRetry,
+    ) {
         versions = emptyList()
         versionError = null
-        if (!editable || targetLoader == LoaderType.Vanilla) return@LaunchedEffect
+        if (!canUpgrade || instance.loaderVersion.isBlank()) return@LaunchedEffect
         loadingVersions = true
         try {
             versions =
                 withContext(Dispatchers.IO) {
-                    actions.controller.installer.loaderVersions(targetLoader, instance.gameVersion)
+                    actions.controller.installer.loaderVersions(
+                        instance.loader,
+                        instance.gameVersion,
+                    )
                 }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -878,6 +1424,7 @@ private fun ColumnScope.InstanceInstallSections(
             loadingVersions = false
         }
     }
+    val candidates = loaderUpgradeCandidates(instance, versions)
     SettingsSection("当前安装") {
         SettingRow("游戏版本", instance.gameVersion) {
             InstanceArtwork(instance, actions, Modifier.size(24.dp))
@@ -904,145 +1451,140 @@ private fun ColumnScope.InstanceInstallSections(
             }
         }
     }
-    if (editable)
-        SettingsSection("更换加载器", "更改加载器会重新校验并补齐依赖文件；成功后可回退到上一组件。") {
-            SimpleDropdown(
-                targetLoader.title,
-                LoaderType.entries.map { it.title to it.title },
-                { selected ->
-                    targetLoader = LoaderType.entries.first { it.title == selected }
-                    targetVersion = ""
-                },
-            )
-            if (targetLoader != LoaderType.Vanilla) {
-                when {
-                    loadingVersions ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            LinearProgressIndicator(Modifier.weight(1f))
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "正在获取" + targetLoader.title + "版本列表",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    versionError != null ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                versionError.orEmpty(),
-                                Modifier.weight(1f),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                            TextButton({ versionRetry++ }) {
-                                Text("重试", fontSize = 12.sp)
-                            }
-                        }
-                    versions.isEmpty() ->
-                        Text(
-                            "该游戏版本暂无可用的 " + targetLoader.title + " 版本",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    else ->
-                        SimpleDropdown(
-                            targetVersion.ifBlank { "选择 " + targetLoader.title + " 版本" },
-                            versions.map {
-                                it.version to (it.version + if (it.stable) "" else "（测试版）")
-                            },
-                            { targetVersion = it },
-                        )
-                }
-            }
-            val changed =
-                targetLoader != instance.loader ||
-                    (targetLoader != LoaderType.Vanilla &&
-                        targetVersion.isNotBlank() &&
-                        targetVersion != instance.loaderVersion)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton(
-                    "应用更改",
-                    Icons.Outlined.Check,
-                    changed &&
-                        (targetLoader == LoaderType.Vanilla ||
-                            targetVersion.isNotBlank() &&
-                                !loadingVersions &&
-                                versionError == null) &&
-                        !actions.controller.isInstanceBusy(instance.id),
-                ) {
-                    requestChange(
-                        ComponentSelection(
-                            targetLoader,
-                            if (targetLoader == LoaderType.Vanilla) "" else targetVersion,
-                            "",
-                        ),
-                        false,
-                    )
-                }
-                if (targetLoader != instance.loader && instance.loader != LoaderType.Vanilla)
-                    TextButton({
-                        targetLoader = instance.loader
-                        targetVersion = instance.loaderVersion
-                    }) {
-                        Text("还原为当前加载器", fontSize = 12.sp)
-                    }
-            }
-            if (targetLoader == LoaderType.Vanilla && instance.loader != LoaderType.Vanilla)
+    SettingsSection("升级加载器", "只升级同一加载器的版本；游戏版本、模组与存档保持不变。") {
+        when {
+            instance.broken && instance.externalProfile ->
                 Text(
-                    "恢复原版后，已有的模组文件会保留但不再被加载。",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            instance.previousComponents?.let { previous ->
-                HorizontalDivider()
-                SettingRow("上一组件", previous.title) {
-                    SecondaryButton(
-                        { requestChange(previous, true) },
-                        enabled = !actions.controller.isInstanceBusy(instance.id),
-                    ) {
-                        Text("回退组件", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-    else
-        SettingsSection("组件维护") {
-            Text(
-                if (instance.externalProfile) "这是外部目录中的实例。为保留原有自定义启动配置，请由原目录维护加载器；仍可在此修复已有游戏文件。"
-                else "整合包的加载器由包清单定义，请通过整合包修复维护，暂不直接更换组件。",
-                fontSize = 12.sp,
-            )
-        }
-    pending?.let { selection ->
-        Modal("加载器兼容提醒", "目标：${selection.title}", onDismiss = { pending = null }) {
-            Text("更换前会备份原版本配置，可在成功后回退。整合包与外部实例的自定义组件可能受影响，请确认目标加载器兼容。")
-            Text("当前有 $enabledMods 个已启用的模组。请确认它们支持目标加载器及版本；现有模组文件会保留。")
-            if (selection.loader == LoaderType.Vanilla)
-                Text(
-                    "恢复原版后这些模组不会被加载。",
+                    (instance.brokenReason.ifBlank { "外部版本配置无法识别" }) +
+                        "。请先在原目录补齐该版本，再进行升级。",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton({ pending = null }) { Text("取消") }
-                PrimaryButton(
-                    if (restoring) "保留模组并回退" else "保留模组并更换",
-                    onClick = {
-                        val restore = restoring
-                        pending = null
-                        applyChange(selection, restore)
-                    },
+            instance.loader == LoaderType.Vanilla ->
+                Text(
+                    "原版实例没有可升级的加载器。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            instance.packFile.isNotBlank() ->
+                Text(
+                    "整合包的加载器由包清单定义，请通过整合包更新维护。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            instance.externalProfile && externalBlocker != null ->
+                Text(
+                    externalBlocker ?: "",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            !upgradeable ->
+                Text(
+                    "请先完成游戏安装，再升级加载器。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            instance.loaderVersion.isBlank() ->
+                Text(
+                    "无法识别当前加载器版本，请先修复游戏。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            else -> {
+                SettingRow("当前加载器", instance.loader.title + " " + instance.loaderVersion) {}
+                val latest = candidates.firstOrNull()
+                when {
+                    loadingVersions -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(Modifier.weight(1f))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "正在获取" + instance.loader.title + "版本列表",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    versionError != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            versionError.orEmpty(),
+                            Modifier.weight(1f),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        TextButton({ versionRetry++ }) { Text("重试", fontSize = 12.sp) }
+                    }
+                    versions.isEmpty() -> Text(
+                        "该游戏版本暂无可用的 " + instance.loader.title + " 版本",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    latest == null -> Text(
+                        "已是此游戏版本下最新的 " +
+                            instance.loader.title +
+                            " " +
+                            instance.loaderVersion,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    else -> SettingRow(
+                        "可升级至",
+                        latest.version + if (latest.stable) "" else "（测试版）",
+                    ) {
+                        PrimaryButton(
+                            "升级",
+                            Icons.Outlined.ArrowUpward,
+                            !actions.controller.isInstanceBusy(instance.id),
+                        ) {
+                            actions.run {
+                                actions.controller.upgradeInstanceLoader(
+                                    instance.id,
+                                    latest.version,
+                                )
+                            }
+                            actions.taskQueued()
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-/** 模组列表：顶部工具行 + 52dp 行（名称/版本与来源/开关/删除）+ 骨架 + 空态 + 搜索无结果。 */
+/** 内容页签共用的筛选芯片；顺序固定，页签只挑自己需要的几项显示。 */
+private enum class ContentChip(val title: String) {
+    All("全部"),
+    Disabled("已禁用"),
+    Updatable("可更新"),
+    NoUpdate("未找到更新"),
+}
+
+/** 同一组件、同一顺序、同一尺寸：只显示 [visible] 里给出的芯片。 */
+@Composable
+private fun ContentChipRow(
+    selected: ContentChip,
+    visible: List<ContentChip>,
+    onSelect: (ContentChip) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        visible.forEach { chip ->
+            FilterChip(
+                selected = selected == chip,
+                onClick = { onSelect(chip) },
+                label = { Text(chip.title, fontSize = 11.sp) },
+                modifier = Modifier.height(28.dp),
+            )
+        }
+    }
+}
+
+/** 模组列表：工具行（刷新/导入/下载/打开文件夹）+ 筛选芯片 + 52dp 行（版本与来源/更新/开关/删除）+ 骨架 + 空态。 */
 @Composable
 private fun InstanceMods(
     instance: GameInstance,
     actions: UiActions,
+    updates: InstanceUpdateCenter,
     modifier: Modifier,
     onDiscover: () -> Unit,
 ) {
@@ -1051,17 +1593,59 @@ private fun InstanceMods(
     var refresh by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var loadedOnce by remember(instance.id) { mutableStateOf(false) }
     var updatesOpen by remember { mutableStateOf(false) }
     var detailMod by remember { mutableStateOf<ModFile?>(null) }
     var deletingMod by remember { mutableStateOf<ModFile?>(null) }
+    var chip by remember(instance.id) { mutableStateOf(ContentChip.All) }
+    val checking = updates.modsChecking
+    val updateReport = updates.mods
+    val updateError = updates.modsError
+    val checkScope = rememberCoroutineScope()
+    // 本次页面发起的更新任务；完成/失败后刷新列表并更新报告。
+    var applyingJob by remember(instance.id) { mutableStateOf<Pair<String, ModUpdateItem>?>(null) }
+    var confirmingUpdate by remember { mutableStateOf<ModUpdateItem?>(null) }
     val liveState by actions.controller.state.collectAsState()
+    // 检查只读网络与 JAR 声明：自动检查由页面发起，手动重查只取消它自己的请求。
+    val startCheck: () -> Unit = { updates.checkMods(checkScope) }
+    val startUpdate: (ModUpdateItem) -> Unit = { item ->
+        updates.modsError = null
+        runCatching { actions.controller.updateMod(instance.id, item) }
+            .onSuccess { job -> applyingJob = job to item }
+            .onFailure { failure -> updates.modsError = failure.message }
+    }
     if (updatesOpen)
         ContentUpdatesDialog(instance.id, actions) {
             updatesOpen = false
             refresh++
         }
     detailMod?.let { mod -> ModDetailsDialog(mod) { detailMod = null } }
+    // 名称搜索得到的匹配先确认来源项目，避免把同名模组替换掉。
+    confirmingUpdate?.let { item ->
+        AlertDialog(
+            onDismissRequest = { confirmingUpdate = null },
+            title = { Text("可能不是同一项目") },
+            text = {
+                Text(
+                    "「" +
+                        item.title +
+                        "」是按名称匹配的，来源项目为「" +
+                        item.candidate?.projectTitle.orEmpty().ifBlank {
+                            item.candidate?.projectId.orEmpty()
+                        } +
+                        "」。确认是同一项目后再更新。"
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmingUpdate = null
+                    startUpdate(item)
+                }) {
+                    Text("仍然更新", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton({ confirmingUpdate = null }) { Text("取消") } },
+        )
+    }
     // 删除模组会从 mods 目录移入回收站，先确认再执行。
     deletingMod?.let { mod ->
         AlertDialog(
@@ -1101,35 +1685,65 @@ private fun InstanceMods(
             error = failure.message
         } finally {
             loading = false
-            loadedOnce = true
         }
     }
-    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CompactSearchField(
-                query,
-                { query = it },
-                Modifier.weight(1f),
-                placeholder = "搜索已安装模组",
-            )
-            SmallIconButton(
-                Icons.Outlined.Refresh,
-                "刷新模组",
-                { refresh++ },
-                enabled = !actions.controller.isInstanceBusy(instance.id),
-            )
-            TextButton(
-                { updatesOpen = true },
-                enabled = !actions.controller.isInstanceBusy(instance.id),
-            ) {
-                Text("检查更新", fontSize = 12.sp)
+    // 应用更新是任务中心里的后台任务；结束后刷新列表，并把旧文件对应的报告项改为已是最新。
+    LaunchedEffect(applyingJob, liveState.jobs.map { it.id + ":" + it.status }) {
+        val pending = applyingJob ?: return@LaunchedEffect
+        val job = liveState.jobs.firstOrNull { it.id == pending.first } ?: return@LaunchedEffect
+        when (job.status) {
+            JobStatus.Completed -> {
+                val done = pending.second
+                val candidate = done.candidate
+                if (candidate != null) {
+                    val newFilename =
+                        candidate.filename +
+                            if (done.filename.endsWith(".disabled", true)) ".disabled" else ""
+                    updates.mods =
+                        updateReport?.let { report ->
+                            report
+                                .copy(
+                                    items =
+                                        report.items
+                                            .map { item ->
+                                                if (item.filename == done.filename)
+                                                    item.copy(
+                                                        filename = newFilename,
+                                                        currentVersion = candidate.versionNumber,
+                                                        status = ModUpdateStatus.Latest,
+                                                        latestVersion = "",
+                                                        candidate = null,
+                                                        possibleMatch = false,
+                                                        applicable = false,
+                                                        warning = "",
+                                                    )
+                                                else item
+                                            }
+                                            .distinctBy { it.filename }
+                                )
+                        }
+                }
+                applyingJob = null
+                refresh++
             }
-            SecondaryButton(
-                {
+            JobStatus.Failed, JobStatus.Cancelled -> {
+                updates.modsError =
+                    job.error
+                        ?: if (job.status == JobStatus.Cancelled) "更新已取消" else "更新失败"
+                applyingJob = null
+                refresh++
+            }
+            else -> Unit
+        }
+    }
+    val busy = actions.controller.isInstanceBusy(instance.id)
+    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ContentToolbar(
+            flexible = { ToolbarSearchField(query, { query = it }, "搜索已安装模组") },
+            refresh =
+                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+            importAction =
+                ToolbarAction("导入模组", icon = Icons.Outlined.FileDownload, enabled = !busy) {
                     actions.run {
                         actions.controller.requireIdle(instance.id)
                         val files =
@@ -1138,17 +1752,123 @@ private fun InstanceMods(
                         withContext(Dispatchers.Swing) { refresh++ }
                     }
                 },
+            downloads =
+                listOf(
+                    ToolbarAction(
+                        "下载模组",
+                        icon = Icons.Outlined.Add,
+                        style = ToolbarActionStyle.Filled,
+                    ) { onDiscover() },
+                ),
+            openFolder =
+                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+                    actions.run { actions.controller.openFolder(instance.id, "mods") }
+                },
+        )
+        val reportByFile = updateReport?.items?.associateBy { it.filename }.orEmpty()
+        val activeNames = mods.map { it.filename }.toSet()
+        val updateCount =
+            updateReport?.items.orEmpty().count {
+                it.status == ModUpdateStatus.Updatable && it.filename in activeNames
+            }
+        val unknownCount =
+            updateReport?.items.orEmpty().count {
+                it.status == ModUpdateStatus.Unknown && it.filename in activeNames
+            }
+        // 芯片按更新状态筛选：「未找到更新」只收「无法确认」，「已是最新」只出现在「全部」。
+        // 数量与芯片一致：可更新数量、无法确认数量都不含已是最新的条目。
+        val statusText =
+            when {
+                checking -> "正在检查更新…"
+                updateReport == null -> ""
+                updateCount > 0 ->
+                    "$updateCount 项可更新" +
+                        if (unknownCount > 0) " · $unknownCount 项无法确认" else ""
+                unknownCount > 0 -> "$unknownCount 项无法确认"
+                else -> "全部为最新"
+            }
+        // 芯片行常驻：即使检查失败或被取消，也能继续筛选并回到「版本管理」。
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ContentChipRow(
+                selected = chip,
+                visible =
+                    listOf(
+                        ContentChip.All,
+                        ContentChip.Disabled,
+                        ContentChip.Updatable,
+                        ContentChip.NoUpdate,
+                    ),
+            ) { chip = it }
+            if (statusText.isNotBlank())
+                Text(
+                    statusText,
+                    Modifier.weight(1f),
+                    fontSize = 11.sp,
+                    color =
+                        if (updateCount > 0) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            else Spacer(Modifier.weight(1f))
+            TextButton(
+                { updates.checkAll(checkScope, refresh = true) },
+                enabled = !actions.controller.isInstanceBusy(instance.id) && !checking,
+            ) {
+                Text(if (checking) "正在检查…" else "检查更新", fontSize = 12.sp)
+            }
+            TextButton(
+                { updatesOpen = true },
                 enabled = !actions.controller.isInstanceBusy(instance.id),
             ) {
-                Text("导入模组", fontSize = 12.sp)
+                Text("版本管理", fontSize = 12.sp)
             }
-            PrimaryButton("下载模组", Icons.Outlined.Add, onClick = onDiscover)
         }
-        val filtered = mods.filter {
-            it.filename.contains(query, true) ||
-                it.metadata.title.contains(query, true) ||
-                it.metadata.entries.any { entry -> entry.id.contains(query, true) }
+        if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+        updateError?.let { failure ->
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    failure,
+                    Modifier.weight(1f),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                TextButton(
+                    { updates.modsError = null; startCheck() },
+                    enabled = !actions.controller.isInstanceBusy(instance.id) && !checking,
+                ) {
+                    Text("重新检查", fontSize = 12.sp)
+                }
+            }
         }
+        val filtered =
+            mods.filter {
+                    query.isBlank() ||
+                        it.filename.contains(query, true) ||
+                        it.metadata.title.contains(query, true) ||
+                        it.metadata.entries.any { entry -> entry.id.contains(query, true) }
+                }
+                .filter { mod ->
+                    when (chip) {
+                        ContentChip.All -> true
+                        ContentChip.Disabled -> !mod.enabled
+                        ContentChip.Updatable ->
+                            reportByFile[mod.filename]?.status == ModUpdateStatus.Updatable
+                        // 「未找到更新」只收「无法确认」的条目；已是最新的只在「全部」里出现。
+                        ContentChip.NoUpdate ->
+                            reportByFile[mod.filename]?.status == ModUpdateStatus.Unknown
+                    }
+                }
         // 模组图标从 JAR 自带资源里取，缓存在启动器 cache/mod-icons；行内按 JAR 路径 + 修改时间复用。
         val modsDirectory = runCatching {
             actions.controller.store.instancePath(instance.id).resolve("mods")
@@ -1178,8 +1898,21 @@ private fun InstanceMods(
                 }
             filtered.isEmpty() ->
                 Panel(Modifier.fillMaxWidth()) {
-                    EmptyState("没有匹配的模组", "换个关键词试试", Icons.Outlined.SearchOff) {
-                        TextButton({ query = "" }) { Text("清除搜索") }
+                    EmptyState(
+                        if (chip != ContentChip.All && query.isBlank())
+                            "没有「${chip.title}」的模组"
+                        else "没有匹配的模组",
+                        if (chip != ContentChip.All && query.isBlank())
+                            "切换到「全部」查看所有模组。"
+                        else "换个关键词试试",
+                        Icons.Outlined.SearchOff,
+                    ) {
+                        TextButton({
+                            query = ""
+                            chip = ContentChip.All
+                        }) {
+                            Text("清除筛选")
+                        }
                     }
                 }
             else ->
@@ -1190,8 +1923,15 @@ private fun InstanceMods(
                             jar = modsDirectory?.resolve(mod.filename),
                             iconCacheRoot = iconCacheRoot,
                             modifier = Modifier.animateItem(),
-                            busy = actions.controller.isInstanceBusy(instance.id),
+                            update = reportByFile[mod.filename],
+                            busy = actions.controller.isInstanceBusy(instance.id) || applyingJob != null,
                             onDetail = { detailMod = mod },
+                            onUpdate = {
+                                reportByFile[mod.filename]?.let { item ->
+                                    if (item.possibleMatch) confirmingUpdate = item
+                                    else startUpdate(item)
+                                }
+                            },
                             onToggle = {
                                 actions.run {
                                     actions.controller.requireIdle(instance.id)
@@ -1213,15 +1953,50 @@ private fun InstanceMods(
     }
 }
 
-/** 52dp 模组行：JAR 自带图标 28dp + 名称 14 + 版本/加载器/大小 12 + 来源文件名 11 + 开关与删除。 */
+/**
+ * 行尾动作按钮：模组 / 资源包 / 光影 / 存档共用。
+ *
+ * 文字动作高 28、12sp、左右 8dp；图标动作同高（28dp）同间距。调用方统一按「主动作 → 开关 → 删除」排序， 动作之间间隔 4dp；删除一律用图标并放最后。
+ */
+@Composable
+private fun RowTextAction(
+    text: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick,
+        enabled = enabled,
+        modifier = Modifier.height(28.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+    ) {
+        Text(text, fontSize = 12.sp)
+    }
+}
+
+/** 行尾图标动作：与 [RowTextAction] 同高同间距，删除类动作放最后。 */
+@Composable
+private fun RowIconAction(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean = true,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onClick: () -> Unit,
+) {
+    SmallIconButton(icon, label, onClick, enabled = enabled, tint = tint, size = 28.dp)
+}
+
+/** 52dp 模组行：JAR 图标 28dp + 名称 14 + 版本/加载器/大小 12 + 来源文件名 11 + 更新/开关/删除。 */
 @Composable
 private fun ModRow(
     mod: ModFile,
     jar: Path?,
     iconCacheRoot: Path?,
     modifier: Modifier,
+    update: ModUpdateItem?,
     busy: Boolean,
     onDetail: () -> Unit,
+    onUpdate: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -1230,6 +2005,22 @@ private fun ModRow(
     val icon =
         if (jar != null && iconCacheRoot != null) rememberModIcon(jar, mod.modified, iconCacheRoot)
         else null
+    val details =
+        listOf(
+                mod.metadata.versions.ifBlank { "版本未知" },
+                mod.metadata.loader.ifBlank { "加载器未知" },
+                "%.1f MB".format(mod.size / 1048576f),
+            )
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+    val metaDetails =
+        listOf(
+                mod.metadata.loader.ifBlank { "加载器未知" },
+                "%.1f MB".format(mod.size / 1048576f),
+            )
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+    val updateItem = update?.takeIf { it.status == ModUpdateStatus.Updatable }
     Surface(
         modifier.fillMaxWidth().heightIn(min = 52.dp).pressScale(),
         shape = shape,
@@ -1267,26 +2058,57 @@ private fun ModRow(
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(
-                    mod.metadata.title.ifBlank { sourceName },
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    listOf(
-                            mod.metadata.versions.ifBlank { "版本未知" },
-                            mod.metadata.loader.ifBlank { "加载器未知" },
-                            "%.1f MB".format(mod.size / 1048576f),
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        mod.metadata.title.ifBlank { sourceName },
+                        Modifier.weight(1f, fill = false),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (update?.possibleMatch == true) {
+                        Spacer(Modifier.width(5.dp))
+                        Tag("可能匹配", MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+                if (updateItem != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            updateItem.currentVersion.ifBlank { "当前" } +
+                                " → " +
+                                updateItem.latestVersion.ifBlank {
+                                    updateItem.candidate?.versionNumber.orEmpty()
+                                },
+                            Modifier.weight(1f, fill = false),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        .filter { it.isNotBlank() }
-                        .joinToString(" · "),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            metaDetails +
+                                if (updateItem.candidate == null) " · 需手动下载" else "",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else
+                    Text(
+                        details +
+                            when (update?.status) {
+                                ModUpdateStatus.Latest -> " · 已是最新"
+                                ModUpdateStatus.Unknown -> " · 无法确认"
+                                else -> ""
+                            },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
             }
             Spacer(Modifier.width(8.dp))
             Text(
@@ -1298,13 +2120,20 @@ private fun ModRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(8.dp))
-            CompactSwitch(mod.enabled, { onToggle() }, enabled = !busy)
-            SmallIconButton(
-                Icons.Outlined.DeleteOutline,
-                "将模组移至回收站",
-                onDelete,
-                enabled = !busy,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (updateItem != null && updateItem.applicable)
+                    RowTextAction("更新", enabled = !busy, onClick = onUpdate)
+                CompactSwitch(mod.enabled, { onToggle() }, enabled = !busy)
+                RowIconAction(
+                    Icons.Outlined.DeleteOutline,
+                    "将模组移至回收站",
+                    enabled = !busy,
+                    onClick = onDelete,
+                )
+            }
         }
     }
 }
@@ -1357,10 +2186,478 @@ private fun rememberModIcon(jar: Path, modified: Long, cacheRoot: Path): ImageBi
 }
 
 /**
- * 存档页签：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、 「可能不是有效世界」提示），行尾「备份」「复制到…」「删除」；下方「备份」卡片列出可恢复的备份。
+ * 内容区的拖放接收器：把传入的文件/文件夹路径交给 [onFiles]，悬停时给内容区描边。
  *
- * 列表在 IO 线程读取（备份列举会现算 SHA1，不能放在 Compose 线程）；首次加载给骨架、读取失败可
- * 重试、没有存档给空态。任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端的中文消息显示在工具行下方，不静默吞掉。
+ * 只接受系统文件列表（Finder / 资源管理器的拖放都走这一种）；数量上限 20，避免误拖整个目录。
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Modifier.contentDropTarget(
+    enabled: Boolean = true,
+    hint: String = "请拖入文件或文件夹",
+    onError: (String) -> Unit = {},
+    onFiles: (List<Path>) -> Unit,
+): Modifier {
+    var hovered by remember { mutableStateOf(false) }
+    val receiver by rememberUpdatedState(onFiles)
+    val failure by rememberUpdatedState(onError)
+    val target =
+        remember(enabled) {
+            object : DragAndDropTarget {
+                override fun onEntered(event: DragAndDropEvent) {
+                    if (enabled) hovered = true
+                }
+
+                override fun onExited(event: DragAndDropEvent) {
+                    hovered = false
+                }
+
+                override fun onEnded(event: DragAndDropEvent) {
+                    hovered = false
+                }
+
+                override fun onDrop(event: DragAndDropEvent): Boolean {
+                    hovered = false
+                    if (!enabled) return false
+                    return runCatching {
+                        val raw =
+                            event.awtTransferable.getTransferData(DataFlavor.javaFileListFlavor)
+                                as? List<*>
+                        val files = raw.orEmpty().filterIsInstance<File>().map { it.toPath() }
+                        require(files.isNotEmpty()) { hint }
+                        require(files.size <= 20) { "一次最多拖入 20 个文件" }
+                        receiver(files)
+                        true
+                    }
+                        .getOrElse { error ->
+                            failure(error.message ?: "无法读取拖入的文件")
+                            false
+                        }
+                }
+            }
+        }
+    val shape = RoundedCornerShape(Metrics.cardRadius)
+    return this
+        .then(
+            if (hovered && enabled)
+                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+            else Modifier
+        )
+        .dragAndDropTarget(
+            shouldStartDragAndDrop = { event ->
+                enabled &&
+                    event.awtTransferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+            },
+            target = target,
+        )
+}
+
+/** 资源包 / 光影行：缩略图 + 名称 14 + 类型/大小/修改时间 12 + 更新标记；行尾只有删除。 */
+@Composable
+private fun PackRow(
+    entry: LocalPackEntry,
+    folder: PackFolder,
+    update: PackUpdateItem?,
+    busy: Boolean,
+    onDelete: () -> Unit,
+) {
+    val shader = folder == PackFolder.ShaderPacks
+    val shape = RoundedCornerShape(Metrics.cardRadius)
+    val details =
+        listOf(
+                if (entry.isDirectory) "文件夹" else "ZIP",
+                formatFileSize(entry.size),
+                "修改于 " +
+                    if (entry.modified > 0) formatSaveTime(java.time.Instant.ofEpochMilli(entry.modified))
+                    else "未知时间",
+            )
+            .joinToString(" · ")
+    // 更新信息与文件信息合成一行，行高与模组/存档一致；「可更新」用主题色，失败原因如实附在后面。
+    val meta =
+        buildString {
+            if (update?.status == PackUpdateStatus.Updatable) {
+                append(update.currentVersion.ifBlank { "当前" })
+                append(" → ")
+                append(update.latestVersion.ifBlank { update.candidate?.versionNumber.orEmpty() })
+                append(" · ")
+            }
+            append(details)
+            when (update?.status) {
+                PackUpdateStatus.Latest -> append(" · 已是最新")
+                PackUpdateStatus.Unknown -> {
+                    append(" · 无法确认")
+                    if (update.warning.isNotBlank()) append(" · ").append(update.warning)
+                }
+                else -> Unit
+            }
+        }
+    Surface(
+        Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth()
+                .hoverHighlight(shape, alpha = .04f)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LocalContentThumbnail(
+                entry.path,
+                world = false,
+                modifier = Modifier.size(28.dp),
+                modified = entry.modified,
+                shader = shader,
+                fallback = {
+                    if (shader) ShaderFallbackIcon(Modifier.size(28.dp))
+                    else
+                        Icon(
+                            Icons.Outlined.Image,
+                            null,
+                            Modifier.size(28.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                },
+            )
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        entry.filename,
+                        Modifier.weight(1f, fill = false),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (update?.possibleMatch == true) {
+                        Spacer(Modifier.width(5.dp))
+                        Tag("可能匹配", MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+                Text(
+                    meta,
+                    fontSize = 12.sp,
+                    color =
+                        if (update?.status == PackUpdateStatus.Updatable)
+                            MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            RowIconAction(
+                Icons.Outlined.DeleteOutline,
+                "将${entry.filename}移至回收站",
+                enabled = !busy,
+                onClick = onDelete,
+            )
+        }
+    }
+}
+
+/**
+ * 资源包 / 光影页签：搜索 + 刷新 + 导入 + 打开文件夹；更新检查由左栏「检查更新」统一触发，结果按页签显示。行列出目录里的 zip 与文件夹。
+ *
+ * 没有启用/禁用开关：资源包在游戏内选择，光影由 Iris / OptiFine 读取。支持把 zip 或文件夹直接拖进页面导入。
+ */
+@Composable
+private fun InstancePackTab(
+    instance: GameInstance,
+    actions: UiActions,
+    updates: InstanceUpdateCenter,
+    folder: PackFolder,
+    modifier: Modifier,
+) {
+    var entries by remember(instance.id, folder) { mutableStateOf<List<LocalPackEntry>>(emptyList()) }
+    var query by remember(instance.id, folder) { mutableStateOf("") }
+    var refresh by remember(instance.id, folder) { mutableIntStateOf(0) }
+    var loading by remember(instance.id, folder) { mutableStateOf(true) }
+    var error by remember(instance.id, folder) { mutableStateOf<String?>(null) }
+    var actionError by remember(instance.id, folder) { mutableStateOf<String?>(null) }
+    var chip by remember(instance.id, folder) { mutableStateOf(ContentChip.All) }
+    var deleting by remember { mutableStateOf<LocalPackEntry?>(null) }
+    var watchingJob by remember(instance.id, folder) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val liveState by actions.controller.state.collectAsState()
+    val busy = actions.controller.isInstanceBusy(instance.id)
+    val checking = updates.packsChecking
+    val report = updates.packs
+    val reportItems = report?.items(folder).orEmpty()
+    // 列表还没读出来时不按文件名过滤，避免先闪一下「全部为最新」。
+    val visibleItems =
+        if (entries.isEmpty()) reportItems
+        else {
+            val installed = entries.mapTo(HashSet()) { it.filename }
+            reportItems.filter { it.filename in installed }
+        }
+    val itemsByFile = reportItems.associateBy { it.filename }
+    val updatable = visibleItems.count { it.status == PackUpdateStatus.Updatable }
+    val uncertain = visibleItems.count { it.status == PackUpdateStatus.Unknown }
+    val statusText =
+        when {
+            checking -> "正在检查更新…"
+            report == null -> ""
+            updatable > 0 ->
+                "$updatable 项可更新" + if (uncertain > 0) " · $uncertain 项无法确认" else ""
+            uncertain > 0 -> "$uncertain 项无法确认"
+            else -> "全部为最新"
+        }
+    LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.id + ":" + it.status }) {
+        loading = true
+        error = null
+        try {
+            entries =
+                withContext(Dispatchers.IO) { actions.controller.listPacks(instance.id, folder) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            entries = emptyList()
+            error = failure.message
+        } finally {
+            loading = false
+        }
+    }
+    // 导入与删除都是任务中心里的后台任务；结束后刷新列表，失败原因留在工具行下方。
+    LaunchedEffect(watchingJob, liveState.jobs.map { it.id + ":" + it.status }) {
+        val id = watchingJob ?: return@LaunchedEffect
+        val job = liveState.jobs.firstOrNull { it.id == id } ?: return@LaunchedEffect
+        when (job.status) {
+            JobStatus.Failed -> {
+                actionError = job.error ?: "操作失败，详情见日志"
+                watchingJob = null
+            }
+            JobStatus.Completed,
+            JobStatus.Cancelled -> {
+                watchingJob = null
+                refresh++
+            }
+            else -> Unit
+        }
+    }
+    val startImport: (List<Path>) -> Unit = { chosen ->
+        actionError = null
+        if (chosen.isNotEmpty())
+            try {
+                watchingJob = actions.controller.importPacks(instance.id, folder, chosen)
+            } catch (failure: Exception) {
+                actionError = failure.message ?: "无法导入"
+            }
+    }
+    deleting?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("移入回收站？") },
+            text = { Text("「${entry.filename}」会移到回收站，需要时可以再找回。") },
+            confirmButton = {
+                TextButton({
+                    deleting = null
+                    actionError = null
+                    actions.run {
+                        actions.controller.requireIdle(instance.id)
+                        val removed =
+                            runCatching {
+                                    actions.controller.deletePack(
+                                        instance.id,
+                                        folder,
+                                        entry.filename,
+                                    )
+                                }
+                                .getOrElse { failure ->
+                                    withContext(Dispatchers.Swing) {
+                                        actionError = failure.message ?: "无法删除"
+                                    }
+                                    false
+                                }
+                        withContext(Dispatchers.Swing) {
+                            if (!removed && actionError == null)
+                                actionError =
+                                    "「${entry.filename}」没有移入回收站：文件可能已不存在，" +
+                                        "或回收站不可用；详情见日志。"
+                            // 报告里的旧条目同步移除，避免「N 项可更新」把已删除的文件算进去。
+                            if (removed)
+                                updates.packs?.let { current ->
+                                    updates.packs =
+                                        current.copy(
+                                            items =
+                                                current.items.filterNot {
+                                                    it.folder == folder &&
+                                                        it.filename == entry.filename
+                                                }
+                                        )
+                                }
+                            refresh++
+                        }
+                    }
+                }) {
+                    Text("移至回收站", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton({ deleting = null }) { Text("取消") } },
+        )
+    }
+    Column(
+        modifier
+            .fillMaxHeight()
+            .contentDropTarget(
+                enabled = !busy,
+                hint = "请拖入 .zip 或文件夹",
+                onError = { actionError = it },
+            ) { dropped -> startImport(dropped) },
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ContentToolbar(
+            flexible = {
+                ToolbarSearchField(query, { query = it }, "搜索已安装${folder.title}")
+            },
+            refresh =
+                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+            importAction =
+                ToolbarAction("导入", icon = Icons.Outlined.FileDownload, enabled = !busy) {
+                    actions.run {
+                        val chosen =
+                            actions.choose(
+                                "导入${folder.title}（.zip）",
+                                multiple = true,
+                                extensions = listOf("zip"),
+                            )
+                        withContext(Dispatchers.Swing) { startImport(chosen) }
+                    }
+                },
+            openFolder =
+                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+                    actions.run { actions.controller.openFolder(instance.id, folder.directory) }
+                },
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ContentChipRow(
+                selected = chip,
+                visible = listOf(ContentChip.All, ContentChip.Updatable, ContentChip.NoUpdate),
+            ) { chip = it }
+            if (statusText.isNotBlank())
+                Text(
+                    statusText,
+                    Modifier.weight(1f),
+                    fontSize = 11.sp,
+                    color =
+                        if (updatable > 0) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            else Spacer(Modifier.weight(1f))
+        }
+        if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+        updates.packsError?.let { failure ->
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    failure,
+                    Modifier.weight(1f),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                TextButton(
+                    { updates.packsError = null; updates.checkPacks(scope) },
+                    enabled = !busy && !checking,
+                ) {
+                    Text("重新检查", fontSize = 12.sp)
+                }
+            }
+        }
+        actionError?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+        val filtered =
+            entries
+                .filter { query.isBlank() || it.filename.contains(query, true) }
+                .filter { entry ->
+                    val status = itemsByFile[entry.filename]?.status
+                    when (chip) {
+                        ContentChip.All -> true
+                        ContentChip.Updatable -> status == PackUpdateStatus.Updatable
+                        // 「未找到更新」只收「无法确认」的条目；已是最新的只在「全部」里出现。
+                        ContentChip.NoUpdate -> status == PackUpdateStatus.Unknown
+                        // 资源包与光影没有启用/禁用开关，这个芯片不会显示。
+                        ContentChip.Disabled -> true
+                    }
+                }
+        when {
+            loading && entries.isEmpty() -> ListSkeleton()
+            error != null ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState("无法读取${folder.title}目录", error.orEmpty(), Icons.Outlined.CloudOff) {
+                        TextButton({ refresh++ }) { Text("重试") }
+                    }
+                }
+            entries.isEmpty() ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState(
+                        "还没有${folder.title}",
+                        "点「导入」选择 .zip，或把 .zip / 文件夹直接拖进这个页面。",
+                        if (folder == PackFolder.ShaderPacks) Icons.Outlined.AutoAwesome
+                        else Icons.Outlined.Palette,
+                    )
+                }
+            filtered.isEmpty() ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState(
+                        if (chip != ContentChip.All && query.isBlank())
+                            "没有「${chip.title}」的${folder.title}"
+                        else "没有匹配的${folder.title}",
+                        if (chip != ContentChip.All && query.isBlank()) "切换到「全部」查看全部内容。"
+                        else "换个关键词试试",
+                        Icons.Outlined.SearchOff,
+                    ) {
+                        TextButton({
+                            query = ""
+                            chip = ContentChip.All
+                        }) {
+                            Text("清除筛选")
+                        }
+                    }
+                }
+            else ->
+                ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        filtered.forEach { entry ->
+                            key(entry.filename) {
+                                PackRow(
+                                    entry = entry,
+                                    folder = folder,
+                                    update = itemsByFile[entry.filename],
+                                    busy = busy,
+                                    onDelete = { deleting = entry },
+                                )
+                            }
+                        }
+                    }
+                }
+        }
+        Text(
+            "共 ${entries.size} 项 · ${folder.directory}",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * 存档页签：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、 「可能不是有效世界」提示），行尾「备份」「复制到…」「删除」；下方是「恢复时替换原世界」设置与「备份」卡片。
+ *
+ * 备份与原版游戏共用 `<游戏目录>/backups/`，原版写的备份也会列出；没有 `level.dat` 的压缩包只展示、不提供恢复。
+ * 列表在 IO 线程读取；任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端的中文消息显示在 工具行下方，不静默吞掉。
  */
 @Composable
 private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifier: Modifier) {
@@ -1376,7 +2673,8 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
     var watchingJob by remember(instance.id) { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<SaveEntry?>(null) }
     var deletingBackup by remember { mutableStateOf<SaveBackupInfo?>(null) }
-    var restoring by remember { mutableStateOf<SaveBackupInfo?>(null) }
+    // 开启「恢复时替换原世界」后，恢复会替换同名世界；执行前单独确认。
+    var replacing by remember { mutableStateOf<SaveBackupInfo?>(null) }
     var copying by remember { mutableStateOf<SaveEntry?>(null) }
     val liveState by actions.controller.state.collectAsState()
     val busy = actions.controller.isInstanceBusy(instance.id)
@@ -1435,12 +2733,26 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
             actionError = failure.message ?: "无法开始备份存档"
         }
     }
-    val startRestore = { backup: SaveBackupInfo, overwrite: Boolean ->
+    val startRestore = { backup: SaveBackupInfo ->
         actionError = null
         try {
-            watchingJob = actions.controller.restoreSave(instance.id, backup.id, overwrite)
+            watchingJob = actions.controller.restoreSave(instance.id, backup.id)
         } catch (failure: Exception) {
             actionError = failure.message ?: "无法开始恢复存档"
+        }
+    }
+    // 拖入的 .zip / 世界文件夹：核心先校验（level.dat 在根或唯一一层包装目录）再解压，无效输入不落盘。
+    val startImport: (List<Path>) -> Unit = { dropped ->
+        actionError = null
+        when {
+            dropped.isEmpty() -> Unit
+            dropped.size > 1 -> actionError = "请一次拖入一个存档"
+            else ->
+                try {
+                    watchingJob = actions.controller.importSave(instance.id, dropped.single())
+                } catch (failure: Exception) {
+                    actionError = failure.message ?: "无法导入存档"
+                }
         }
     }
     deleting?.let { entry ->
@@ -1498,22 +2810,25 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
             dismissButton = { TextButton({ deletingBackup = null }) { Text("取消") } },
         )
     }
-    restoring?.let { backup ->
+    replacing?.let { backup ->
         AlertDialog(
-            onDismissRequest = { restoring = null },
-            title = { Text("覆盖现有存档？") },
+            onDismissRequest = { replacing = null },
+            title = { Text("用备份替换原世界？") },
             text = {
-                Text("saves 里已有同名世界「" + backup.saveName + "」。恢复会先把现有存档自动备份到备份区，再用这个备份覆盖它。")
+                Text(
+                    "当前世界「" + backup.saveName + "」会先备份到 backups/，再用这个备份替换它；" +
+                        "当前世界会改名为「" + backup.saveName + "（替换前 时间）」保留，不会删除。"
+                )
             },
             confirmButton = {
                 TextButton({
-                    restoring = null
-                    startRestore(backup, true)
+                    replacing = null
+                    startRestore(backup)
                 }) {
-                    Text("覆盖并恢复")
+                    Text("替换并恢复", color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton({ restoring = null }) { Text("取消") } },
+            dismissButton = { TextButton({ replacing = null }) { Text("取消") } },
         )
     }
     copying?.let { entry ->
@@ -1525,36 +2840,28 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
             onStarted = { jobId -> watchingJob = jobId },
         )
     }
-    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CompactSearchField(
-                query,
-                { query = it },
-                Modifier.weight(1f),
-                placeholder = "搜索存档名称",
-            )
-            SmallIconButton(
-                Icons.Outlined.Refresh,
-                "刷新存档列表",
-                {
+    Column(
+        modifier
+            .fillMaxHeight()
+            .contentDropTarget(
+                enabled = canManage,
+                hint = "请拖入存档 .zip 或世界文件夹",
+                onError = { actionError = it },
+            ) { dropped -> startImport(dropped) },
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ContentToolbar(
+            flexible = { ToolbarSearchField(query, { query = it }, "搜索存档名称") },
+            refresh =
+                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) {
                     actionError = null
                     refresh++
                 },
-                enabled = !busy,
-            )
-            SecondaryButton(
-                { actions.run { actions.controller.openFolder(instance.id, "saves") } },
-                enabled = !busy,
-            ) {
-                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(15.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("打开存档文件夹", fontSize = 12.sp)
-            }
-        }
+            openFolder =
+                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+                    actions.run { actions.controller.openFolder(instance.id, "saves") }
+                },
+        )
         Text(
             "${saves.size} 个存档 · ${backups.size} 个备份 · $savesDirectory",
             fontSize = 11.sp,
@@ -1588,7 +2895,8 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
                             Panel(Modifier.fillMaxWidth()) {
                                 EmptyState(
                                     "这个实例还没有存档",
-                                    "在游戏里创建一个世界，或用「复制到…」从别的实例复制过来。",
+                                    "在游戏里创建一个世界，用「复制到…」从别的实例复制，" +
+                                        "或把存档 .zip / 世界文件夹拖进这个页面。",
                                     Icons.Outlined.Save,
                                 )
                             }
@@ -1614,10 +2922,36 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
                                 }
                             }
                     }
+                    Panel(Modifier.fillMaxWidth()) {
+                        SettingRow(
+                            "恢复时替换原世界",
+                            "关闭时恢复只解压成同级的新世界，不改动原存档；开启后先备份当前世界，再用备份替换它，" +
+                                "当前世界改名为「（替换前 时间）」保留。",
+                        ) {
+                            CompactSwitch(
+                                instance.replaceSaveOnRestore,
+                                { enabled ->
+                                    actionError = null
+                                    runCatching {
+                                            actions.controller.setReplaceSaveOnRestore(
+                                                instance.id,
+                                                enabled,
+                                            )
+                                        }
+                                        .onFailure {
+                                            actionError = it.message ?: "无法保存设置"
+                                        }
+                                },
+                                enabled = !busy,
+                            )
+                        }
+                    }
                     Panel(
                         Modifier.fillMaxWidth(),
                         title = "备份",
-                        detail = "备份保存在实例目录的隐藏目录里；恢复前会先备份同名存档，不会直接覆盖。",
+                        detail =
+                            "与原版游戏共用 backups/ 目录（原版自己写的备份也会列在这里）；" +
+                                "恢复默认解压成新世界，不直接覆盖。",
                     ) {
                         if (backups.isEmpty())
                             Text(
@@ -1638,8 +2972,10 @@ private fun InstanceSavesTab(instance: GameInstance, actions: UiActions, modifie
                                                         saveBaseName(it.name)
                                                             .equals(backup.saveName, true)
                                                 }
-                                                if (exists) restoring = backup
-                                                else startRestore(backup, false)
+                                                // 只有开启「恢复时替换原世界」且同名世界存在时才替换。
+                                                if (instance.replaceSaveOnRestore && exists)
+                                                    replacing = backup
+                                                else startRestore(backup)
                                             },
                                             onDelete = { deletingBackup = backup },
                                         )
@@ -1697,14 +3033,24 @@ private fun SaveRow(
                     color = MaterialTheme.colorScheme.error.copy(alpha = .85f),
                     maxLines = 1,
                 )
-            SaveRowAction("备份", canManage, onBackup)
-            SaveRowAction("复制到…", canCopy, onCopy)
-            SaveRowAction("删除", canManage, danger = true, onClick = onDelete)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                RowTextAction("备份", enabled = canManage, onClick = onBackup)
+                RowTextAction("复制到…", enabled = canCopy, onClick = onCopy)
+                RowIconAction(
+                    Icons.Outlined.DeleteOutline,
+                    "将「${entry.name}」移至回收站",
+                    enabled = canManage,
+                    onClick = onDelete,
+                )
+            }
         }
     }
 }
 
-/** 一个备份行：44dp，来源存档名 + 创建时间与大小，行尾「恢复」「删除」。 */
+/** 一个备份行：44dp，来源存档名 + 创建时间与大小；没有 level.dat 的压缩包不提供恢复。 */
 @Composable
 private fun SaveBackupRow(
     backup: SaveBackupInfo,
@@ -1734,41 +3080,353 @@ private fun SaveBackupRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                formatSaveTime(backup.createdAt) + " · " + formatSaveSize(backup.size),
+                formatSaveTime(backup.createdAt) +
+                    " · " +
+                    formatSaveSize(backup.size) +
+                    if (backup.restorable) "" else " · 不含 level.dat",
+                fontSize = 12.sp,
+                color =
+                    if (backup.restorable) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.error.copy(alpha = .8f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            RowTextAction("恢复", enabled = !busy && backup.restorable, onClick = onRestore)
+            RowIconAction(
+                Icons.Outlined.DeleteOutline,
+                "将备份移至回收站",
+                enabled = !busy,
+                onClick = onDelete,
+            )
+        }
+    }
+}
+
+/**
+ * 数据包页签：先选世界，再列出 `<世界>/datapacks/` 里的压缩包与文件夹（名称、大小、启用状态）。
+ *
+ * 支持安装 `.zip`（校验 `pack.mcmeta` 与 `pack_format`）、删除到回收站、打开文件夹、启用/禁用
+ * （写 `level.dat` 的 `Data.Packs`）。`level.dat` 无法解析或世界正被打开时，开关禁用并在顶部说明原因，
+ * 宁可只读也不冒险改世界。
+ */
+@Composable
+private fun InstanceDatapacksTab(instance: GameInstance, actions: UiActions, modifier: Modifier) {
+    var worlds by remember(instance.id) { mutableStateOf<List<SaveEntry>>(emptyList()) }
+    var world by remember(instance.id) { mutableStateOf("") }
+    var listing by remember(instance.id) { mutableStateOf<DatapackListing?>(null) }
+    var loading by remember(instance.id) { mutableStateOf(true) }
+    var loadError by remember(instance.id) { mutableStateOf<String?>(null) }
+    var actionError by remember(instance.id) { mutableStateOf<String?>(null) }
+    var refresh by remember(instance.id) { mutableIntStateOf(0) }
+    var query by remember(instance.id) { mutableStateOf("") }
+    var deleting by remember { mutableStateOf<DatapackEntry?>(null) }
+    var working by remember(instance.id) { mutableStateOf<String?>(null) }
+    val busy = actions.controller.isInstanceBusy(instance.id)
+    val running = actions.controller.game.isRunning(instance.id)
+    val canEdit = !busy && !running
+    val blockedNote =
+        when {
+            running -> "游戏正在使用存档，请先退出游戏再管理数据包。"
+            busy -> "任务进行中，数据包操作暂时不可用。"
+            else -> ""
+        }
+    val savesDirectory = actions.controller.store.instancePath(instance.id).resolve("saves")
+    val datapacksDirectory = savesDirectory.resolve(world).resolve("datapacks")
+    // 数据包只属于真实世界目录，`saves/` 里的 .zip 存档没有可写的 datapacks 目录。
+    LaunchedEffect(instance.id, refresh) {
+        try {
+            worlds =
+                withContext(Dispatchers.IO) {
+                    actions.controller.listSaves(instance.id).filter {
+                        it.path.isDirectory() && it.hasLevelDat
+                    }
+                }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            worlds = emptyList()
+            loadError = failure.message ?: "无法读取存档目录"
+        }
+        if (worlds.none { it.name == world }) world = worlds.firstOrNull()?.name.orEmpty()
+    }
+    LaunchedEffect(instance.id, world, refresh) {
+        listing = null
+        if (world.isBlank()) {
+            loading = false
+            return@LaunchedEffect
+        }
+        loading = true
+        loadError = null
+        try {
+            listing =
+                withContext(Dispatchers.IO) {
+                    actions.controller.listDatapacks(instance.id, world)
+                }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            loadError = failure.message ?: "无法读取数据包"
+        } finally {
+            loading = false
+        }
+    }
+    val install = {
+        actionError = null
+        actions.run {
+            val chosen =
+                actions.choose("选择数据包 ZIP", extensions = listOf("zip")).firstOrNull()
+            if (chosen != null) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        actions.controller.installDatapackFile(instance.id, world, chosen)
+                    }
+                    withContext(Dispatchers.Swing) { refresh++ }
+                } catch (failure: Exception) {
+                    withContext(Dispatchers.Swing) {
+                        actionError = failure.message ?: "安装数据包失败"
+                    }
+                }
+            }
+        }
+    }
+    val toggle = { entry: DatapackEntry, enabled: Boolean ->
+        actionError = null
+        actions.run {
+            withContext(Dispatchers.Swing) { working = entry.name }
+            try {
+                withContext(Dispatchers.IO) {
+                    actions.controller.setDatapackEnabled(instance.id, world, entry.name, enabled)
+                }
+                withContext(Dispatchers.Swing) { refresh++ }
+            } catch (failure: Exception) {
+                withContext(Dispatchers.Swing) {
+                    actionError = failure.message ?: "切换数据包状态失败"
+                }
+            } finally {
+                withContext(Dispatchers.Swing) { working = null }
+            }
+        }
+    }
+    deleting?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("移入回收站？") },
+            text = { Text("「${entry.name}」会从该存档的 datapacks 目录移入回收站，可从回收站恢复。") },
+            confirmButton = {
+                TextButton({
+                    deleting = null
+                    actionError = null
+                    actions.run {
+                        val moved =
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                        actions.controller.deleteDatapack(
+                                            instance.id,
+                                            world,
+                                            entry.name,
+                                        )
+                                    }
+                                    .getOrElse { failure ->
+                                        withContext(Dispatchers.Swing) {
+                                            actionError =
+                                                failure.message ?: "删除数据包失败，详情见日志"
+                                        }
+                                        false
+                                    }
+                            }
+                        withContext(Dispatchers.Swing) {
+                            if (!moved && actionError == null)
+                                actionError = "「${entry.name}」没有移入回收站：文件可能已不存在，或回收站不可用。"
+                            refresh++
+                        }
+                    }
+                }) {
+                    Text("移入回收站", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton({ deleting = null }) { Text("取消") } },
+        )
+    }
+    val current = listing
+    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ContentToolbar(
+            flexible = {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "世界",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CompactSelect(
+                        world,
+                        if (worlds.isEmpty()) listOf("" to "此实例还没有世界")
+                        else worlds.map { it.name to it.name },
+                        { world = it },
+                        Modifier.weight(1f).height(ContentToolbarMetrics.height),
+                        enabled = worlds.isNotEmpty() && !busy,
+                    )
+                }
+            },
+            importAction =
+                ToolbarAction(
+                    "安装数据包",
+                    icon = Icons.Outlined.FileDownload,
+                    enabled = world.isNotBlank() && canEdit,
+                ) { install() },
+            refresh =
+                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) {
+                    actionError = null
+                    refresh++
+                },
+            openFolder =
+                ToolbarAction(
+                    "打开文件夹",
+                    icon = Icons.Outlined.FolderOpen,
+                    enabled = world.isNotBlank() && !busy,
+                ) {
+                    actions.run { actions.controller.openWorldDatapacks(instance.id, world) }
+                },
+        )
+        Text(
+            if (world.isBlank()) "$savesDirectory"
+            else "${current?.entries?.size ?: 0} 个数据包 · $datapacksDirectory",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (blockedNote.isNotBlank())
+            Text(
+                blockedNote,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        actionError?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+        if (loading && current != null)
+            LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+        when {
+            loadError != null ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState("无法读取数据包", loadError.orEmpty(), Icons.Outlined.CloudOff) {
+                        TextButton({ refresh++ }) { Text("重试") }
+                    }
+                }
+            worlds.isEmpty() && !loading ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState(
+                        "这个实例还没有世界",
+                        "先创建或复制一个世界，再回来管理它的数据包。",
+                        Icons.Outlined.Save,
+                    )
+                }
+            current != null && current.entries.isEmpty() ->
+                Panel(Modifier.fillMaxWidth()) {
+                    EmptyState(
+                        "这个存档还没有数据包",
+                        "点「安装数据包」选一个 .zip；也可以把文件夹放进 datapacks/。",
+                        Icons.Outlined.FolderZip,
+                    )
+                }
+            current != null -> {
+                val filtered =
+                    current.entries.filter { query.isBlank() || it.name.contains(query, true) }
+                ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
+                    if (current.note.isNotBlank())
+                        Text(
+                            current.note,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    if (filtered.isEmpty())
+                        Panel(Modifier.fillMaxWidth()) {
+                            EmptyState("没有匹配的数据包", "换个关键词试试", Icons.Outlined.SearchOff) {
+                                TextButton({ query = "" }) { Text("清除搜索") }
+                            }
+                        }
+                    else
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            filtered.forEach { entry ->
+                                key(entry.name) {
+                                    DatapackRow(
+                                        entry = entry,
+                                        toggleEnabled =
+                                            current.toggleAvailable &&
+                                                canEdit &&
+                                                working == null &&
+                                                entry.enabled != null,
+                                        onToggle = { enabled -> toggle(entry, enabled) },
+                                        deleteEnabled = canEdit && working == null,
+                                        onDelete = { deleting = entry },
+                                    )
+                                }
+                            }
+                        }
+                }
+            }
+        }
+    }
+}
+
+/** 一个数据包行：44dp，图标 + 名称 + 大小与状态，行尾启用开关与「删除」。 */
+@Composable
+private fun DatapackRow(
+    entry: DatapackEntry,
+    toggleEnabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    deleteEnabled: Boolean,
+    onDelete: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .height(Metrics.rowHeight)
+            .hoverHighlight(RoundedCornerShape(Metrics.innerRadius), alpha = .04f)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            if (entry.directory) Icons.Outlined.Folder else Icons.Outlined.FolderZip,
+            null,
+            Modifier.size(18.dp),
+            MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.weight(1f)) {
+            Text(entry.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                (if (entry.directory) "文件夹" else "压缩包") +
+                    " · " +
+                    formatSaveSize(entry.size) +
+                    " · " +
+                    when (entry.enabled) {
+                        true -> "已启用"
+                        false -> "已禁用"
+                        null -> "状态未知"
+                    },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SaveRowAction("恢复", !busy, onRestore)
-        SaveRowAction("删除", !busy, danger = true, onClick = onDelete)
-    }
-}
-
-/** 行尾文字操作：12sp、高 28，禁用时降到 38% 透明度，破坏性操作用错误色。 */
-@Composable
-private fun SaveRowAction(
-    text: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    danger: Boolean = false,
-) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.height(28.dp),
-        enabled = enabled,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text,
-            fontSize = 12.sp,
-            color =
-                when {
-                    !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .38f)
-                    danger -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.primary
-                },
+        CompactSwitch(
+            entry.enabled == true,
+            { onToggle(entry.enabled != true) },
+            enabled = toggleEnabled,
+        )
+        RowIconAction(
+            Icons.Outlined.DeleteOutline,
+            "将数据包移至回收站",
+            enabled = deleteEnabled,
+            onClick = onDelete,
         )
     }
 }
@@ -1801,7 +3459,7 @@ private data class FolderEntry(
     val modified: String,
 )
 
-/** 内容文件夹浏览：资源包 / 原理图共用；原理图支持导入，目录可逐级进入。 文件大小与修改时间来自文件系统，显示的都是真实数据。 */
+/** 内容文件夹浏览：原理图专用（可导入、可逐级进入、可删除）；大小与修改时间来自文件系统。 */
 @Composable
 private fun InstanceFolderBrowser(
     instance: GameInstance,
@@ -1815,19 +3473,14 @@ private fun InstanceFolderBrowser(
     var entries by remember { mutableStateOf<List<FolderEntry>>(emptyList()) }
     var refresh by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
-    var updatesOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     // 目录读取期间先显示骨架，读完再决定空态，避免空态闪一下被误判成“目录是空的”。
     var loading by remember(instance.id, folder) { mutableStateOf(true) }
     var deletingFile by remember { mutableStateOf<Path?>(null) }
     // 子目录浏览只在前端维护，不改实例目录结构；返回上一级时清空栈。
     var subPath by remember(instance.id, folder) { mutableStateOf<List<String>>(emptyList()) }
+    val busy = actions.controller.isInstanceBusy(instance.id)
     val liveState by actions.controller.state.collectAsState()
-    if (updatesOpen)
-        ContentUpdatesDialog(instance.id, actions) {
-            updatesOpen = false
-            refresh++
-        }
     val root = actions.controller.store.instancePath(instance.id).resolve(folder)
     val directory =
         if (subPath.isEmpty()) root
@@ -1869,71 +3522,41 @@ private fun InstanceFolderBrowser(
         )
     }
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (subPath.isNotEmpty())
-                HeaderIconButton(Icons.Outlined.ArrowUpward, "返回上一级目录") {
-                    subPath = subPath.dropLast(1)
-                    query = ""
-                }
-            CompactSearchField(
-                query,
-                { query = it },
-                Modifier.weight(1f),
-                placeholder = "在文件夹内搜索",
-            )
-            if (importExtensions.isNotEmpty())
-                SecondaryButton(
-                    {
-                        actions.run {
-                            val chosen =
-                                actions.choose(
-                                    importLabel.ifBlank { "选择文件" },
-                                    multiple = true,
-                                    extensions = importExtensions,
-                                )
-                            if (chosen.isNotEmpty()) {
-                                actions.controller.content.importSchematics(instance.id, chosen)
-                                withContext(Dispatchers.Swing) { refresh++ }
-                            }
+        ContentToolbar(
+            leading = {
+                if (subPath.isNotEmpty())
+                    ToolbarIconAction(Icons.Outlined.ArrowUpward, "返回上一级目录") {
+                        subPath = subPath.dropLast(1)
+                        query = ""
+                    }
+            },
+            flexible = { ToolbarSearchField(query, { query = it }, "在文件夹内搜索") },
+            importAction =
+                ToolbarAction(
+                    importLabel.ifBlank { "导入" },
+                    icon = Icons.Outlined.FileDownload,
+                    enabled = !busy,
+                ) {
+                    actions.run {
+                        val chosen =
+                            actions.choose(
+                                importLabel.ifBlank { "选择文件" },
+                                multiple = true,
+                                extensions = importExtensions,
+                            )
+                        if (chosen.isNotEmpty()) {
+                            actions.controller.content.importSchematics(instance.id, chosen)
+                            withContext(Dispatchers.Swing) { refresh++ }
                         }
-                    },
-                    enabled = !actions.controller.isInstanceBusy(instance.id),
-                ) {
-                    Icon(Icons.Outlined.FileDownload, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text(importLabel.ifBlank { "导入" }, fontSize = 12.sp)
-                }
-            else
-            // 资源包没有导入后端：保留可见的禁用按钮与说明。
-            SecondaryButton({}, enabled = false) {
-                    Icon(Icons.Outlined.FileDownload, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("导入", fontSize = 12.sp)
-                }
-            if (folder in setOf("resourcepacks", "shaderpacks"))
-                TextButton(
-                    { updatesOpen = true },
-                    enabled = !actions.controller.isInstanceBusy(instance.id),
-                ) {
-                    Text("检查更新", fontSize = 12.sp)
-                }
-            SmallIconButton(
-                Icons.Outlined.Refresh,
-                "刷新文件",
-                { refresh++ },
-                enabled = !actions.controller.isInstanceBusy(instance.id),
-            )
-            SecondaryButton({
-                actions.run { actions.controller.openFolder(instance.id, folder) }
-            }) {
-                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(15.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("打开文件夹", fontSize = 12.sp)
-            }
-        }
+                    }
+                },
+            refresh =
+                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+            openFolder =
+                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen) {
+                    actions.run { actions.controller.openFolder(instance.id, folder) }
+                },
+        )
         Text(
             directory.toString(),
             fontSize = 11.sp,
@@ -1941,12 +3564,6 @@ private fun InstanceFolderBrowser(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (importExtensions.isEmpty())
-            Text(
-                "导入暂未支持：请用「打开文件夹」把文件放进目录后点刷新。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         if (loading && entries.isNotEmpty())
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
@@ -2065,15 +3682,12 @@ private fun FolderRow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (entry.path.parent?.fileName?.toString() in setOf("resourcepacks", "shaderpacks"))
-                LocalContentThumbnail(entry.path, world = false)
-            else
-                Icon(
-                    if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
-                    null,
-                    Modifier.size(19.dp),
-                    MaterialTheme.colorScheme.primary,
-                )
+            Icon(
+                if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
+                null,
+                Modifier.size(19.dp),
+                MaterialTheme.colorScheme.primary,
+            )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
@@ -2103,11 +3717,11 @@ private fun FolderRow(
                     MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             if (allowDelete)
-                SmallIconButton(
+                RowIconAction(
                     Icons.Outlined.DeleteOutline,
                     "移至回收站 " + entry.path.name,
-                    onDelete,
                     enabled = !busy,
+                    onClick = onDelete,
                 )
         }
     }

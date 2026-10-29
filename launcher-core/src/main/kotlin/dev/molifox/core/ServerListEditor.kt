@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责备份并原子删除真实游戏服务器列表中的条目，保护共享目录和运行中的游戏。
 
 package dev.molifox.core

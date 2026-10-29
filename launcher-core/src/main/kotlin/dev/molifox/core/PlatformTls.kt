@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责让 Windows 网络客户端使用现有系统与 Java 信任根，保持标准证书和域名校验。
 
 package dev.molifox.core

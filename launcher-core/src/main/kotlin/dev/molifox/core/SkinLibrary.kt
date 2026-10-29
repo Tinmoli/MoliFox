@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责本地皮肤文件的导入、索引和导出。
 
 package dev.molifox.core
@@ -27,6 +30,10 @@ data class LibrarySkin(
 class SkinLibrary(private val store: LauncherStore) {
     private val root: Path
         get() = store.dataDirectory.resolve("skins")
+
+    /** 皮肤库目录（`MoliFox/skins`）；离线皮肤文件与 `library.json` 都在这里。 */
+    val directory: Path
+        get() = root
 
     private val index: Path
         get() = root.resolve("library.json")
@@ -162,4 +169,22 @@ internal fun validateUploadSkin(file: Path, variant: SkinVariant) {
         "正版上传需要 64×64 或 64×32 皮肤，不支持高清纹理"
     }
     require(variant != SkinVariant.Slim || image.height == 64) { "纤细手臂需要 64×64 皮肤" }
+}
+
+/**
+ * 写入皮肤模组本地目录（CustomSkinLoader `LocalSkin/skins/<name>.png`）前的校验。
+ *
+ * 模组目录里的文件是按原版皮肤角色读取的，所以只接受 64×64 / 64×32 标准尺寸； 启动器皮肤库仍可保留高清纹理仅作预览，两者边界不同。
+ */
+internal fun validateLocalSkinFile(file: Path, variant: SkinVariant) {
+    require(validSkinTexture(file)) { "皮肤文件无效" }
+    val image = ImageIO.read(file.toFile()) ?: error("皮肤文件无效")
+    try {
+        require(image.width == 64 && image.height in setOf(32, 64)) {
+            "本地皮肤需要 64×64 或 64×32 的 PNG"
+        }
+        require(variant != SkinVariant.Slim || image.height == 64) { "纤细手臂需要 64×64 皮肤" }
+    } finally {
+        image.flush()
+    }
 }

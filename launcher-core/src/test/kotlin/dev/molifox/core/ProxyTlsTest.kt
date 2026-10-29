@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 用本地 HTTPS 和 CONNECT 代理验证 TLS 回退及证书校验边界。
 
 package dev.molifox.core

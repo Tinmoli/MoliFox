@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 识别与项目身份匹配的 MC 百科详情页；查询失败或没有可靠对应关系时不提供链接。
 
 package dev.molifox.core

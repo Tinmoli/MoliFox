@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 对已知大小和摘要的大文件进行有界分段传输、断点恢复与合并校验。
 
 package dev.molifox.core

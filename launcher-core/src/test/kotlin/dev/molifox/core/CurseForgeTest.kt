@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责验证CurseForge API 适配和授权下载规则的行为与边界。
 
 package dev.molifox.core
@@ -139,13 +142,13 @@ class CurseForgeTest {
                     settings =
                         it.settings.copy(
                             contentDownloadSource = "curseforge",
-                            curseForgeApiKey = "fixture-key",
+                            curseForgeBaseUrl =
+                                server.loopbackUrl("").toString().trimEnd('/'),
                         ),
                     instances = listOf(instance),
                 )
             }
             NetworkClient().use { network ->
-                val api = server.loopbackUrl("/v1").toString()
                 val service =
                     ContentService(
                         store,
@@ -157,17 +160,9 @@ class CurseForgeTest {
                             server.loopbackUrl("/minecraft/manifest").toString(),
                         ),
                         server.loopbackUrl("/v2").toString(),
-                        api,
                     )
                 val fixture =
-                    Fixture(
-                        store,
-                        server,
-                        service,
-                        CurseForgeBackend(store, network, api),
-                        instance,
-                        network,
-                    )
+                    Fixture(store, server, service, CurseForgeBackend(store, network), instance, network)
                 val client =
                     ByteArrayOutputStream().use { output ->
                         ZipOutputStream(output).use { zip ->
@@ -209,17 +204,43 @@ class CurseForgeTest {
                             fixture.requests += request
                             val url = request.requestUrl!!
                             val path = url.encodedPath
-                            if (
-                                path.startsWith("/v1/") &&
-                                    request.getHeader("x-api-key") != "fixture-key"
-                            )
-                                return MockResponse().setResponseCode(403)
                             if (fixture.mode == "malformed-response" && path.startsWith("/v1/"))
-                                return MockResponse().setBody("invalid-json fixture-key")
+                                return MockResponse().setBody("invalid-json response body")
+                            if (fixture.mode == "server-error" && path.startsWith("/v1/"))
+                                return MockResponse().setResponseCode(500)
+                            if (
+                                fixture.mode == "no-details" &&
+                                    path.startsWith("/v1/") &&
+                                    (path.endsWith("/description") ||
+                                        path.endsWith("/changelog"))
+                            )
+                                return MockResponse().setResponseCode(404)
                             if (fixture.mode == "redirect" && path.startsWith("/v1/"))
                                 return MockResponse()
                                     .setResponseCode(302)
                                     .addHeader("Location", server.loopbackUrl("/leak"))
+                            if (path == "/v2/search")
+                                return MockResponse()
+                                    .setBody(
+                                        gson.toJson(
+                                            mapOf(
+                                                "hits" to
+                                                    listOf(
+                                                        mapOf(
+                                                            "project_id" to "modrinth-project",
+                                                            "slug" to "modrinth-project",
+                                                            "title" to "Modrinth Project",
+                                                            "description" to "",
+                                                            "author" to "Author",
+                                                            "downloads" to 1,
+                                                            "project_type" to "mod",
+                                                            "icon_url" to "",
+                                                        )
+                                                    ),
+                                                "total_hits" to 1,
+                                            )
+                                        )
+                                    )
                             if (path.startsWith("/files/")) {
                                 if (fixture.mode == "download-fail" && path.endsWith("21"))
                                     return MockResponse().setResponseCode(404)
@@ -450,7 +471,7 @@ class CurseForgeTest {
         assertTrue(
             requests
                 .filter { it.path!!.startsWith("/files/") }
-                .all { it.getHeader("x-api-key") == null }
+                .all { it.getHeader("Authorization") == null }
         )
         assertTrue(readObject(root.resolve(".molifox-content.json")).has("curseforge:1"))
     }
@@ -530,16 +551,58 @@ class CurseForgeTest {
         }
 
     @Test
-    fun `key missing and API redirects fail without credential leaks`() = fixture {
-        store.mutate { it.copy(settings = it.settings.copy(curseForgeApiKey = "")) }
-        assertFails { service.search("", "mod") }
-        assertTrue(requests.isEmpty())
-        store.mutate { it.copy(settings = it.settings.copy(curseForgeApiKey = "fixture-key")) }
-        mode = "redirect"
-        val error = assertFails { service.search("", "mod") }
-        assertFalse(error.stackTraceToString().contains("fixture-key"))
-        assertEquals(1, requests.size)
-        assertTrue(requests.none { it.path == "/leak" })
+    fun `empty or invalid service falls back to the default mirror with a log line`() = fixture {
+        store.mutate { it.copy(settings = it.settings.copy(curseForgeBaseUrl = "")) }
+        assertEquals(DEFAULT_CURSE_FORGE_BASE_URL, store.data.settings.effectiveCurseForgeBaseUrl)
+        assertEquals(
+            "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
+            CurseForgeBackend(store, network).api,
+        )
+        assertTrue(store.state.value.logs.any { it.message.contains("默认镜像") })
+
+        store.mutate {
+            it.copy(settings = it.settings.copy(curseForgeBaseUrl = "ftp://example.com/curseforge"))
+        }
+        assertEquals(DEFAULT_CURSE_FORGE_BASE_URL, store.data.settings.effectiveCurseForgeBaseUrl)
+        assertEquals(
+            "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
+            CurseForgeBackend(store, network).api,
+        )
+    }
+
+    @Test
+    fun `mirrors without description endpoints still expose installable metadata`() = fixture {
+        mode = "no-details"
+        val details = service.catalog.details(hit().id, instance.id)
+        assertEquals("", details.body)
+        assertEquals("", details.versions.first().changelog)
+        assertEquals("curseforge:1:12", details.versions.first().id)
+        assertTrue(
+            service.planContent(hit(), instance.id, versionId = "curseforge:1:12").files.any {
+                it.projectId == "curseforge:1" && it.versionId == "curseforge:1:12"
+            }
+        )
+    }
+
+    @Test
+    fun `custom service base is applied to every request`() = fixture {
+        service.search("sodium", "mod", instance.id)
+        val request =
+            requests.last { it.requestUrl!!.encodedPath.endsWith("/search") }.requestUrl!!
+        assertEquals(server.port, request.port)
+        assertEquals("/v1/mods/search", request.encodedPath)
+        assertEquals("sodium", request.queryParameter("searchFilter"))
+    }
+
+    @Test
+    fun `failing CurseForge request is a normal error and other sources stay usable`() = fixture {
+        mode = "server-error"
+        val failure = assertFailsWith<IllegalStateException> { service.search("", "mod") }
+        assertTrue(failure.message.orEmpty().contains("500"))
+        store.mutate {
+            it.copy(settings = it.settings.copy(contentDownloadSource = "modrinth"))
+        }
+        assertEquals("modrinth-project", service.search("", "mod").hits.single().id)
     }
 
     @Test
@@ -592,15 +655,22 @@ class CurseForgeTest {
             .asJsonObject
 
     @Test
-    fun `malformed responses mask their body and API keys cannot target other hosts`() = fixture {
-        mode = "malformed-response"
-        val failure = assertFails { service.search("", "mod") }
-        assertFalse(failure.stackTraceToString().contains("fixture-key"))
-        assertFalse(failure.stackTraceToString().contains("invalid-json"))
-        val count = requests.size
-        assertFails { network.curseForgeJson("https://example.com/v1/mods", "fixture-key") }
-        assertEquals(count, requests.size)
-    }
+    fun `malformed responses hide their body and invalid service schemes stop before network`() =
+        fixture {
+            mode = "malformed-response"
+            val failure = assertFails { service.search("", "mod") }
+            assertFalse(failure.stackTraceToString().contains("invalid-json"))
+            val count = requests.size
+            assertFailsWith<IllegalArgumentException> {
+                network.curseForgeJson("ftp://example.com/v1/mods")
+            }
+            assertEquals(count, requests.size)
+
+            mode = "redirect"
+            val redirect = assertFails { service.search("", "mod") }
+            assertTrue(redirect.message.orEmpty().contains("重定向"))
+            assertTrue(requests.none { it.path == "/leak" })
+        }
 
     @Test
     fun `large pack metadata batches project and file requests without fetching descriptions`() =

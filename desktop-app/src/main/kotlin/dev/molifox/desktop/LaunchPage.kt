@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责开始页账户摘要、实例选择和启动操作。
 
 package dev.molifox.desktop
@@ -29,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +51,10 @@ fun ColumnScope.HomePage(
     onManage: (String) -> Unit,
     onOpenAccounts: () -> Unit,
 ) {
+    // 页面重新可见时只做目录签名比较：安装/删除/改名/手动改文件夹后回到开始页即可看到最新扫描。
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { runCatching { actions.controller.refreshInstancesIfChanged() } }
+    }
     // 选中记录可能为空或指向已删除的实例：先按「当前游戏目录 → 最近游玩」回退，再把回退结果
     // 写回状态。这样自动识别目录后开始页不会停在「未选择版本」，其他页面读到的也是同一个实例。
     val stored =
@@ -130,6 +138,7 @@ fun ColumnScope.HomePage(
     val installState =
         when {
             selected == null -> "未选择版本"
+            selected.broken -> "无法识别 · " + selected.brokenReason
             !selected.installed -> "未安装完成"
             selected.externalProfile && !filesPresent -> "版本文件缺失"
             !filesPresent -> "启动时补全文件"
@@ -198,10 +207,14 @@ fun ColumnScope.HomePage(
                                     )
                                     if (selected != null) {
                                         Spacer(Modifier.width(6.dp))
-                                        Tag(
-                                            if (actions.controller.store.isolated(selected)) "版本隔离"
-                                            else "共用目录"
-                                        )
+                                        if (selected.broken)
+                                            Tag("无法识别", MaterialTheme.colorScheme.error)
+                                        else
+                                            Tag(
+                                                if (actions.controller.store.isolated(selected))
+                                                    "版本隔离"
+                                                else "共用目录"
+                                            )
                                     }
                                 }
                                 if (selected != null)
@@ -251,6 +264,11 @@ fun ColumnScope.HomePage(
                                     actions.controller.store.notify("还没有可启动的游戏，已打开安装页")
                                     onNew()
                                 }
+                                selected.broken -> {
+                                    actions.controller.store.notify(
+                                        "「" + selected.name + "」无法识别：" + selected.brokenReason
+                                    )
+                                }
                                 !selected.installed -> {
                                     // 修复任务在后台推进，进度可从左侧「日志」入口查看。
                                     actions.controller.store.notify(
@@ -290,9 +308,13 @@ fun ColumnScope.HomePage(
                                 enabled = selected != null && !busy,
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             ) {
-                                Icon(Icons.Outlined.Settings, null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("版本设置", fontSize = 13.sp)
+                                // 只留中文文字并居中：两侧内边距对称，不再保留任何图标或图标间距。
+                                Text(
+                                    "版本设置",
+                                    Modifier.fillMaxWidth(),
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center,
+                                )
                             }
                         }
                     }
@@ -414,7 +436,7 @@ internal fun HomeCard(
 
 /**
  * 「实例管理」入口：外观沿用 [SimpleDropdown] 那一套控件样式（34dp、圆角、实色填充 + 1dp 细边、悬停提亮），
- * 但点开不是菜单，而是进入实例列表页——顶部导航不含「实例」，这里是进入实例列表的入口。 文字固定为「实例管理」，不显示实例名，也不带次要文字；箭头表示这是一次页面跳转。
+ * 但点开不是菜单，而是进入实例列表页——顶部导航不含「实例」，这里是进入实例列表的入口。 文字固定为「实例管理」并居中，不显示实例名，也不带次要文字或箭头。
  */
 @Composable
 private fun InstanceManageButton(
@@ -447,17 +469,12 @@ private fun InstanceManageButton(
     ) {
         Text(
             "实例管理",
-            Modifier.weight(1f),
+            Modifier.fillMaxWidth(),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-        Icon(
-            Icons.Outlined.ChevronRight,
-            null,
-            Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }

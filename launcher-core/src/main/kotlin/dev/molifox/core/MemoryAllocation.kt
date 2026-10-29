@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责自动和手动游戏内存分配。
 
 package dev.molifox.core
@@ -22,12 +25,27 @@ fun effectiveGameMemory(
     instance: GameInstance,
     platform: PlatformServices,
     architecture: String = platform.architecture,
+): GameMemoryAllocation =
+    effectiveGameMemory(
+        settings,
+        instance,
+        platform.totalMemoryMb,
+        platform.availableMemoryMb,
+        architecture,
+    )
+
+/** 与平台对象解耦的同一套解析逻辑，供启动计划与测试复用。 */
+fun effectiveGameMemory(
+    settings: LauncherSettings,
+    instance: GameInstance,
+    totalMemoryMb: Int,
+    availableMemoryMb: Int,
+    architecture: String = "x64",
 ): GameMemoryAllocation {
     // Existing explicit per-instance allocations remain manual unless the user opts in.
     val automatic = instance.autoMemory ?: (instance.memoryMb <= 0 && settings.autoMemory)
     val maximum =
-        if (automatic)
-            automaticMemoryMb(platform.totalMemoryMb, platform.availableMemoryMb, architecture)
+        if (automatic) automaticMemoryMb(totalMemoryMb, availableMemoryMb, architecture)
         else instance.memoryMb.takeIf { it > 0 } ?: settings.memoryMb
     val initial =
         (instance.initialMemoryMb.takeIf { it > 0 } ?: settings.initialMemoryMb).coerceIn(

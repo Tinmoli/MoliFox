@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责实例删除范围、确认信息和文件删除执行。
 
 package dev.molifox.core
@@ -12,6 +15,13 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import kotlin.io.path.*
+
+/**
+ * 删除被拒绝：实例自己的版本/游戏目录仍被其他实例使用，或目录无法安全核对。
+ *
+ * 抛出这个异常时磁盘与记录都不动，界面直接展示 [message]，不会出现「记录删了、文件还在」的半成品。
+ */
+class InstanceDeletionBlockedException(message: String) : IOException(message)
 
 /** 删除实例的计划：真正会永久删除的路径，以及因共用而保留的路径。 */
 data class InstanceDeletionPlan(
@@ -29,6 +39,8 @@ data class InstanceDeletionReport(
     val freedBytes: Long,
     /** true 表示确实进了回收站；false 表示永久删除（包括回收站不可用时的回退）。 */
     val movedToTrash: Boolean,
+    /** 因其他实例真实引用而保留的路径与原因；非空时提示语必须说明保留了哪些内容。 */
+    val preserved: List<String> = emptyList(),
 )
 
 /** 删除实例会一并删除的存档：名称与上次修改时间，只用于确认框展示。 */
@@ -38,11 +50,14 @@ data class InstanceDeletionWorld(val name: String, val modified: Instant?)
  * 删除实例的版本文件夹与游戏文件夹：默认移入系统回收站，按住 Shift 时永久删除。
  *
  * 删除范围就是实例自己的两部分目录：
- * - `<游戏根>/versions/<版本标识>/`：版本 json、客户端 jar；另一个实例仍在用同一版本目录时保留。
+ * - `<游戏根>/versions/<版本标识>/`：版本 json、客户端 jar；另一个实例仍在用同一版本目录时整次删除被拒绝。
  * - `<游戏根>/instances/<实例 id>/`：实例的独立游戏目录（含 `mods/`、`config/`、`saves/`、
  *   `resourcepacks/`、`shaderpacks/`、`logs/` 等全部内容）。
  *
- * 共用游戏根、`libraries/`、`assets/` 与非隔离实例的 `saves/` 仍不在删除范围内：它们不属于任何单个实例。 默认按系统回收站处理（[delete] 的
+ * 「实例要么有记录、要么有文件」是硬约束：任何一项自有目录仍被别的实例占用时，[plan] 直接抛出
+ * [InstanceDeletionBlockedException]，记录与文件都原样保留；只有所有目标都真正删除（或移入回收站）后，
+ * 调用方才会移除记录。共用游戏根、`libraries/`、`assets/` 与非隔离实例的 `saves/` 仍不在删除范围内：
+ * 它们不属于任何单个实例。 默认按系统回收站处理（[delete] 的
  * `permanent = false`），用户按住 Shift 确认时永久删除；回收站不可用时回退为 永久删除并在结果中注明。永久删除用 `Files.walkFileTree`
  * 递归进行，不跟随符号链接（遇到符号链接只解除链接本身）， 缺失文件视为已删除，权限不足等失败会带中文路径报错并停止。
  */
@@ -51,7 +66,8 @@ class InstanceDeletionService(private val store: LauncherStore) {
     /**
      * 计算 [instanceId] 的删除计划；不修改磁盘。
      *
-     * 无法解析实例的游戏目录、实例路径是符号链接，或目标落在共享目录上时抛出带中文说明的异常， 让调用方拒绝删除而不是猜测。
+     * 无法解析实例的游戏目录、实例路径是符号链接、目标落在共享目录上，或版本/游戏目录仍被另一个实例
+     * 使用时抛出带中文说明的异常，让调用方拒绝删除而不是猜测；抛出时记录与文件都不动。
      */
     fun plan(instanceId: String): InstanceDeletionPlan {
         val instance = store.instance(instanceId)
@@ -59,20 +75,21 @@ class InstanceDeletionService(private val store: LauncherStore) {
             try {
                 store.minecraftRoot(instance)
             } catch (failure: Exception) {
-                throw IOException(
-                    "无法解析实例的游戏目录：${failure.message ?: "游戏目录已被移除"}",
-                    failure,
+                throw InstanceDeletionBlockedException(
+                    "无法删除：${failure.message ?: "游戏目录已被移除"}"
                 )
             }
         val root =
             try {
                 declared.toRealPath()
             } catch (failure: Exception) {
-                throw IOException("无法解析实例的游戏目录：$declared", failure)
+                throw InstanceDeletionBlockedException("无法删除：游戏目录不存在（$declared）")
             }
-        if (!Files.isDirectory(root)) throw IOException("实例的游戏目录不是文件夹：$root")
+        if (!Files.isDirectory(root))
+            throw InstanceDeletionBlockedException("无法删除：游戏目录不是文件夹（$root）")
         val targets = mutableListOf<Path>()
         val preserved = mutableListOf<String>()
+        val handled = mutableSetOf<Path>()
         val versionId = instance.versionId
         if (versionId.isNotBlank()) {
             val name = runCatching { safeFilename(versionId) }.getOrNull()
@@ -80,15 +97,16 @@ class InstanceDeletionService(private val store: LauncherStore) {
             else {
                 val folder = ownedTarget(root, root.resolve("versions").resolve(name))
                 if (folder != null) {
-                    if (sharesVersion(instance, root, name)) preserved += "$folder（另一个实例仍在使用同一版本目录）"
-                    else targets.add(folder)
+                    handled.add(folder)
+                    requireNotShared(instance, root, name)
+                    targets.add(folder)
                 }
             }
         }
         ownedTarget(root, store.versionGamePath(instance))?.let { folder ->
-            if (sharesVersion(instance, root, folder.fileName.toString()))
-                preserved += "$folder（另一个实例仍在使用）"
-            else if (folder !in targets) targets.add(folder)
+            if (folder in handled) return@let
+            requireNotShared(instance, root, folder.fileName.toString())
+            if (folder !in targets) targets.add(folder)
         }
         // 兼容尚未迁移的旧目录，不触及已经移入备份的内容。
         ownedTarget(root, root.resolve("instances").resolve(instance.id))?.let { targets.add(it) }
@@ -96,25 +114,49 @@ class InstanceDeletionService(private val store: LauncherStore) {
     }
 
     /**
+     * 版本/游戏目录仍被其他实例真实使用时拒绝整次删除：不能只删掉一半再留下一条「没有文件」的记录。
+     *
+     * 抛出的消息正是界面与日志要显示的一句话，包含占用者名称，告诉用户先处理哪个实例。
+     */
+    private fun requireNotShared(instance: GameInstance, root: Path, versionId: String) {
+        val sharers = sharers(instance, root, versionId)
+        if (sharers.isEmpty()) return
+        throw InstanceDeletionBlockedException(
+            "无法删除：版本目录仍被实例${sharers.joinToString("、") { "「$it」" }}使用；请先处理该实例"
+        )
+    }
+
+    /**
      * 执行 [plan]：统计字节数后逐个移入回收站（[permanent] 为 true 时永久删除）。
      *
      * 回收站不可用时回退为永久删除，并把 [InstanceDeletionReport.movedToTrash] 置为 false，界面据此提示。
      * 缺失的文件视为已删除；权限不足等失败抛出带路径的中文异常，已处理的部分不回滚。
+     * 每个目标处理完都再核对一次是否真的消失：只要还有目标留在磁盘上就抛出异常，调用方不得移除记录。
      */
     fun delete(plan: InstanceDeletionPlan, permanent: Boolean = false): InstanceDeletionReport {
         val freed = plan.targets.sumOf { bytesOf(it) }
         val removed = mutableListOf<String>()
-        var movedToTrash = plan.targets.isNotEmpty() && !permanent
+        var trashedAny = false
+        var permanentFallback = false
         for (target in plan.targets) {
+            if (!target.exists(LinkOption.NOFOLLOW_LINKS)) {
+                // 规划后被别处删掉：目标确实不再存在，不能因此留下记录。
+                removed += target.toString()
+                store.log("实例文件已不存在，视为已删除：$target")
+                continue
+            }
+            var trashedThis = false
             try {
                 if (permanent) {
                     deleteTree(target)
                 } else {
                     try {
                         store.platform.moveToTrash(target)
+                        trashedAny = true
+                        trashedThis = true
                     } catch (failure: Exception) {
                         store.log("回收站不可用，改为永久删除：$target（${failure.message}）", true)
-                        movedToTrash = false
+                        permanentFallback = true
                         deleteTree(target)
                     }
                 }
@@ -125,13 +167,27 @@ class InstanceDeletionService(private val store: LauncherStore) {
                     failure,
                 )
             }
+            if (target.exists(LinkOption.NOFOLLOW_LINKS)) {
+                store.log("删除后文件仍存在：$target", true)
+                throw IOException("无法删除：$target 仍存在，已保留实例记录")
+            }
             removed += target.toString()
             store.log(
-                if (movedToTrash) "实例文件已移入回收站：$target"
+                if (trashedThis) "实例文件已移入回收站：$target"
                 else if (permanent) "实例文件已永久删除：$target" else "实例文件已改为永久删除：$target"
             )
         }
-        return InstanceDeletionReport(removed, freed, movedToTrash)
+        // 二次核对：任何自有目录还在，就不能让调用方把它当成「删干净了」。
+        val remaining = plan.targets.filter { it.exists(LinkOption.NOFOLLOW_LINKS) }
+        if (remaining.isNotEmpty()) {
+            throw IOException("无法删除：${remaining.joinToString("、")} 仍存在，已保留实例记录")
+        }
+        return InstanceDeletionReport(
+            removed,
+            freed,
+            !permanent && trashedAny && !permanentFallback,
+            plan.preserved,
+        )
     }
 
     /**
@@ -165,32 +221,61 @@ class InstanceDeletionService(private val store: LauncherStore) {
             .getOrDefault(emptyList())
     }
 
-    /** 同一游戏根下是否还有别的实例引用这个版本目录；有则不能删，否则会把别的实例一起删坏。 */
-    private fun sharesVersion(instance: GameInstance, root: Path, versionId: String): Boolean =
-        store.data.instances.any { other ->
-            other.id != instance.id &&
-                (other.versionId == versionId ||
-                    other.gameVersion == versionId ||
-                    other.gameDirectoryName == versionId ||
-                    inheritsVersion(other, versionId)) &&
-                runCatching { store.minecraftRoot(other).toRealPath() }.getOrNull() == root
-        }
-
-    private fun inheritsVersion(instance: GameInstance, target: String): Boolean {
-        var id = instance.versionId
-        val visited = mutableSetOf<String>()
-        return try {
-            while (id.isNotBlank() && visited.add(id) && visited.size <= 64) {
-                if (id == target) return true
-                val file =
-                    safePath(store.minecraftRoot(instance), "versions/${safeFilename(id)}/$id.json")
-                if (!file.isRegularFile()) return false
-                id = readObject(file).string("inheritsFrom")
+    /**
+     * 同一游戏根下真实使用这个版本目录的其他实例名称（用于说明保留原因）。
+     *
+     * 只认实际文件身份：另一个实例解析后的版本目录是同一物理路径，或它的版本 JSON 的
+     * `inheritsFrom`/`jar` 真指向这个目录或版本标识。`gameVersion` 相同不算共用。
+     */
+    private fun sharers(instance: GameInstance, root: Path, versionId: String): List<String> {
+        val target = versionFolder(root, versionId) ?: return emptyList()
+        val targetKey = physical(target)
+        return store.data.instances
+            .filter { other ->
+                other.id != instance.id &&
+                    runCatching {
+                            val otherRoot = store.minecraftRoot(other).toRealPath()
+                            otherRoot == root &&
+                                (versionFolder(otherRoot, other.versionId)
+                                    ?.let { physical(it) == targetKey } == true ||
+                                    referencesVersion(other, otherRoot, targetKey, versionId))
+                        }
+                        .getOrDefault(false)
             }
-            false
-        } catch (_: Exception) {
-            true
+            .map { it.name }
+    }
+
+    private fun versionFolder(root: Path, id: String): Path? =
+        runCatching { safePath(root.resolve("versions"), safeFilename(id)) }.getOrNull()
+
+    /** 存在时取真实路径；目录还没创建时用规范化的绝对路径，保证两侧同一种比较。 */
+    private fun physical(path: Path): Path =
+        runCatching { path.toRealPath() }.getOrElse { path.toAbsolutePath().normalize() }
+
+    /** 顺着 [other] 的继承链检查 `jar`/`inheritsFrom` 是否真的指向目标版本目录。 */
+    private fun referencesVersion(
+        other: GameInstance,
+        otherRoot: Path,
+        targetKey: Path,
+        targetId: String,
+    ): Boolean {
+        var id = other.versionId
+        val visited = mutableSetOf<String>()
+        while (id.isNotBlank() && visited.add(id) && visited.size <= 64) {
+            val file =
+                runCatching { safePath(otherRoot, "versions/${safeFilename(id)}/$id.json") }
+                    .getOrNull() ?: return false
+            if (!file.isRegularFile()) return false
+            val json = runCatching { readObject(file) }.getOrNull() ?: return false
+            if (json.string("jar") == targetId) return true
+            val parent = json.string("inheritsFrom")
+            if (parent.isBlank()) return false
+            if (parent == targetId) return true
+            val parentFolder = versionFolder(otherRoot, parent) ?: return false
+            if (physical(parentFolder) == targetKey) return true
+            id = parent
         }
+        return false
     }
 
     /**

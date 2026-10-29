@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 管理 versions 下的具名游戏目录与必要的版本配置。
 
 package dev.molifox.core

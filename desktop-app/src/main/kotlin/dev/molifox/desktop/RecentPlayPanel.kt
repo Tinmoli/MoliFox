@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 负责首页最近游玩的加载、直达启动、隐藏和经确认的实际删除。
 
 package dev.molifox.desktop
