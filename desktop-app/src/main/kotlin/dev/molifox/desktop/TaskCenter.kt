@@ -39,23 +39,17 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
     val active = state.jobs.filter { it.active() }
     val progress = if (active.isEmpty()) 1f else taskPercent(active)
     val failed = state.jobs.any { it.status == JobStatus.Failed }
-    val completionKey = state.jobs.map { it.id to it.status }
-    var hidden by remember { mutableStateOf(false) }
-    LaunchedEffect(completionKey) {
-        hidden = false
-        if (
-            state.jobs.isNotEmpty() &&
-                active.isEmpty() &&
-                !failed &&
-                state.jobs.any { it.status == JobStatus.Completed }
-        ) {
+    val finishedIds = state.jobs.filterNot { it.active() }.map { it.id }.toSet()
+    LaunchedEffect(finishedIds) {
+        if (finishedIds.isNotEmpty()) {
             delay(COMPLETED_TASK_HIDE_DELAY_MILLIS)
-            hidden = true
+            actions.controller.jobs.clearFinished(finishedIds)
         }
     }
-    if (state.jobs.isEmpty() || hidden) return
+    if (state.jobs.isEmpty()) return
     Surface(
         modifier
+            .padding(bottom = 60.dp)
             .semantics { contentDescription = "打开任务中心" }
             .clickable(role = Role.Button, onClickLabel = "打开任务中心") { actions.showTasks() },
         shape = RoundedCornerShape(Metrics.cardRadius),
@@ -90,7 +84,7 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    if (active.isNotEmpty()) "${(progress * 100).toInt()}% · 点击查看进度" else "点击查看结果",
+                    if (active.isNotEmpty()) "${(progress * 100).toInt()}% · 点击查看进度" else "即将自动收起",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -103,7 +97,6 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
 fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
     val active = state.jobs.filter { it.active() }
     var cancelling by remember { mutableStateOf<DownloadJob?>(null) }
-    var clearing by remember { mutableStateOf(false) }
     Dialog(
         onDismissRequest = { actions.taskCenterOpen = false },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -174,34 +167,7 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                         Modifier.weight(1f).padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            listOf("active" to "进行中", "ended" to "已结束", "all" to "全部").forEach {
-                                (value, label) ->
-                                FilterChip(
-                                    actions.taskFilter == value,
-                                    { actions.taskFilter = value },
-                                    { Text(label, fontSize = 12.sp) },
-                                )
-                            }
-                            Spacer(Modifier.weight(1f))
-                            TextButton(
-                                { clearing = true },
-                                enabled = state.jobs.any { !it.active() },
-                            ) {
-                                Text("清除已结束", fontSize = 12.sp)
-                            }
-                        }
-                        val visible =
-                            state.jobs.filter {
-                                when (actions.taskFilter) {
-                                    "active" -> it.active()
-                                    "ended" -> !it.active()
-                                    else -> true
-                                }
-                            }
+                        val visible = active
                         if (visible.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Column(
@@ -231,10 +197,6 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                                     TaskDetailCard(
                                         job,
                                         onCancel = { cancelling = job },
-                                        onLogs = {
-                                            actions.taskCenterOpen = false
-                                            actions.navigation.navigate(Page.Downloads)
-                                        },
                                     )
                                 }
                             }
@@ -253,27 +215,12 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                     actions.controller.jobs.cancel(job.id)
                     cancelling = null
                 }) {
-                    Text("取消")
+                    Text("确定取消")
                 }
             },
             dismissButton = { TextButton({ cancelling = null }) { Text("继续任务") } },
         )
     }
-    if (clearing)
-        AlertDialog(
-            onDismissRequest = { clearing = false },
-            title = { Text("清除已结束任务？") },
-            text = { Text("只清除任务记录，已下载的文件和日志保留。") },
-            confirmButton = {
-                TextButton({
-                    actions.controller.jobs.clearFinished()
-                    clearing = false
-                }) {
-                    Text("清除")
-                }
-            },
-            dismissButton = { TextButton({ clearing = false }) { Text("取消") } },
-        )
 }
 
 @Composable
@@ -290,7 +237,7 @@ private fun TaskStatistic(label: String, value: String) {
 }
 
 @Composable
-private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit, onLogs: () -> Unit) {
+private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(Metrics.cardRadius),
         border = BorderStroke(1.dp, hairline()),
@@ -348,8 +295,6 @@ private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit, onLogs: () ->
                         "${transferSize(job.downloadedBytes)} / ${transferSize(job.totalBytes)}",
                         fontSize = 11.sp,
                     )
-                if (job.status == JobStatus.Failed)
-                    TextButton(onLogs) { Text("查看日志", fontSize = 11.sp) }
             }
         }
     }

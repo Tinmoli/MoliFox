@@ -286,8 +286,8 @@ final class RefinementActions {
         UiSmoke.click(robot, "继续任务");
         UiSmoke.waitFor("取消任务 安装 Java 8");
         UiSmoke.click(robot, "取消任务 安装 Java 8");
-        UiSmoke.click(robot, "取消");
-        UiSmoke.waitFor("已结束");
+        UiSmoke.click(robot, "确定取消");
+        UiSmoke.waitFor("这里暂时没有任务");
         UiSmoke.click(robot, "关闭任务中心");
         UiSmoke.click(robot, "设置");
         UiSmoke.clickRail(robot, "日志");

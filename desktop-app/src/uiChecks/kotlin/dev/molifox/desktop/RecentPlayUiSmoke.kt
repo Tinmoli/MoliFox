@@ -313,18 +313,36 @@ private fun exerciseRecentUi(
         delay(1200)
     }
     await("download badge visible") { contexts("打开任务中心").isNotEmpty() }
+    val badge = bounds(contexts("打开任务中心").last())
+    check(badge.y + badge.height <= testWindow.get().y + testWindow.get().height - 50) {
+        "Download badge overlaps the bottom controls"
+    }
     await("download finished") {
         controller.state.value.jobs.all { it.status == JobStatus.Completed }
     }
     check(contexts("打开任务中心").isNotEmpty()) { "Success badge disappeared before its delay" }
     await("download badge hidden after five seconds", 8000) { contexts("打开任务中心").isEmpty() }
-    check(controller.state.value.jobs.isNotEmpty())
-    controller.jobs.enqueue("New download fixture", setOf("ui-task")) { delay(1800) }
+    check(controller.state.value.jobs.isEmpty()) { "Finished task records were retained" }
+    val cancelledTask =
+        controller.jobs.enqueue("New download fixture", setOf("ui-task")) {
+            kotlinx.coroutines.awaitCancellation()
+        }
     await("new task reopens badge") { contexts("打开任务中心").isNotEmpty() }
-    await("second task finished") {
-        controller.state.value.jobs.all { it.status == JobStatus.Completed }
+    click(robot, "打开任务中心")
+    check(contexts("已结束").isEmpty() && contexts("全部").isEmpty() && contexts("清除已结束").isEmpty())
+    click(robot, "取消任务 New download fixture")
+    await("clear cancellation choices") {
+        contexts("继续任务").isNotEmpty() && contexts("确定取消").isNotEmpty()
     }
-    await("second badge hidden", 8000) { contexts("打开任务中心").isEmpty() }
+    click(robot, "继续任务")
+    check(controller.state.value.jobs.first { it.id == cancelledTask }.status == JobStatus.Running)
+    click(robot, "取消任务 New download fixture")
+    click(robot, "确定取消")
+    await("cancelled task removed from current list") { contexts("这里暂时没有任务").isNotEmpty() }
+    check(contexts("New download fixture").isEmpty())
+    click(robot, "关闭任务中心")
+    await("cancelled badge hidden", 8000) { contexts("打开任务中心").isEmpty() }
+    check(controller.state.value.jobs.isEmpty())
     writeFixture(
         Path.of("docs/validation/recent-play-ui.json"),
         mapOf(
@@ -342,7 +360,8 @@ private fun exerciseRecentUi(
                     "actual NBT deletion and backup",
                     "font scaling",
                     "dark theme",
-                    "five second success hiding and next task reopening",
+                    "raised download badge clears success and cancellation after five seconds",
+                    "current tasks only and explicit continue or confirm cancel buttons",
                 ),
         ),
     )

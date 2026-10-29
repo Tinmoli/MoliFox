@@ -13,14 +13,11 @@ final class LogActionChecks {
         UiSmoke.click(robot, "打开任务中心");
         UiSmoke.click(robot, "取消任务 安装 Java 25");
         UiSmoke.waitFor("继续任务");
-        UiSmoke.click(robot, "取消");
-        UiSmoke.click(robot, "已结束");
-        UiSmoke.waitFor("已取消，本次下载文件已清理");
+        UiSmoke.click(robot, "确定取消");
+        UiSmoke.waitFor("这里暂时没有任务");
         UiFunctionalChecks.record(
                 "tasks.cancel",
-                "running installer cancelled using confirmation dialog; cancelled status displayed");
-        UiSmoke.click(robot, "进行中");
-        UiSmoke.click(robot, "全部");
+                "running installer cancelled using explicit confirmation; current task list emptied");
         UiSmoke.click(robot, "关闭任务中心");
         UiSmoke.clickRail(robot, "日志");
         UiSmoke.enterText("筛选日志内容", "Java 25");
@@ -48,15 +45,6 @@ final class LogActionChecks {
         UiFunctionalChecks.record(
                 "logs.exports",
                 "actual log contains cancelled task; diagnostic ZIP is nonempty and excludes credential files");
-        UiSmoke.click(robot, "打开任务中心");
-        UiSmoke.click(robot, "清除已结束");
-        UiSmoke.waitFor("清除已结束任务？");
-        UiSmoke.clickTopButton(robot, "清除");
-        UiSmoke.waitUntilGone("安装 Java 25");
-        UiFunctionalChecks.record(
-                "tasks.clear-finished",
-                "cancelled task record removed through the confirmed UI action");
-        UiSmoke.click(robot, "关闭任务中心");
         UiSmoke.capture(
                 robot, window, new File(output.getParentFile(), "MoliFox-actions-logs.png"), true);
     }

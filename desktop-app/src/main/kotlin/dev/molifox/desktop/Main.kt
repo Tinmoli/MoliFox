@@ -61,21 +61,12 @@ class UiActions(val controller: LauncherController, val window: ComposeWindow) {
     private var packPreviewLoading = false
     var launchPreview by mutableStateOf<LaunchPlan?>(null)
     var taskCenterOpen by mutableStateOf(false)
-    var taskFilter by mutableStateOf("active")
 
     fun taskQueued() {
-        taskFilter = "active"
+        controller.jobs.clearFinished()
     }
 
     fun showTasks() {
-        taskFilter =
-            if (
-                controller.state.value.jobs.any {
-                    it.status == JobStatus.Running || it.status == JobStatus.Queued
-                }
-            )
-                "active"
-            else "all"
         taskCenterOpen = true
     }
 
