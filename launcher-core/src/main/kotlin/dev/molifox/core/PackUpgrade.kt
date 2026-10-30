@@ -131,58 +131,51 @@ internal object PackUpgradePlanner {
         protectedPaths: MutableList<String>,
     ): PackFileChange {
         val optional = newFile.optional
-        if (!state.present || state.sha1 == null) {
-            val deleted = oldFile != null
-            if (deleted && !policy.restoreUserDeleted) {
-                return PackFileChange(
+        val current = state.sha1
+        if (!state.present || current == null) {
+            return missingIncoming(path, optional, oldFile != null, policy)
+        }
+        return when {
+            current.equals(newFile.sha1, true) ->
+                change(path, PackFileAction.Keep, PackUserState.Unchanged, "文件已是新整合包版本", optional)
+            oldFile != null && current.equals(oldFile.sha1, true) ->
+                change(path, PackFileAction.Replace, PackUserState.Unchanged, "整合包更新文件", optional)
+            policy.protectUserModified -> {
+                protectedPaths += path
+                change(path, PackFileAction.Keep, PackUserState.UserModified, "保留用户修改的文件", optional)
+            }
+            else ->
+                change(
                     path,
-                    PackFileAction.Keep,
-                    PackUserState.UserDeleted,
-                    "用户删除的整合包文件保持缺失",
+                    PackFileAction.Replace,
+                    PackUserState.UserModified,
+                    "按策略覆盖用户修改的文件",
                     optional,
                 )
-            }
-            return PackFileChange(
-                path,
-                PackFileAction.Add,
-                if (deleted) PackUserState.UserDeleted else PackUserState.Unchanged,
-                if (deleted) "恢复用户删除的整合包文件" else "新增整合包文件",
-                optional,
-            )
         }
-        if (state.sha1.equals(newFile.sha1, true)) {
-            return PackFileChange(
-                path,
-                PackFileAction.Keep,
-                PackUserState.Unchanged,
-                "文件已是新整合包版本",
-                optional,
-            )
-        }
-        if (oldFile != null && state.sha1.equals(oldFile.sha1, true)) {
-            return PackFileChange(
-                path,
-                PackFileAction.Replace,
-                PackUserState.Unchanged,
-                "整合包更新文件",
-                optional,
-            )
-        }
-        if (policy.protectUserModified) {
-            protectedPaths += path
-            return PackFileChange(
+    }
+
+    /** 磁盘上缺少新整合包文件时的结论：按策略恢复用户删除的文件，或保持缺失。 */
+    private fun missingIncoming(
+        path: String,
+        optional: Boolean,
+        deleted: Boolean,
+        policy: PackUpgradePolicy,
+    ): PackFileChange {
+        if (deleted && !policy.restoreUserDeleted) {
+            return change(
                 path,
                 PackFileAction.Keep,
-                PackUserState.UserModified,
-                "保留用户修改的文件",
+                PackUserState.UserDeleted,
+                "用户删除的整合包文件保持缺失",
                 optional,
             )
         }
-        return PackFileChange(
+        return change(
             path,
-            PackFileAction.Replace,
-            PackUserState.UserModified,
-            "按策略覆盖用户修改的文件",
+            PackFileAction.Add,
+            if (deleted) PackUserState.UserDeleted else PackUserState.Unchanged,
+            if (deleted) "恢复用户删除的整合包文件" else "新增整合包文件",
             optional,
         )
     }
@@ -195,46 +188,29 @@ internal object PackUpgradePlanner {
         protectedPaths: MutableList<String>,
     ): PackFileChange {
         if (!state.present || state.sha1 == null) {
-            return PackFileChange(
-                path,
-                PackFileAction.Keep,
-                PackUserState.UserDeleted,
-                "用户已删除的旧整合包文件",
-            )
+            return change(path, PackFileAction.Keep, PackUserState.UserDeleted, "用户已删除的旧整合包文件")
         }
         if (state.sha1.equals(oldFile.sha1, true)) {
             return if (policy.removeObsoleteFiles) {
-                PackFileChange(
-                    path,
-                    PackFileAction.Remove,
-                    PackUserState.Unchanged,
-                    "新整合包已移除该文件",
-                )
+                change(path, PackFileAction.Remove, PackUserState.Unchanged, "新整合包已移除该文件")
             } else {
-                PackFileChange(
-                    path,
-                    PackFileAction.Keep,
-                    PackUserState.Unchanged,
-                    "按策略保留新整合包已移除的文件",
-                )
+                change(path, PackFileAction.Keep, PackUserState.Unchanged, "按策略保留新整合包已移除的文件")
             }
         }
         if (policy.protectUserModified) {
             protectedPaths += path
-            return PackFileChange(
-                path,
-                PackFileAction.Keep,
-                PackUserState.UserModified,
-                "保留用户修改的旧文件",
-            )
+            return change(path, PackFileAction.Keep, PackUserState.UserModified, "保留用户修改的旧文件")
         }
-        return PackFileChange(
-            path,
-            PackFileAction.Remove,
-            PackUserState.UserModified,
-            "按策略移除用户修改的旧文件",
-        )
+        return change(path, PackFileAction.Remove, PackUserState.UserModified, "按策略移除用户修改的旧文件")
     }
+
+    private fun change(
+        path: String,
+        action: PackFileAction,
+        userState: PackUserState,
+        reason: String,
+        optional: Boolean = false,
+    ): PackFileChange = PackFileChange(path, action, userState, reason, optional)
 }
 
 /**
@@ -268,10 +244,140 @@ internal class PackUpgradeTransaction(
     ) {
         context.checkCancelled()
         val content = staging.toAbsolutePath().normalize()
+        validateUpgradeDirectories(content, archiveSource)
+        validateUpgradePlan(plan)
+        val installing =
+            plan.changes.filter {
+                it.action == PackFileAction.Add || it.action == PackFileAction.Replace
+            }
+        validateStagedFiles(content, installing)
+        val ledger = safePath(root, PACK_OWNERSHIP_FILE)
+        val archive = archiveTarget.toAbsolutePath().normalize()
+        val oldInstance = store.instance(instanceId)
+        val backup = directory.createDirectories()
+        val state = UpgradeWriteState(ledger, archive)
+        runCatching {
+            backupCurrentFiles(state, plan.changes, backup, context)
+            installStagedFiles(state, installing, content, context)
+            writeLedgerAndArchive(state, archiveSource, ownership, context)
+            context.checkCancelled()
+            store.updateInstance(instanceId, updateInstance)
+            state.instanceUpdated = true
+        }.onFailure { error ->
+            // 升级事务的总出口：任何 Throwable（含取消与 Error）都必须先回滚再抛出，不能收窄。
+            throw rollbackUpgrade(error, instanceId, oldInstance, state)
+        }
+        cleanup()
+    }
+
+    /** 把将被替换/移除的旧文件移入备份目录，并保留旧账本与旧归档的副本。 */
+    private suspend fun backupCurrentFiles(
+        state: UpgradeWriteState,
+        changes: List<PackFileChange>,
+        backup: Path,
+        context: JobContext,
+    ) {
+        val replacing =
+            changes.filter {
+                it.action == PackFileAction.Replace || it.action == PackFileAction.Remove
+            }
+        for ((position, change) in replacing.withIndex()) {
+            context.checkCancelled()
+            val target = packPath(root, change.path)
+            if (!target.exists()) continue
+            requireUpgradeFile(target, "升级目标不是普通文件：${change.path}")
+            val saved = safePath(backup, "files/$position/${target.fileName}")
+            saved.parent.createDirectories()
+            Files.move(target, saved)
+            state.backups[target] = saved
+        }
+        if (state.ledger.exists()) {
+            requireUpgradeFile(state.ledger, "文件归属账本不是普通文件")
+            state.ledgerBackup =
+                safePath(backup, "ledger.json").also { Files.copy(state.ledger, it) }
+        }
+        if (state.archive.exists()) {
+            requireUpgradeFile(state.archive, "旧整合包归档不是普通文件")
+            state.archiveBackup =
+                safePath(backup, "archive")
+                    .createDirectories()
+                    .resolve(state.archive.fileName)
+                    .also { Files.copy(state.archive, it) }
+        }
+    }
+
+    private suspend fun installStagedFiles(
+        state: UpgradeWriteState,
+        installing: List<PackFileChange>,
+        content: Path,
+        context: JobContext,
+    ) {
+        for (change in installing) {
+            context.checkCancelled()
+            val source = packPath(content, change.path)
+            val target = packPath(root, change.path)
+            target.parent.createDirectories()
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
+            state.installed.add(target)
+        }
+    }
+
+    /** 落新账本，并把新归档经临时文件原子改名到目标位置。 */
+    private suspend fun writeLedgerAndArchive(
+        state: UpgradeWriteState,
+        archiveSource: Path,
+        ownership: PackOwnership,
+        context: JobContext,
+    ) {
+        context.checkCancelled()
+        PackOwnershipStore.write(root, ownership)
+        state.ledgerWritten = true
+        val parent = archiveParent(state.archive)
+        parent.createDirectories()
+        val part = Files.createTempFile(parent, "${state.archive.fileName}.", ".part")
+        try {
+            Files.copy(archiveSource, part, StandardCopyOption.REPLACE_EXISTING)
+            try {
+                Files.move(
+                    part,
+                    state.archive,
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(part, state.archive, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            part.deleteIfExists()
+        }
+        state.archiveWritten = true
+    }
+
+    /** 升级事务里已完成的写入；回滚时按此逐项撤销。 */
+    private class UpgradeWriteState(
+        val ledger: Path,
+        val archive: Path,
+    ) {
+        val backups: MutableMap<Path, Path> = linkedMapOf()
+        val installed: MutableList<Path> = mutableListOf()
+        var ledgerBackup: Path? = null
+        var archiveBackup: Path? = null
+        var ledgerWritten: Boolean = false
+        var archiveWritten: Boolean = false
+        var instanceUpdated: Boolean = false
+    }
+
+    private fun validateUpgradeDirectories(
+        content: Path,
+        archiveSource: Path,
+    ) {
         require(content.startsWith(root) && content != root) { "升级暂存目录必须位于实例目录内" }
         require(archiveSource.isRegularFile() && !Files.isSymbolicLink(archiveSource)) {
             "新整合包归档不可用"
         }
+    }
+
+    private fun validateUpgradePlan(plan: PackUpgradePlan) {
         require(
             plan.changes
                 .map { packRelative(it.path) }
@@ -280,120 +386,64 @@ internal class PackUpgradeTransaction(
         ) {
             "升级计划包含重复路径"
         }
-        val replacing =
-            plan.changes.filter {
-                it.action == PackFileAction.Replace || it.action == PackFileAction.Remove
-            }
-        val installing =
-            plan.changes.filter {
-                it.action == PackFileAction.Add || it.action == PackFileAction.Replace
-            }
+    }
+
+    private fun validateStagedFiles(
+        content: Path,
+        installing: List<PackFileChange>,
+    ) {
         for (change in installing) {
             val source = packPath(content, change.path)
             require(source.isRegularFile() && !Files.isSymbolicLink(source)) {
                 "暂存文件缺失：${change.path}"
             }
         }
-        val ledger = safePath(root, PACK_OWNERSHIP_FILE)
-        val archive = archiveTarget.toAbsolutePath().normalize()
-        val oldInstance = store.instance(instanceId)
-        val backup = directory.createDirectories()
-        val backups = linkedMapOf<Path, Path>()
-        val installed = mutableListOf<Path>()
-        var ledgerBackup: Path? = null
-        var archiveBackup: Path? = null
-        var ledgerWritten = false
-        var archiveWritten = false
-        var instanceUpdated = false
-        try {
-            for ((position, change) in replacing.withIndex()) {
-                context.checkCancelled()
-                val target = packPath(root, change.path)
-                if (!target.exists()) continue
-                require(target.isRegularFile() && !Files.isSymbolicLink(target)) {
-                    "升级目标不是普通文件：${change.path}"
-                }
-                val saved = safePath(backup, "files/$position/${target.fileName}")
-                saved.parent.createDirectories()
-                Files.move(target, saved)
-                backups[target] = saved
+    }
+
+    private fun requireUpgradeFile(
+        path: Path,
+        message: String,
+    ) {
+        require(path.isRegularFile() && !Files.isSymbolicLink(path)) { message }
+    }
+
+    private fun archiveParent(archive: Path): Path =
+        archive.parent ?: throw IOException("整合包归档路径无效")
+
+    /** 回滚已写入的文件、账本、归档与实例记录；有未恢复项时保留备份目录并返回带说明的异常。 */
+    private fun rollbackUpgrade(
+        error: Throwable,
+        instanceId: String,
+        oldInstance: GameInstance,
+        state: UpgradeWriteState,
+    ): Throwable {
+        val failures = mutableListOf<Throwable>()
+        runCatching {
+            state.installed.asReversed().forEach { Files.deleteIfExists(it) }
+            for ((target, saved) in state.backups.entries
+                .toList()
+                .asReversed()) {
+                Files.move(
+                    saved,
+                    target,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
             }
-            if (ledger.exists()) {
-                require(ledger.isRegularFile() && !Files.isSymbolicLink(ledger)) {
-                    "文件归属账本不是普通文件"
-                }
-                ledgerBackup = safePath(backup, "ledger.json").also { Files.copy(ledger, it) }
+            if (state.ledgerWritten) restoreOrDelete(state.ledger, state.ledgerBackup)
+            if (state.archiveWritten) restoreOrDelete(state.archive, state.archiveBackup)
+        }.onFailure { failures += it }
+        if (state.instanceUpdated) {
+            runCatching { store.updateInstance(instanceId) { oldInstance } }
+                .onFailure { failures += it }
+        }
+        if (failures.isNotEmpty()) {
+            retain = true
+            return IOException("整合包升级未完成，原文件备份保留在 $directory", error).also {
+                failures.forEach(it::addSuppressed)
             }
-            if (archive.exists()) {
-                require(archive.isRegularFile() && !Files.isSymbolicLink(archive)) {
-                    "旧整合包归档不是普通文件"
-                }
-                archiveBackup =
-                    safePath(backup, "archive").createDirectories().resolve(archive.fileName).also {
-                        Files.copy(archive, it)
-                    }
-            }
-            for (change in installing) {
-                context.checkCancelled()
-                val source = packPath(content, change.path)
-                val target = packPath(root, change.path)
-                target.parent.createDirectories()
-                Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
-                installed.add(target)
-            }
-            context.checkCancelled()
-            PackOwnershipStore.write(root, ownership)
-            ledgerWritten = true
-            val parent = archive.parent ?: throw IOException("整合包归档路径无效")
-            parent.createDirectories()
-            val part = Files.createTempFile(parent, "${archive.fileName}.", ".part")
-            try {
-                Files.copy(archiveSource, part, StandardCopyOption.REPLACE_EXISTING)
-                try {
-                    Files.move(
-                        part,
-                        archive,
-                        StandardCopyOption.REPLACE_EXISTING,
-                        StandardCopyOption.ATOMIC_MOVE,
-                    )
-                } catch (_: AtomicMoveNotSupportedException) {
-                    Files.move(part, archive, StandardCopyOption.REPLACE_EXISTING)
-                }
-            } finally {
-                part.deleteIfExists()
-            }
-            archiveWritten = true
-            context.checkCancelled()
-            store.updateInstance(instanceId, updateInstance)
-            instanceUpdated = true
-        } catch (error: Throwable) {
-            val failures = mutableListOf<Throwable>()
-            runCatching {
-                installed.asReversed().forEach { Files.deleteIfExists(it) }
-                for ((target, saved) in backups.entries.toList().asReversed()) {
-                    Files.move(
-                        saved,
-                        target,
-                        StandardCopyOption.REPLACE_EXISTING,
-                    )
-                }
-                if (ledgerWritten) restoreOrDelete(ledger, ledgerBackup)
-                if (archiveWritten) restoreOrDelete(archive, archiveBackup)
-            }.onFailure { failures += it }
-            if (instanceUpdated) {
-                runCatching { store.updateInstance(instanceId) { oldInstance } }
-                    .onFailure { failures += it }
-            }
-            if (failures.isNotEmpty()) {
-                retain = true
-                throw IOException("整合包升级未完成，原文件备份保留在 $directory", error).also {
-                    failures.forEach(it::addSuppressed)
-                }
-            }
-            cleanup()
-            throw error
         }
         cleanup()
+        return error
     }
 
     fun cleanup() {

@@ -9,7 +9,6 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,11 +32,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,7 +51,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,14 +59,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
-import dev.molifox.core.importAppearanceBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
+
+private const val WINDOW_BACKGROUND_ALPHA = .82f
 
 typealias AppearanceChange = ((LauncherSettings) -> LauncherSettings) -> Unit
 
@@ -102,6 +98,7 @@ fun LauncherBackdrop(settings: LauncherSettings) {
     Box(
         Modifier
             .fillMaxSize()
+            .alpha(if (settings.windowTransparent) WINDOW_BACKGROUND_ALPHA else 1f)
             .blur(
                 if (settings.glassEnabled) settings.backgroundBlur.dp else 0.dp,
                 edgeTreatment = BlurredEdgeTreatment.Unbounded,
@@ -113,50 +110,26 @@ fun LauncherBackdrop(settings: LauncherSettings) {
                 it,
                 null,
                 Modifier.fillMaxSize().alpha(settings.backgroundOpacity.coerceIn(0f, 1f)),
-                contentScale =
-                    when (settings.backgroundFit) {
-                        "fit" -> ContentScale.Fit
-                        "stretch" -> ContentScale.FillBounds
-                        else -> ContentScale.Crop
-                    },
-                alignment =
-                    when (settings.backgroundAlignment) {
-                        "topLeft" -> Alignment.TopStart
-                        "topCenter" -> Alignment.TopCenter
-                        "topRight" -> Alignment.TopEnd
-                        "centerLeft" -> Alignment.CenterStart
-                        "centerRight" -> Alignment.CenterEnd
-                        "bottomLeft" -> Alignment.BottomStart
-                        "bottomCenter" -> Alignment.BottomCenter
-                        "bottomRight" -> Alignment.BottomEnd
-                        else -> Alignment.Center
-                    },
+                contentScale = backgroundContentScale(settings.backgroundFit),
+                alignment = backgroundContentAlignment(settings.backgroundAlignment),
             )
         }
     }
 }
 
-/** 设置 → 外观板块：子页（主题与效果 / 字体与缩放 / 页面布局）由设置页左栏在「外观」下面展开选择， 这里渲染当前子页：顶部一个实时预览，下面是该子页的设置卡片。 */
+/** 设置 → 外观板块：子页（主题与效果 / 字体与缩放 / 页面布局）由设置页左栏在「外观」下面展开选择， 这里直接渲染当前子页的设置卡片。 */
 @Composable
 fun ColumnScope.AppearanceSection(
     state: LauncherState,
     actions: UiActions,
     onResetDefaults: () -> Unit,
     subSection: Int,
-    onOpenFont: () -> Unit,
 ) {
     val settings = state.data.settings
     // 外观与其它分区一致：改动当场写入 store，MoliTheme / LauncherBackdrop 随之重绘，
-    // 所以预览和窗口效果都是真的「实时」，不存在未保存状态。
+    // 主题和窗口效果会随保存的设置即时更新。
     val apply: AppearanceChange = { change -> applySetting(actions, change) }
     Column(Modifier.weight(1f).fillMaxWidth()) {
-        // 只留实时预览，靠右对齐：随主题 / 强调色 / 字体 / 缩放即时变化，只读、无业务回调。
-        Row(
-            Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            AppearanceLivePreview()
-        }
         Crossfade(
             subSection,
             Modifier.weight(1f).fillMaxWidth(),
@@ -165,7 +138,7 @@ fun ColumnScope.AppearanceSection(
         ) { index ->
             ScrollColumn(Modifier.fillMaxSize()) {
                 when (index) {
-                    0 -> ThemePreferences(settings, actions, apply, onOpenFont = onOpenFont)
+                    0 -> ThemePreferences(settings, actions, apply)
                     1 -> FontPreferences(settings, actions, apply)
                     else -> PageLayoutPreferences(settings, apply)
                 }
@@ -179,446 +152,24 @@ fun ColumnScope.AppearanceSection(
 /** 外观子页标题：顺序与设置页左栏「外观」下面展开的子条目一致。 */
 internal val appearanceSubSections = listOf("主题与效果", "字体与缩放", "页面布局")
 
-/** 120×80 实时预览块：一张卡片 + 一行列表 + 一枚主按钮，全部读当前主题与字体。 */
-@Composable
-private fun AppearanceLivePreview() {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        Modifier.size(width = 120.dp, height = 80.dp),
-        shape = RoundedCornerShape(Metrics.cardRadius),
-        color = colors.surface,
-        border = BorderStroke(1.dp, hairline()),
-    ) {
-        Column(
-            Modifier.fillMaxSize().padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(14.dp)
-                        .clip(RoundedCornerShape(Metrics.innerRadius))
-                        .background(colors.primary.copy(alpha = .12f)),
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Box(
-                        Modifier
-                            .height(4.dp)
-                            .fillMaxWidth(.62f)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(colors.onSurface.copy(alpha = .55f)),
-                    )
-                    Box(
-                        Modifier
-                            .height(3.dp)
-                            .fillMaxWidth(.42f)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(colors.onSurfaceVariant.copy(alpha = .5f)),
-                    )
-                }
-            }
-            HorizontalDivider(color = hairline())
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(20.dp)
-                    .clip(RoundedCornerShape(Metrics.innerRadius))
-                    .background(colors.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("启动游戏", color = colors.onPrimary, fontSize = 11.sp, maxLines = 1)
-            }
-        }
-    }
-}
-
 @Composable
 private fun ThemePreferences(
     settings: LauncherSettings,
     actions: UiActions,
     apply: AppearanceChange,
-    onOpenFont: () -> Unit,
 ) {
-    val theme = settings.themeMode
-    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
-    SettingsSection("界面主题", "选择界面明暗；切换后立即生效。") {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ThemeOptionCard(
-                "light",
-                "浅色",
-                "始终使用浅色界面",
-                theme == "light",
-                settings.accentColor,
-                duration,
-            ) {
-                apply { it.copy(themeMode = "light") }
-            }
-            ThemeOptionCard(
-                "dark",
-                "深色",
-                "始终使用深色界面",
-                theme == "dark",
-                settings.accentColor,
-                duration,
-            ) {
-                apply { it.copy(themeMode = "dark") }
-            }
-            ThemeOptionCard(
-                "system",
-                "跟随系统",
-                "跟随操作系统外观",
-                theme == "system",
-                settings.accentColor,
-                duration,
-            ) {
-                apply { it.copy(themeMode = "system") }
-            }
-        }
-    }
-    SettingsSection("主题颜色", "默认樱花粉；可选择预设颜色，或输入十六进制值自定义。") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            accentPresetTitles.forEach { (id, title) ->
-                AccentChip(
-                    id = id,
-                    title = title,
-                    dark = isDarkScheme(),
-                    selected = settings.accentColor == id,
-                    duration = duration,
-                ) {
-                    apply { it.copy(accentColor = id) }
-                }
-            }
-        }
-        Text(
-            (accentPresetTitles[settings.accentColor] ?: "自定义颜色") + " · 统一界面配色",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.sp,
-        )
-        var customHex by
-            remember(settings.accentColor) {
-                mutableStateOf(
-                    if (Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor)) {
-                        settings.accentColor
-                    } else {
-                        ""
-                    },
-                )
-            }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.width(200.dp)) {
-                CompactTextField(
-                    customHex,
-                    { value ->
-                        customHex = value
-                        if (Regex("^#[0-9A-Fa-f]{6}$").matches(value)) {
-                            apply { it.copy(accentColor = value.uppercase()) }
-                        }
-                    },
-                    placeholder = "#RRGGBB",
-                )
-            }
-            if (customHex.isNotEmpty() && !Regex("^#[0-9A-Fa-f]{6}$").matches(customHex)) {
-                Text(
-                    "格式需为 #RRGGBB",
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp,
-                )
-            } else {
-                Text(
-                    "输入 #RRGGBB 作为自定义强调色",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
-                )
-            }
-        }
-    }
-    // 左上角图标：只改主窗口标题栏左侧的品牌标识，标题栏图标、任务栏与准备窗口仍用内置图标。
-    var brandError by remember { mutableStateOf<String?>(null) }
-    val brandCustom = settings.brandIconPath.isNotBlank()
-    SettingsSection(
-        "左上角图标",
-        "只替换启动器左上角的品牌标识；标题栏与准备窗口仍使用内置图标。",
-        action = { EnabledTag(brandCustom) },
-        contentGap = 0.dp,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(Metrics.innerRadius))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .07f))
-                    .border(1.dp, hairline(), RoundedCornerShape(Metrics.innerRadius)),
-                contentAlignment = Alignment.Center,
-            ) {
-                BrandMark(Modifier.size(24.dp))
-            }
-            SecondaryButton({
-                brandError = null
-                actions.run {
-                    val source =
-                        actions
-                            .choose("选择左上角图标", extensions = listOf("png", "jpg", "jpeg"))
-                            .firstOrNull() ?: return@run
-                    val result =
-                        runCatching {
-                            importBrandIcon(actions.controller.store.dataDirectory, source)
-                        }
-                    withContext(Dispatchers.Swing) {
-                        val imported = result.getOrNull()
-                        brandError =
-                            if (imported == null) {
-                                result.exceptionOrNull()?.message ?: "无法使用这张图片"
-                            } else {
-                                applySetting(actions) {
-                                    it.copy(
-                                        brandIconPath = imported.toString(),
-                                        brandIconRevision = System.currentTimeMillis(),
-                                    )
-                                }
-                            }
-                    }
-                }
-            }) {
-                Icon(Icons.Outlined.Image, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(7.dp))
-                Text("选择图片")
-            }
-            if (brandCustom) {
-                SecondaryButton({
-                    brandError = null
-                    actions.run {
-                        val stored = actions.controller.store.data.settings.brandIconPath
-                        applySetting(actions) {
-                            it.copy(
-                                brandIconPath = "",
-                                brandIconRevision = System.currentTimeMillis(),
-                            )
-                        }
-                        removeBrandIcon(actions.controller.store.dataDirectory, stored)
-                    }
-                }) { Text("恢复默认") }
-            }
-        }
-        brandError?.let { message ->
-            Spacer(Modifier.height(6.dp))
-            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-        }
-        Spacer(Modifier.height(8.dp))
-        MutedText("支持 PNG / JPEG，最大 2 MB、边长 16–1024 像素；图片副本保存在 MoliFox/appearance/branding。")
-    }
-    SettingsSection("字体与缩放", "字体、文字大小与界面缩放集中在「字体与缩放」子页。", contentGap = 0.dp) {
-        SettingRow("当前字体", fontLabel(settings)) {
-            SecondaryButton({ onOpenFont() }) { Text("字体与缩放") }
-        }
-        SettingDivider()
-        SettingRow("界面缩放", "当前 " + (settings.uiScale * 100).toInt() + "%") {
-            Tag((settings.uiScale * 100).toInt().toString() + "%")
-        }
-        SettingDivider()
-        PreferenceSlider(
-            "界面圆角",
-            settings.cornerRadiusDp.toFloat(),
-            0f..24f,
-            { "${it.toInt()} dp" },
-        ) { value ->
-            apply { it.copy(cornerRadiusDp = value.toInt()) }
-        }
-        MutedText("0 为直角；卡片、按钮、输入框与对话框按统一比例实时调整。")
-    }
-    SettingsSection("界面行为", "标题栏与动画效果；窗口透明需要重启启动器。", contentGap = 0.dp) {
-        SettingRow("标题栏半透明", "让背景透过顶部标题栏，无需开启玻璃效果") {
-            CompactSwitch(
-                settings.titlebarTransparent,
-                { value -> apply { it.copy(titlebarTransparent = value) } },
-            )
-        }
-        SettingDivider()
-        SettingRow("窗口透明", "整窗半透明，重启启动器后生效") {
-            CompactSwitch(
-                settings.windowTransparent,
-                { value -> apply { it.copy(windowTransparent = value) } },
-            )
-        }
-        SettingDivider()
-        SettingRow("过渡动画", "关闭后页面切换与提示不再淡入淡出") {
-            CompactSwitch(
-                settings.animationsEnabled,
-                { value -> apply { it.copy(animationsEnabled = value) } },
-            )
-        }
-        SettingDivider()
-        SettingRow("默认游戏窗口", "实例的窗口设置可以覆盖这里的默认值") {
-            Box(Modifier.width(180.dp)) {
-                SimpleDropdown(
-                    settings.gameWindowMode,
-                    listOf(
-                        "launcher" to "与启动器一样大",
-                        "fullscreen" to "全屏",
-                        "custom" to "自定义分辨率",
-                    ),
-                    { value -> apply { it.copy(gameWindowMode = value) } },
-                )
-            }
-        }
-    }
-    SettingsSection(
-        "透明与磨砂",
-        "让背景透过卡片，保留清晰的文字与操作层级。",
-        action = { EnabledTag(settings.glassEnabled) },
-        contentGap = 0.dp,
-    ) {
-        SettingRow("玻璃效果", "关闭后使用实色面板") {
-            CompactSwitch(
-                settings.glassEnabled,
-                { value -> apply { it.copy(glassEnabled = value) } },
-                Modifier.semantics { contentDescription = "玻璃效果开关" },
-            )
-        }
-        SettingDivider()
-        // 关闭玻璃时保留滑块并置灰，避免布局跳变与「设置丢了」的错觉。
-        PreferenceSlider(
-            "面板不透明度",
-            settings.surfaceOpacity,
-            .6f..1f,
-            { (it * 100).toInt().toString() + "%" },
-            enabled = settings.glassEnabled,
-        ) { value ->
-            apply { it.copy(surfaceOpacity = value) }
-        }
-        SettingDivider()
-        PreferenceSlider(
-            "背景磨砂强度",
-            settings.backgroundBlur,
-            0f..40f,
-            { it.toInt().toString() },
-            enabled = settings.glassEnabled,
-        ) { value ->
-            apply { it.copy(backgroundBlur = value) }
-        }
-        if (!settings.glassEnabled) MutedText("需开启玻璃效果后这些滑块才生效。", Modifier.padding(top = 4.dp))
-    }
-    var removing by remember { mutableStateOf(false) }
-    val backgroundOn = settings.backgroundPath.isNotBlank()
-    SettingsSection(
-        "窗口背景",
-        "图片副本保存在 MoliFox/appearance，可搭配透明与磨砂效果。",
-        action = { EnabledTag(backgroundOn) },
-        // 卡片内的四个行块之间用 1dp 细线分隔：行数 4 → 分隔线 3 条，首末不加。
-        contentGap = 0.dp,
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SecondaryButton({
-                actions.run {
-                    val source =
-                        actions
-                            .choose("选择窗口背景", extensions = listOf("png", "jpg", "jpeg"))
-                            .firstOrNull()
-                    if (source != null) {
-                        val imported =
-                            importAppearanceBackground(
-                                actions.controller.store.dataDirectory,
-                                source,
-                            )
-                        applySetting(actions) {
-                            it.copy(
-                                backgroundPath = imported.toString(),
-                                backgroundRevision = System.currentTimeMillis(),
-                            )
-                        }
-                    }
-                }
-            }) {
-                Icon(Icons.Outlined.Image, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(7.dp))
-                Text("选择背景图片")
-            }
-            if (backgroundOn) SecondaryButton({ removing = true }) { Text("移除背景") }
-        }
-        SettingDivider()
-        PreferenceSlider(
-            "背景浓度",
-            settings.backgroundOpacity,
-            0f..1f,
-            { (it * 100).toInt().toString() + "%" },
-            enabled = backgroundOn,
-        ) { value ->
-            apply { it.copy(backgroundOpacity = value) }
-        }
-        SettingDivider()
-        SettingRow("图片适配", "填满可能裁边；完整显示保留全图；拉伸可能改变比例") {
-            SimpleDropdown(
-                settings.backgroundFit,
-                listOf("crop" to "填满并裁切", "fit" to "完整显示", "stretch" to "拉伸铺满"),
-                { value -> apply { it.copy(backgroundFit = value) } },
-                Modifier.width(170.dp),
-                enabled = true,
-            )
-        }
-        SettingDivider()
-        SettingRow("图片位置", "控制裁切中心或完整图片在窗口中的对齐位置") {
-            SimpleDropdown(
-                settings.backgroundAlignment,
-                listOf(
-                    "topLeft" to "左上",
-                    "topCenter" to "居中靠上",
-                    "topRight" to "右上",
-                    "centerLeft" to "靠左居中",
-                    "center" to "居中",
-                    "centerRight" to "靠右居中",
-                    "bottomLeft" to "左下",
-                    "bottomCenter" to "居中靠下",
-                    "bottomRight" to "右下",
-                ),
-                { value -> apply { it.copy(backgroundAlignment = value) } },
-                Modifier.width(170.dp),
-                enabled = settings.backgroundFit != "stretch",
-            )
-        }
-        if (!backgroundOn) MutedText("可以先设置图片适配和位置，选择背景图片后生效。", Modifier.padding(top = 4.dp))
-        if (settings.backgroundFit == "stretch") MutedText("拉伸铺满时没有空白或裁切区域；切换为填满或完整显示后可调整位置。")
-    }
-    // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行。
-    if (removing) {
-        Modal(
-            "移除背景？",
-            "图片副本会从 MoliFox/appearance 删除，无法从启动器恢复。",
-            460.dp,
-            { removing = false },
-        ) {
-            MutedText("原图若保存在其它位置不受影响；移除后窗口背景恢复为纯色。")
-            DialogActions(
-                confirmText = "移除背景",
-                onConfirm = {
-                    actions.run {
-                        applySetting(actions) { it.copy(backgroundPath = "") }
-                        Files.deleteIfExists(
-                            actions.controller.store.directories.backgrounds.resolve(
-                                "background.img",
-                            ),
-                        )
-                    }
-                    removing = false
-                },
-                cancelText = "保留",
-                onCancel = { removing = false },
-                danger = true,
-            )
-        }
-    }
+    ThemeModeSection(settings, apply)
+    AccentColorSection(settings, apply)
+    BrandIconSection(settings, actions)
+    CornerRadiusSection(settings, apply)
+    BehaviorSection(settings, apply)
+    GlassEffectSection(settings, apply)
+    BackgroundImageSection(settings, actions, apply)
 }
 
 /** 已启用 / 未启用 Tag：分组卡片标题行右侧的状态标记。 */
 @Composable
-private fun EnabledTag(enabled: Boolean) {
+internal fun EnabledTag(enabled: Boolean) {
     val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
     val color by
         animateColorAsState(
@@ -635,7 +186,7 @@ private fun EnabledTag(enabled: Boolean) {
 
 /** 主题卡片：64dp 预览块 + 12sp 标题 + 11sp 说明，选中时边框 2dp 主题色。 */
 @Composable
-private fun RowScope.ThemeOptionCard(
+internal fun RowScope.ThemeOptionCard(
     id: String,
     title: String,
     detail: String,
@@ -766,7 +317,7 @@ private fun ThemeSwatchPane(
 
 /** 强调色 chip：色点 16dp + 12sp 文字，选中加 2dp 主题色边框与对勾。 */
 @Composable
-private fun AccentChip(
+internal fun AccentChip(
     id: String,
     title: String,
     dark: Boolean,
@@ -825,7 +376,7 @@ private fun AccentChip(
 }
 
 /** 当前字体名称：与「字体与缩放」子页的判定保持一致。 */
-private fun fontLabel(settings: LauncherSettings): String =
+internal fun fontLabel(settings: LauncherSettings): String =
     when {
         settings.fontChoice.isBlank() -> "系统默认"
         settings.fontChoice.startsWith("file:") ->

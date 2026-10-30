@@ -61,7 +61,13 @@ class CoreRulesTest {
         val rules =
             JsonParser
                 .parseString(
-                    """[{"action":"allow"},{"action":"disallow","os":{"name":"windows"}},{"action":"allow","os":{"name":"windows","arch":"aarch64"}}]""",
+                    """
+                    [
+                      {"action":"allow"},
+                      {"action":"disallow","os":{"name":"windows"}},
+                      {"action":"allow","os":{"name":"windows","arch":"aarch64"}}
+                    ]
+                    """,
                 ).asJsonArray
         assertFalse(rulesAllow(rules, "windows", "amd64", "10.0"))
         assertTrue(rulesAllow(rules, "linux", "amd64", "6.8"))
@@ -97,18 +103,7 @@ class CoreRulesTest {
 
     @Test
     fun `version inheritance keeps vanilla jar and replaces library versions`() {
-        writeJson(
-            directory.resolve("versions/base/base.json"),
-            JsonParser.parseString(
-                """{"id":"base","mainClass":"Base","downloads":{"client":{"url":"https://example.com/base.jar"}},"libraries":[{"name":"org.example:library:1"}],"arguments":{"game":["--username","${'$'}{auth_player_name}"]}}""",
-            ),
-        )
-        writeJson(
-            directory.resolve("versions/modded/modded.json"),
-            JsonParser.parseString(
-                """{"id":"modded","inheritsFrom":"base","mainClass":"Modded","libraries":[{"name":"org.example:library:2"}],"arguments":{"game":["--tweakClass","Example"]}}""",
-            ),
-        )
+        writeInheritedVersionProfiles()
         val resolved = VersionResolver(directory, DesktopPlatform()).resolve("modded")
         assertEquals("base", resolved.jarId)
         assertEquals("Modded", resolved.mainClass)
@@ -125,6 +120,37 @@ class CoreRulesTest {
         )
     }
 
+    private fun writeInheritedVersionProfiles() {
+        writeJson(
+            directory.resolve("versions/base/base.json"),
+            JsonParser.parseString(
+                """
+                {
+                  "id": "base",
+                  "mainClass": "Base",
+                  "downloads": {"client": {"url": "https://example.com/base.jar"}},
+                  "libraries": [{"name": "org.example:library:1"}],
+                  "arguments": {"game": ["--username", "${'$'}{auth_player_name}"]}
+                }
+                """,
+            ),
+        )
+        writeJson(
+            directory.resolve("versions/modded/modded.json"),
+            JsonParser.parseString(
+                """
+                {
+                  "id": "modded",
+                  "inheritsFrom": "base",
+                  "mainClass": "Modded",
+                  "libraries": [{"name": "org.example:library:2"}],
+                  "arguments": {"game": ["--tweakClass", "Example"]}
+                }
+                """,
+            ),
+        )
+    }
+
     @Test
     fun `circular inheritance is rejected`() {
         writeJson(directory.resolve("versions/a/a.json"), mapOf("id" to "a", "inheritsFrom" to "b"))
@@ -137,7 +163,18 @@ class CoreRulesTest {
         val library =
             JsonParser
                 .parseString(
-                    """{"name":"org.lwjgl:lwjgl-platform:2.9","natives":{"windows":"natives-windows","linux":"natives-linux"},"downloads":{"classifiers":{"natives-windows":{"url":"https://example.com/windows.jar","path":"windows.jar"},"natives-linux":{"url":"https://example.com/linux.jar","path":"linux.jar"}}}}""",
+                    """
+                    {
+                      "name": "org.lwjgl:lwjgl-platform:2.9",
+                      "natives": {"windows": "natives-windows", "linux": "natives-linux"},
+                      "downloads": {"classifiers": {
+                        "natives-windows": {"url": "https://example.com/windows.jar",
+                          "path": "windows.jar"},
+                        "natives-linux": {"url": "https://example.com/linux.jar",
+                          "path": "linux.jar"}
+                      }}
+                    }
+                    """,
                 ).asJsonObject
         val resolver = VersionResolver(directory, DesktopPlatform())
         assertFalse(resolver.hasClasspathArtifact(library))

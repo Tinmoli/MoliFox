@@ -7,6 +7,9 @@ package dev.molifox.core
 
 import java.nio.file.Path
 
+/** 纳秒到毫秒的换算基数。 */
+private const val NANOS_PER_MILLI = 1_000_000L
+
 internal typealias ModFileHasher = (Path, String) -> String
 
 /** 更新检查结果：有更新、匹配到项目但已是最新、或无法确认当前版本。 */
@@ -152,7 +155,8 @@ internal data class BatchLatest(
 /** 逐项目版本查询的并发上限：服务端能承受，又不至于把一条慢连接排成一列。 */
 internal const val UPDATE_LOOKUP_CONCURRENCY = 6
 
-internal fun elapsedMillis(startedAt: Long): Long = (System.nanoTime() - startedAt) / 1_000_000
+internal fun elapsedMillis(startedAt: Long): Long =
+    (System.nanoTime() - startedAt) / NANOS_PER_MILLI
 
 internal typealias ModUpdateDownloader =
     suspend (version: RemoteModVersion, target: Path, context: JobContext?) -> Unit

@@ -35,9 +35,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.JsonParseException
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentSource
+import dev.molifox.core.ContentUpdate
 import dev.molifox.core.ContentUpdateReport
 import dev.molifox.core.ModFile
 import dev.molifox.desktop.content.contentSourceName
@@ -46,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /** 资源更新管理：检查更新后选择资源、准备安装计划，再确认执行更新任务。 */
 @Composable
@@ -74,21 +77,23 @@ fun ContentUpdatesDialog(
         report = null
         selected = emptySet()
         try {
-            val checkedReport =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog
-                        .checkUpdates(instanceId, includePrerelease)
+            val message =
+                catchContentFailure {
+                    val checkedReport =
+                        withContext(Dispatchers.IO) {
+                            actions.controller.content.catalog
+                                .checkUpdates(instanceId, includePrerelease)
+                        }
+                    report = checkedReport
+                    selected =
+                        checkedReport.items
+                            .filter { it.update != null }
+                            .map { it.key }
+                            .toSet()
                 }
-            report = checkedReport
-            selected =
-                checkedReport.items
-                    .filter { it.update != null }
-                    .map { it.key }
-                    .toSet()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            error = failure.message
+            if (message != null) {
+                error = message
+            }
         } finally {
             loading = false
         }
@@ -112,183 +117,298 @@ fun ContentUpdatesDialog(
             Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SettingsSection(
-                "检查设置",
-                "按文件哈希在当前内容源（" +
-                    contentSourceName(state.data.settings.contentDownloadSource) +
-                    "）识别资源，只匹配当前游戏版本与加载器。",
-            ) {
-                SettingRow("包含测试版和预览版", "版本列表会包含测试版与预览版") {
-                    CompactSwitch(
-                        includePrerelease,
-                        { includePrerelease = it },
-                        enabled = !loading && !busy,
-                    )
-                }
-                SettingRow("重新检查", "重新读取本地文件并按哈希匹配来源") {
-                    SecondaryButton({ refresh++ }, enabled = !loading && !busy) {
-                        Text("重新检查", fontSize = 12.sp)
-                    }
-                }
-            }
+            ContentCheckSettings(
+                includePrerelease = includePrerelease,
+                onIncludePrereleaseChange = { includePrerelease = it },
+                sourceName = contentSourceName(state.data.settings.contentDownloadSource),
+                loading = loading,
+                busy = busy,
+                onRecheck = { refresh++ },
+            )
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             }
-            val prepared = plan
-            if (prepared != null) {
-                SettingsSection("即将安装", "将安装 ${prepared.files.size} 项（包括必要前置）") {
-                    prepared.files.forEach { file ->
-                        Row(
-                            Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "${file.folder}/${file.filename}",
-                                Modifier.weight(1f),
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Tag(
-                                "%.1f MB".format(file.size / 1048576f),
-                                MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    if (prepared.optional.isNotEmpty()) MutedText("可选前置默认不安装；可在项目详情中单独选择。")
-                }
-            } else {
-                report?.let { result ->
-                    if (result.items.isEmpty()) {
-                        Panel(Modifier.fillMaxWidth()) {
-                            EmptyState(
-                                "没有可检查的资源",
-                                "没有可检查的 JAR 或 ZIP 资源。",
-                                Icons.Outlined.CloudOff,
-                            )
-                        }
-                    } else {
-                        SettingsSection(
-                            "可更新资源",
-                            "已识别 ${result.items.size} 个文件 · 已选 ${selected.size} 项",
-                        ) {
-                            result.items.forEach { item ->
-                                val origin = item.source
-                                Row(
-                                    Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Checkbox(
-                                        item.key in selected,
-                                        { checked ->
-                                            selected =
-                                                if (checked) {
-                                                    selected + item.key
-                                                } else {
-                                                    selected - item.key
-                                                }
-                                        },
-                                        enabled = item.update != null && !loading && !busy,
-                                    )
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            item.filename,
-                                            fontSize = 13.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            when {
-                                                item.warning.isNotBlank() -> item.warning
-                                                item.update != null ->
-                                                    "${item.currentVersion} → " +
-                                                        "${item.update?.number}"
-                                                else -> "${item.currentVersion} · " + "当前筛选下没有更高版本"
-                                            },
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    if (origin != null) {
-                                        TextButton({ details = origin }, enabled = !busy) {
-                                            Text("详情", fontSize = 12.sp)
-                                        }
-                                        TextButton(
-                                            {
-                                                loading = true
-                                                error = null
-                                                scope.launch {
-                                                    try {
-                                                        actions.controller.requireIdle(instanceId)
-                                                        withContext(Dispatchers.IO) {
-                                                            actions.controller.content.catalog
-                                                                .setLocked(
-                                                                    instanceId,
-                                                                    origin,
-                                                                    !origin.locked,
-                                                                )
-                                                        }
-                                                        refresh++
-                                                    } catch (failure: Exception) {
-                                                        error = failure.message
-                                                        loading = false
-                                                    }
-                                                }
-                                            },
-                                            enabled = !loading && !busy,
-                                        ) {
-                                            Text(
-                                                if (origin.locked) "解锁" else "锁定",
-                                                fontSize = 12.sp,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onDismiss) { Text("关闭更新管理") }
-            if (plan != null) TextButton({ plan = null }) { Text("返回选择") }
-            PrimaryButton(
-                if (plan == null) "准备所选更新 (${selected.size})" else "确认更新",
-                enabled = !loading && !busy && selected.isNotEmpty(),
-                onClick = {
+            ContentUpdatesBody(
+                plan = plan,
+                report = report,
+                selected = selected,
+                loading = loading,
+                busy = busy,
+                onSelectionChange = { selected = it },
+                onDetails = { details = it },
+                onToggleLock = { origin ->
                     loading = true
                     error = null
                     scope.launch {
-                        try {
-                            val prepared = plan
-                            if (prepared != null) {
-                                actions.controller.installContent(prepared)
-                                onDismiss()
-                            } else {
-                                plan =
-                                    withContext(Dispatchers.IO) {
-                                        actions.controller.content.planUpdates(
-                                            requireNotNull(report),
-                                            selected,
+                        val message =
+                            catchContentFailure {
+                                actions.controller.requireIdle(instanceId)
+                                withContext(Dispatchers.IO) {
+                                    actions.controller.content.catalog
+                                        .setLocked(
+                                            instanceId,
+                                            origin,
+                                            !origin.locked,
                                         )
-                                    }
+                                }
+                                refresh++
                             }
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Exception) {
-                            error = failure.message
-                        } finally {
+                        if (message != null) {
+                            error = message
                             loading = false
                         }
                     }
                 },
             )
         }
+        ContentUpdatesFooter(
+            plan = plan,
+            selectedCount = selected.size,
+            loading = loading,
+            busy = busy,
+            onClose = onDismiss,
+            onBackToSelection = { plan = null },
+            onPrimary = {
+                loading = true
+                error = null
+                scope.launch {
+                    try {
+                        val message =
+                            catchContentFailure {
+                                val prepared = plan
+                                if (prepared != null) {
+                                    actions.controller.installContent(prepared)
+                                    onDismiss()
+                                } else {
+                                    plan =
+                                        withContext(Dispatchers.IO) {
+                                            actions.controller.content.planUpdates(
+                                                requireNotNull(report),
+                                                selected,
+                                            )
+                                        }
+                                }
+                            }
+                        if (message != null) {
+                            error = message
+                        }
+                    } finally {
+                        loading = false
+                    }
+                }
+            },
+        )
+    }
+}
+
+/**
+ * 执行一次内容目录操作，只把可预期的文件、解析与前置校验失败交给界面提示。
+ *
+ * 取消继续上抛；未列出的异常（程序错误）保持原样抛出，不再显示成用户提示。
+ */
+private suspend fun catchContentFailure(block: suspend () -> Unit): String? =
+    try {
+        block()
+        null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: IOException) {
+        failure.message
+    } catch (failure: JsonParseException) {
+        failure.message
+    } catch (failure: IllegalStateException) {
+        failure.message
+    } catch (failure: IllegalArgumentException) {
+        failure.message
+    }
+
+/** 检查设置：是否包含预发布版本与重新检查按钮。 */
+@Composable
+private fun ContentCheckSettings(
+    includePrerelease: Boolean,
+    onIncludePrereleaseChange: (Boolean) -> Unit,
+    sourceName: String,
+    loading: Boolean,
+    busy: Boolean,
+    onRecheck: () -> Unit,
+) {
+    SettingsSection(
+        "检查设置",
+        "按文件哈希在当前内容源（$sourceName）识别资源，只匹配当前游戏版本与加载器。",
+    ) {
+        SettingRow("包含测试版和预览版", "版本列表会包含测试版与预览版") {
+            CompactSwitch(
+                includePrerelease,
+                onIncludePrereleaseChange,
+                enabled = !loading && !busy,
+            )
+        }
+        SettingRow("重新检查", "重新读取本地文件并按哈希匹配来源") {
+            SecondaryButton(onRecheck, enabled = !loading && !busy) {
+                Text("重新检查", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** 已经准备好的安装计划预览。 */
+@Composable
+private fun PreparedPlanSection(prepared: ContentInstallPlan) {
+    SettingsSection("即将安装", "将安装 ${prepared.files.size} 项（包括必要前置）") {
+        prepared.files.forEach { file ->
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${file.folder}/${file.filename}",
+                    Modifier.weight(1f),
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Tag(
+                    "%.1f MB".format(file.size / 1048576f),
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (prepared.optional.isNotEmpty()) {
+            MutedText("可选前置默认不安装；可在项目详情中单独选择。")
+        }
+    }
+}
+
+/** 主体：优先展示准备好的计划，否则展示检查结果或空状态。 */
+@Composable
+private fun ContentUpdatesBody(
+    plan: ContentInstallPlan?,
+    report: ContentUpdateReport?,
+    selected: Set<String>,
+    loading: Boolean,
+    busy: Boolean,
+    onSelectionChange: (Set<String>) -> Unit,
+    onDetails: (ContentSource) -> Unit,
+    onToggleLock: (ContentSource) -> Unit,
+) {
+    if (plan != null) {
+        PreparedPlanSection(plan)
+        return
+    }
+    val result = report ?: return
+    if (result.items.isEmpty()) {
+        Panel(Modifier.fillMaxWidth()) {
+            EmptyState(
+                "没有可检查的资源",
+                "没有可检查的 JAR 或 ZIP 资源。",
+                Icons.Outlined.CloudOff,
+            )
+        }
+        return
+    }
+    SettingsSection(
+        "可更新资源",
+        "已识别 ${result.items.size} 个文件 · 已选 ${selected.size} 项",
+    ) {
+        result.items.forEach { item ->
+            ContentUpdateRow(
+                item = item,
+                checked = item.key in selected,
+                loading = loading,
+                busy = busy,
+                onCheckedChange = { checked ->
+                    onSelectionChange(
+                        if (checked) selected + item.key else selected - item.key,
+                    )
+                },
+                onDetails = onDetails,
+                onToggleLock = onToggleLock,
+            )
+        }
+    }
+}
+
+/** 单个可更新资源行：勾选框、文件名与版本说明、详情/锁定操作。 */
+@Composable
+private fun ContentUpdateRow(
+    item: ContentUpdate,
+    checked: Boolean,
+    loading: Boolean,
+    busy: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    onDetails: (ContentSource) -> Unit,
+    onToggleLock: (ContentSource) -> Unit,
+) {
+    val origin = item.source
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Checkbox(
+            checked,
+            onCheckedChange,
+            enabled = item.update != null && !loading && !busy,
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.filename,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                updateStatusLine(item),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (origin != null) {
+            TextButton({ onDetails(origin) }, enabled = !busy) {
+                Text("详情", fontSize = 12.sp)
+            }
+            TextButton({ onToggleLock(origin) }, enabled = !loading && !busy) {
+                Text(
+                    if (origin.locked) "解锁" else "锁定",
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+/** 资源行的版本说明：警告优先，其次「当前 → 目标」，否则说明当前筛选下没有更高版本。 */
+private fun updateStatusLine(item: ContentUpdate): String =
+    when {
+        item.warning.isNotBlank() -> item.warning
+        item.update != null ->
+            "${item.currentVersion} → " +
+                "${item.update?.number}"
+        else -> "${item.currentVersion} · " + "当前筛选下没有更高版本"
+    }
+
+/** 底部操作：关闭、返回选择与准备/确认更新。 */
+@Composable
+private fun ContentUpdatesFooter(
+    plan: ContentInstallPlan?,
+    selectedCount: Int,
+    loading: Boolean,
+    busy: Boolean,
+    onClose: () -> Unit,
+    onBackToSelection: () -> Unit,
+    onPrimary: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TextButton(onClose) { Text("关闭更新管理") }
+        if (plan != null) TextButton(onBackToSelection) { Text("返回选择") }
+        PrimaryButton(
+            if (plan == null) "准备所选更新 ($selectedCount)" else "确认更新",
+            enabled = !loading && !busy && selectedCount > 0,
+            onClick = onPrimary,
+        )
     }
 }
 

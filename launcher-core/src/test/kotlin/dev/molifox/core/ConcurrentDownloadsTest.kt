@@ -47,6 +47,55 @@ class ConcurrentDownloadsTest {
             while (!condition()) delay(10)
         }
 
+    private fun LauncherStore.assertJobStatus(
+        jobId: String,
+        expected: JobStatus,
+    ) {
+        assertEquals(
+            expected,
+            state.value.jobs
+                .first { it.id == jobId }
+                .status,
+        )
+    }
+
+    /** 首个任务下载三份文件后停在取消点，供取消清理用例观察借用与既有文件。 */
+    private fun JobQueue.enqueueHeldDownload(
+        network: NetworkClient,
+        server: MockWebServer,
+        targets: List<Path>,
+        ready: CompletableDeferred<Unit>,
+    ): String =
+        enqueue("Download", setOf("A")) {
+            for (target in targets) {
+                network.download(
+                    DownloadArtifact(
+                        server.loopbackUrl("/file").toString(),
+                        target,
+                        size = 3,
+                    ),
+                )
+            }
+            ready.complete(Unit)
+            awaitCancellation()
+        }
+
+    /** 第二个任务复用被借用文件的下载结果，验证借用文件不会被取消清理删除。 */
+    private fun JobQueue.enqueueSharedDownload(
+        network: NetworkClient,
+        server: MockWebServer,
+        target: Path,
+    ): String =
+        enqueue("Use shared", setOf("B")) {
+            network.download(
+                DownloadArtifact(
+                    server.loopbackUrl("/file").toString(),
+                    target,
+                    size = 3,
+                ),
+            )
+        }
+
     @Test
     fun `conflicting tasks wait and cancelled reservations release`() =
         runBlocking {
@@ -77,24 +126,9 @@ class ConcurrentDownloadsTest {
                 withTimeout(10_000) { queue.awaitIdle() }
                 val fourth = queue.enqueue("A again", setOf("instance:A")) {}
                 withTimeout(10_000) { queue.awaitIdle() }
-                assertEquals(
-                    JobStatus.Completed,
-                    store.state.value.jobs
-                        .first { it.id == first }
-                        .status,
-                )
-                assertEquals(
-                    JobStatus.Cancelled,
-                    store.state.value.jobs
-                        .first { it.id == second }
-                        .status,
-                )
-                assertEquals(
-                    JobStatus.Completed,
-                    store.state.value.jobs
-                        .first { it.id == fourth }
-                        .status,
-                )
+                store.assertJobStatus(first, JobStatus.Completed)
+                store.assertJobStatus(second, JobStatus.Cancelled)
+                store.assertJobStatus(fourth, JobStatus.Completed)
             } finally {
                 scope.cancel()
             }
@@ -115,30 +149,14 @@ class ConcurrentDownloadsTest {
                         val existing = directory.resolve("existing.bin").apply { writeText("abc") }
                         val ready = CompletableDeferred<Unit>()
                         val job =
-                            queue.enqueue("Download", setOf("A")) {
-                                for (target in listOf(own, borrowed, existing)) {
-                                    network.download(
-                                        DownloadArtifact(
-                                            server.loopbackUrl("/file").toString(),
-                                            target,
-                                            size = 3,
-                                        ),
-                                    )
-                                }
-                                ready.complete(Unit)
-                                awaitCancellation()
-                            }
+                            queue.enqueueHeldDownload(
+                                network = network,
+                                server = server,
+                                targets = listOf(own, borrowed, existing),
+                                ready = ready,
+                            )
                         ready.await()
-                        val consumer =
-                            queue.enqueue("Use shared", setOf("B")) {
-                                network.download(
-                                    DownloadArtifact(
-                                        server.loopbackUrl("/file").toString(),
-                                        borrowed,
-                                        size = 3,
-                                    ),
-                                )
-                            }
+                        val consumer = queue.enqueueSharedDownload(network, server, borrowed)
                         eventually {
                             store.state.value.jobs
                                 .first { it.id == consumer }
@@ -178,19 +196,29 @@ class ConcurrentDownloadsTest {
         override fun dispatch(request: RecordedRequest): MockResponse {
             val range = request.getHeader("Range")
             if (range != null) observed.add(range)
-            if (ignore || range == null) return MockResponse().setBody(Buffer().write(bytes))
             val match =
-                Regex("bytes=(\\d+)-(\\d*)").matchEntire(range)
-                    ?: return MockResponse().setResponseCode(416)
-            val start = match.groupValues[1].toInt()
-            val end = match.groupValues[2].toIntOrNull() ?: bytes.lastIndex
-            return MockResponse()
-                .setResponseCode(206)
-                .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
-                .setBody(Buffer().write(bytes, start, end - start + 1))
-                .apply {
-                    if (slow && end > start) throttleBody(16384, 20, TimeUnit.MILLISECONDS)
+                if (ignore || range == null) {
+                    null
+                } else {
+                    Regex("bytes=(\\d+)-(\\d*)").matchEntire(range)
                 }
+            return when {
+                ignore || range == null -> MockResponse().setBody(Buffer().write(bytes))
+                match == null -> MockResponse().setResponseCode(416)
+                else -> {
+                    val start = match.groupValues[1].toInt()
+                    val end = match.groupValues[2].toIntOrNull() ?: bytes.lastIndex
+                    MockResponse()
+                        .setResponseCode(206)
+                        .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
+                        .setBody(Buffer().write(bytes, start, end - start + 1))
+                        .apply {
+                            if (slow && end > start) {
+                                throttleBody(16384, 20, TimeUnit.MILLISECONDS)
+                            }
+                        }
+                }
+            }
         }
     }
 
@@ -200,7 +228,7 @@ class ConcurrentDownloadsTest {
             val bytes = ByteArray(9 * 1024 * 1024) { (it * 31).toByte() }
             val observed = java.util.Collections.synchronizedList(mutableListOf<String>())
             MockWebServer().use { server ->
-                NetworkClient().use { network ->
+                NetworkClient(downloadSegments = { 4 }).use { network ->
                     server.dispatcher = ranges(bytes, observed = observed)
                     val target = directory.resolve("large.bin")
                     network.download(artifact(server, target, bytes), attempts = 1)
@@ -232,7 +260,7 @@ class ConcurrentDownloadsTest {
         runBlocking {
             val bytes = ByteArray(8 * 1024 * 1024) { it.toByte() }
             MockWebServer().use { server ->
-                NetworkClient().use { network ->
+                NetworkClient(downloadSegments = { 4 }).use { network ->
                     server.dispatcher = ranges(bytes, slow = true)
                     val target = directory.resolve("cancel.bin")
                     val job =

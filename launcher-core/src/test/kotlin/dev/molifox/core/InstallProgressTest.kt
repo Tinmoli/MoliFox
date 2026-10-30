@@ -63,7 +63,26 @@ class InstallProgressTest {
         val libraryJar = artifact("library.jar", 4096)
         val assets = (1..5000).map { artifact("asset-$it") }
 
-        // 和真实安装一致：所有阶段的工作量在开始前一次登记，分母固定。
+        planAllPhases(progress, clientJar, libraryJar, assets)
+        verifyAllFiles(progress, clientJar, libraryJar, assets)
+        downloadLibrary(progress, clientJar)
+
+        // 还有整批资源没下：此时绝不能已经显示 100%。
+        val beforeAssets = recorder.values.last()
+        assertTrue(beforeAssets < .99f, "库下完、资源还没开始时不能到 100%，实际 $beforeAssets")
+
+        downloadAllAssets(progress, assets)
+        progress.finish()
+        assertProgressSummary(recorder)
+    }
+
+    /** 和真实安装一致：所有阶段的工作量在开始前一次登记，分母固定。 */
+    private fun planAllPhases(
+        progress: InstallProgress,
+        clientJar: DownloadArtifact,
+        libraryJar: DownloadArtifact,
+        assets: List<DownloadArtifact>,
+    ) {
         progress.plan(
             InstallPhase.VERIFY,
             2 + assets.size,
@@ -72,18 +91,28 @@ class InstallProgressTest {
         )
         progress.plan(InstallPhase.LIBRARIES, 2, clientJar.size + libraryJar.size)
         progress.plan(InstallPhase.ASSETS, assets.size, 0)
+    }
 
-        // 校验阶段：每个文件都记满「校验文件」的份额。
+    /** 校验阶段：每个文件都记满「校验文件」的份额；已存在的库释放下载份额（客户端 JAR 缺失）。 */
+    private fun verifyAllFiles(
+        progress: InstallProgress,
+        clientJar: DownloadArtifact,
+        libraryJar: DownloadArtifact,
+        assets: List<DownloadArtifact>,
+    ) {
         progress.begin(InstallPhase.VERIFY)
         progress.verified(InstallPhase.VERIFY, clientJar)
         progress.verified(InstallPhase.VERIFY, libraryJar)
         assets.forEach { progress.verified(InstallPhase.VERIFY, it) }
-
-        // 已存在的库文件释放下载份额（客户端 JAR 缺失，需要下载）。
         progress.release(InstallPhase.LIBRARIES, 1, libraryJar.size)
         progress.release(InstallPhase.ASSETS, 0, 0)
+    }
 
-        // 下载库：大文件按字节推进。
+    /** 下载库：大文件按字节推进。 */
+    private fun downloadLibrary(
+        progress: InstallProgress,
+        clientJar: DownloadArtifact,
+    ) {
         progress.begin(InstallPhase.LIBRARIES)
         progress.started("client.jar", clientJar)
         var done = 0L
@@ -92,19 +121,22 @@ class InstallProgressTest {
             done += 256 * 1024
         }
         progress.finished("client.jar", clientJar)
+    }
 
-        // 还有整批资源没下：此时绝不能已经显示 100%。
-        val beforeAssets = recorder.values.last()
-        assertTrue(beforeAssets < .99f, "库下完、资源还没开始时不能到 100%，实际 $beforeAssets")
-
-        // 下载资源：5000 个文件，每个完成都应推进。
+    /** 下载资源：5000 个文件，每个完成都应推进。 */
+    private fun downloadAllAssets(
+        progress: InstallProgress,
+        assets: List<DownloadArtifact>,
+    ) {
         progress.begin(InstallPhase.ASSETS)
         assets.forEach { asset ->
             progress.started(asset.target.toString(), asset)
             progress.finished(asset.target.toString(), asset)
         }
-        progress.finish()
+    }
 
+    /** 单调性、终值与三种阶段标签都应满足。 */
+    private fun assertProgressSummary(recorder: Recorder) {
         recorder.keepMonotone()
         assertEquals(1f, recorder.values.last(), "最终进度必须精确等于 1.0")
         assertTrue(recorder.details.any { it.startsWith(InstallPhase.VERIFY) }, "缺少「校验文件」阶段标签")

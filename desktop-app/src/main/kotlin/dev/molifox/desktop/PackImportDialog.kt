@@ -57,7 +57,8 @@ fun PackImportDialog(
             if (preview.version.isNotBlank()) MutedText("整合包版本 · ${preview.version}")
             if (preview.summary.isNotBlank()) MutedText(preview.summary)
             MutedText(
-                "必需文件 ${preview.requiredFiles} 项 · 可选文件 ${selected.size}/${preview.optionalFiles.size} 项",
+                "必需文件 ${preview.requiredFiles} 项 · " +
+                    "可选文件 ${selected.size}/${preview.optionalFiles.size} 项",
             )
             if (preview.optionalFiles.isNotEmpty()) {
                 HorizontalDivider()
@@ -102,7 +103,9 @@ fun PackImportDialog(
                             preview.hash,
                         )
                         onDismiss()
-                    } catch (failure: Exception) {
+                    } catch (failure: IllegalArgumentException) {
+                        error = failure.message ?: "无法开始导入，请稍后重试"
+                    } catch (failure: IllegalStateException) {
                         error = failure.message ?: "无法开始导入，请稍后重试"
                     }
                 },

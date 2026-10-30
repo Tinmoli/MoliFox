@@ -16,6 +16,9 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.jvm.Transient
 
+private const val DEFAULT_MIRROR_CONCURRENCY = 4
+private const val HIGH_MIRROR_CONCURRENCY = 8
+
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
 const val LAUNCHER_VERSION = "0.4.0-beta"
 
@@ -119,10 +122,7 @@ data class LauncherSettings(
     val javaPath: String = "",
     /** 用户手动「添加」过的 Java 可执行文件；检测时与系统 Java 一起列出，删除前一直保留。 */
     val customJavaPaths: List<String> = emptyList(),
-    /**
-     * Java 下载源：auto（测速选最快官方源）/ official（Azul 官方，Temurin 走 Adoptium）。
-     * 旧的 mirror（国内镜像站）已移除；读到该值时按 official 处理，保存时自动迁移。
-     */
+    /** Java 下载来源：自动测速，或仅使用 Azul / Adoptium。 */
     val javaDownloadSource: String = "auto",
     val memoryMb: Int = 4096,
     val autoMemory: Boolean = false,
@@ -187,6 +187,8 @@ data class LauncherSettings(
     val contentDownloadSource: String = "modrinth",
     /** 文件下载缓存文件夹；为空使用数据目录 cache/。 */
     val downloadCachePath: String = "",
+    /** 同时下载的文件数（1..128，默认 64）：与 HMCL 的自定义线程数一致，改动对下一个任务生效。 */
+    val downloadThreads: Int = 64,
     val proxyEnabled: Boolean = false,
     /** 空值沿用旧代理开关；新配置默认跟随系统，支持 system/direct/manual。 */
     val proxyMode: String = "",
@@ -201,14 +203,10 @@ data class LauncherSettings(
     val processPriority: ProcessPriority = ProcessPriority.Normal,
 )
 
-/**
- * 把 Java 下载源收敛到当前支持的两种取值：official 与 auto。
- * 旧配置里的 mirror（TUNA 等国内镜像）按 official 读取，未知值按 auto，绝不因为旧值崩溃。
- */
+/** 统一 Java 下载来源，未知值使用自动选择。 */
 fun normalizedJavaDownloadSource(value: String): String =
-    if (value == "official" || value == "mirror") "official" else "auto"
+    value.takeIf { it in setOf("auto", "azul", "adoptium") } ?: "auto"
 
-/** 设置里实际的 Java 下载源；UI 与安装流程都读这个，旧 mirror 配置自动显示为官方源。 */
 val LauncherSettings.effectiveJavaDownloadSource: String
     get() = normalizedJavaDownloadSource(javaDownloadSource)
 
@@ -257,7 +255,12 @@ val LauncherSettings.effectiveCurseForgeBaseUrl: String
     get() = normalizedCurseForgeBaseUrl(curseForgeBaseUrl.orEmpty())
 
 /** 镜像并发只接受 2 / 4 / 8，其余值回落到默认 4。 */
-fun normalizedMirrorConcurrency(value: Int): Int = if (value in setOf(2, 4, 8)) value else 4
+fun normalizedMirrorConcurrency(value: Int): Int =
+    if (value in setOf(2, DEFAULT_MIRROR_CONCURRENCY, HIGH_MIRROR_CONCURRENCY)) {
+        value
+    } else {
+        DEFAULT_MIRROR_CONCURRENCY
+    }
 
 data class Account(
     val id: String = UUID.randomUUID().toString(),

@@ -41,7 +41,8 @@ class DesktopRefinementsTest {
                         calls++
                         when {
                             url.contains("search.mcmod.cn") ->
-                                "<a href=\"https://www.mcmod.cn/class/10.html\">Similar</a><a href=\"https://www.mcmod.cn/class/11.html\">Correct</a>"
+                                "<a href=\"https://www.mcmod.cn/class/10.html\">Similar</a>" +
+                                    "<a href=\"https://www.mcmod.cn/class/11.html\">Correct</a>"
                             url.endsWith("/10.html") ->
                                 "<a href=\"https://modrinth.com/mod/another-project\">Modrinth</a>"
                             else ->

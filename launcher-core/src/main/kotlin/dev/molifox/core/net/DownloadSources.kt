@@ -7,6 +7,12 @@ package dev.molifox.core.net
 
 import java.io.IOException
 
+/** 失败原因在描述里的最大保留长度。 */
+private const val MAX_REASON_LENGTH = 160
+
+/** 失败消息里最多逐条列出的源尝试数量，其余合并为「另有 N 个源」。 */
+private const val MAX_LISTED_ATTEMPTS = 8
+
 /** 源的一条地址前缀映射：官方前缀 → 该源前缀，路径原样保留。 */
 data class SourceRoute(
     val from: String,
@@ -74,19 +80,23 @@ class DownloadSourceCatalog(
                 listOf(CandidateSource(official, url))
             }
         }
-        // 自动模式：官方优先，其次 BMCLAPI，其余 Maven 镜像只排在回退位。
+        // 自动模式：中国网络优先镜像、其余地区优先官方，未登记的 Maven 镜像排在回退位。
+        val mirrorFirst = MachineRegion.prefersMirror()
         val served =
             all
                 .mapNotNull { source -> source.serve(url)?.let { CandidateSource(source, it) } }
-                .sortedBy { candidate -> rankOf(candidate.source) }
+                .sortedBy { candidate -> rankOf(candidate.source, mirrorFirst) }
                 .distinctBy { it.url }
         return if (served.isEmpty()) listOf(CandidateSource(official, url)) else served
     }
 
-    private fun rankOf(source: DownloadSource): Int =
-        when (source.key) {
-            OFFICIAL -> 0
-            BMCLAPI -> 1
+    private fun rankOf(
+        source: DownloadSource,
+        mirrorFirst: Boolean,
+    ): Int =
+        when {
+            source.key == BMCLAPI -> if (mirrorFirst) 0 else 1
+            source.key == OFFICIAL -> if (mirrorFirst) 1 else 0
             else -> 2 + (index[source.key] ?: Int.MAX_VALUE / 2)
         }
 
@@ -190,7 +200,7 @@ data class SourceAttempt(
             if (status != null) {
                 append(" → HTTP ").append(status)
             } else if (reason.isNotBlank()) {
-                append(" → ").append(reason.take(160))
+                append(" → ").append(reason.take(MAX_REASON_LENGTH))
             }
         }
 }
@@ -211,11 +221,13 @@ class DownloadSourceFailureException(
                     append("\n没有可用的下载源（全部已禁用或无法服务该地址）")
                 } else {
                     append("\n每个源尝试的 URL 与状态码：")
-                    attempts.take(8).forEach { append("\n  ").append(it.describe()) }
-                    if (attempts.size >
-                        8
-                    ) {
-                        append("\n  …另有 ").append(attempts.size - 8).append(" 个源")
+                    attempts.take(MAX_LISTED_ATTEMPTS).forEach {
+                        append("\n  ").append(it.describe())
+                    }
+                    if (attempts.size > MAX_LISTED_ATTEMPTS) {
+                        append("\n  …另有 ")
+                            .append(attempts.size - MAX_LISTED_ATTEMPTS)
+                            .append(" 个源")
                     }
                 }
             }

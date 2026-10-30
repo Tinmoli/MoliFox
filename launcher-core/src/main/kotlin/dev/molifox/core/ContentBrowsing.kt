@@ -8,6 +8,11 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import java.net.URI
 
+private const val MAX_GAME_VERSION_FILTER_CHARS = 100
+private const val MAX_CONTENT_CATEGORIES = 60
+private const val MAX_CATEGORY_SLUG_CHARS = 32
+private const val MAX_CONTENT_LINK_CHARS = 2048
+
 /** Browsing filters never change the selected instance or weaken installation checks. */
 data class ContentFilter(
     val gameVersion: String = "",
@@ -16,14 +21,17 @@ data class ContentFilter(
     val categories: Set<String> = emptySet(),
 ) {
     init {
-        require(gameVersion.length <= 100 && gameVersion.none { it.isISOControl() }) {
+        require(
+            gameVersion.length <= MAX_GAME_VERSION_FILTER_CHARS &&
+                gameVersion.none { it.isISOControl() },
+        ) {
             "游戏版本筛选无效"
         }
         require(
-            categories.size <= 60 &&
+            categories.size <= MAX_CONTENT_CATEGORIES &&
                 categories.all { slug ->
                     slug.isNotEmpty() &&
-                        slug.length <= 32 &&
+                        slug.length <= MAX_CATEGORY_SLUG_CHARS &&
                         slug.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
                 },
         ) {
@@ -109,13 +117,9 @@ internal fun contentLinks(
         ) {
             val url = project.string(key)
             val uri = runCatching { URI(url) }.getOrNull() ?: continue
-            if (
-                uri.scheme == "https" &&
-                !uri.host.isNullOrBlank() &&
-                uri.rawUserInfo == null &&
-                (uri.port == -1 || uri.port == 443) &&
-                url.length <= 2048
-            ) {
+            val secureScheme = uri.scheme == "https" && !uri.host.isNullOrBlank()
+            val safeAuthority = uri.rawUserInfo == null && (uri.port == -1 || uri.port == 443)
+            if (secureScheme && safeAuthority && url.length <= MAX_CONTENT_LINK_CHARS) {
                 add(ContentLink(title, uri.toASCIIString()))
             }
         }

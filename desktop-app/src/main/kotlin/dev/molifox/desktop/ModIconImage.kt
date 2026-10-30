@@ -18,6 +18,7 @@ import androidx.compose.ui.input.key.key
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
 
@@ -66,7 +67,16 @@ internal fun rememberModIcon(
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (failure: Exception) {
+                } catch (failure: IllegalArgumentException) {
+                    // Skia 解码失败（图片损坏/格式不支持）只影响这一个图标，退回占位图。
+                    onFailure(failure)
+                    null
+                } catch (failure: IOException) {
+                    // 读取归档内的图标时文件被占用或损坏；与解码失败同样只退回占位图。
+                    onFailure(failure)
+                    null
+                } catch (failure: IllegalStateException) {
+                    // 解码后转成 Compose 位图时画布/位图句柄已失效；同样只影响当前图标。
                     onFailure(failure)
                     null
                 }

@@ -18,6 +18,9 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 import kotlin.io.path.walk
 
+private const val RUNTIME_64_BITS = 64
+private const val RUNTIME_32_BITS = 32
+
 /** 一条已安装的 Java。`path` 相对 runtimes/，便于整个数据目录迁移后继续可用。 */
 data class JavaRuntimeEntry(
     val path: String = "",
@@ -223,7 +226,7 @@ internal fun bitsOf(architecture: String): Int =
         "arm64",
         "ppc64le",
         "s390x",
-        -> 64
+        -> RUNTIME_64_BITS
         "x86",
         "i386",
         "i486",
@@ -231,6 +234,6 @@ internal fun bitsOf(architecture: String): Int =
         "i686",
         "arm",
         "arm32",
-        -> 32
+        -> RUNTIME_32_BITS
         else -> 0
     }

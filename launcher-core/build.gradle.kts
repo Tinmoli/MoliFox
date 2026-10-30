@@ -15,7 +15,8 @@ java {
 }
 
 dependencies {
-    implementation("com.google.code.gson:gson:2.13.2")
+    // 资源目录模型把 JsonObject 暴露在公开签名里，界面层需要能引用 Gson 的解析异常类型。
+    api("com.google.code.gson:gson:2.13.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.apache.commons:commons-compress:1.28.0")

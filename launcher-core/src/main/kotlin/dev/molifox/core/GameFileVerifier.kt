@@ -97,6 +97,14 @@ internal class GameFileVerifier(
         val brokenTargets = broken.mapTo(HashSet()) { it.target }
         val intact = unique.filter { it.target !in brokenTargets }
         progress?.release(label, intact.size, intact.sumOf { it.size.coerceAtLeast(0) })
+        downloadBroken(broken, context, label)
+    }
+
+    private suspend fun downloadBroken(
+        broken: List<DownloadArtifact>,
+        context: JobContext,
+        label: String,
+    ) {
         if (broken.isEmpty()) return
         val unavailable = broken.filter { it.url.isBlank() }
         check(unavailable.isEmpty()) {
@@ -118,14 +126,15 @@ internal class GameFileVerifier(
                 context.checkCancelled()
                 artifactProblem(it) != null
             }
-        if (failures.isEmpty() && remaining.isEmpty()) return
-        val details =
-            if (failures.isNotEmpty()) {
-                failures.joinToString("\n") { it.describe() }
-            } else {
-                remaining.take(8).joinToString("\n") { it.target.toString() }
-            }
-        throw IOException("游戏文件自动补全失败，请检查网络或使用修复功能。\n$details")
+        if (failures.isNotEmpty() || remaining.isNotEmpty()) {
+            val details =
+                if (failures.isNotEmpty()) {
+                    failures.joinToString("\n") { it.describe() }
+                } else {
+                    remaining.take(8).joinToString("\n") { it.target.toString() }
+                }
+            throw IOException("游戏文件自动补全失败，请检查网络或使用修复功能。\n$details")
+        }
     }
 
     /**

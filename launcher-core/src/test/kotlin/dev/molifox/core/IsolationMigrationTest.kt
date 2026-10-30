@@ -29,8 +29,6 @@ import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IsolationMigrationTest {
@@ -80,153 +78,6 @@ class IsolationMigrationTest {
         store: LauncherStore,
         instance: GameInstance,
     ) = store.versionGamePath(instance)
-
-    // ---- 计划 ----
-
-    @Test
-    fun `plan only lists whitelisted game content`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-        val root = store.instancePath(shared.id)
-        write(root.resolve("mods/a.jar"), "jar")
-        write(root.resolve("config/fixture.toml"), "config")
-        write(root.resolve("defaultconfigs/pack.toml"), "default")
-        write(root.resolve("options.txt"), "options")
-        write(root.resolve("servers.dat"), "servers")
-        write(root.resolve("resourcepacks/pack.zip"), "pack")
-        write(root.resolve("shaderpacks/shader.zip"), "shader")
-        write(root.resolve("logs/latest.log"), "log")
-        write(root.resolve("crash-reports/crash.txt"), "crash")
-        write(root.resolve("caches/one.bin"), "cache")
-        write(root.resolve("screenshots/a.png"), "png")
-        write(root.resolve("usercache.json"), "cache")
-        write(root.resolve(".molifox-content.json"), "{}")
-        write(root.resolve(".molifox-pack-upgrade-fixture/files/0/a.jar"), "backup")
-
-        val plan = IsolationMigration(store).planIsolation(shared.id, isolate = true)
-
-        assertEquals(
-            listOf(
-                "config/fixture.toml",
-                "defaultconfigs/pack.toml",
-                "mods/a.jar",
-                "options.txt",
-                "resourcepacks/pack.zip",
-                "servers.dat",
-                "shaderpacks/shader.zip",
-            ),
-            plan.entries.map { it.relativePath },
-        )
-        assertEquals(IsolationMode.Shared, plan.from)
-        assertEquals(IsolationMode.Isolated, plan.to)
-        assertTrue(plan.blockers.isEmpty())
-        assertEquals(7, plan.transferCount)
-    }
-
-    @Test
-    fun `plan reports conflicting targets and refuses to overwrite`() =
-        runBlocking {
-            val store = store()
-            val migration = IsolationMigration(store)
-            val shared = instance(store, isolate = false)
-            val root = store.instancePath(shared.id)
-            write(root.resolve("mods/a.jar"), "mine")
-            val target = isolatedRoot(store, shared)
-            write(target.resolve("mods/a.jar"), "theirs")
-
-            val plan = migration.planIsolation(shared.id, isolate = true)
-
-            assertEquals(1, plan.conflictCount)
-            assertEquals(MigrationAction.Conflict, plan.entries.single().action)
-            assertEquals(1, plan.blockers.size)
-            assertTrue(plan.blockers.single().contains("mods/a.jar"))
-
-            val error =
-                assertFailsWith<IllegalArgumentException> {
-                    migration.changeIsolation(
-                        shared.id,
-                        isolate = true,
-                        context = JobContext(store, "fixture"),
-                    )
-                }
-            assertTrue(error.message.orEmpty().contains("mods/a.jar"))
-            assertEquals("theirs", target.resolve("mods/a.jar").readText())
-            assertEquals("mine", root.resolve("mods/a.jar").readText())
-            assertEquals(VersionIsolation.Disabled, store.instance(shared.id).isolation)
-        }
-
-    @Test
-    fun `plan skips targets that already hold identical content`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-        val root = store.instancePath(shared.id)
-        write(root.resolve("mods/a.jar"), "same")
-        write(isolatedRoot(store, shared).resolve("mods/a.jar"), "same")
-
-        val plan = IsolationMigration(store).planIsolation(shared.id, isolate = true)
-
-        assertEquals(MigrationAction.Skip, plan.entries.single().action)
-        assertEquals(0L, plan.copyBytes)
-        assertEquals(0, plan.transferCount)
-        assertTrue(plan.blockers.isEmpty())
-    }
-
-    @Test
-    fun `plan honours the copySaves switch`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-        val root = store.instancePath(shared.id)
-        write(root.resolve("saves/world/level.dat"), "level")
-
-        val withSaves = IsolationMigration(store).planIsolation(shared.id, isolate = true)
-        assertEquals(listOf("saves/world/level.dat"), withSaves.entries.map { it.relativePath })
-        assertEquals("level".length.toLong(), withSaves.copyBytes)
-
-        val withoutSaves =
-            IsolationMigration(store).planIsolation(shared.id, isolate = true, copySaves = false)
-        val entry = withoutSaves.entries.single()
-        assertEquals("saves", entry.relativePath)
-        assertEquals(MigrationAction.Skip, entry.action)
-        assertEquals("level".length.toLong(), entry.size)
-        assertTrue(entry.reason.isNotBlank())
-        assertEquals(0, withoutSaves.transferCount)
-        assertTrue(withoutSaves.blockers.isEmpty())
-    }
-
-    @Test
-    fun `plan omits paths that do not exist in the source`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-
-        val empty = IsolationMigration(store).planIsolation(shared.id, isolate = true)
-
-        assertTrue(empty.entries.isEmpty())
-        assertEquals(0L, empty.copyBytes)
-        assertTrue(empty.blockers.isEmpty())
-
-        write(store.instancePath(shared.id).resolve("options.txt"), "options")
-        val one = IsolationMigration(store).planIsolation(shared.id, isolate = true)
-        assertEquals(listOf("options.txt"), one.entries.map { it.relativePath })
-    }
-
-    @Test
-    fun `plan never moves files out of the shared game directory`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-        write(store.instancePath(shared.id).resolve("mods/a.jar"), "jar")
-
-        val plan =
-            IsolationMigration(store).planIsolation(shared.id, isolate = true, moveSource = true)
-
-        assertEquals(MigrationAction.Copy, plan.entries.single().action)
-        assertEquals(0, plan.moveCount)
-        assertTrue(
-            plan.entries
-                .single()
-                .reason
-                .contains("只复制"),
-        )
-    }
 
     // ---- 执行 ----
 
@@ -319,27 +170,7 @@ class IsolationMigrationTest {
             }
             val targetMods = sharedRoot(store).resolve("mods")
             val job = Job()
-            val cancelled = AtomicBoolean(false)
-            val watcher =
-                Thread {
-                    val deadline = System.nanoTime() + 15_000_000_000L
-                    while (System.nanoTime() < deadline) {
-                        val started =
-                            runCatching {
-                                targetMods.isDirectory() &&
-                                    targetMods.listDirectoryEntries().isNotEmpty()
-                            }.getOrDefault(false)
-                        if (started) {
-                            job.cancel()
-                            cancelled.set(true)
-                            return@Thread
-                        }
-                        Thread.yield()
-                    }
-                }.apply {
-                    isDaemon = true
-                    start()
-                }
+            val (watcher, cancelled) = cancelWhenTransferStarts(store, job)
             try {
                 assertFailsWith<CancellationException> {
                     withContext(job) {
@@ -430,116 +261,33 @@ class IsolationMigrationTest {
             assertEquals(VersionIsolation.Enabled, store.instance(isolated.id).isolation)
         }
 
-    // ---- 跨游戏目录迁移 ----
-
-    @Test
-    fun `move relocates the whole instance into another game directory`() =
-        runBlocking {
-            val store = store()
-            val migration = IsolationMigration(store)
-            val isolated = instance(store, isolate = true)
-            val root = store.instancePath(isolated.id)
-            write(root.resolve("mods/a.jar"), "jar")
-            write(root.resolve("saves/world/level.dat"), "level")
-            write(root.resolve("logs/latest.log"), "log")
-            val destination = temporary.resolve("other-game").apply { createDirectories() }
-
-            val plan = migration.planInstanceMove(isolated.id, destination)
-            assertTrue(plan.blockers.isEmpty(), plan.blockers.toString())
-            assertEquals(3, plan.transferCount)
-
-            val moved =
-                migration.moveInstance(
-                    isolated.id,
-                    destination,
-                    JobContext(store, "fixture"),
-                )
-
-            val expected = destination.resolve("versions/${isolated.gameDirectoryName}")
-            assertEquals(expected.toAbsolutePath().normalize(), moved)
-            assertEquals("jar", expected.resolve("mods/a.jar").readText())
-            assertEquals("level", expected.resolve("saves/world/level.dat").readText())
-            assertEquals("log", expected.resolve("logs/latest.log").readText())
-            assertFalse(root.exists(), "移动成功后源目录应删除")
-            val updated = store.instance(isolated.id)
-            assertNotNull(updated.gameDirectoryId)
-            assertTrue(updated.managedGameDirectory)
-            assertEquals(
-                expected.toAbsolutePath().normalize(),
-                store.instancePath(isolated.id).toAbsolutePath().normalize(),
-            )
-            assertTrue(
-                store.data.gameDirectories.any {
-                    Path.of(it.path).toAbsolutePath().normalize() ==
-                        destination.toAbsolutePath().normalize()
-                },
-            )
-        }
-
-    @Test
-    fun `move refuses a destination that already holds the instance folder`() =
-        runBlocking {
-            val store = store()
-            val migration = IsolationMigration(store)
-            val isolated = instance(store, isolate = true)
-            write(store.instancePath(isolated.id).resolve("mods/a.jar"), "jar")
-            val destination = temporary.resolve("other-game")
-            destination.resolve("versions/${isolated.gameDirectoryName}/mods").createDirectories()
-
-            val plan = migration.planInstanceMove(isolated.id, destination)
-            assertEquals(1, plan.blockers.size)
-            assertTrue(plan.blockers.single().contains("同名"))
-
-            val error =
-                assertFailsWith<IllegalArgumentException> {
-                    migration.moveInstance(isolated.id, destination, JobContext(store, "fixture"))
+    /** 等目标目录出现文件后立即取消任务；返回监听线程与是否真的取消过。 */
+    private fun cancelWhenTransferStarts(
+        store: LauncherStore,
+        job: Job,
+    ): Pair<Thread, AtomicBoolean> {
+        val targetMods = sharedRoot(store).resolve("mods")
+        val cancelled = AtomicBoolean(false)
+        val watcher =
+            Thread {
+                val deadline = System.nanoTime() + 15_000_000_000L
+                while (System.nanoTime() < deadline) {
+                    val started =
+                        runCatching {
+                            targetMods.isDirectory() &&
+                                targetMods.listDirectoryEntries().isNotEmpty()
+                        }.getOrDefault(false)
+                    if (started) {
+                        job.cancel()
+                        cancelled.set(true)
+                        return@Thread
+                    }
+                    Thread.yield()
                 }
-            assertTrue(error.message.orEmpty().contains("同名"))
-            assertTrue(store.instancePath(isolated.id).resolve("mods/a.jar").isRegularFile())
-        }
-
-    @Test
-    fun `move failure keeps the source and rolls back the target`() =
-        runBlocking {
-            val store = store()
-            val migration = IsolationMigration(store)
-            val isolated = instance(store, isolate = true)
-            val root = store.instancePath(isolated.id)
-            write(root.resolve("mods/a.jar"), "jar")
-            write(root.resolve("config/a.toml"), "cfg")
-            val destination = temporary.resolve("other-game")
-            val plan = migration.planInstanceMove(isolated.id, destination)
-            val target = plan.targetRoot
-            val backup = temporary.resolve("backup/move-failure")
-            val transaction = IsolationMigrationTransaction(store, plan.sourceRoot, backup)
-
-            assertFailsWith<IOException> {
-                transaction.apply(
-                    plan,
-                    context = JobContext(store, "fixture"),
-                    copySaves = true,
-                    updateInstance = { throw IOException("模拟目录记录写入失败") },
-                )
+            }.apply {
+                isDaemon = true
+                start()
             }
-
-            assertEquals("jar", root.resolve("mods/a.jar").readText())
-            assertEquals("cfg", root.resolve("config/a.toml").readText())
-            assertFalse(target.exists(), "失败后目标目录必须回滚")
-            assertNull(store.instance(isolated.id).gameDirectoryId)
-            assertFalse(backup.exists())
-        }
-
-    @Test
-    fun `move rejects shared instances without an isolated directory`() {
-        val store = store()
-        val shared = instance(store, isolate = false)
-        val destination = temporary.resolve("other-game")
-
-        val error =
-            assertFailsWith<IllegalArgumentException> {
-                IsolationMigration(store).planInstanceMove(shared.id, destination)
-            }
-
-        assertTrue(error.message.orEmpty().contains("版本隔离"))
+        return watcher to cancelled
     }
 }

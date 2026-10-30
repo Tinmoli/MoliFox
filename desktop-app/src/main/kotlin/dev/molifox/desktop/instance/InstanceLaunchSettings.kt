@@ -41,6 +41,9 @@ import dev.molifox.desktop.SettingRow
 import dev.molifox.desktop.Tag
 import dev.molifox.desktop.UiActions
 
+/** 1 GB = 1024 MB，只用于内存标签的换算显示。 */
+private const val MEGABYTES_PER_GIGABYTE = 1024f
+
 /** 启动设置卡片：最大内存滑块、窗口宽高、全屏与两段额外参数输入。 */
 @Composable
 internal fun InstanceLaunchSettingsSection(
@@ -78,48 +81,11 @@ internal fun InstanceLaunchSettingsSection(
         "启动设置",
         "最大内存只在「手动分配」时可调；窗口宽高留空表示跟随全局，参数留空表示不追加。",
     ) {
-        val fullscreenNow =
-            when (draft.windowMode) {
-                "fullscreen" -> true
-                "windowed" -> false
-                else ->
-                    when (settings.gameWindowMode) {
-                        "fullscreen" -> true
-                        "launcher" -> false
-                        else -> settings.fullscreen
-                    }
-            }
-        val memoryLabel =
-            when (memoryPolicy) {
-                InstanceMemoryPolicy.Inherit ->
-                    "跟随全局（当前 $effectiveMemory MB）"
-                InstanceMemoryPolicy.Automatic ->
-                    "自动分配（当前 $effectiveMemory MB）"
-                InstanceMemoryPolicy.Manual ->
-                    "$memoryMb MB（%.1f GB）".format(memoryMb / 1024f)
-            }
-        val memoryHint =
-            when (memoryPolicy) {
-                InstanceMemoryPolicy.Inherit ->
-                    "当前继承全局内存策略；切换到「手动分配」后才能调整。"
-                InstanceMemoryPolicy.Automatic ->
-                    "启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。"
-                InstanceMemoryPolicy.Manual ->
-                    "拖动滑块按 256 MB 步进；初始内存会自动收窄到最大值以内。"
-            }
+        val fullscreenNow = resolveFullscreenNow(draft, settings)
+        val memoryLabel = memoryPolicyLabel(memoryPolicy, effectiveMemory, memoryMb)
+        val memoryHint = memoryPolicyHint(memoryPolicy)
         // 非手动策略滑块只显示解析后的有效值，不接受拖动。
-        val sliderValue =
-            if (memoryPolicy == InstanceMemoryPolicy.Manual) {
-                memoryMb
-                    .coerceIn(
-                        MIN_INSTANCE_MEMORY_MB,
-                        memoryLimit,
-                    ).toFloat()
-            } else {
-                effectiveMemory
-                    .coerceIn(MIN_INSTANCE_MEMORY_MB, memoryLimit)
-                    .toFloat()
-            }
+        val sliderValue = sliderMemoryMb(memoryPolicy, memoryMb, effectiveMemory, memoryLimit)
         val memoryRange =
             MIN_INSTANCE_MEMORY_MB.toFloat()..memoryLimit.toFloat()
         Row(
@@ -136,7 +102,7 @@ internal fun InstanceLaunchSettingsSection(
                             actions.controller.platform.totalMemoryMb,
                         )
                     onMemoryMbChange(next)
-                    if ((initialMemory.toIntOrNull() ?: 0) > next) {
+                    if (narrowsInitialMemory(initialMemory, next)) {
                         onInitialMemoryChange(next.toString())
                     }
                 },
@@ -161,11 +127,7 @@ internal fun InstanceLaunchSettingsSection(
                 hint =
                     "留空表示跟随全局（当前 ${settings.width} px）",
                 onFocusChange = { focused ->
-                    if (!focused && invalidWindowField(widthValue)) {
-                        onWidthChange(
-                            instanceLaunchNumberField(instance.width),
-                        )
-                    }
+                    windowFieldFallback(focused, widthValue, instance.width)?.let(onWidthChange)
                 },
             )
             NumberField(
@@ -179,11 +141,7 @@ internal fun InstanceLaunchSettingsSection(
                 hint =
                     "留空表示跟随全局（当前 ${settings.height} px）",
                 onFocusChange = { focused ->
-                    if (!focused && invalidWindowField(heightValue)) {
-                        onHeightChange(
-                            instanceLaunchNumberField(instance.height),
-                        )
-                    }
+                    windowFieldFallback(focused, heightValue, instance.height)?.let(onHeightChange)
                 },
             )
         }
@@ -200,14 +158,7 @@ internal fun InstanceLaunchSettingsSection(
                     checked = fullscreenNow,
                     onCheckedChange = { checked ->
                         onDraftChange(
-                            draft.copy(
-                                windowMode =
-                                    if (checked) {
-                                        "fullscreen"
-                                    } else {
-                                        "windowed"
-                                    },
-                            ),
+                            draft.copy(windowMode = windowModeAfterToggle(checked)),
                         )
                     },
                 )
@@ -218,16 +169,12 @@ internal fun InstanceLaunchSettingsSection(
             { onDraftChange(draft.copy(extraJvmArgs = it.take(4096))) },
             Modifier.fillMaxWidth().onFocusChanged { focus ->
                 // 非法 JVM 参数不写盘；离开输入框时回退到上一次有效值。
-                if (
-                    !focus.isFocused &&
-                    extraArgumentError(draft.extraJvmArgs, "") !=
-                    null
-                ) {
-                    onDraftChange(
-                        draft.copy(
-                            extraJvmArgs = instance.extraJvmArgs,
-                        ),
-                    )
+                argsRevertValue(
+                    focus.isFocused,
+                    instance.extraJvmArgs,
+                    extraArgumentError(draft.extraJvmArgs, ""),
+                )?.let { original ->
+                    onDraftChange(draft.copy(extraJvmArgs = original))
                 }
             },
             label = { Text("额外 JVM 参数（留空跟随全局）") },
@@ -251,16 +198,12 @@ internal fun InstanceLaunchSettingsSection(
             { onDraftChange(draft.copy(extraGameArgs = it.take(4096))) },
             Modifier.fillMaxWidth().onFocusChanged { focus ->
                 // 非法游戏参数不写盘；离开输入框时回退到上一次有效值。
-                if (
-                    !focus.isFocused &&
-                    extraArgumentError("", draft.extraGameArgs) !=
-                    null
-                ) {
-                    onDraftChange(
-                        draft.copy(
-                            extraGameArgs = instance.extraGameArgs,
-                        ),
-                    )
+                argsRevertValue(
+                    focus.isFocused,
+                    instance.extraGameArgs,
+                    extraArgumentError("", draft.extraGameArgs),
+                )?.let { original ->
+                    onDraftChange(draft.copy(extraGameArgs = original))
                 }
             },
             label = { Text("额外游戏参数（追加在标准参数之后）") },
@@ -288,3 +231,102 @@ internal fun InstanceLaunchSettingsSection(
         }
     }
 }
+
+/** 「跟随全局」时按全局窗口模式与全屏开关解析当前是否全屏。 */
+private fun resolveFullscreenNow(
+    draft: GameInstance,
+    settings: LauncherSettings,
+): Boolean =
+    when (draft.windowMode) {
+        "fullscreen" -> true
+        "windowed" -> false
+        else ->
+            when (settings.gameWindowMode) {
+                "fullscreen" -> true
+                "launcher" -> false
+                else -> settings.fullscreen
+            }
+    }
+
+/** 内存策略标签：手动分配同时给出 GB 换算。 */
+private fun memoryPolicyLabel(
+    policy: InstanceMemoryPolicy,
+    effectiveMemory: Int,
+    memoryMb: Int,
+): String =
+    when (policy) {
+        InstanceMemoryPolicy.Inherit ->
+            "跟随全局（当前 $effectiveMemory MB）"
+        InstanceMemoryPolicy.Automatic ->
+            "自动分配（当前 $effectiveMemory MB）"
+        InstanceMemoryPolicy.Manual ->
+            "$memoryMb MB（%.1f GB）".format(memoryMb / MEGABYTES_PER_GIGABYTE)
+    }
+
+/** 内存策略说明：解释滑块为什么可调或只读。 */
+private fun memoryPolicyHint(policy: InstanceMemoryPolicy): String =
+    when (policy) {
+        InstanceMemoryPolicy.Inherit ->
+            "当前继承全局内存策略；切换到「手动分配」后才能调整。"
+        InstanceMemoryPolicy.Automatic ->
+            "启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。"
+        InstanceMemoryPolicy.Manual ->
+            "拖动滑块按 256 MB 步进；初始内存会自动收窄到最大值以内。"
+    }
+
+/** 滑块显示值：手动分配取实例值，其它策略显示解析后的有效值。 */
+private fun sliderMemoryMb(
+    policy: InstanceMemoryPolicy,
+    memoryMb: Int,
+    effectiveMemory: Int,
+    memoryLimit: Int,
+): Float =
+    if (policy == InstanceMemoryPolicy.Manual) {
+        memoryMb
+            .coerceIn(
+                MIN_INSTANCE_MEMORY_MB,
+                memoryLimit,
+            ).toFloat()
+    } else {
+        effectiveMemory
+            .coerceIn(MIN_INSTANCE_MEMORY_MB, memoryLimit)
+            .toFloat()
+    }
+
+/** 初始内存比新上限大时一起收窄，避免出现「初始值大于最大值」。 */
+private fun narrowsInitialMemory(
+    initialMemory: String,
+    next: Int,
+): Boolean = (initialMemory.toIntOrNull() ?: 0) > next
+
+/** 窗口宽高失焦校验：非法时回退到实例上一次有效值，合法时返回 null。 */
+private fun windowFieldFallback(
+    focused: Boolean,
+    parsed: Int?,
+    current: Int,
+): String? =
+    if (!focused && invalidWindowField(parsed)) {
+        instanceLaunchNumberField(current)
+    } else {
+        null
+    }
+
+/** 额外参数失焦校验：非法时回退到实例上一次有效值，合法时返回 null。 */
+private fun argsRevertValue(
+    focused: Boolean,
+    original: String,
+    error: String?,
+): String? =
+    if (!focused && error != null) {
+        original
+    } else {
+        null
+    }
+
+/** 全屏开关对应的窗口模式。 */
+private fun windowModeAfterToggle(checked: Boolean): String =
+    if (checked) {
+        "fullscreen"
+    } else {
+        "windowed"
+    }

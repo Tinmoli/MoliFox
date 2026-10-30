@@ -41,10 +41,17 @@ internal class ServerListEditor(
         }
         requireSafeServerPath(directory)
         val file = directory.resolve("servers.dat")
-        if (!file.exists()) {
-            forgetShared(directory, instanceId, address)
-            return ServerDeletion(0, null)
-        }
+        val deletion = if (file.exists()) deleteFromFile(file, address) else null
+        forgetShared(directory, instanceId, address)
+        if (deletion != null) store.log("服务器已删除：$address；原列表备份：${deletion.backup}")
+        return deletion ?: ServerDeletion(0, null)
+    }
+
+    /** 主文件存在时删除条目；没有匹配条目返回 null，且不写备份、不改动原文件。 */
+    private fun deleteFromFile(
+        file: Path,
+        address: String,
+    ): ServerDeletion? {
         requireSafeServerPath(file)
         val before =
             Files.readAllBytes(
@@ -59,19 +66,28 @@ internal class ServerListEditor(
                     sameServerAddress(parseServerAddress(it.string("ip").orEmpty()), target)
             }
         val removed = servers.elements.size - remaining.size
-        if (removed == 0) {
-            forgetShared(directory, instanceId, address)
-            return ServerDeletion(0, null)
+        return if (removed == 0) {
+            null
+        } else {
+            val replacement =
+                document.copy(
+                    root =
+                        NbtCompound(
+                            document.root.entries +
+                                ("servers" to NbtList(remaining, servers.elementType)),
+                        ),
+                )
+            replaceServerList(file, before, encodeNbt(replacement), removed)
         }
-        val replacement =
-            document.copy(
-                root =
-                    NbtCompound(
-                        document.root.entries +
-                            ("servers" to NbtList(remaining, servers.elementType)),
-                    ),
-            )
-        val bytes = encodeNbt(replacement)
+    }
+
+    /** 用临时文件原子替换服务器列表；替换前先备份原字节，失败时清掉临时文件。 */
+    private fun replaceServerList(
+        file: Path,
+        before: ByteArray,
+        bytes: ByteArray,
+        removed: Int,
+    ): ServerDeletion {
         val backup =
             store.dataDirectory
                 .resolve("backups/servers")
@@ -93,8 +109,6 @@ internal class ServerListEditor(
         } finally {
             Files.deleteIfExists(temporary)
         }
-        forgetShared(directory, instanceId, address)
-        store.log("服务器已删除：$address；原列表备份：$backup")
         return ServerDeletion(removed, backup)
     }
 

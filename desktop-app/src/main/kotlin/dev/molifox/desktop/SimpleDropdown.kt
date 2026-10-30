@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -40,13 +40,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * 紧凑下拉：控件 34dp 高、圆角 4、实色主题填充 + 1dp 细边，菜单宽 210–500、高上限 320。 填充与边框来自 Theme.kt 的 controlBackground /
+ * 紧凑下拉：控件 34dp 高、圆角 4、实色主题填充 + 1dp 细边，菜单与触发框等宽、高上限 320。 填充与边框来自 Theme.kt 的 controlBackground /
  * controlBorder，与输入框、搜索框保持一致。
  */
 @Composable
@@ -58,6 +60,8 @@ fun SimpleDropdown(
     enabled: Boolean = true,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var anchorWidth by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val popupWidth = with(LocalDensity.current) { anchorWidth.toDp() }
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val shape = RoundedCornerShape(Metrics.innerRadius)
@@ -75,7 +79,7 @@ fun SimpleDropdown(
             label = "dropdownFill",
         )
     val border by animateColorAsState(controlBorderColor(), animation, label = "dropdownBorder")
-    Box(modifier) {
+    Box(modifier.onSizeChanged { anchorWidth = it.width }) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -107,7 +111,7 @@ fun SimpleDropdown(
         DropdownMenu(
             expanded,
             { expanded = false },
-            modifier = Modifier.heightIn(max = 320.dp).widthIn(min = 210.dp, max = 500.dp),
+            modifier = Modifier.width(popupWidth).heightIn(max = 320.dp),
         ) {
             values.forEach { (id, label) ->
                 val selected = id == value

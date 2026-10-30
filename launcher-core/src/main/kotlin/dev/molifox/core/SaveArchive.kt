@@ -36,51 +36,63 @@ internal object SaveArchive {
             "找不到存档压缩包：${archive.fileName}"
         }
         ZipFile(archive.toFile()).use { zip ->
-            val entries =
-                zip
-                    .entries()
-                    .asSequence()
-                    .filter { !it.isDirectory && !it.name.endsWith("/") }
-                    .map { it.name.replace('\\', '/') to it.size }
-                    .toList()
+            val entries = readEntries(zip)
             require(entries.isNotEmpty()) { "压缩包是空的，不是有效的存档" }
-            for ((name, _) in entries) {
-                require(name.split('/').none { it == ".." }) {
-                    "压缩包包含向上跳转的路径：$name"
-                }
-                require(!name.startsWith('/') && !Regex("^[A-Za-z]:").containsMatchIn(name)) {
-                    "压缩包包含绝对路径：$name"
-                }
-            }
+            rejectUnsafeNames(entries)
             val rootLevel = entries.firstOrNull { (name, _) -> name.equals("level.dat", true) }
             if (rootLevel != null) {
                 require(rootLevel.second > 0) { "level.dat 是空文件，不是有效的存档" }
                 return SaveArchiveLayout("")
             }
-            // 只有一层包装目录、且它直接包含 level.dat 时才剥掉这一层。
-            val wrappers =
-                entries
-                    .filter { (name, _) ->
-                        name.count { it == '/' } == 1 &&
-                            name.substringAfter('/').equals("level.dat", true)
-                    }.map { (name, size) -> name.substringBefore('/') to size }
-                    .distinctBy { it.first.lowercase() }
-            require(wrappers.isNotEmpty()) { "压缩包里没有 level.dat，不是有效的存档" }
-            require(wrappers.size == 1) {
-                "压缩包里有多个世界目录（${wrappers.joinToString("、") { it.first }}），无法确定导入哪一个"
-            }
-            val (wrapper, levelSize) = wrappers.single()
-            require(levelSize > 0) { "level.dat 是空文件，不是有效的存档" }
-            val prefix = "$wrapper/"
-            require(entries.all { (name, _) -> name.startsWith(prefix, ignoreCase = true) }) {
-                "压缩包里有包装目录之外的文件（" +
-                    entries
-                        .first { (name, _) ->
-                            !name.startsWith(prefix, ignoreCase = true)
-                        }.first +
-                    "），无法导入"
-            }
-            return SaveArchiveLayout(prefix)
+            return wrappedLayout(entries)
         }
+    }
+
+    /** 只读名字与大小，不触碰内容。 */
+    private fun readEntries(zip: ZipFile): List<Pair<String, Long>> =
+        zip
+            .entries()
+            .asSequence()
+            .filter { !it.isDirectory && !it.name.endsWith("/") }
+            .map { it.name.replace('\\', '/') to it.size }
+            .toList()
+
+    /** 路径穿越与绝对路径在这里拒绝，无效输入不会在 `saves/` 留下任何内容。 */
+    private fun rejectUnsafeNames(entries: List<Pair<String, Long>>) {
+        for ((name, _) in entries) {
+            require(name.split('/').none { it == ".." }) {
+                "压缩包包含向上跳转的路径：$name"
+            }
+            require(!name.startsWith('/') && !Regex("^[A-Za-z]:").containsMatchIn(name)) {
+                "压缩包包含绝对路径：$name"
+            }
+        }
+    }
+
+    /** 只有一层包装目录、且它直接包含 level.dat 时才剥掉这一层。 */
+    private fun wrappedLayout(entries: List<Pair<String, Long>>): SaveArchiveLayout {
+        val wrappers =
+            entries
+                .filter { (name, _) ->
+                    name.count { it == '/' } == 1 &&
+                        name.substringAfter('/').equals("level.dat", true)
+                }.map { (name, size) -> name.substringBefore('/') to size }
+                .distinctBy { it.first.lowercase() }
+        require(wrappers.isNotEmpty()) { "压缩包里没有 level.dat，不是有效的存档" }
+        require(wrappers.size == 1) {
+            "压缩包里有多个世界目录（${wrappers.joinToString("、") { it.first }}），无法确定导入哪一个"
+        }
+        val (wrapper, levelSize) = wrappers.single()
+        require(levelSize > 0) { "level.dat 是空文件，不是有效的存档" }
+        val prefix = "$wrapper/"
+        require(entries.all { (name, _) -> name.startsWith(prefix, ignoreCase = true) }) {
+            "压缩包里有包装目录之外的文件（" +
+                entries
+                    .first { (name, _) ->
+                        !name.startsWith(prefix, ignoreCase = true)
+                    }.first +
+                "），无法导入"
+        }
+        return SaveArchiveLayout(prefix)
     }
 }

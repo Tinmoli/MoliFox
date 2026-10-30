@@ -16,12 +16,41 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 
+/** CurseForge 整合包允许的文件条目上限。 */
+private const val MAX_CURSEFORGE_FILE_COUNT = 20000
+
 internal fun readCurseForgeManifest(
     info: JsonObject,
     zip: ZipFile,
     root: Path,
     os: String,
 ): PackManifest {
+    val header = readCurseForgeHeader(info)
+    requireValidOverrideEntries(zip, info, root, os)
+    val files = validatePackFiles(info)
+    return PackManifest(
+        null,
+        InstallRequest(
+            info.string("name"),
+            info.obj("minecraft").string("version"),
+            header.loaderType,
+            header.loaderVersion,
+        ),
+        files.filter { !it.boolean("required") }.map(::curseForgePackKey),
+        files.count { it.boolean("required") },
+        info.string("version"),
+        info.string("author").let { if (it.isBlank()) "CurseForge 整合包" else "作者：$it" },
+        info,
+    )
+}
+
+/** 清单头部校验得到的加载器信息。 */
+private data class CurseForgeHeader(
+    val loaderType: LoaderType,
+    val loaderVersion: String,
+)
+
+private fun readCurseForgeHeader(info: JsonObject): CurseForgeHeader {
     require(
         info.string("manifestType") == "minecraftModpack" && info.string("manifestVersion") == "1",
     ) {
@@ -50,6 +79,19 @@ internal fun readCurseForgeManifest(
     ) {
         "整合包使用了不支持的加载器：$loader"
     }
+    return CurseForgeHeader(
+        types[loader.substringBefore('-')] ?: LoaderType.Vanilla,
+        loader.substringAfter('-', ""),
+    )
+}
+
+/** 校验 overrides 目录并检查覆盖文件之间没有重复路径或文件/目录冲突。 */
+private fun requireValidOverrideEntries(
+    zip: ZipFile,
+    info: JsonObject,
+    root: Path,
+    os: String,
+) {
     val overrides = info.string("overrides")
     require(
         overrides.isNotBlank() &&
@@ -80,8 +122,11 @@ internal fun readCurseForgeManifest(
             parent = parent.substringBeforeLast('/', "")
         }
     }
+}
+
+private fun validatePackFiles(info: JsonObject): List<JsonObject> {
     val files = info.array("files").map { it.asJsonObject }
-    require(files.size <= 20000) { "整合包文件过多" }
+    require(files.size <= MAX_CURSEFORGE_FILE_COUNT) { "整合包文件过多" }
     for (file in files) {
         curseForgeVersionId(curseForgePackKey(file))
         require(
@@ -94,20 +139,7 @@ internal fun readCurseForgeManifest(
     require(files.map { it.string("projectID") }.distinct().size == files.size) {
         "整合包包含重复项目或多个文件版本"
     }
-    return PackManifest(
-        null,
-        InstallRequest(
-            info.string("name"),
-            info.obj("minecraft").string("version"),
-            types[loader.substringBefore('-')] ?: LoaderType.Vanilla,
-            loader.substringAfter('-', ""),
-        ),
-        files.filter { !it.boolean("required") }.map(::curseForgePackKey),
-        files.count { it.boolean("required") },
-        info.string("version"),
-        info.string("author").let { if (it.isBlank()) "CurseForge 整合包" else "作者：$it" },
-        info,
-    )
+    return files
 }
 
 private fun curseForgePackKey(file: JsonObject) =
@@ -120,6 +152,123 @@ internal data class CurseForgePackFile(
     val hash: String,
     val size: Long,
 )
+
+/** 清单条目解析后的安装目标：文件名、实例内相对路径与校验信息。 */
+private data class CurseForgePackTarget(
+    val filename: String,
+    val relative: String,
+    val url: String,
+    val hash: String,
+    val size: Long,
+)
+
+private fun requireCompatiblePackEntry(
+    manifest: PackManifest,
+    versionId: String,
+    info: JsonObject,
+    kind: String,
+) {
+    require(kind in setOf("mod", "resourcepack", "shader")) { "整合包包含不支持的项目类型：$kind" }
+    require(
+        info.array("game_versions").any { it.asString == manifest.request.gameVersion } &&
+            (
+                kind != "mod" ||
+                    manifest.request.loader != LoaderType.Vanilla &&
+                    info.array("loaders").any {
+                        it.asString.equals(manifest.request.loader.name, true)
+                    }
+            ),
+    ) {
+        "整合包中的文件与游戏版本或加载器不兼容：$versionId"
+    }
+}
+
+private fun resolvePackTarget(
+    kind: String,
+    info: JsonObject,
+): CurseForgePackTarget {
+    val file = info.array("files").first().asJsonObject
+    val filename = safeFilename(file.string("filename"))
+    require(filename.endsWith(if (kind == "mod") ".jar" else ".zip", true)) {
+        "整合包文件扩展名无效：$filename"
+    }
+    val folder =
+        when (kind) {
+            "mod" -> "mods"
+            "resourcepack" -> "resourcepacks"
+            else -> "shaderpacks"
+        }
+    return CurseForgePackTarget(
+        filename,
+        "$folder/$filename",
+        file.string("url"),
+        file.obj("hashes").string("sha1"),
+        file.get("size").asLong,
+    )
+}
+
+/**
+ * 解析单个清单条目；需要手动下载且本地未命中时记入 [missing] 并返回 null。
+ */
+private fun resolvePackEntry(
+    manifest: PackManifest,
+    entry: JsonObject,
+    metadata: Map<String, Pair<JsonObject, String>>,
+    manualDirectory: Path,
+    existingRoot: Path?,
+    missing: MutableList<ManualContentFile>,
+): CurseForgePackFile? {
+    val versionId = curseForgePackKey(entry)
+    val (info, kind) = metadata.getValue(versionId)
+    requireCompatiblePackEntry(manifest, versionId, info, kind)
+    val target = resolvePackTarget(kind, info)
+    if (!info.boolean("manual_download")) {
+        val artifact =
+            DownloadArtifact(target.url, Path.of(target.relative), target.hash, target.size)
+        return CurseForgePackFile(target.relative, artifact, null, target.hash, target.size)
+    }
+    return resolveManualPackEntry(
+        entry,
+        target,
+        info,
+        versionId,
+        manualDirectory,
+        existingRoot,
+        missing,
+    )
+}
+
+/** 手动下载条目：本地已有且校验通过就复用，否则记入缺失清单。 */
+private fun resolveManualPackEntry(
+    entry: JsonObject,
+    target: CurseForgePackTarget,
+    info: JsonObject,
+    versionId: String,
+    manualDirectory: Path,
+    existingRoot: Path?,
+    missing: MutableList<ManualContentFile>,
+): CurseForgePackFile? {
+    val local =
+        listOfNotNull(
+            safePath(manualDirectory, target.filename),
+            existingRoot?.let { packPath(it, target.relative) },
+        ).firstOrNull {
+            it.isRegularFile() &&
+                !Files.isSymbolicLink(it) &&
+                it.fileSize() == target.size &&
+                digest(it).equals(target.hash, true)
+        }
+    if (local == null) {
+        missing +=
+            ManualContentFile(
+                "curseforge:${entry.string("projectID")}",
+                versionId,
+                target.filename,
+                info.string("website"),
+            )
+    }
+    return local?.let { CurseForgePackFile(target.relative, null, it, target.hash, target.size) }
+}
 
 /**
  * Resolve the entire file list, including manual files, before creating or modifying an instance.
@@ -146,62 +295,9 @@ internal suspend fun prepareCurseForgePack(
     for ((position, entry) in files.withIndex()) {
         context.checkCancelled()
         context.progress(0f, "读取 CurseForge 清单 ${position + 1}/${files.size}")
-        val versionId = curseForgePackKey(entry)
-        val id = "curseforge:${entry.string("projectID")}"
-        val (info, kind) = metadata.getValue(versionId)
-        require(kind in setOf("mod", "resourcepack", "shader")) { "整合包包含不支持的项目类型：$kind" }
-        require(
-            info.array("game_versions").any { it.asString == manifest.request.gameVersion } &&
-                (
-                    kind != "mod" ||
-                        manifest.request.loader != LoaderType.Vanilla &&
-                        info.array("loaders").any {
-                            it.asString.equals(manifest.request.loader.name, true)
-                        }
-                ),
-        ) {
-            "整合包中的文件与游戏版本或加载器不兼容：$versionId"
-        }
-        val file = info.array("files").first().asJsonObject
-        val filename = safeFilename(file.string("filename"))
-        require(filename.endsWith(if (kind == "mod") ".jar" else ".zip", true)) {
-            "整合包文件扩展名无效：$filename"
-        }
-        val folder =
-            when (kind) {
-                "mod" -> "mods"
-                "resourcepack" -> "resourcepacks"
-                else -> "shaderpacks"
-            }
-        val relative = "$folder/$filename"
-        val hash = file.obj("hashes").string("sha1")
-        val size = file.get("size").asLong
-        if (info.boolean("manual_download")) {
-            val local =
-                listOfNotNull(
-                    safePath(manualDirectory, filename),
-                    existingRoot?.let { packPath(it, relative) },
-                ).firstOrNull {
-                    it.isRegularFile() &&
-                        !Files.isSymbolicLink(it) &&
-                        it.fileSize() == size &&
-                        digest(it).equals(hash, true)
-                }
-            if (local == null) {
-                missing += ManualContentFile(id, versionId, filename, info.string("website"))
-            } else {
-                resolved += CurseForgePackFile(relative, null, local, hash, size)
-            }
-        } else {
-            resolved +=
-                CurseForgePackFile(
-                    relative,
-                    DownloadArtifact(file.string("url"), Path.of(relative), hash, size),
-                    null,
-                    hash,
-                    size,
-                )
-        }
+        val file =
+            resolvePackEntry(manifest, entry, metadata, manualDirectory, existingRoot, missing)
+        if (file != null) resolved += file
     }
     require(resolved.map { it.path.lowercase() }.distinct().size == resolved.size) {
         "整合包中多个项目使用同名文件"

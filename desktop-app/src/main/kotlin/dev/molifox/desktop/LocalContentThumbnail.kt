@@ -32,13 +32,17 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
 
+/** 图标来源的「修改时间 + 大小」合成一个签名时使用的乘数。 */
+private const val STAMP_HASH_MULTIPLIER = 31
+
 /**
  * 内容自带的图标（世界的 `icon.png` / 资源包的 `pack.png` / 光影包的预览图）。
  *
  * [shader] 为 true 时读取明确命名的包图标与预览图，不把普通光影纹理当头像。
  *
  * [modified] 是内容本身的最后修改时间（毫秒）：给出时把解码结果缓存起来——缓存键是图标来源的路径， 再按来源的「大小 + 修改时间」判断要不要重新解码，所以同一张 PNG
- * 滚动、切页时只解码一次， 世界重新截图或光影包被替换后也能拿到新图。`null` 表示不缓存（其他调用点保持原有行为）。 图标缺失、损坏或读不出来时渲染 [fallback]，默认是图片占位图标。
+ * 滚动、切页时只解码一次， 世界重新截图或光影包被替换后也能拿到新图。`null` 表示不缓存（其他调用点保持原有行为）。
+ * 图标缺失、损坏或读不出来时渲染 [fallback]，默认是图片占位图标。
  */
 @Composable
 internal fun LocalContentThumbnail(
@@ -167,7 +171,7 @@ internal object LocalIconCache {
                 }
             val modified = Files.getLastModifiedTime(target).toMillis()
             val size = if (Files.isRegularFile(target)) Files.size(target) else 0L
-            modified * 31 + size
+            modified * STAMP_HASH_MULTIPLIER + size
         }.getOrDefault(-1L)
 }
 

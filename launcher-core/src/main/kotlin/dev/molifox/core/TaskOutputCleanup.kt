@@ -64,17 +64,20 @@ internal class TaskOutputCleanup(
     suspend fun cleanFiles() = journal.clean { _, action -> action() }
 
     fun cleanEmptyDirectories() {
-        for (path in directories.sortedByDescending { it.nameCount }) {
-            if (!path.isDirectory(NOFOLLOW_LINKS) || path.toRealPath() != path) continue
-            if (path in versionDirectories) {
-                cleanVersionDirectory(path)
-                continue
-            }
-            try {
-                Files.deleteIfExists(path)
-            } catch (_: DirectoryNotEmptyException) {
-                // Existing content or another task's files keep their parent directory alive.
-            }
+        for (path in directories.sortedByDescending { it.nameCount }) cleanEmptyDirectory(path)
+    }
+
+    /** 清理单个目录：目录不存在（或不是真实目录）时跳过，版本目录交给单独逻辑。 */
+    private fun cleanEmptyDirectory(path: Path) {
+        if (!path.isDirectory(NOFOLLOW_LINKS) || path.toRealPath() != path) return
+        if (path in versionDirectories) {
+            cleanVersionDirectory(path)
+            return
+        }
+        try {
+            Files.deleteIfExists(path)
+        } catch (_: DirectoryNotEmptyException) {
+            // Existing content or another task's files keep their parent directory alive.
         }
     }
 

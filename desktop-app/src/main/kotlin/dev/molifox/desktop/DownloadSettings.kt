@@ -34,7 +34,7 @@ internal fun downloadSettingCards(
     cards.add(
         SettingCard(
             "下载设置",
-            "镜像用于 Minecraft 元数据、本体、资源及依赖。",
+            "自动模式在中国网络优先镜像；分段固定关闭、失败换源重试 5 次。",
             listOf(
                 settingField("版本列表源", "只影响版本清单（manifest）的获取地址。") {
                     SimpleDropdown(
@@ -58,30 +58,16 @@ internal fun downloadSettingCards(
                         { value -> writer.commit { it.copy(downloadSource = value) } },
                     )
                 },
-                // 下载并发：紧跟两个源设置，改动对下一个任务生效。
-                settingRow("并发下载数", "默认 8；过高会更慢") {
-                    SimpleDropdown(
-                        settings.maxConcurrent.toString(),
-                        legacyOption(settings.maxConcurrent, listOf(4, 8, 16)) { "$it 个文件" },
-                        { value -> writer.commit { it.copy(maxConcurrent = value.toInt()) } },
-                        Modifier.width(132.dp),
-                    )
-                },
-                settingRow("镜像并发", "镜像站的同时请求数，默认 4") {
-                    SimpleDropdown(
-                        settings.mirrorConcurrency.toString(),
-                        listOf(2, 4, 8).map { it.toString() to "$it 个文件" },
-                        { value -> writer.commit { it.copy(mirrorConcurrency = value.toInt()) } },
-                        Modifier.width(132.dp),
-                    )
-                },
-                settingRow("大文件分段", "单个大文件的分段数，默认 4") {
-                    SimpleDropdown(
-                        settings.downloadSegments.toString(),
-                        listOf("1" to "1（不分段）", "4" to "4（默认）", "8" to "8 段"),
-                        { value -> writer.commit { it.copy(downloadSegments = value.toInt()) } },
-                        Modifier.width(132.dp),
-                    )
+                settingRow("下载线程数", "同时下载的文件数，1–128；下一个任务生效。") {
+                    LiveNumberField(
+                        settings.downloadThreads,
+                        "",
+                        1..128,
+                        Modifier.width(120.dp),
+                        placeholder = "64",
+                    ) { value ->
+                        applySetting(actions) { it.copy(downloadThreads = value) }
+                    }
                 },
                 settingField("附加内容下载源", "选择 Modrinth 或 CurseForge。") {
                     SimpleDropdown(
@@ -99,14 +85,6 @@ internal fun downloadSettingCards(
                         placeholder = DEFAULT_CURSE_FORGE_BASE_URL,
                     )
                 },
-                settingRow("失败重试次数", "包含首次请求；只对可恢复的网络错误重试。") {
-                    SimpleDropdown(
-                        settings.downloadAttempts.toString(),
-                        listOf(1, 2, 3, 5, 8).map { it.toString() to "$it 次" },
-                        { value -> writer.commit { it.copy(downloadAttempts = value.toInt()) } },
-                        Modifier.width(132.dp),
-                    )
-                },
                 settingRow("网络超时", "新请求的读取超时；代理和分段设置无需重启。") {
                     SimpleDropdown(
                         settings.networkTimeoutSeconds.toString(),
@@ -117,7 +95,7 @@ internal fun downloadSettingCards(
                         Modifier.width(132.dp),
                     )
                 },
-                settingNote("加载器资源使用各自官方服务。可同时添加下载；取消任务会清理本次下载的文件与分段缓存。"),
+                settingNote("加载器资源使用各自官方服务。可同时添加下载；取消任务会清理本次下载的临时文件。"),
             ),
         ),
     )

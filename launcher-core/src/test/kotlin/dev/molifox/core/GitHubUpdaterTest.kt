@@ -60,10 +60,6 @@ class GitHubUpdaterTest {
             MockWebServer().use { server ->
                 server.start()
                 val payload = "fixture-update".toByteArray()
-                val sha =
-                    MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") {
-                        "%02x".format(it)
-                    }
                 val store = LauncherStore(DesktopPlatform(), directory)
                 val filename =
                     if (store.platform.osName == "windows") {
@@ -71,21 +67,15 @@ class GitHubUpdaterTest {
                     } else {
                         "MoliFox-linux-x64.run"
                     }
-                val asset =
-                    mapOf(
-                        "name" to filename,
-                        "size" to payload.size,
-                        "digest" to "sha256:$sha",
-                        "browser_download_url" to server.loopbackUrl("/update").toString(),
-                    )
+                val asset = updateAsset(server, payload, filename)
                 server.enqueue(
                     MockResponse()
                         .setBody(
                             gson.toJson(
                                 listOf(
-                                    release("v0.10.0", asset),
-                                    release("v9.0.0", prerelease = true),
                                     release("v0.9.0"),
+                                    release("v9.0.0", prerelease = true),
+                                    release("v0.10.0", asset),
                                 ),
                             ),
                         ),
@@ -101,46 +91,74 @@ class GitHubUpdaterTest {
                     assertTrue(store.state.value.update.available)
                     val release = assertNotNull(store.state.value.update.release)
                     assertEquals("v0.10.0", release.version)
-                    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-                    try {
-                        server.enqueue(MockResponse().setBody(String(payload)))
-                        val jobs = JobQueue(store, scope)
-                        jobs.enqueue("Update") { updater.download(release, this) }
-                        jobs.awaitIdle()
-                        assertEquals(
-                            JobStatus.Completed,
-                            store.state.value.jobs
-                                .single()
-                                .status,
-                        )
-                        assertContentEquals(
-                            payload,
-                            Path
-                                .of(assertNotNull(store.state.value.update.downloadedFile))
-                                .readBytes(),
-                        )
-                        assertEquals(
-                            1,
-                            store.state.value.jobs
-                                .single()
-                                .completedFiles,
-                        )
-                        assertEquals(
-                            payload.size.toLong(),
-                            store.state.value.jobs
-                                .single()
-                                .downloadedBytes,
-                        )
-                        assertEquals(
-                            "/repos/Tinmoli/MoliFox/releases?per_page=100",
-                            server.takeRequest().path,
-                        )
-                    } finally {
-                        scope.cancel()
-                    }
+                    assertEquals("Release notes", release.notes)
+                    downloadAndVerify(store, updater, release, server, payload)
                 }
             }
         }
+
+    /** 正式版安装包的资产描述：大小与 digest 由实际字节算出。 */
+    private fun updateAsset(
+        server: MockWebServer,
+        payload: ByteArray,
+        filename: String,
+    ): Map<String, Any> {
+        val sha =
+            MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") {
+                "%02x".format(it)
+            }
+        return mapOf(
+            "name" to filename,
+            "size" to payload.size,
+            "digest" to "sha256:$sha",
+            "browser_download_url" to server.loopbackUrl("/update").toString(),
+        )
+    }
+
+    /** 在任务队列里下载更新包，并核对任务状态、落盘字节与请求地址。 */
+    private suspend fun downloadAndVerify(
+        store: LauncherStore,
+        updater: GitHubUpdater,
+        release: LauncherRelease,
+        server: MockWebServer,
+        payload: ByteArray,
+    ) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            server.enqueue(MockResponse().setBody(String(payload)))
+            val jobs = JobQueue(store, scope)
+            jobs.enqueue("Update") { updater.download(release, this) }
+            jobs.awaitIdle()
+            assertEquals(
+                JobStatus.Completed,
+                store.state.value.jobs
+                    .single()
+                    .status,
+            )
+            assertContentEquals(
+                payload,
+                Path.of(assertNotNull(store.state.value.update.downloadedFile)).readBytes(),
+            )
+            assertEquals(
+                1,
+                store.state.value.jobs
+                    .single()
+                    .completedFiles,
+            )
+            assertEquals(
+                payload.size.toLong(),
+                store.state.value.jobs
+                    .single()
+                    .downloadedBytes,
+            )
+            assertEquals(
+                "/repos/Tinmoli/MoliFox/releases?per_page=100",
+                server.takeRequest().path,
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
 
     @Test
     fun `failed check is visible and untrusted release origins are rejected`(): Unit =

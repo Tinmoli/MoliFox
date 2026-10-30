@@ -7,12 +7,13 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -32,7 +33,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,16 +40,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.DownloadJob
 import dev.molifox.core.GameInstance
 import dev.molifox.core.JobStatus
 import dev.molifox.core.LocalPackEntry
 import dev.molifox.core.PackFolder
+import dev.molifox.core.PackUpdateItem
 import dev.molifox.core.PackUpdateStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.job
@@ -88,26 +90,11 @@ internal fun InstancePackTab(
     val checking = updates.packsChecking
     val report = updates.packs
     val reportItems = report?.items(folder).orEmpty()
-    // 列表还没读出来时不按文件名过滤，避免先闪一下「全部为最新」。
-    val visibleItems =
-        if (entries.isEmpty()) {
-            reportItems
-        } else {
-            val installed = entries.mapTo(HashSet()) { it.filename }
-            reportItems.filter { it.filename in installed }
-        }
+    val visibleItems = visiblePackItems(entries, reportItems)
     val itemsByFile = reportItems.associateBy { it.filename }
     val updatable = visibleItems.count { it.status == PackUpdateStatus.Updatable }
     val uncertain = visibleItems.count { it.status == PackUpdateStatus.Unknown }
-    val statusText =
-        when {
-            checking -> "正在检查更新…"
-            report == null -> ""
-            updatable > 0 ->
-                "$updatable 项可更新" + if (uncertain > 0) " · $uncertain 项无法确认" else ""
-            uncertain > 0 -> "$uncertain 项无法确认"
-            else -> "全部为最新"
-        }
+    val statusText = packStatusText(checking, report != null, updatable, uncertain)
     LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.id + ":" + it.status }) {
         loading = true
         error = null
@@ -116,7 +103,10 @@ internal fun InstancePackTab(
                 withContext(Dispatchers.IO) { actions.controller.listPacks(instance.id, folder) }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (failure: Exception) {
+        } catch (failure: IllegalStateException) {
+            entries = emptyList()
+            error = failure.message
+        } catch (failure: IllegalArgumentException) {
             entries = emptyList()
             error = failure.message
         } finally {
@@ -125,83 +115,36 @@ internal fun InstancePackTab(
     }
     // 导入与删除都是任务中心里的后台任务；结束后刷新列表，失败原因留在工具行下方。
     LaunchedEffect(watchingJob, liveState.jobs.map { it.id + ":" + it.status }) {
-        val id = watchingJob ?: return@LaunchedEffect
-        val job = liveState.jobs.firstOrNull { it.id == id } ?: return@LaunchedEffect
-        when (job.status) {
-            JobStatus.Failed -> {
-                actionError = job.error ?: "操作失败，详情见日志"
-                watchingJob = null
-            }
-            JobStatus.Completed,
-            JobStatus.Cancelled,
-            -> {
-                watchingJob = null
-                refresh++
-            }
-            else -> Unit
-        }
+        watchPackJob(
+            watchingJob,
+            liveState.jobs,
+            onFailed = { actionError = it },
+            onCleared = { watchingJob = null },
+            onFinished = { refresh++ },
+        )
     }
     val startImport: (List<Path>) -> Unit = { chosen ->
         actionError = null
         if (chosen.isNotEmpty()) {
             try {
                 watchingJob = actions.controller.importPacks(instance.id, folder, chosen)
-            } catch (failure: Exception) {
+            } catch (failure: IllegalStateException) {
+                actionError = failure.message ?: "无法导入"
+            } catch (failure: IllegalArgumentException) {
                 actionError = failure.message ?: "无法导入"
             }
         }
     }
     deleting?.let { entry ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text("移入回收站？") },
-            text = { Text("「${entry.filename}」会移到回收站，需要时可以再找回。") },
-            confirmButton = {
-                TextButton({
-                    deleting = null
-                    actionError = null
-                    actions.run {
-                        actions.controller.requireIdle(instance.id)
-                        val removed =
-                            runCatching {
-                                actions.controller.deletePack(
-                                    instance.id,
-                                    folder,
-                                    entry.filename,
-                                )
-                            }.getOrElse { failure ->
-                                withContext(Dispatchers.Swing) {
-                                    actionError = failure.message ?: "无法删除"
-                                }
-                                false
-                            }
-                        withContext(Dispatchers.Swing) {
-                            if (!removed && actionError == null) {
-                                actionError =
-                                    "「${entry.filename}」没有移入回收站：文件可能已不存在，" +
-                                    "或回收站不可用；详情见日志。"
-                            }
-                            // 报告里的旧条目同步移除，避免「N 项可更新」把已删除的文件算进去。
-                            if (removed) {
-                                updates.packs?.let { current ->
-                                    updates.packs =
-                                        current.copy(
-                                            items =
-                                                current.items.filterNot {
-                                                    it.folder == folder &&
-                                                        it.filename == entry.filename
-                                                },
-                                        )
-                                }
-                            }
-                            refresh++
-                        }
-                    }
-                }) {
-                    Text("移至回收站", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton({ deleting = null }) { Text("取消") } },
+        PackDeleteDialog(
+            entry = entry,
+            folder = folder,
+            instanceId = instance.id,
+            actions = actions,
+            updates = updates,
+            onError = { actionError = it },
+            onDismiss = { deleting = null },
+            onRefresh = { refresh++ },
         )
     }
     Column(
@@ -246,138 +189,34 @@ internal fun InstancePackTab(
                 selected = chip,
                 visible = listOf(ContentChip.All, ContentChip.Updatable, ContentChip.NoUpdate),
             ) { chip = it }
-            if (statusText.isNotBlank()) {
-                Text(
-                    statusText,
-                    Modifier.weight(1f),
-                    fontSize = 11.sp,
-                    color =
-                        if (updatable > 0) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
+            PackStatusLabel(statusText, updatable)
         }
         if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
-        updates.packsError?.let { failure ->
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    failure,
-                    Modifier.weight(1f),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                TextButton(
-                    {
-                        updates.packsError = null
-                        updates.checkPacks(scope)
-                    },
-                    enabled = !busy && !checking,
-                ) {
-                    Text("重新检查", fontSize = 12.sp)
-                }
-            }
-        }
+        PackUpdateErrorRow(updates, busy, checking, scope)
         actionError?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
-        val filtered =
-            entries
-                .filter { query.isBlank() || it.filename.contains(query, true) }
-                .filter { entry ->
-                    val status = itemsByFile[entry.filename]?.status
-                    when (chip) {
-                        ContentChip.All -> true
-                        ContentChip.Updatable -> status == PackUpdateStatus.Updatable
-                        // 「未找到更新」只收「无法确认」的条目；已是最新的只在「全部」里出现。
-                        ContentChip.NoUpdate -> status == PackUpdateStatus.Unknown
-                        // 资源包与光影没有启用/禁用开关，这个芯片不会显示。
-                        ContentChip.Disabled -> true
-                    }
-                }
-        when {
-            loading && entries.isEmpty() -> ListSkeleton()
-            error != null ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState("无法读取${folder.title}目录", error.orEmpty(), Icons.Outlined.CloudOff) {
-                        TextButton({ refresh++ }) { Text("重试") }
-                    }
-                }
-            entries.isEmpty() ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        "还没有${folder.title}",
-                        "点「导入」选择 .zip，或把 .zip / 文件夹直接拖进这个页面。",
-                        if (folder == PackFolder.ShaderPacks) {
-                            Icons.Outlined.AutoAwesome
-                        } else {
-                            Icons.Outlined.Palette
-                        },
-                    )
-                }
-            filtered.isEmpty() ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        if (chip != ContentChip.All && query.isBlank()) {
-                            "没有「${chip.title}」的${folder.title}"
-                        } else {
-                            "没有匹配的${folder.title}"
-                        },
-                        if (chip != ContentChip.All && query.isBlank()) {
-                            "切换到「全部」查看全部内容。"
-                        } else {
-                            "换个关键词试试"
-                        },
-                        Icons.Outlined.SearchOff,
-                    ) {
-                        TextButton({
-                            query = ""
-                            chip = ContentChip.All
-                        }) {
-                            Text("清除筛选")
-                        }
-                    }
-                }
-            else ->
-                LazyColumn(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(filtered, key = { it.filename }) { entry ->
-                        PackRow(
-                            entry = entry,
-                            folder = folder,
-                            update = itemsByFile[entry.filename],
-                            busy = busy,
-                            iconRevision = refresh,
-                            readIcon = { path ->
-                                actions.controller.content.packIcon(
-                                    instance.id,
-                                    path,
-                                    folder,
-                                )
-                            },
-                            onIconFailure = {
-                                actions.controller.store.log(
-                                    "本地包头像解码失败：${it.message}",
-                                    true,
-                                )
-                            },
-                            onDelete = { deleting = entry },
-                        )
-                    }
-                }
-        }
+        PackContentArea(
+            ui =
+                PackListUi(
+                    entries = entries,
+                    filtered = filteredPackEntries(entries, query, chip, itemsByFile),
+                    itemsByFile = itemsByFile,
+                    folder = folder,
+                    chip = chip,
+                    query = query,
+                    loading = loading,
+                    error = error,
+                    busy = busy,
+                    iconRevision = refresh,
+                ),
+            actions = actions,
+            instanceId = instance.id,
+            onRetry = { refresh++ },
+            onClearFilters = {
+                query = ""
+                chip = ContentChip.All
+            },
+            onDelete = { deleting = it },
+        )
         Text(
             "共 ${entries.size} 项 · ${folder.directory}",
             fontSize = 11.sp,
@@ -385,5 +224,316 @@ internal fun InstancePackTab(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/** 列表还没读出来时不按文件名过滤，避免先闪一下「全部为最新」。 */
+private fun visiblePackItems(
+    entries: List<LocalPackEntry>,
+    reportItems: List<PackUpdateItem>,
+): List<PackUpdateItem> =
+    if (entries.isEmpty()) {
+        reportItems
+    } else {
+        val installed = entries.mapTo(HashSet()) { it.filename }
+        reportItems.filter { it.filename in installed }
+    }
+
+private fun packStatusText(
+    checking: Boolean,
+    hasReport: Boolean,
+    updatable: Int,
+    uncertain: Int,
+): String =
+    when {
+        checking -> "正在检查更新…"
+        !hasReport -> ""
+        updatable > 0 -> "$updatable 项可更新" + if (uncertain > 0) " · $uncertain 项无法确认" else ""
+        uncertain > 0 -> "$uncertain 项无法确认"
+        else -> "全部为最新"
+    }
+
+private fun filteredPackEntries(
+    entries: List<LocalPackEntry>,
+    query: String,
+    chip: ContentChip,
+    itemsByFile: Map<String, PackUpdateItem>,
+): List<LocalPackEntry> =
+    entries
+        .filter { query.isBlank() || it.filename.contains(query, true) }
+        .filter { entry ->
+            val status = itemsByFile[entry.filename]?.status
+            when (chip) {
+                ContentChip.All -> true
+                ContentChip.Updatable -> status == PackUpdateStatus.Updatable
+                // 「未找到更新」只收「无法确认」的条目；已是最新的只在「全部」里出现。
+                ContentChip.NoUpdate -> status == PackUpdateStatus.Unknown
+                // 资源包与光影没有启用/禁用开关，这个芯片不会显示。
+                ContentChip.Disabled -> true
+            }
+        }
+
+/** 把后台导入/删除任务的状态变化翻译成界面动作；任务未结束时不处理。 */
+private fun watchPackJob(
+    watchingJob: String?,
+    jobs: List<DownloadJob>,
+    onFailed: (String?) -> Unit,
+    onCleared: () -> Unit,
+    onFinished: () -> Unit,
+) {
+    val job = jobs.firstOrNull { it.id == watchingJob } ?: return
+    when (job.status) {
+        JobStatus.Failed -> {
+            onFailed(job.error ?: "操作失败，详情见日志")
+            onCleared()
+        }
+        JobStatus.Completed,
+        JobStatus.Cancelled,
+        -> {
+            onCleared()
+            onFinished()
+        }
+        else -> Unit
+    }
+}
+
+/** 删除资源包/光影并同步更新报告；失败原因写回 [onError]，成功则刷新列表。 */
+private suspend fun deletePackEntry(
+    actions: UiActions,
+    updates: InstanceUpdateCenter,
+    instanceId: String,
+    folder: PackFolder,
+    entry: LocalPackEntry,
+    onError: (String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    var reported = false
+    actions.controller.requireIdle(instanceId)
+    val removed =
+        runCatching { actions.controller.deletePack(instanceId, folder, entry.filename) }
+            .getOrElse { failure ->
+                withContext(Dispatchers.Swing) { onError(failure.message ?: "无法删除") }
+                reported = true
+                false
+            }
+    withContext(Dispatchers.Swing) {
+        if (!removed && !reported) {
+            onError(
+                "「${entry.filename}」没有移入回收站：文件可能已不存在，" +
+                    "或回收站不可用；详情见日志。",
+            )
+        }
+        // 报告里的旧条目同步移除，避免「N 项可更新」把已删除的文件算进去。
+        if (removed) {
+            updates.packs?.let { current ->
+                updates.packs =
+                    current.copy(
+                        items =
+                            current.items.filterNot {
+                                it.folder == folder && it.filename == entry.filename
+                            },
+                    )
+            }
+        }
+        onRefresh()
+    }
+}
+
+/** 行内的更新状态文案；没有可更新项时用弱化颜色。 */
+@Composable
+private fun RowScope.PackStatusLabel(
+    statusText: String,
+    updatable: Int,
+) {
+    if (statusText.isNotBlank()) {
+        Text(
+            statusText,
+            Modifier.weight(1f),
+            fontSize = 11.sp,
+            color =
+                if (updatable > 0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    } else {
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+/** 更新检查失败的提示行；重试按钮在有任务时不响应。 */
+@Composable
+private fun PackUpdateErrorRow(
+    updates: InstanceUpdateCenter,
+    busy: Boolean,
+    checking: Boolean,
+    scope: CoroutineScope,
+) {
+    updates.packsError?.let { failure ->
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                failure,
+                Modifier.weight(1f),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TextButton(
+                {
+                    updates.packsError = null
+                    updates.checkPacks(scope)
+                },
+                enabled = !busy && !checking,
+            ) {
+                Text("重新检查", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** 删除确认对话框；确认后删除，取消只关闭弹窗。 */
+@Composable
+private fun PackDeleteDialog(
+    entry: LocalPackEntry,
+    folder: PackFolder,
+    instanceId: String,
+    actions: UiActions,
+    updates: InstanceUpdateCenter,
+    onError: (String?) -> Unit,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移入回收站？") },
+        text = { Text("「${entry.filename}」会移到回收站，需要时可以再找回。") },
+        confirmButton = {
+            TextButton({
+                onDismiss()
+                onError(null)
+                actions.run {
+                    deletePackEntry(
+                        actions,
+                        updates,
+                        instanceId,
+                        folder,
+                        entry,
+                        { onError(it) },
+                        onRefresh,
+                    )
+                }
+            }) {
+                Text("移至回收站", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+    )
+}
+
+/** 列表区的展示快照，避免把一串列表状态逐个传进子组件。 */
+private data class PackListUi(
+    val entries: List<LocalPackEntry>,
+    val filtered: List<LocalPackEntry>,
+    val itemsByFile: Map<String, PackUpdateItem>,
+    val folder: PackFolder,
+    val chip: ContentChip,
+    val query: String,
+    val loading: Boolean,
+    val error: String?,
+    val busy: Boolean,
+    val iconRevision: Int,
+)
+
+/** 列表区：加载骨架、错误、空目录、无匹配结果与实际行列表。 */
+@Composable
+private fun ColumnScope.PackContentArea(
+    ui: PackListUi,
+    actions: UiActions,
+    instanceId: String,
+    onRetry: () -> Unit,
+    onClearFilters: () -> Unit,
+    onDelete: (LocalPackEntry) -> Unit,
+) {
+    when {
+        ui.loading && ui.entries.isEmpty() -> ListSkeleton()
+        ui.error != null ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState(
+                    "无法读取${ui.folder.title}目录",
+                    ui.error.orEmpty(),
+                    Icons.Outlined.CloudOff,
+                ) {
+                    TextButton(onRetry) { Text("重试") }
+                }
+            }
+        ui.entries.isEmpty() ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState(
+                    "还没有${ui.folder.title}",
+                    "点「导入」选择 .zip，或把 .zip / 文件夹直接拖进这个页面。",
+                    if (ui.folder == PackFolder.ShaderPacks) {
+                        Icons.Outlined.AutoAwesome
+                    } else {
+                        Icons.Outlined.Palette
+                    },
+                )
+            }
+        ui.filtered.isEmpty() ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState(
+                    if (ui.chip != ContentChip.All && ui.query.isBlank()) {
+                        "没有「${ui.chip.title}」的${ui.folder.title}"
+                    } else {
+                        "没有匹配的${ui.folder.title}"
+                    },
+                    if (ui.chip != ContentChip.All && ui.query.isBlank()) {
+                        "切换到「全部」查看全部内容。"
+                    } else {
+                        "换个关键词试试"
+                    },
+                    Icons.Outlined.SearchOff,
+                ) {
+                    TextButton(onClearFilters) {
+                        Text("清除筛选")
+                    }
+                }
+            }
+        else ->
+            LazyColumn(
+                Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(ui.filtered, key = { it.filename }) { entry ->
+                    PackRow(
+                        entry = entry,
+                        folder = ui.folder,
+                        update = ui.itemsByFile[entry.filename],
+                        busy = ui.busy,
+                        iconRevision = ui.iconRevision,
+                        readIcon = { path ->
+                            actions.controller.content.packIcon(
+                                instanceId,
+                                path,
+                                ui.folder,
+                            )
+                        },
+                        onIconFailure = {
+                            actions.controller.store.log(
+                                "本地包头像解码失败：${it.message}",
+                                true,
+                            )
+                        },
+                        onDelete = { onDelete(entry) },
+                    )
+                }
+            }
     }
 }

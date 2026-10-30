@@ -7,31 +7,14 @@ package dev.molifox.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import kotlin.io.path.Path
-import kotlin.io.path.absolute
-import kotlin.io.path.bufferedReader
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
-import kotlin.io.path.inputStream
-import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.readText
-import kotlin.io.path.walk
 
 /** 从 java -version / -XshowSettings 输出解析主版本（1.8.0_512 → 8，21.0.5 → 21）。 */
 fun parseJavaVersion(output: String): Int? = parseJavaProbe(output)?.major
@@ -46,16 +29,7 @@ internal data class JavaProbe(
 )
 
 internal fun parseJavaProbe(output: String): JavaProbe? {
-    val versionText =
-        Regex("(?:java|openjdk) version \"((?:1\\.)?[0-9][0-9._-]*)\"", RegexOption.IGNORE_CASE)
-            .find(output)
-            ?.groupValues
-            ?.get(1)
-            ?: Regex("java\\.version\\s*=\\s*((?:1\\.)?[0-9][0-9._-]*)")
-                .find(output)
-                ?.groupValues
-                ?.get(1)
-            ?: return null
+    val versionText = javaVersionText(output) ?: return null
     val major = javaMajorOfVersion(versionText) ?: return null
     val vendor =
         Regex("java\\.vendor\\s*=\\s*(.+)")
@@ -88,6 +62,16 @@ internal fun parseJavaProbe(output: String): JavaProbe? {
     return JavaProbe(major, versionText, vendor, architecture, bits, home)
 }
 
+private fun javaVersionText(output: String): String? =
+    Regex("(?:java|openjdk) version \"((?:1\\.)?[0-9][0-9._-]*)\"", RegexOption.IGNORE_CASE)
+        .find(output)
+        ?.groupValues
+        ?.get(1)
+        ?: Regex("java\\.version\\s*=\\s*((?:1\\.)?[0-9][0-9._-]*)")
+            .find(output)
+            ?.groupValues
+            ?.get(1)
+
 /**
  * 从 release 文件读取版本/位数/厂商。优先读 release 而不是启动子进程，省一次 JVM 启动；
  * 版本或 OS_ARCH 缺失时返回 null，调用方回退 `java -version`。
@@ -113,6 +97,7 @@ class JavaService(
 ) {
     private val installLocks = ConcurrentHashMap<Int, Mutex>()
     private val probeLock = Mutex()
+    private val discovery = JavaDiscovery(store)
 
     /** 探测结果按进程缓存；显式路径、选中实例或安装目录变化时自动重探，[invalidate] 立即失效。 */
     @Volatile private var cached: List<JavaRuntime>? = null
@@ -129,8 +114,6 @@ class JavaService(
         cachedKey = ""
         revision++
     }
-
-    private fun runtimeIndex() = JavaRuntimeIndex(runtimesDirectory, store.platform.javaExecutable)
 
     private fun cacheKey(): String {
         val selected =
@@ -154,79 +137,13 @@ class JavaService(
         verifyRunnable: Boolean = false,
     ): JavaRuntime? =
         withContext(Dispatchers.IO) {
-            val resolved = resolveJavaPath(executable) ?: return@withContext null
+            val resolved = resolveJavaPath(store, executable) ?: return@withContext null
             if (!resolved.exists) return@withContext null
             val probe =
-                (
-                    if (verifyRunnable) {
-                        runJavaVersionProbe(Path.of(resolved.display))
-                    } else {
-                        probe(resolved.display)
-                    }
-                ) ?: return@withContext null
-            runtime(resolved.display, probe, JavaRuntimeSource.System, null)
+                discovery.probeExecutable(resolved.display, verifyRunnable)
+                    ?: return@withContext null
+            discovery.runtime(resolved.display, probe, JavaRuntimeSource.System, null)
         }
-
-    /** 已存在路径的探测：优先读 JDK/JRE 的 release，缺版本或架构信息时再运行 java -version。 */
-    private suspend fun probe(executable: String): JavaProbe? =
-        withContext(Dispatchers.IO) {
-            val path = runCatching { Path.of(executable) }.getOrNull() ?: return@withContext null
-            if (!path.isRegularFile()) return@withContext null
-            javaProbeFromRelease(path.parent?.parent ?: return@withContext null)
-                ?: runJavaVersionProbe(path)
-        }
-
-    private suspend fun runJavaVersionProbe(executable: Path): JavaProbe? =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                // 用参数列表而不是拼接命令行：路径里的空格、中文和引号都原样传给子进程。
-                val process =
-                    ProcessBuilder(
-                        executable.toString(),
-                        "-XshowSettings:properties",
-                        "-version",
-                    ).redirectErrorStream(true)
-                        .start()
-                try {
-                    val output =
-                        withTimeout(10_000) {
-                            runInterruptible(Dispatchers.IO) {
-                                process.inputStream.bufferedReader().readText()
-                            }
-                        }
-                    check(process.waitFor(2, TimeUnit.SECONDS)) { "Java 检测超时" }
-                    parseJavaProbe(output)
-                } finally {
-                    if (process.isAlive) process.destroyForcibly()
-                }
-            }.getOrNull()
-        }
-
-    private data class ResolvedJavaPath(
-        val display: String,
-        val key: String,
-        val exists: Boolean,
-    )
-
-    /**
-     * 归一化可执行文件路径：绝对路径 + toRealPath（解析符号链接、Windows 8.3 短名与大小写），
-     * 与 `toRealPath()` 的去重方式一致（解析符号链接、Windows 8.3 短名与大小写，同一安装只算一条）。
-     */
-    private fun resolveJavaPath(raw: String): ResolvedJavaPath? {
-        val text = raw.trim().trim('"')
-        if (text.isBlank()) return null
-        val absolute =
-            runCatching { Path.of(text).toAbsolutePath().normalize() }.getOrNull() ?: return null
-        val target = runCatching { absolute.toRealPath() }.getOrNull() ?: absolute
-        val exists = runCatching { target.isRegularFile() }.getOrDefault(false)
-        val key =
-            if (store.platform.osName == "windows") {
-                target.toString().lowercase(Locale.ROOT)
-            } else {
-                target.toString()
-            }
-        return ResolvedJavaPath(target.toString(), key, exists)
-    }
 
     /**
      * 按顺序发现 Java：
@@ -242,264 +159,16 @@ class JavaService(
             if (!force) cached?.takeIf { key == cachedKey }?.let { return@withContext it }
             probeLock.withLock {
                 if (!force) cached?.takeIf { key == cachedKey }?.let { return@withLock it }
-                val index = runtimeIndex()
-                val discovered = LinkedHashMap<String, Candidate>()
-
-                fun offer(
-                    path: String,
-                    source: JavaRuntimeSource,
-                    entry: JavaRuntimeEntry?,
-                    group: Int,
-                    keepInvalid: Boolean = false,
-                ) {
-                    val resolved = resolveJavaPath(path) ?: return
-                    // 不存在的路径只对用户显式添加的条目保留，避免 PATH 里的死链接堆进列表。
-                    if (!resolved.exists && !keepInvalid) return
-                    discovered.putIfAbsent(
-                        resolved.key,
-                        Candidate(
-                            resolved.display,
-                            source,
-                            entry,
-                            group,
-                            resolved.exists,
-                            keepInvalid,
-                        ),
-                    )
-                }
-                // (a) 显式路径；用户添加/选择过的路径即使失效也保留，标为「路径不存在」而不是悄悄消失。
-                val selected =
-                    store.data.selectedInstanceId
-                        ?.let { id -> store.data.instances.find { it.id == id } }
-                listOfNotNull(
-                    selected?.javaPath?.takeIf { it.isNotBlank() },
-                    store.data.settings.javaPath
-                        .takeIf { it.isNotBlank() },
-                ).forEach { offer(it, JavaRuntimeSource.Custom, null, 0, keepInvalid = true) }
-                // 用户手动添加过的路径：不改变系统环境，只在列表里多一条可选项。
-                store.data.settings.customJavaPaths.forEach {
-                    offer(it, JavaRuntimeSource.Custom, null, 0, keepInvalid = true)
-                }
-                // (b) 启动器自己的 runtimes/
-                index.available().sortedByDescending { it.major }.forEach { entry ->
-                    index.executable(entry)?.let {
-                        offer(it.toString(), JavaRuntimeSource.Bundled, entry, 1)
-                    }
-                }
-                // (c) JAVA_HOME 与当前运行的 JVM；JAVA_HOME 可能直接指向 JDK，也可能指向其中的 jre/。
-                System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() }?.let { home ->
-                    javaHomeExecutables(home).forEach {
-                        offer(it, JavaRuntimeSource.System, null, 2)
-                    }
-                }
-                System.getProperty("java.home")?.takeIf { it.isNotBlank() }?.let {
-                    offer(
-                        Path.of(it, "bin", store.platform.javaExecutable).toString(),
-                        JavaRuntimeSource.System,
-                        null,
-                        2,
-                    )
-                }
-                // (d) PATH
-                System
-                    .getenv("PATH")
-                    ?.split(java.io.File.pathSeparator)
-                    ?.filter { it.isNotBlank() }
-                    ?.forEach { entry ->
-                        offer(
-                            Path.of(entry.trim('"'), store.platform.javaExecutable).toString(),
-                            JavaRuntimeSource.System,
-                            null,
-                            3,
-                        )
-                    }
-                // (e) 常见安装目录
-                commonRoots().flatMap { candidates(it) }.forEach {
-                    offer(it, JavaRuntimeSource.System, null, 4)
-                }
-                val probed =
-                    coroutineScope {
-                        discovered.values
-                            .map { candidate ->
-                                async {
-                                    candidate to
-                                        if (candidate.exists) probe(candidate.path) else null
-                                }
-                            }.awaitAll()
-                    }
-                val result =
-                    probed
-                        .mapNotNull { (candidate, info) ->
-                            val runtime =
-                                when {
-                                    info != null ->
-                                        runtime(
-                                            candidate.path,
-                                            info,
-                                            candidate.source,
-                                            candidate.entry,
-                                        )
-                                    candidate.keepInvalid ->
-                                        invalidRuntime(
-                                            candidate.path,
-                                            candidate.source,
-                                            if (candidate.exists) "无效" else "路径不存在",
-                                        )
-                                    else -> null
-                                }
-                            runtime?.let { candidate.group to it }
-                        }.sortedWith(
-                            compareBy(
-                                { it.first },
-                                { !it.second.usable },
-                                { -it.second.majorVersion },
-                            ),
-                        ).map { it.second }
+                val result = discovery.discover()
                 cached = result
                 cachedKey = key
                 result
             }
         }
 
-    /** JAVA_HOME 既可能指向 JDK 根目录，也可能指向 JDK 内的 jre/ 子目录；两种都试。 */
-    private fun javaHomeExecutables(home: String): List<String> {
-        val root = runCatching { Path.of(home.trim('"')) }.getOrNull() ?: return emptyList()
-        return listOf(root, root.resolve("jre")).map {
-            it.resolve("bin").resolve(store.platform.javaExecutable).toString()
-        }
-    }
-
-    private fun invalidRuntime(
-        path: String,
-        source: JavaRuntimeSource,
-        reason: String,
-    ): JavaRuntime =
-        JavaRuntime(
-            path = path,
-            majorVersion = 0,
-            vendor = "",
-            source = source,
-            invalidReason = reason,
-        )
-
-    private data class Candidate(
-        val path: String,
-        val source: JavaRuntimeSource,
-        val entry: JavaRuntimeEntry?,
-        val group: Int,
-        val exists: Boolean,
-        val keepInvalid: Boolean,
-    )
-
-    private fun runtime(
-        executable: String,
-        probe: JavaProbe,
-        source: JavaRuntimeSource,
-        entry: JavaRuntimeEntry?,
-    ): JavaRuntime {
-        val path =
-            probe.home
-                ?.let {
-                    runCatching {
-                        Path
-                            .of(it, "bin", store.platform.javaExecutable)
-                            .takeIf(Path::isRegularFile)
-                            ?.toString()
-                    }.getOrNull()
-                }
-                ?: executable
-        return JavaRuntime(
-            path = path,
-            majorVersion = probe.major,
-            vendor = entry?.vendor?.takeIf { it.isNotBlank() } ?: probe.vendor,
-            architecture = probe.architecture,
-            version = probe.version,
-            bits = probe.bits,
-            source = source,
-            imageType = entry?.imageType.orEmpty(),
-            installedAt = entry?.installedAt.orEmpty(),
-            sizeBytes = entry?.sizeBytes ?: 0,
-        )
-    }
-
     /** 只探测本机，不扫描目录；用于给定路径的快速校验。 */
-    suspend fun inspectVersion(executable: String): String? = probe(executable)?.version
-
-    private fun candidates(
-        root: Path,
-        depth: Int = 0,
-    ): List<String> {
-        if (!root.isDirectory() || Files.isSymbolicLink(root) || depth > 4) return emptyList()
-        val java = root.resolve("bin").resolve(store.platform.javaExecutable)
-        if (java.isRegularFile()) return listOf(java.toAbsolutePath().toString())
-        return runCatching {
-            root
-                .listDirectoryEntries()
-                .filter { it.isDirectory() && !Files.isSymbolicLink(it) }
-                .flatMap { candidates(it, depth + 1) }
-        }.getOrDefault(emptyList())
-    }
-
-    private fun commonRoots(): List<Path> {
-        val roots = mutableListOf<Path>()
-        if (store.platform.osName == "windows") {
-            val programFiles = System.getenv("ProgramFiles") ?: "C:\\Program Files"
-            listOf("Java", "Eclipse Adoptium", "Microsoft", "Zulu", "Amazon Corretto", "BellSoft")
-                .forEach { roots.add(Path.of(programFiles, it)) }
-            System.getenv("ProgramFiles(x86)")?.let { roots.add(Path.of(it, "Java")) }
-            System.getenv("APPDATA")?.let { roots.add(Path.of(it, ".minecraft/runtime")) }
-            System.getenv("LOCALAPPDATA")?.let {
-                roots.add(Path.of(it, "Programs", "Eclipse Adoptium"))
-            }
-            roots.addAll(windowsJavaHomes())
-        } else {
-            roots.addAll(
-                listOf("/usr/lib/jvm", "/usr/java", "/opt/java", "/opt/jdk", "/opt/zulu")
-                    .map(::Path),
-            )
-            roots.add(Path.of(System.getProperty("user.home"), ".jdks"))
-            roots.add(Path.of(System.getProperty("user.home"), ".minecraft/runtime"))
-        }
-        return roots
-    }
-
-    /** 只读注册表里登记的 JavaHome；失败（权限/非 Windows）时返回空，不影响其它来源。 */
-    private fun windowsJavaHomes(): List<Path> =
-        runCatching {
-            if (store.platform.osName != "windows") return@runCatching emptyList()
-            val registry = com.sun.jna.platform.win32.WinReg.HKEY_LOCAL_MACHINE
-            val paths = mutableListOf<Path>()
-            for (prefix in listOf("SOFTWARE\\JavaSoft", "SOFTWARE\\WOW6432Node\\JavaSoft")) {
-                for (kind in listOf(
-                    "JDK",
-                    "JRE",
-                    "Java Development Kit",
-                    "Java Runtime Environment",
-                )) {
-                    val key = "$prefix\\$kind"
-                    if (!com.sun.jna.platform.win32.Advapi32Util
-                            .registryKeyExists(registry, key)
-                    ) {
-                        continue
-                    }
-                    for (
-                    version in
-                    com.sun.jna.platform.win32.Advapi32Util
-                        .registryGetKeys(registry, key)
-                    ) {
-                        runCatching {
-                            com.sun.jna.platform.win32.Advapi32Util.registryGetStringValue(
-                                registry,
-                                "$key\\$version",
-                                "JavaHome",
-                            )
-                        }.getOrNull()
-                            ?.let { paths.add(Path.of(it)) }
-                    }
-                }
-            }
-            paths
-        }.getOrDefault(emptyList())
+    suspend fun inspectVersion(executable: String): String? =
+        discovery.probeExecutable(executable, false)?.version
 
     suspend fun resolve(
         requiredMajor: Int,
@@ -596,7 +265,7 @@ class JavaService(
             ) {
                 "拒绝删除 runtimes 之外的目录：$directory"
             }
-            val index = runtimeIndex()
+            val index = discovery.runtimeIndex()
             if (directory.exists()) {
                 Files.walk(directory).use { stream ->
                     stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }

@@ -12,6 +12,12 @@ import java.net.ProxySelector
 import java.net.SocketAddress
 import java.net.URI
 
+/** 代理地址里没写端口时的默认值：HTTP 走 80，HTTPS 走 443，SOCKS 走 1080。 */
+private const val DEFAULT_HTTP_PROXY_PORT = 80
+
+private const val DEFAULT_HTTPS_PROXY_PORT = 443
+private const val DEFAULT_SOCKS_PROXY_PORT = 1080
+
 fun LauncherSettings.effectiveProxyMode(): String =
     proxyMode.ifBlank {
         if (proxyEnabled) "manual" else "direct"
@@ -35,45 +41,57 @@ internal class SystemProxyResolver(
         if (preferNative && nativeSelection.any { it.type() != Proxy.Type.DIRECT }) {
             return nativeSelection
         }
-        val bypass = environment("no_proxy") ?: environment("NO_PROXY")
-        if (bypass?.split(',')?.any { entry -> matchesBypassEntry(uri, entry) } == true) {
+        if (isBypassed(uri)) {
             return listOf(Proxy.NO_PROXY)
         }
+        val proxy = environmentProxy(uri)
+        if (proxy != null) return listOf(proxy)
+        return nativeSelection.takeIf { it.isNotEmpty() } ?: listOf(Proxy.NO_PROXY)
+    }
+
+    /** `no_proxy` / `NO_PROXY` 里任意一条命中即直连。 */
+    private fun isBypassed(uri: URI): Boolean {
+        val bypass = environment("no_proxy") ?: environment("NO_PROXY")
+        return bypass?.split(',')?.any { entry -> matchesBypassEntry(uri, entry) } == true
+    }
+
+    /** 按 scheme 读取 `*_proxy` 环境变量；解析失败视同没有配置。 */
+    private fun environmentProxy(uri: URI): Proxy? {
         val value =
             environment("${uri.scheme.lowercase()}_proxy")
                 ?: environment("${uri.scheme.uppercase()}_PROXY")
                 ?: environment("all_proxy")
                 ?: environment("ALL_PROXY")
-        val proxy =
-            value
-                ?.takeIf { it.isNotBlank() }
-                ?.let {
-                    runCatching {
-                        val address = URI(if (it.contains("://")) it else "http://$it")
-                        val type =
-                            when (address.scheme.lowercase()) {
-                                "http" -> Proxy.Type.HTTP
-                                "socks",
-                                "socks5",
-                                "socks5h",
-                                -> Proxy.Type.SOCKS
-                                else -> return@runCatching null
-                            }
-                        if (address.host.isNullOrBlank()) return@runCatching null
-                        val port =
-                            if (address.port > 0) {
-                                address.port
-                            } else if (type == Proxy.Type.SOCKS) {
-                                1080
-                            } else {
-                                80
-                            }
-                        Proxy(type, InetSocketAddress.createUnresolved(address.host, port))
-                    }.getOrNull()
-                }
-        if (proxy != null) return listOf(proxy)
-        return nativeSelection.takeIf { it.isNotEmpty() } ?: listOf(Proxy.NO_PROXY)
+        return value?.takeIf { it.isNotBlank() }?.let { parseProxy(it) }
     }
+
+    private fun parseProxy(value: String): Proxy? =
+        runCatching {
+            val address = URI(if (value.contains("://")) value else "http://$value")
+            val type =
+                when (address.scheme.lowercase()) {
+                    "http" -> Proxy.Type.HTTP
+                    "socks",
+                    "socks5",
+                    "socks5h",
+                    -> Proxy.Type.SOCKS
+                    else -> return@runCatching null
+                }
+            if (address.host.isNullOrBlank()) return@runCatching null
+            val port = proxyPort(address.port, type)
+            Proxy(type, InetSocketAddress.createUnresolved(address.host, port))
+        }.getOrNull()
+
+    /** 地址里写了端口就用它，否则按代理类型取默认端口。 */
+    private fun proxyPort(
+        configured: Int,
+        type: Proxy.Type,
+    ): Int =
+        when {
+            configured > 0 -> configured
+            type == Proxy.Type.SOCKS -> DEFAULT_SOCKS_PROXY_PORT
+            else -> DEFAULT_HTTP_PROXY_PORT
+        }
 
     override fun connectFailed(
         uri: URI?,
@@ -99,6 +117,6 @@ private fun matchesBypassEntry(
 private fun bypassPort(uri: URI): Int =
     when {
         uri.port > 0 -> uri.port
-        uri.scheme == "https" -> 443
-        else -> 80
+        uri.scheme == "https" -> DEFAULT_HTTPS_PROXY_PORT
+        else -> DEFAULT_HTTP_PROXY_PORT
     }

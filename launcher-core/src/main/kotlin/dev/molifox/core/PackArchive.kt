@@ -12,15 +12,17 @@ import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
+private const val MAX_PACK_MANIFEST_BYTES = 8_388_608
+
 /** Read metadata without extracting it or trusting the ZIP's claimed uncompressed size alone. */
 internal fun packJson(
     zip: ZipFile,
     name: String,
 ): JsonObject? {
     val entry = zip.getEntry(name) ?: return null
-    require(!entry.isDirectory && entry.size in 1..8_388_608) { "整合包清单过大或为空：$name" }
+    require(!entry.isDirectory && entry.size in 1..MAX_PACK_MANIFEST_BYTES) { "整合包清单过大或为空：$name" }
     val bytes = zip.getInputStream(entry).use { it.readNBytes(8_388_609) }
-    require(bytes.size <= 8_388_608) { "整合包清单过大：$name" }
+    require(bytes.size <= MAX_PACK_MANIFEST_BYTES) { "整合包清单过大：$name" }
     return try {
         JsonParser.parseString(bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")).asJsonObject
     } catch (_: Exception) {

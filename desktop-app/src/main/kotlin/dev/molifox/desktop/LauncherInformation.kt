@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.molifox.core.LAUNCHER_VERSION
+import dev.molifox.core.LauncherRelease
 import dev.molifox.core.LauncherUpdateState
 import dev.molifox.core.MoliFoxIdentity
 import java.awt.Toolkit
@@ -62,50 +63,61 @@ fun LauncherUpdatePanel(
                 style = MaterialTheme.typography.titleMedium,
             )
         }
+        MutedText("自动测速 GitHub 原站与加速站，按版本号判断最新正式版；忽略草稿和预发布版。")
         update.release?.let { release ->
-            MutedText("${release.title} · ${release.publishedAt.take(10)}")
-            if (release.notes.isNotBlank()) {
-                ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
-                    Text(release.notes, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            if (update.available) {
-                val hasPackage = release.asset?.sha256?.isNotBlank() == true
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton(
-                        "下载更新包",
-                        Icons.Outlined.Download,
-                        enabled = hasPackage && !actions.controller.jobs.busy,
-                    ) {
-                        actions.run {
-                            actions.controller.downloadUpdate()
-                            actions.taskQueued()
-                        }
-                    }
-                    update.downloadedFile?.let { file ->
-                        SecondaryButton({
-                            actions.run {
-                                actions.controller.platform.openFolder(Path.of(file).parent)
-                            }
-                        }) {
-                            Text("查看下载文件")
-                        }
-                    }
-                }
-                MutedText(
-                    if (hasPackage) {
-                        "下载后验证 SHA-256；退出启动器再替换原文件，保留 MoliFox 文件夹。"
-                    } else {
-                        "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
-                    },
-                )
-            }
+            LauncherReleaseDetails(update, actions, release)
         }
         TextButton({
             actions.run { actions.controller.platform.openUrl(MoliFoxIdentity.RELEASES) }
         }) {
             Text("查看 GitHub 发布页")
         }
+    }
+}
+
+@Composable
+private fun LauncherReleaseDetails(
+    update: LauncherUpdateState,
+    actions: UiActions,
+    release: LauncherRelease,
+) {
+    MutedText("${release.title} · ${release.publishedAt.take(10)}")
+    if (release.notes.isNotBlank()) {
+        Text("更新内容", style = MaterialTheme.typography.titleSmall)
+        ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
+            Text(release.notes, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    if (update.available) {
+        val hasPackage = release.asset?.sha256?.isNotBlank() == true
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton(
+                "下载更新包",
+                Icons.Outlined.Download,
+                enabled = hasPackage && !actions.controller.jobs.busy,
+            ) {
+                actions.run {
+                    actions.controller.downloadUpdate()
+                    actions.taskQueued()
+                }
+            }
+            update.downloadedFile?.let { file ->
+                SecondaryButton({
+                    actions.run {
+                        actions.controller.platform.openFolder(Path.of(file).parent)
+                    }
+                }) {
+                    Text("查看下载文件")
+                }
+            }
+        }
+        MutedText(
+            if (hasPackage) {
+                "下载后验证 SHA-256；退出启动器再替换原文件，保留 MoliFox 文件夹。"
+            } else {
+                "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
+            },
+        )
     }
 }
 
@@ -122,7 +134,7 @@ fun LauncherAboutPanel(actions: UiActions) {
                 MutedText("$LAUNCHER_VERSION · Minecraft Java Edition Launcher")
             }
         }
-        MutedText("Kotlin · Compose Multiplatform · Windows / Linux")
+        MutedText("Kotlin · Compose Multiplatform · 支持 Windows x86_64 / Linux x86_64")
         MutedText(
             "${actions.controller.platform.osName} " +
                 "${actions.controller.platform.architecture} · " +

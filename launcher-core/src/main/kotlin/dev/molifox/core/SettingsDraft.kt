@@ -13,25 +13,32 @@ fun mergeSettingsDraft(
     base: LauncherSettings,
     edited: LauncherSettings,
     current: LauncherSettings,
-): LauncherSettings {
-    fun merge(
-        before: JsonElement?,
-        change: JsonElement?,
-        latest: JsonElement?,
-    ): JsonElement? {
-        if (before == change) return latest?.deepCopy()
-        if (before is JsonObject && change is JsonObject && latest is JsonObject) {
-            return latest.deepCopy().apply {
-                (before.keySet() + change.keySet()).forEach { key ->
-                    val value = merge(before.get(key), change.get(key), latest.get(key))
-                    if (value == null) remove(key) else add(key, value)
-                }
-            }
-        }
-        return change?.deepCopy()
-    }
-    return gson.fromJson(
-        merge(gson.toJsonTree(base), gson.toJsonTree(edited), gson.toJsonTree(current)),
+): LauncherSettings =
+    gson.fromJson(
+        mergeSettingsJson(gson.toJsonTree(base), gson.toJsonTree(edited), gson.toJsonTree(current)),
         LauncherSettings::class.java,
     )
+
+private fun mergeSettingsJson(
+    before: JsonElement?,
+    change: JsonElement?,
+    latest: JsonElement?,
+): JsonElement? {
+    if (before == change) return latest?.deepCopy()
+    if (before is JsonObject && change is JsonObject && latest is JsonObject) {
+        return mergeSettingsObject(before, change, latest)
+    }
+    return change?.deepCopy()
 }
+
+private fun mergeSettingsObject(
+    before: JsonObject,
+    change: JsonObject,
+    latest: JsonObject,
+): JsonObject =
+    latest.deepCopy().apply {
+        (before.keySet() + change.keySet()).forEach { key ->
+            val value = mergeSettingsJson(before.get(key), change.get(key), latest.get(key))
+            if (value == null) remove(key) else add(key, value)
+        }
+    }

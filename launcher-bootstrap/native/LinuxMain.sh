@@ -35,9 +35,16 @@ fi
 
 usableJava() {
     [ -x "$1" ] || return 1
-    major=$("$1" -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1)
+    if versionText=$("$1" -Xms32m -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=20 -XX:G1PeriodicGCInterval=30000 -version 2>&1); then
+        memoryTuningSupported=true
+    else
+        memoryTuningSupported=false
+        versionText=$("$1" -version 2>&1) || return 1
+    fi
+    major=$(printf '%s\n' "$versionText" | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1)
     [ "${major:-0}" -ge 17 ] 2>/dev/null
 }
+memoryTuningSupported=false
 javaExecutable=""
 for candidate in "${JAVA_HOME:-/nonexistent}/bin/java" "$(command -v java || true)" "$data"/runtimes/*/bin/java; do
     if usableJava "$candidate"; then javaExecutable="$candidate"; break; fi
@@ -77,7 +84,14 @@ if [ -z "$javaExecutable" ]; then
 fi
 
 cd "$applicationDirectory"
-"$javaExecutable" --enable-native-access=ALL-UNNAMED -Djava.net.useSystemProxies=true -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 "-Dmolifox.data.dir=$data" "-Djava.io.tmpdir=$TMPDIR" "-Dmolifox.temp.dir=$TMPDIR" -jar "$jar" "$@" &
+# 先保留应用参数，再前置启动器选项；不通过环境变量把回收策略传给游戏。
+set -- --enable-native-access=ALL-UNNAMED -Djava.net.useSystemProxies=true -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 "-Dmolifox.data.dir=$data" "-Djava.io.tmpdir=$TMPDIR" "-Dmolifox.temp.dir=$TMPDIR" -jar "$jar" "$@"
+if [ "$memoryTuningSupported" = true ]; then
+    set -- -Xms32m -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=20 -XX:G1PeriodicGCInterval=30000 "$@"
+else
+    set -- -Xms32m "$@"
+fi
+"$javaExecutable" "$@" &
 javaPid=$!
 set +e
 wait "$javaPid"

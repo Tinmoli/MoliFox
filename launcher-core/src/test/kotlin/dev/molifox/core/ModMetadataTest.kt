@@ -39,13 +39,7 @@ class ModMetadataTest {
         val reader = ModMetadataReader()
         val fabric =
             reader.read(
-                jar(
-                    "fabric.jar",
-                    mapOf(
-                        "fabric.mod.json" to
-                            """{"id":"fox","name":"茉狐","version":"1.2","authors":["Alice",{"name":"Bob"}],"depends":{"minecraft":"1.20.1"}}""",
-                    ),
-                ),
+                fabricMetadataJar(),
             )
         assertEquals("茉狐", fabric.title)
         assertEquals("Alice, Bob", fabric.entries.single().authors)
@@ -56,20 +50,49 @@ class ModMetadataTest {
                 .single()
                 .contains("minecraft"),
         )
-        val quilt =
-            reader.read(
-                jar(
-                    "quilt.jar",
-                    mapOf(
-                        "quilt.mod.json" to
-                            """{"quilt_loader":{"id":"fox","version":"2","metadata":{"name":"Quilt Fox","contributors":{"C":"Developer"}},"depends":[{"id":"quilt_loader"}]}}""",
-                    ),
-                ),
-            )
+        val quilt = reader.read(quiltMetadataJar())
         assertEquals("Quilt", quilt.loader)
         assertEquals("C", quilt.entries.single().authors)
         assertEquals(listOf("quilt_loader"), quilt.entries.single().dependencies)
     }
+
+    private fun quiltMetadataJar(): Path =
+        jar(
+            "quilt.jar",
+            mapOf(
+                "quilt.mod.json" to
+                    """
+                    {
+                      "quilt_loader": {
+                        "id": "fox",
+                        "version": "2",
+                        "metadata": {
+                          "name": "Quilt Fox",
+                          "contributors": {"C": "Developer"}
+                        },
+                        "depends": [{"id": "quilt_loader"}]
+                      }
+                    }
+                    """,
+            ),
+        )
+
+    private fun fabricMetadataJar(): Path =
+        jar(
+            "fabric.jar",
+            mapOf(
+                "fabric.mod.json" to
+                    """
+                            {
+                              "id": "fox",
+                              "name": "茉狐",
+                              "version": "1.2",
+                              "authors": ["Alice", {"name": "Bob"}],
+                              "depends": {"minecraft": "1.20.1"}
+                            }
+                            """,
+            ),
+        )
 
     @Test
     fun `forge multi mod TOML and jar version are parsed without executing code`() {

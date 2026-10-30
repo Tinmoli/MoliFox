@@ -19,6 +19,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -204,59 +205,73 @@ class MultiMcPackTest {
         runBlocking {
             val store = store()
             val root = temporary.resolve("game").apply { createDirectories() }
-            val files =
-                mapOf(
-                    "mods/test.jar.disabled" to "mod",
-                    "config/test.txt" to "setting",
-                    "saves/world/level.dat" to "world",
-                    "versions/old/old.json" to "cached version",
-                    "assets/indexes/a.json" to "assets",
-                    "logs/latest.log" to "log",
-                )
-            val source =
-                archive(
-                    files = files,
-                    config =
-                        "[General]\nname=Test instance\nPreLaunchCommand=malicious-command\nJavaPath=C:/other/java\n",
-                    extras = mapOf("accounts.json" to "private", "launcher.cfg" to "settings"),
-                )
             val transaction = PackFileTransaction(store, root)
             try {
-                ZipFile(source.toFile()).use { zip ->
-                    val parsed = readPackManifest(zip, root, "windows")
-                    assertEquals(3, parsed.requiredFiles)
-                    stagePackFiles(
-                        parsed,
-                        zip,
-                        transaction,
-                        root,
-                        null,
-                        false,
-                        JobContext(store, "test"),
-                    ) {
-                        error("No download expected")
-                    }
-                }
+                stageIsolatedArchive(store, root, transaction)
                 transaction.commit(JobContext(store, "test"))
-                assertEquals("mod", root.resolve("mods/test.jar.disabled").readText())
-                assertEquals("world", root.resolve("saves/world/level.dat").readText())
-                for (
-                path in
-                listOf(
-                    "versions",
-                    "assets",
-                    "logs",
-                    "instance.cfg",
-                    "accounts.json",
-                    "launcher.cfg",
-                )
-                ) {
-                    assertFalse(root.resolve(path).exists(), path)
-                }
+                assertStagedLayout(root)
             } finally {
                 transaction.cleanup()
             }
         }
+
+    /** 暂存阶段要解析出 3 个必需文件，且完全不触发下载。 */
+    private suspend fun stageIsolatedArchive(
+        store: LauncherStore,
+        root: Path,
+        transaction: PackFileTransaction,
+    ) {
+        val source =
+            archive(
+                files =
+                    mapOf(
+                        "mods/test.jar.disabled" to "mod",
+                        "config/test.txt" to "setting",
+                        "saves/world/level.dat" to "world",
+                        "versions/old/old.json" to "cached version",
+                        "assets/indexes/a.json" to "assets",
+                        "logs/latest.log" to "log",
+                    ),
+                config =
+                    "[General]\nname=Test instance\n" +
+                        "PreLaunchCommand=malicious-command\nJavaPath=C:/other/java\n",
+                extras = mapOf("accounts.json" to "private", "launcher.cfg" to "settings"),
+            )
+        ZipFile(source.toFile()).use { zip ->
+            val parsed = readPackManifest(zip, root, "windows")
+            assertEquals(3, parsed.requiredFiles)
+            stagePackFiles(
+                parsed,
+                zip,
+                transaction,
+                root,
+                null,
+                false,
+                JobContext(store, "test"),
+            ) {
+                error("No download expected")
+            }
+        }
+    }
+
+    /** 落盘后只保留游戏数据：缓存目录、启动器配置与账号文件都不能进实例。 */
+    private fun assertStagedLayout(root: Path) {
+        assertEquals("mod", root.resolve("mods/test.jar.disabled").readText())
+        assertEquals("world", root.resolve("saves/world/level.dat").readText())
+        for (
+        path in
+        listOf(
+            "versions",
+            "assets",
+            "logs",
+            "instance.cfg",
+            "accounts.json",
+            "launcher.cfg",
+        )
+        ) {
+            assertFalse(root.resolve(path).exists(), path)
+        }
+    }
 
     @Test
     fun `ambiguous instances game folders unsafe paths and case collisions are rejected`() {
@@ -283,72 +298,10 @@ class MultiMcPackTest {
             val store = store()
             store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
             MockWebServer().use { server ->
-                fun hash(bytes: ByteArray) =
-                    MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") {
-                        "%02x".format(it)
-                    }
                 val client = zipBytes(mapOf("fixture.txt" to "fixture"))
-                val profile =
-                    gson.toJson(
-                        mapOf(
-                            "id" to "1.20.1",
-                            "type" to "release",
-                            "mainClass" to "fixture.Main",
-                            "libraries" to emptyList<String>(),
-                            "downloads" to
-                                mapOf(
-                                    "client" to
-                                        mapOf(
-                                            "url" to server.loopbackUrl("/client.jar").toString(),
-                                            "sha1" to hash(client),
-                                            "size" to client.size,
-                                        ),
-                                ),
-                            "assetIndex" to
-                                mapOf(
-                                    "id" to "fixture",
-                                    "url" to server.loopbackUrl("/assets.json").toString(),
-                                ),
-                        ),
-                    )
-                var failDownload = true
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse =
-                            when (checkNotNull(request.requestUrl).encodedPath) {
-                                "/manifest.json" ->
-                                    MockResponse()
-                                        .setBody(
-                                            gson.toJson(
-                                                mapOf(
-                                                    "versions" to
-                                                        listOf(
-                                                            mapOf(
-                                                                "id" to "1.20.1",
-                                                                "type" to "release",
-                                                                "url" to
-                                                                    server
-                                                                        .loopbackUrl(
-                                                                            "/profile.json",
-                                                                        ).toString(),
-                                                                "sha1" to
-                                                                    hash(profile.toByteArray()),
-                                                            ),
-                                                        ),
-                                                ),
-                                            ),
-                                        )
-                                "/profile.json" -> MockResponse().setBody(profile)
-                                "/assets.json" -> MockResponse().setBody("{\"objects\":{}}")
-                                "/client.jar" ->
-                                    if (failDownload) {
-                                        MockResponse().setResponseCode(404)
-                                    } else {
-                                        MockResponse().setBody(Buffer().write(client))
-                                    }
-                                else -> MockResponse().setResponseCode(404)
-                            }
-                    }
+                val profile = profileJson(server, client)
+                val failDownload = AtomicBoolean(true)
+                server.dispatcher = fixtureDispatcher(server, profile, client, failDownload)
                 NetworkClient().use { network ->
                     val service =
                         ContentService(
@@ -361,30 +314,113 @@ class MultiMcPackTest {
                                 server.loopbackUrl("/manifest.json").toString(),
                             ),
                         )
-                    val source = archive()
-                    assertFails { service.importPack(source, JobContext(store, "test")) }
-                    val instance = store.data.instances.single()
-                    assertEquals(VersionIsolation.Inherit, instance.isolation)
-                    assertFalse(instance.installed)
-                    val root = store.instancePath(instance.id)
-                    assertFalse(root.resolve("config/test.txt").exists())
-                    failDownload = false
-                    service.importPack(
-                        Path.of(instance.packFile),
-                        JobContext(store, "test"),
-                        instance.id,
-                    )
-                    assertEquals(1, store.data.instances.size)
-                    assertTrue(store.instance(instance.id).installed)
-                    assertEquals("setting", root.resolve("config/test.txt").readText())
-                    root.resolve("config/test.txt").writeText("user setting")
-                    service.importPack(
-                        Path.of(instance.packFile),
-                        JobContext(store, "test"),
-                        instance.id,
-                    )
-                    assertEquals("user setting", root.resolve("config/test.txt").readText())
+                    assertImportAndRepair(service, store, failDownload)
                 }
             }
+        }
+
+    /** 首次下载失败要不留半成品；补全后再导入不能覆盖用户改过的配置。 */
+    private suspend fun assertImportAndRepair(
+        service: ContentService,
+        store: LauncherStore,
+        failDownload: AtomicBoolean,
+    ) {
+        val source = archive()
+        assertFails { service.importPack(source, JobContext(store, "test")) }
+        val instance = store.data.instances.single()
+        assertEquals(VersionIsolation.Inherit, instance.isolation)
+        assertFalse(instance.installed)
+        val root = store.instancePath(instance.id)
+        assertFalse(root.resolve("config/test.txt").exists())
+        failDownload.set(false)
+        service.importPack(
+            Path.of(instance.packFile),
+            JobContext(store, "test"),
+            instance.id,
+        )
+        assertEquals(1, store.data.instances.size)
+        assertTrue(store.instance(instance.id).installed)
+        assertEquals("setting", root.resolve("config/test.txt").readText())
+        root.resolve("config/test.txt").writeText("user setting")
+        service.importPack(
+            Path.of(instance.packFile),
+            JobContext(store, "test"),
+            instance.id,
+        )
+        assertEquals("user setting", root.resolve("config/test.txt").readText())
+    }
+
+    private fun sha1Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /** 最小 1.20.1 版本清单：客户端 jar 与空资源索引都指向本地假服务。 */
+    private fun profileJson(
+        server: MockWebServer,
+        client: ByteArray,
+    ): String =
+        gson.toJson(
+            mapOf(
+                "id" to "1.20.1",
+                "type" to "release",
+                "mainClass" to "fixture.Main",
+                "libraries" to emptyList<String>(),
+                "downloads" to
+                    mapOf(
+                        "client" to
+                            mapOf(
+                                "url" to server.loopbackUrl("/client.jar").toString(),
+                                "sha1" to sha1Hex(client),
+                                "size" to client.size,
+                            ),
+                    ),
+                "assetIndex" to
+                    mapOf(
+                        "id" to "fixture",
+                        "url" to server.loopbackUrl("/assets.json").toString(),
+                    ),
+            ),
+        )
+
+    /** 版本清单 / 资源索引 / 客户端 jar 的假服务；jar 在 [failDownload] 为真时返回 404。 */
+    private fun fixtureDispatcher(
+        server: MockWebServer,
+        profile: String,
+        client: ByteArray,
+        failDownload: AtomicBoolean,
+    ): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                when (checkNotNull(request.requestUrl).encodedPath) {
+                    "/manifest.json" ->
+                        MockResponse()
+                            .setBody(
+                                gson.toJson(
+                                    mapOf(
+                                        "versions" to
+                                            listOf(
+                                                mapOf(
+                                                    "id" to "1.20.1",
+                                                    "type" to "release",
+                                                    "url" to
+                                                        server
+                                                            .loopbackUrl(
+                                                                "/profile.json",
+                                                            ).toString(),
+                                                    "sha1" to sha1Hex(profile.toByteArray()),
+                                                ),
+                                            ),
+                                    ),
+                                ),
+                            )
+                    "/profile.json" -> MockResponse().setBody(profile)
+                    "/assets.json" -> MockResponse().setBody("{\"objects\":{}}")
+                    "/client.jar" ->
+                        if (failDownload.get()) {
+                            MockResponse().setResponseCode(404)
+                        } else {
+                            MockResponse().setBody(Buffer().write(client))
+                        }
+                    else -> MockResponse().setResponseCode(404)
+                }
         }
 }

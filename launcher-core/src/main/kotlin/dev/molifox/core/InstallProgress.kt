@@ -5,8 +5,6 @@
 
 package dev.molifox.core
 
-import kotlin.io.path.fileSize
-
 /** 安装与维护的阶段标签：单个阶段可能要处理数千个文件，必须让用户看出还在做什么。 */
 internal object InstallPhase {
     const val VERIFY = "校验文件"
@@ -73,46 +71,20 @@ internal interface DownloadProgressSink {
  */
 internal class InstallProgress(
     private val context: JobContext,
-    private val from: Float = 0f,
-    private val to: Float = 1f,
-    private val emitIntervalMillis: Long = PROGRESS_EMIT_INTERVAL_MILLIS,
+    from: Float = 0f,
+    to: Float = 1f,
+    emitIntervalMillis: Long = PROGRESS_EMIT_INTERVAL_MILLIS,
 ) : DownloadProgressSink {
-    private class PhaseWork(
-        val label: String,
-        val bytesPerUnit: Long,
-    ) {
-        var files = 0
-        var finished = 0
-        var bytes = 0L
-    }
-
-    private val lock = Any()
-    private val phases = LinkedHashMap<String, PhaseWork>()
-    private val credit = HashMap<String, Double>()
-    private val completedFiles = HashSet<String>()
-    private val sizeOf = HashMap<String, Long>()
-    private val phaseOf = HashMap<String, String>()
-    private var plannedUnits = 0.0
-    private var doneUnits = 0.0
-    private var anchorUnits = 0.0
-    private var anchorFraction = from
-    private var emitted = from
-    private var lastEmitAt = 0L
-    private var currentPhase = InstallPhase.VERIFY
-
-    private fun composite(
-        phase: String,
-        key: String,
-    ) = "$phase\u0000$key"
+    private val state = InstallProgressState(context, from, to, emitIntervalMillis)
 
     /** 切换阶段：标签变化立即上报，哪怕还在节流窗口内。 */
     fun begin(label: String) {
-        synchronized(lock) {
-            if (currentPhase != label) {
-                currentPhase = label
-                emit(force = true)
+        synchronized(state.lock) {
+            if (state.currentPhase != label) {
+                state.currentPhase = label
+                state.emit(force = true)
             } else {
-                emit(force = false)
+                state.emit(force = false)
             }
         }
     }
@@ -125,17 +97,17 @@ internal class InstallProgress(
         bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT,
     ) {
         if (files <= 0 && bytes <= 0) return
-        synchronized(lock) {
-            val phase = phases.getOrPut(label) { PhaseWork(label, bytesPerUnit) }
+        synchronized(state.lock) {
+            val phase = state.phases.getOrPut(label) { InstallProgressPhase(label, bytesPerUnit) }
             phase.files += files.coerceAtLeast(0)
             phase.bytes += bytes.coerceAtLeast(0)
             // 新增工作量后重新锚定，已完成的部分保持当前百分比。
-            anchorFraction = emitted
-            anchorUnits = doneUnits
-            plannedUnits +=
+            state.anchorFraction = state.emitted
+            state.anchorUnits = state.doneUnits
+            state.plannedUnits +=
                 files.coerceAtLeast(0) + bytes.coerceAtLeast(0).toDouble() / bytesPerUnit
             if (label != InstallPhase.VERIFY) context.expectFiles(files.coerceAtLeast(0))
-            emit(force = false)
+            state.emit(force = false)
         }
     }
 
@@ -150,14 +122,14 @@ internal class InstallProgress(
         bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT,
     ) {
         if (files <= 0 && bytes <= 0) return
-        synchronized(lock) {
-            val phase = phases[label] ?: return
+        synchronized(state.lock) {
+            val phase = state.phases[label] ?: return
             val units = files.coerceAtLeast(0) + bytes.coerceAtLeast(0).toDouble() / bytesPerUnit
             phase.files = (phase.files - files).coerceAtLeast(phase.finished)
             phase.bytes = (phase.bytes - bytes).coerceAtLeast(0)
-            plannedUnits = (plannedUnits - units).coerceAtLeast(doneUnits)
-            anchorUnits = minOf(anchorUnits, plannedUnits)
-            emit(force = false)
+            state.plannedUnits = (state.plannedUnits - units).coerceAtLeast(state.doneUnits)
+            state.anchorUnits = minOf(state.anchorUnits, state.plannedUnits)
+            state.emit(force = false)
         }
     }
 
@@ -166,13 +138,13 @@ internal class InstallProgress(
         label: String,
         artifact: DownloadArtifact,
     ) {
-        synchronized(lock) {
-            val key = composite(label, artifact.target.toString())
-            phaseOf[key] = label
-            sizeOf[key] = artifact.size
-            markCompleted(label, key)
-            setCredit(key, fullCredit(key))
-            emit(force = false)
+        synchronized(state.lock) {
+            val key = state.composite(label, artifact.target.toString())
+            state.phaseOf[key] = label
+            state.sizeOf[key] = artifact.size
+            state.markCompleted(label, key)
+            state.setCredit(key, state.fullCredit(key))
+            state.emit(force = false)
         }
     }
 
@@ -180,11 +152,11 @@ internal class InstallProgress(
         key: String,
         artifact: DownloadArtifact,
     ) {
-        synchronized(lock) {
-            val composite = composite(currentPhase, key)
-            phaseOf[composite] = currentPhase
-            sizeOf[composite] = artifact.size
-            setCredit(composite, 0.0)
+        synchronized(state.lock) {
+            val composite = state.composite(state.currentPhase, key)
+            state.phaseOf[composite] = state.currentPhase
+            state.sizeOf[composite] = artifact.size
+            state.setCredit(composite, 0.0)
             // 任务中心的速度与「剩余文件」仍按真实传输统计，和进度条共用同一份数据。
             context.transfer(key, 0, artifact.size.coerceAtLeast(0))
         }
@@ -195,18 +167,18 @@ internal class InstallProgress(
         done: Long,
         total: Long,
     ) {
-        synchronized(lock) {
-            val composite = composite(currentPhase, key)
-            val size = sizeOf[composite] ?: 0L
+        synchronized(state.lock) {
+            val composite = state.composite(state.currentPhase, key)
+            val size = state.sizeOf[composite] ?: 0L
             val measured =
                 when {
                     total > 0 -> done.toDouble() / total
                     size > 0 -> done.toDouble() / size
                     else -> 0.0
                 }
-            setCredit(composite, fullCredit(composite) * measured.coerceIn(0.0, 1.0))
+            state.setCredit(composite, state.fullCredit(composite) * measured.coerceIn(0.0, 1.0))
             context.transfer(key, done.coerceAtLeast(0), total.coerceAtLeast(0))
-            emit(force = false)
+            state.emit(force = false)
         }
     }
 
@@ -214,15 +186,15 @@ internal class InstallProgress(
         key: String,
         artifact: DownloadArtifact,
     ) {
-        synchronized(lock) {
-            val composite = composite(currentPhase, key)
-            phaseOf[composite] = currentPhase
-            if (sizeOf[composite] == null) sizeOf[composite] = artifact.size
-            markCompleted(currentPhase, composite)
-            setCredit(composite, fullCredit(composite))
-            val size = transferredSize(artifact)
+        synchronized(state.lock) {
+            val composite = state.composite(state.currentPhase, key)
+            state.phaseOf[composite] = state.currentPhase
+            if (state.sizeOf[composite] == null) state.sizeOf[composite] = artifact.size
+            state.markCompleted(state.currentPhase, composite)
+            state.setCredit(composite, state.fullCredit(composite))
+            val size = state.transferredSize(artifact)
             context.transfer(key, size, size, completed = true)
-            emit(force = false)
+            state.emit(force = false)
         }
     }
 
@@ -230,82 +202,20 @@ internal class InstallProgress(
         key: String,
         artifact: DownloadArtifact,
     ) {
-        synchronized(lock) {
+        synchronized(state.lock) {
             // 失败的文件也算「处理完」，否则任务中心会一直显示还有剩余文件。
-            val size = transferredSize(artifact)
+            val size = state.transferredSize(artifact)
             context.transfer(key, size, size, completed = true)
-            emit(force = false)
+            state.emit(force = false)
         }
     }
-
-    private fun transferredSize(artifact: DownloadArtifact): Long =
-        if (artifact.size > 0) {
-            artifact.size
-        } else {
-            runCatching { artifact.target.fileSize() }.getOrDefault(0L)
-        }
 
     /** 这段工作全部结束：精确落到 [to]，再由上层任务收尾。 */
     fun finish() {
-        synchronized(lock) {
-            emitted = maxOf(emitted, to)
-            lastEmitAt = System.currentTimeMillis()
-            context.progressImmediate(emitted, detail())
-        }
-    }
-
-    private fun fullCredit(key: String): Double {
-        val size = sizeOf[key] ?: 0L
-        val perUnit = phases[phaseOf[key]]?.bytesPerUnit ?: PROGRESS_BYTES_PER_UNIT
-        return 1.0 + if (size > 0) size.toDouble() / perUnit else 0.0
-    }
-
-    private fun setCredit(
-        key: String,
-        value: Double,
-    ) {
-        val previous = credit[key] ?: 0.0
-        credit[key] = value
-        doneUnits += value - previous
-    }
-
-    /** 每个文件在它所属阶段只计一次完成，用于「阶段 已完成/计划」的明细。 */
-    private fun markCompleted(
-        label: String,
-        key: String,
-    ) {
-        if (completedFiles.add(key)) phases[label]?.let { it.finished += 1 }
-    }
-
-    private fun fraction(): Float {
-        val remaining = plannedUnits - anchorUnits
-        val raw =
-            if (remaining <= 1e-6) {
-                anchorFraction.toDouble()
-            } else {
-                anchorFraction.toDouble() +
-                    (doneUnits - anchorUnits) / remaining *
-                    (to.toDouble() - anchorFraction.toDouble())
-            }
-        return raw.coerceIn(from.toDouble(), to.toDouble()).toFloat()
-    }
-
-    private fun detail(): String {
-        val phase = phases[currentPhase] ?: return currentPhase
-        if (phase.files <= 0) return currentPhase
-        return "$currentPhase ${minOf(phase.finished, phase.files)}/${phase.files}"
-    }
-
-    private fun emit(force: Boolean) {
-        val now = System.currentTimeMillis()
-        if (!force && now - lastEmitAt < emitIntervalMillis) return
-        lastEmitAt = now
-        val value = fraction()
-        if (value > emitted) emitted = value
-        if (force) {
-            context.progressImmediate(emitted, detail())
-        } else {
-            context.progress(emitted, detail())
+        synchronized(state.lock) {
+            state.emitted = maxOf(state.emitted, state.to)
+            state.lastEmitAt = System.currentTimeMillis()
+            context.progressImmediate(state.emitted, state.detail())
         }
     }
 }

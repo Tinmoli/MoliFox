@@ -20,6 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 
+/** `.zip` 后缀占 4 个字符，去掉后缀只用于对话框里的默认名称展示。 */
+private const val ZIP_SUFFIX_LENGTH = 4
+
 /** 复制存档到其他实例：目标下拉只列 MoliFox 自建、启用版本隔离的实例（排除当前实例）。 新名称默认沿用原名，可清空表示沿用；目标已有同名存档时由后端自动加序号，从不覆盖。 */
 @Composable
 fun CopySaveDialog(
@@ -101,7 +104,7 @@ fun CopySaveDialog(
                             )
                         onStarted(jobId)
                         onDismiss()
-                    } catch (failure: Exception) {
+                    } catch (failure: IllegalStateException) {
                         error = failure.message ?: "无法开始复制，请稍后重试"
                     }
                 },
@@ -114,4 +117,4 @@ fun CopySaveDialog(
 
 /** 存档名去掉 `.zip` 后缀（不区分大小写），只用于对话框里的默认名称展示。 */
 private fun saveNameWithoutZip(name: String): String =
-    if (name.endsWith(".zip", true)) name.dropLast(4) else name
+    if (name.endsWith(".zip", true)) name.dropLast(ZIP_SUFFIX_LENGTH) else name

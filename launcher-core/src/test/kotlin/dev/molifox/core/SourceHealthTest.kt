@@ -172,73 +172,74 @@ class SourceHealthTest {
         runBlocking {
             val warnings = Collections.synchronizedList(mutableListOf<String>())
             MockWebServer().use { primary ->
-                primary.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest) =
-                            MockResponse().setResponseCode(500)
-                    }
+                primary.dispatcher = statusDispatcher(500)
                 MockWebServer().use { mirror ->
-                    mirror.dispatcher =
-                        object : Dispatcher() {
-                            override fun dispatch(request: RecordedRequest) =
-                                MockResponse().setResponseCode(404)
-                        }
+                    mirror.dispatcher = statusDispatcher(404)
                     NetworkClient(source = { "auto" }, catalog = catalogFor(primary, mirror))
-                        .use { network ->
-                            val required =
-                                artifact(primary.loopbackUrl("/required").toString(), "required")
-                            val optional =
-                                artifact(primary.loopbackUrl("/optional").toString(), "optional")
-                            val failure =
-                                assertFailsWith<DownloadSourceFailureException> {
-                                    network.download(
-                                        required,
-                                    )
-                                }
-                            assertEquals(listOf<Int?>(500, 404), failure.attempts.map { it.status })
-                            assertTrue("每个源尝试的 URL 与状态码" in failure.message.orEmpty())
-                            assertTrue("HTTP 500" in failure.message.orEmpty())
-                            assertTrue("HTTP 404" in failure.message.orEmpty())
-                            assertFalse(network.downloadOptional(optional))
-                            assertFalse(optional.target.exists())
-
-                            val store =
-                                LauncherStore(DesktopPlatform(), directory.resolve("verify"))
-                            val verifier = GameFileVerifier(network, concurrency = 2)
-                            val error =
-                                assertFailsWith<IOException> {
-                                    verifier.ensure(
-                                        listOf(required),
-                                        JobContext(store, "test"),
-                                        "下载资源",
-                                        optional = listOf(optional),
-                                        warn = { warnings += it },
-                                    )
-                                }
-                            assertTrue(
-                                "每个源尝试的 URL 与状态码" in error.message.orEmpty(),
-                                "必需文件的失败信息要列出每个源：${error.message}",
-                            )
-                            assertTrue(
-                                warnings.any { it.startsWith("可选文件未补全，已跳过") },
-                                "可选文件只警告：$warnings",
-                            )
-                        }
+                        .use { network -> assertOptionalSkipped(network, primary, warnings) }
                 }
             }
         }
+
+    /** 必需文件汇总每个源的失败，可选文件只记一条警告并跳过。 */
+    private suspend fun assertOptionalSkipped(
+        network: NetworkClient,
+        primary: MockWebServer,
+        warnings: MutableList<String>,
+    ) {
+        val required = artifact(primary.loopbackUrl("/required").toString(), "required")
+        val optional = artifact(primary.loopbackUrl("/optional").toString(), "optional")
+        val failure =
+            assertFailsWith<DownloadSourceFailureException> {
+                network.download(
+                    required,
+                )
+            }
+        assertEquals(listOf<Int?>(500, 404), failure.attempts.map { it.status })
+        assertTrue("每个源尝试的 URL 与状态码" in failure.message.orEmpty())
+        assertTrue("HTTP 500" in failure.message.orEmpty())
+        assertTrue("HTTP 404" in failure.message.orEmpty())
+        assertFalse(network.downloadOptional(optional))
+        assertFalse(optional.target.exists())
+
+        val store =
+            LauncherStore(DesktopPlatform(), directory.resolve("verify"))
+        val verifier = GameFileVerifier(network, concurrency = 2)
+        val error =
+            assertFailsWith<IOException> {
+                verifier.ensure(
+                    listOf(required),
+                    JobContext(store, "test"),
+                    "下载资源",
+                    optional = listOf(optional),
+                    warn = { warnings += it },
+                )
+            }
+        assertTrue(
+            "每个源尝试的 URL 与状态码" in error.message.orEmpty(),
+            "必需文件的失败信息要列出每个源：${error.message}",
+        )
+        assertTrue(
+            warnings.any { it.startsWith("可选文件未补全，已跳过") },
+            "可选文件只警告：$warnings",
+        )
+    }
 
     @Test
     fun `mirror files offer several candidates while unknown selections fall back to automatic`() {
         val library =
             "https://libraries.minecraft.net/commons-io/commons-io/2.20.0/commons-io-2.20.0.jar"
         val candidates = DownloadSourceCatalog.DEFAULT.candidates(library, "auto")
-        assertEquals(
-            listOf("official", "bmclapi", "aliyun", "tencent", "huawei", "central"),
-            candidates.map { it.source.key },
+        // 自动模式按所在地区决定镜像和官方的先后；两种顺序都完整校验，不依赖运行机器的时区。
+        val keys = candidates.map { it.source.key }
+        val rest = listOf("aliyun", "tencent", "huawei", "central")
+        assertTrue(
+            keys == listOf("official", "bmclapi") + rest ||
+                keys == listOf("bmclapi", "official") + rest,
         )
         assertEquals(
-            "https://bmclapi2.bangbang93.com/maven/commons-io/commons-io/2.20.0/commons-io-2.20.0.jar",
+            "https://bmclapi2.bangbang93.com/maven/" +
+                "commons-io/commons-io/2.20.0/commons-io-2.20.0.jar",
             candidates.first { it.source.key == "bmclapi" }.url,
         )
         val assets =
@@ -252,7 +253,12 @@ class SourceHealthTest {
             assets.first { it.source.key == "bmclapi" }.url,
         )
         // 旧配置里的未知取值按自动处理，绝不因为旧值少试源。
-        assertEquals(2, DownloadSourceCatalog.DEFAULT.candidates(assets.first().url, "mirror").size)
+        assertEquals(
+            2,
+            DownloadSourceCatalog.DEFAULT
+                .candidates("https://resources.download.minecraft.net/ab/abcdef", "mirror")
+                .size,
+        )
         assertEquals(
             listOf("official"),
             DownloadSourceCatalog.DEFAULT
@@ -281,71 +287,86 @@ class SourceHealthTest {
     @Test
     fun `download concurrency follows the memory budget and mirror cap applies`() =
         runBlocking {
-            val plain = downloadConcurrency(8, 1L * 1024 * 1024)
-            assertEquals(8, plain.files)
-            assertNull(plain.note)
-            val clamped = downloadConcurrency(8, 64L * 1024 * 1024)
-            assertEquals(4, clamped.files)
-            assertTrue("并发下载数 8 → 4" in clamped.note.orEmpty())
+            assertBudgetDownloadConcurrency()
+            assertMirrorConcurrencyCap()
+        }
 
-            val logs = Collections.synchronizedList(mutableListOf<String>())
-            val inFlight = AtomicInteger()
-            val peak = AtomicInteger()
-            val content = ByteArray(256 * 1024) { (it % 251).toByte() }
-            MockWebServer().use { server ->
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse {
-                            val current = inFlight.incrementAndGet()
-                            peak.accumulateAndGet(current) { left, right -> maxOf(left, right) }
-                            Thread.sleep(60)
-                            inFlight.decrementAndGet()
-                            return MockResponse().setBody(Buffer().write(content))
-                        }
-                    }
-                NetworkClient(
-                    source = { "official" },
-                    downloadBudgetBytes = 1024L * 1024,
-                    logger = { message, _ -> logs += message },
-                ).use { network ->
-                    val store = LauncherStore(DesktopPlatform(), directory.resolve("budget"))
-                    val artifacts =
-                        (1..4).map { index ->
-                            artifact(
-                                server.loopbackUrl("/big-$index").toString(),
-                                "big-$index",
-                                content,
-                            )
-                        }
-                    val failures =
-                        DownloadScheduler(
-                            network,
-                        ).run(artifacts, JobContext(store, "test"), concurrency = 8)
-                    assertTrue(failures.isEmpty(), "不应有失败：${failures.map { it.describe() }}")
-                    assertTrue(peak.get() in 2..4, "按预算应压到 4 路，实测 ${peak.get()}")
-                    assertEquals(1, logs.count { "并发下载数" in it }, "预算只记一行日志：$logs")
-                }
-            }
+    /** 按内存预算把并发从 8 压到 4，并且只记一行日志。 */
+    private suspend fun assertBudgetDownloadConcurrency() {
+        val plain = downloadConcurrency(8, 1L * 1024 * 1024)
+        assertEquals(8, plain.files)
+        assertNull(plain.note)
+        val clamped = downloadConcurrency(8, 64L * 1024 * 1024)
+        assertEquals(4, clamped.files)
+        assertTrue("并发下载数 8 → 4" in clamped.note.orEmpty())
 
-            SourceThrottle.resetForTests()
-            val mirror = checkNotNull(DownloadSourceCatalog.DEFAULT.source("bmclapi"))
-            val mirrorInFlight = AtomicInteger()
-            val mirrorPeak = AtomicInteger()
-            coroutineScope {
-                repeat(6) {
-                    launch(Dispatchers.IO) {
-                        SourceThrottle.run(mirror, mirrorConcurrency = 2) {
-                            val current = mirrorInFlight.incrementAndGet()
-                            mirrorPeak.accumulateAndGet(
-                                current,
-                            ) { left, right -> maxOf(left, right) }
-                            delay(150)
-                            mirrorInFlight.decrementAndGet()
-                        }
+        val logs = Collections.synchronizedList(mutableListOf<String>())
+        val inFlight = AtomicInteger()
+        val peak = AtomicInteger()
+        val content = ByteArray(256 * 1024) { (it % 251).toByte() }
+        MockWebServer().use { server ->
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        val current = inFlight.incrementAndGet()
+                        peak.accumulateAndGet(current) { left, right -> maxOf(left, right) }
+                        Thread.sleep(60)
+                        inFlight.decrementAndGet()
+                        return MockResponse().setBody(Buffer().write(content))
                     }
                 }
+            NetworkClient(
+                source = { "official" },
+                downloadBudgetBytes = 1024L * 1024,
+                logger = { message, _ -> logs += message },
+            ).use { network ->
+                val store = LauncherStore(DesktopPlatform(), directory.resolve("budget"))
+                val artifacts =
+                    (1..4).map { index ->
+                        artifact(
+                            server.loopbackUrl("/big-$index").toString(),
+                            "big-$index",
+                            content,
+                        )
+                    }
+                val failures =
+                    DownloadScheduler(
+                        network,
+                    ).run(artifacts, JobContext(store, "test"), concurrency = 8)
+                assertTrue(failures.isEmpty(), "不应有失败：${failures.map { it.describe() }}")
+                assertTrue(peak.get() in 2..4, "按预算应压到 4 路，实测 ${peak.get()}")
+                assertEquals(1, logs.count { "并发下载数" in it }, "预算只记一行日志：$logs")
             }
-            assertTrue(mirrorPeak.get() <= 2, "镜像并发设置应生效，实测 ${mirrorPeak.get()}")
+        }
+    }
+
+    /** 镜像并发设置独立生效：6 个任务在 2 路许可下峰值不超过 2。 */
+    private suspend fun assertMirrorConcurrencyCap() {
+        SourceThrottle.resetForTests()
+        val mirror = checkNotNull(DownloadSourceCatalog.DEFAULT.source("bmclapi"))
+        val mirrorInFlight = AtomicInteger()
+        val mirrorPeak = AtomicInteger()
+        coroutineScope {
+            repeat(6) {
+                launch(Dispatchers.IO) {
+                    SourceThrottle.run(mirror, mirrorConcurrency = 2) {
+                        val current = mirrorInFlight.incrementAndGet()
+                        mirrorPeak.accumulateAndGet(
+                            current,
+                        ) { left, right -> maxOf(left, right) }
+                        delay(150)
+                        mirrorInFlight.decrementAndGet()
+                    }
+                }
+            }
+        }
+        assertTrue(mirrorPeak.get() <= 2, "镜像并发设置应生效，实测 ${mirrorPeak.get()}")
+    }
+
+    /** 固定返回某个状态码的假服务，省掉每个用例各写一遍匿名 Dispatcher。 */
+    private fun statusDispatcher(code: Int): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(code)
         }
 
     private fun loadSettings(vararg fields: Pair<String, String>): LauncherSettings {

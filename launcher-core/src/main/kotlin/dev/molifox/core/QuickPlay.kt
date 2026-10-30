@@ -7,6 +7,8 @@ package dev.molifox.core
 
 import java.nio.file.Path
 
+private const val MIN_QUICK_PLAY_LEGACY_MINOR = 20
+
 internal fun supportsQuickPlay(
     profile: ResolvedProfile,
     version: String,
@@ -22,7 +24,7 @@ internal fun supportsQuickPlay(
     val release = profile.json.string("releaseTime")
     if (release.isNotBlank()) return release >= "2023-04-05"
     val old = Regex("^1\\.(\\d+)(?:[. -].*)?$").matchEntire(version)
-    if (old != null) return old.groupValues[1].toInt() >= 20
+    if (old != null) return old.groupValues[1].toInt() >= MIN_QUICK_PLAY_LEGACY_MINOR
     return Regex("^2[6-9]\\.\\d+.*$").matches(version)
 }
 

@@ -164,23 +164,8 @@ fun LaunchProgressCard(
     val phases = stagePhases(job)
     val progress = if (completed) 1f else (job?.progress ?: 0f).coerceIn(0f, 1f)
     val stageTitle = launchStages[currentStageIndex(job)].title
-    val stateLabel =
-        when {
-            failed -> "启动失败"
-            completed -> "已启动"
-            cancelled -> "已取消"
-            running -> "正在启动"
-            else -> "准备启动"
-        }
-    val detail =
-        when {
-            failure != null -> "启动未能完成"
-            completed -> "游戏进程已就绪"
-            cancelled -> "启动已取消"
-            job == null -> "准备启动…"
-            status == JobStatus.Queued -> "等待任务队列…"
-            else -> stageTitle + " · " + job?.detail.orEmpty()
-        }
+    val stateLabel = launchStateLabel(failed, completed, cancelled, running)
+    val detail = launchDetail(failure, completed, cancelled, job, stageTitle)
 
     Surface(
         modifier
@@ -201,57 +186,7 @@ fun LaunchProgressCard(
         shadowElevation = 14.dp,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(
-                            (
-                                if (failed) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.primary
-                                }
-                            ).copy(alpha = .12f),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        when {
-                            failed -> Icons.Outlined.ErrorOutline
-                            completed -> Icons.Outlined.Check
-                            else -> Icons.Outlined.PlayArrow
-                        },
-                        null,
-                        Modifier.size(16.dp),
-                        tint =
-                            if (failed) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(
-                        "启动游戏",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        instanceName + " · " + stateLabel,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                SmallIconButton(Icons.Outlined.Close, "关闭启动进度", latestDismiss)
-            }
+            LaunchCardHeader(instanceName, stateLabel, failed, completed, latestDismiss)
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = hairline())
             Spacer(Modifier.height(6.dp))
@@ -281,6 +216,7 @@ fun LaunchProgressCard(
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(
                 progress = { progress },
+                drawStopIndicator = {},
                 modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.primary.copy(alpha = .14f),
@@ -303,48 +239,166 @@ fun LaunchProgressCard(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            when {
-                failed -> {
-                    Surface(
-                        shape = RoundedCornerShape(Metrics.innerRadius),
-                        color = MaterialTheme.colorScheme.error.copy(alpha = .10f),
-                        border =
-                            BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.error.copy(alpha = .30f),
-                            ),
-                    ) {
-                        Text(
-                            failure ?: "启动失败，请查看日志",
-                            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SecondaryButton({ onViewLogs() }) { Text("查看日志", fontSize = 12.sp) }
-                        Spacer(Modifier.width(8.dp))
-                        PrimaryButton("重试", Icons.Outlined.Refresh, onClick = onRetry)
-                    }
-                }
-                completed -> LaunchCardResult(true, "已启动", "游戏进程已启动，窗口即将出现")
-                cancelled -> LaunchCardResult(false, "已取消", "启动任务已停止")
-                else ->
-                    SecondaryButton(onCancel, Modifier.fillMaxWidth(), enabled = running) {
-                        Text(if (running) "取消" else "请稍候…", fontSize = 12.sp)
-                    }
-            }
+            LaunchCardActions(
+                failure = failure,
+                failed = failed,
+                completed = completed,
+                cancelled = cancelled,
+                running = running,
+                onCancel = onCancel,
+                onRetry = onRetry,
+                onViewLogs = onViewLogs,
+            )
         }
     }
 }
+
+/** 卡片头部：状态图标、标题、实例名与状态短语、关闭按钮。 */
+@Composable
+private fun LaunchCardHeader(
+    instanceName: String,
+    stateLabel: String,
+    failed: Boolean,
+    completed: Boolean,
+    onDismiss: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(
+                    (
+                        if (failed) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
+                    ).copy(alpha = .12f),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                when {
+                    failed -> Icons.Outlined.ErrorOutline
+                    completed -> Icons.Outlined.Check
+                    else -> Icons.Outlined.PlayArrow
+                },
+                null,
+                Modifier.size(16.dp),
+                tint =
+                    if (failed) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                "启动游戏",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                instanceName + " · " + stateLabel,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        SmallIconButton(Icons.Outlined.Close, "关闭启动进度", onDismiss)
+    }
+}
+
+/** 底部操作区：失败给日志与重试，成功或取消给结果说明，其余给取消按钮。 */
+@Composable
+private fun LaunchCardActions(
+    failure: String?,
+    failed: Boolean,
+    completed: Boolean,
+    cancelled: Boolean,
+    running: Boolean,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onViewLogs: () -> Unit,
+) {
+    when {
+        failed -> {
+            Surface(
+                shape = RoundedCornerShape(Metrics.innerRadius),
+                color = MaterialTheme.colorScheme.error.copy(alpha = .10f),
+                border =
+                    BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.error.copy(alpha = .30f),
+                    ),
+            ) {
+                Text(
+                    failure ?: "启动失败，请查看日志",
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SecondaryButton({ onViewLogs() }) { Text("查看日志", fontSize = 12.sp) }
+                Spacer(Modifier.width(8.dp))
+                PrimaryButton("重试", Icons.Outlined.Refresh, onClick = onRetry)
+            }
+        }
+        completed -> LaunchCardResult(true, "已启动", "游戏进程已启动，窗口即将出现")
+        cancelled -> LaunchCardResult(false, "已取消", "启动任务已停止")
+        else ->
+            SecondaryButton(onCancel, Modifier.fillMaxWidth(), enabled = running) {
+                Text(if (running) "取消" else "请稍候…", fontSize = 12.sp)
+            }
+    }
+}
+
+/** 状态短语：失败优先于完成，其次是取消与进行中。 */
+private fun launchStateLabel(
+    failed: Boolean,
+    completed: Boolean,
+    cancelled: Boolean,
+    running: Boolean,
+): String =
+    when {
+        failed -> "启动失败"
+        completed -> "已启动"
+        cancelled -> "已取消"
+        running -> "正在启动"
+        else -> "准备启动"
+    }
+
+/** 详情行：失败、完成、取消各有固定文案，其余显示阶段与任务细节。 */
+private fun launchDetail(
+    failure: String?,
+    completed: Boolean,
+    cancelled: Boolean,
+    job: DownloadJob?,
+    stageTitle: String,
+): String =
+    when {
+        failure != null -> "启动未能完成"
+        completed -> "游戏进程已就绪"
+        cancelled -> "启动已取消"
+        job == null -> "准备启动…"
+        job.status == JobStatus.Queued -> "等待任务队列…"
+        else -> stageTitle + " · " + job.detail.orEmpty()
+    }
 
 /** 阶段行：18dp 高，三态共用左侧 13–14dp 图标位，保证文字起始位置一致。 */
 @Composable

@@ -40,141 +40,8 @@ class ContentCatalogTest {
         action: suspend (ContentService, LauncherStore, GameInstance, Path) -> Unit,
     ) = runBlocking {
         MockWebServer().use { server ->
-            val platform =
-                object : PlatformServices by DesktopPlatform() {
-                    override val defaultDataDirectory = temporary.resolve("profile")
-
-                    override fun moveToTrash(file: Path) {
-                        val target = temporary.resolve("trash/${UUID.randomUUID()}")
-                        target.parent.createDirectories()
-                        Files.move(file, target)
-                    }
-                }
-            val store = LauncherStore(platform)
-            val instance =
-                GameInstance(
-                    name = "Catalog",
-                    gameVersion = "1.20.1",
-                    versionId = "fixture",
-                    loader = LoaderType.Fabric,
-                    installed = true,
-                )
-            store.mutate { it.copy(instances = listOf(instance)) }
-            val root =
-                store.instancePath(instance.id).apply {
-                    resolve("mods").createDirectories()
-                    resolve("resourcepacks").createDirectories()
-                }
-            root.resolve("mods/a-old.jar.disabled").writeText("a1")
-            root.resolve("mods/b-old.jar").writeText("b1")
-            root.resolve("mods/unknown.jar").writeText("unknown")
-            root.resolve("resourcepacks/r-old.zip").writeText("r1")
-
-            fun hash(value: String) =
-                java.security.MessageDigest
-                    .getInstance("SHA-512")
-                    .digest(value.toByteArray())
-                    .joinToString("") { "%02x".format(it) }
-
-            fun version(id: String): Map<String, Any> {
-                val project = id.take(1)
-                return mapOf(
-                    "id" to id,
-                    "project_id" to project,
-                    "name" to "$project $id",
-                    "version_number" to id,
-                    "version_type" to if (mode == "beta" && id.endsWith("2")) "beta" else "release",
-                    "date_published" to
-                        if (id.endsWith("1")) "2025-01-01T00:00:00Z" else "2025-02-01T00:00:00Z",
-                    "changelog" to "Changes $id",
-                    "game_versions" to
-                        listOf(
-                            if (mode == "incompatible" && id.endsWith("2")) "1.21" else "1.20.1",
-                        ),
-                    "loaders" to listOf(if (project == "r") "minecraft" else "fabric"),
-                    "dependencies" to
-                        if (project == "a" && id == "a2") {
-                            listOf(
-                                mapOf(
-                                    "project_id" to "b",
-                                    "version_id" to if (mode == "conflict") "b1" else "b2",
-                                    "dependency_type" to "required",
-                                ),
-                            )
-                        } else {
-                            emptyList<Map<String, String>>()
-                        },
-                    "files" to
-                        listOf(
-                            mapOf(
-                                "filename" to "$id.${if (project == "r") "zip" else "jar"}",
-                                "primary" to true,
-                                "url" to server.loopbackUrl("/files/$id").toString(),
-                                "size" to id.length,
-                                "hashes" to mapOf("sha512" to hash(id)),
-                            ),
-                        ),
-                )
-            }
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse {
-                        val path = checkNotNull(request.requestUrl).encodedPath
-                        if (mode == "network-fail" && path == "/v2/version_files/update") {
-                            return MockResponse().setResponseCode(503)
-                        }
-                        val body: Any =
-                            when {
-                                path == "/v2/version_files" ||
-                                    path == "/v2/version_files/update" -> {
-                                    val data =
-                                        JsonParser.parseString(request.body.readUtf8()).asJsonObject
-                                    val requested = data.array("hashes").map { it.asString }.toSet()
-                                    listOf("a", "b", "r")
-                                        .filter { hash("${it}1") in requested }
-                                        .associate { project ->
-                                            hash("${project}1") to
-                                                version(
-                                                    "$project${if (path.endsWith(
-                                                            "update",
-                                                        )
-                                                    ) {
-                                                        "2"
-                                                    } else {
-                                                        "1"
-                                                    }}",
-                                                )
-                                        }
-                                }
-                                path.startsWith("/v2/version/") ->
-                                    version(path.substringAfterLast('/'))
-                                path.endsWith("/version") -> {
-                                    val project =
-                                        path.removePrefix("/v2/project/").substringBefore('/')
-                                    listOf(version("${project}2"), version("${project}1"))
-                                }
-                                path.startsWith("/v2/project/") -> {
-                                    val project = path.substringAfterLast('/')
-                                    mapOf(
-                                        "project_type" to
-                                            if (project == "r") "resourcepack" else "mod",
-                                        "title" to "Project $project",
-                                        "slug" to project,
-                                        "body" to "Project body",
-                                        "license" to mapOf("id" to "MIT"),
-                                    )
-                                }
-                                path.startsWith("/files/") ->
-                                    return if (mode == "download-fail" && path.endsWith("b2")) {
-                                        MockResponse().setResponseCode(404)
-                                    } else {
-                                        MockResponse().setBody(path.substringAfterLast('/'))
-                                    }
-                                else -> return MockResponse().setResponseCode(404)
-                            }
-                        return MockResponse().setBody(gson.toJson(body))
-                    }
-                }
+            val (store, instance, root) = prepareCatalogFixture()
+            server.dispatcher = CatalogPayloads(mode, server).dispatcher()
             NetworkClient().use { network ->
                 action(
                     ContentService(
@@ -189,6 +56,40 @@ class ContentCatalogTest {
                 )
             }
         }
+    }
+
+    private fun prepareCatalogFixture(): Triple<LauncherStore, GameInstance, Path> {
+        val platform =
+            object : PlatformServices by DesktopPlatform() {
+                override val defaultDataDirectory = temporary.resolve("profile")
+
+                override fun moveToTrash(file: Path) {
+                    val target = temporary.resolve("trash/${UUID.randomUUID()}")
+                    target.parent.createDirectories()
+                    Files.move(file, target)
+                }
+            }
+        val store = LauncherStore(platform)
+        val instance =
+            GameInstance(
+                name = "Catalog",
+                gameVersion = "1.20.1",
+                versionId = "fixture",
+                loader = LoaderType.Fabric,
+                installed = true,
+            )
+        store.mutate { it.copy(instances = listOf(instance)) }
+        val root =
+            store.instancePath(instance.id).apply {
+                resolve("mods").createDirectories()
+                resolve("resourcepacks").createDirectories()
+            }
+        root.resolve("mods/a-old.jar.disabled").writeText("a1")
+        root.resolve("mods/b-old.jar").writeText("b1")
+        root.resolve("mods/unknown.jar").writeText("unknown")
+        root.resolve("resourcepacks/r-old.zip").writeText("r1")
+
+        return Triple(store, instance, root)
     }
 
     @Test
@@ -385,3 +286,132 @@ class ContentCatalogTest {
             assertFalse(root.resolve("mods/a-old.jar.DISABLED").exists())
         }
 }
+
+/** 按 mode 生成 Modrinth 录制样本：正常、beta、不兼容、依赖冲突、下载失败与网络失败。 */
+private class CatalogPayloads(
+    private val mode: String,
+    private val server: MockWebServer,
+) {
+    fun dispatcher(): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = responseFor(request)
+        }
+
+    private fun responseFor(request: RecordedRequest): MockResponse {
+        val path = checkNotNull(request.requestUrl).encodedPath
+        if (mode == "network-fail" && path == "/v2/version_files/update") {
+            return MockResponse().setResponseCode(503)
+        }
+        return when {
+            path == "/v2/version_files" || path == "/v2/version_files/update" ->
+                MockResponse().setBody(gson.toJson(versionFileBody(request, path)))
+            path.startsWith("/v2/version/") ->
+                MockResponse().setBody(gson.toJson(version(path.substringAfterLast('/'))))
+            path.endsWith("/version") ->
+                MockResponse().setBody(gson.toJson(projectVersions(path)))
+            path.startsWith("/v2/project/") ->
+                MockResponse().setBody(gson.toJson(projectBody(path)))
+            path.startsWith("/files/") -> fileResponse(path)
+            else -> MockResponse().setResponseCode(404)
+        }
+    }
+
+    private fun projectVersions(path: String): List<Map<String, Any>> {
+        val project = path.removePrefix("/v2/project/").substringBefore('/')
+        return listOf(version("${project}2"), version("${project}1"))
+    }
+
+    private fun projectBody(path: String): Map<String, Any> {
+        val project = path.substringAfterLast('/')
+        return mapOf(
+            "project_type" to if (project == "r") "resourcepack" else "mod",
+            "title" to "Project $project",
+            "slug" to project,
+            "body" to "Project body",
+            "license" to mapOf("id" to "MIT"),
+        )
+    }
+
+    private fun fileResponse(path: String): MockResponse =
+        if (mode == "download-fail" && path.endsWith("b2")) {
+            MockResponse().setResponseCode(404)
+        } else {
+            MockResponse().setBody(path.substringAfterLast('/'))
+        }
+
+    private fun versionFileBody(
+        request: RecordedRequest,
+        path: String,
+    ): Map<String, Map<String, Any>> {
+        val data = JsonParser.parseString(request.body.readUtf8()).asJsonObject
+        val requested = data.array("hashes").map { it.asString }.toSet()
+        return listOf("a", "b", "r")
+            .filter { hash("${it}1") in requested }
+            .associate { project ->
+                val suffix = if (path.endsWith("update")) "2" else "1"
+                hash("${project}1") to version("$project$suffix")
+            }
+    }
+
+    private fun version(id: String): Map<String, Any> {
+        val project = id.take(1)
+        return mapOf(
+            "id" to id,
+            "project_id" to project,
+            "name" to "$project $id",
+            "version_number" to id,
+            "version_type" to versionType(mode, id),
+            "date_published" to publishedAt(id),
+            "changelog" to "Changes $id",
+            "game_versions" to gameVersions(mode, id),
+            "loaders" to listOf(if (project == "r") "minecraft" else "fabric"),
+            "dependencies" to dependencies(mode, project, id),
+            "files" to
+                listOf(
+                    mapOf(
+                        "filename" to "$id.${if (project == "r") "zip" else "jar"}",
+                        "primary" to true,
+                        "url" to server.loopbackUrl("/files/$id").toString(),
+                        "size" to id.length,
+                        "hashes" to mapOf("sha512" to hash(id)),
+                    ),
+                ),
+        )
+    }
+}
+
+private fun hash(value: String): String =
+    java.security.MessageDigest
+        .getInstance("SHA-512")
+        .digest(value.toByteArray())
+        .joinToString("") { "%02x".format(it) }
+
+private fun versionType(
+    mode: String,
+    id: String,
+): String = if (mode == "beta" && id.endsWith("2")) "beta" else "release"
+
+private fun publishedAt(id: String): String =
+    if (id.endsWith("1")) "2025-01-01T00:00:00Z" else "2025-02-01T00:00:00Z"
+
+private fun gameVersions(
+    mode: String,
+    id: String,
+): List<String> = listOf(if (mode == "incompatible" && id.endsWith("2")) "1.21" else "1.20.1")
+
+private fun dependencies(
+    mode: String,
+    project: String,
+    id: String,
+): List<Map<String, String>> =
+    if (project == "a" && id == "a2") {
+        listOf(
+            mapOf(
+                "project_id" to "b",
+                "version_id" to if (mode == "conflict") "b1" else "b2",
+                "dependency_type" to "required",
+            ),
+        )
+    } else {
+        emptyList()
+    }

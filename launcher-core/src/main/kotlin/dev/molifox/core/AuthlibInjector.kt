@@ -25,6 +25,13 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.readText
 
+private const val MIN_AUTHLIB_JAR_BYTES = 100L * 1024
+private const val ZIP_SIGNATURE_BYTES = 4
+private const val ZIP_LOCAL_HEADER_VERSION_BYTE = 4
+private const val ZIP_LOCAL_HEADER_MIN_VERSION_LOW_BYTE = 3
+private const val ZIP_LOCAL_HEADER_VERSION_INDEX = 3
+private const val MAX_AUTHLIB_METADATA_BYTES = 1024L * 1024
+
 /**
  * authlib-injector 下载与预取元数据。
  *
@@ -90,9 +97,7 @@ class AuthlibInjector(
         cacheDir: Path,
         serverUrl: String,
     ): String {
-        val server =
-            normalizeAuthlibServerUrl(serverUrl)
-                ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+        val server = requireServer(serverUrl)
         val folder = injectorFolder(cacheDir).resolve("metadata")
         val file = folder.resolve("${sha256(server)}.json")
         val cached = readCachedMetadata(file)
@@ -114,6 +119,10 @@ class AuthlibInjector(
         return encodeBase64(metadata.rawJson)
     }
 
+    private fun requireServer(serverUrl: String): String =
+        normalizeAuthlibServerUrl(serverUrl)
+            ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+
     private fun injectorFolder(cacheDir: Path): Path =
         cacheDir.toAbsolutePath().normalize().resolve("authlib-injector")
 
@@ -121,47 +130,51 @@ class AuthlibInjector(
         runCatching {
             path.isRegularFile() &&
                 !Files.isSymbolicLink(path) &&
-                path.fileSize() > 100L * 1024 &&
+                path.fileSize() > MIN_AUTHLIB_JAR_BYTES &&
                 looksLikeJar(path)
         }.getOrDefault(false)
 
     private fun looksLikeJar(path: Path): Boolean =
         Files.newInputStream(path).use { input ->
             val header = input.readNBytes(4)
-            header.size == 4 &&
+            header.size == ZIP_SIGNATURE_BYTES &&
                 header[0] == 'P'.code.toByte() &&
                 header[1] == 'K'.code.toByte() &&
-                header[2] == 3.toByte() &&
-                header[3] == 4.toByte()
+                header[2] == ZIP_LOCAL_HEADER_MIN_VERSION_LOW_BYTE.toByte() &&
+                header[ZIP_LOCAL_HEADER_VERSION_INDEX] ==
+                ZIP_LOCAL_HEADER_VERSION_BYTE.toByte()
         }
 
     private suspend fun artifactUrls(): List<String> =
         buildList {
             for (mirror in mirrors) {
-                val text =
-                    try {
-                        network.text(mirror, "official")
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        continue
-                    }
-                val json =
-                    runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
-                        ?: continue
-                val raw = json.string("download_url").ifBlank { json.string("downloadUrl") }.trim()
-                if (raw.isBlank()) continue
-                val url =
-                    runCatching { URI(mirror).resolve(raw).toString() }.getOrNull() ?: continue
-                if (!url.startsWith("https://") && !url.startsWith("http://")) continue
-                if (url !in this) add(url)
+                val url = artifactUrl(mirror)
+                if (url != null && url !in this) add(url)
+            }
+        }
+
+    /** 读取单个镜像声明的下载地址；读取失败、字段缺失或不是 http(s) 地址时返回 null。 */
+    private suspend fun artifactUrl(mirror: String): String? =
+        runCatching {
+            val text = network.text(mirror, "official")
+            val json = JsonParser.parseString(text).asJsonObject
+            val raw = json.string("download_url").ifBlank { json.string("downloadUrl") }.trim()
+            check(raw.isNotBlank()) { "镜像未提供下载地址" }
+            URI(mirror).resolve(raw).toString().takeIf {
+                it.startsWith("https://") || it.startsWith("http://")
+            }
+        }.getOrElse { error ->
+            when (error) {
+                is CancellationException -> throw error
+                is Exception -> null
+                else -> throw error
             }
         }
 
     private fun readCachedMetadata(file: Path): String? =
         runCatching {
             if (!file.isRegularFile() || Files.isSymbolicLink(file)) return@runCatching null
-            if (file.fileSize() !in 1..(1024L * 1024)) return@runCatching null
+            if (file.fileSize() !in 1..(MAX_AUTHLIB_METADATA_BYTES)) return@runCatching null
             val text = file.readText(Charsets.UTF_8)
             if (text.isBlank()) return@runCatching null
             if (runCatching { JsonParser.parseString(text).asJsonObject }.isFailure) {
@@ -176,37 +189,6 @@ class AuthlibInjector(
                 METADATA_TTL_MILLIS
         }.getOrDefault(true)
 
-    private fun writeAtomically(
-        file: Path,
-        text: String,
-    ) {
-        val temporary = file.resolveSibling(".${file.name}-${UUID.randomUUID()}.tmp")
-        try {
-            Files.writeString(temporary, text, Charsets.UTF_8)
-            try {
-                Files.move(
-                    temporary,
-                    file,
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
-            }
-        } finally {
-            temporary.deleteIfExists()
-        }
-    }
-
-    private fun encodeBase64(text: String): String =
-        Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
-
-    private fun sha256(text: String): String =
-        java.security.MessageDigest
-            .getInstance("SHA-256")
-            .digest(text.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-
     private companion object {
         /** 先 BMCLAPI 镜像，失败再回退官方（GitHub Pages）发布地址。 */
         val mirrors =
@@ -217,3 +199,34 @@ class AuthlibInjector(
         const val METADATA_TTL_MILLIS = 24L * 60 * 60 * 1000
     }
 }
+
+private fun writeAtomically(
+    file: Path,
+    text: String,
+) {
+    val temporary = file.resolveSibling(".${file.name}-${UUID.randomUUID()}.tmp")
+    try {
+        Files.writeString(temporary, text, Charsets.UTF_8)
+        try {
+            Files.move(
+                temporary,
+                file,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING)
+        }
+    } finally {
+        temporary.deleteIfExists()
+    }
+}
+
+private fun encodeBase64(text: String): String =
+    Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
+
+private fun sha256(text: String): String =
+    java.security.MessageDigest
+        .getInstance("SHA-256")
+        .digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }

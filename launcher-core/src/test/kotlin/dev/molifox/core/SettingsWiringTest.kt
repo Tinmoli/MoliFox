@@ -92,7 +92,17 @@ class SettingsWiringTest {
                 server.enqueue(
                     MockResponse()
                         .setBody(
-                            """[{"tag_name":"v9.9.9","name":"MoliFox 9.9.9","body":"测试更新","html_url":"https://github.com/Tinmoli/MoliFox/releases/tag/v9.9.9","draft":false,"prerelease":false,"assets":[]}]""",
+                            """
+                            [{
+                              "tag_name": "v9.9.9",
+                              "name": "MoliFox 9.9.9",
+                              "body": "测试更新",
+                              "html_url": "https://github.com/Tinmoli/MoliFox/releases/tag/v9.9.9",
+                              "draft": false,
+                              "prerelease": false,
+                              "assets": []
+                            }]
+                            """,
                         ),
                 )
                 val api = "http://127.0.0.1:" + server.port + "/repos/Tinmoli/MoliFox"

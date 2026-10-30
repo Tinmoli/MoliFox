@@ -107,44 +107,10 @@ class AdvancedLaunchTest {
                         managedGameDirectory = true,
                         installed = true,
                     )
-                controller.store.mutate {
-                    it.copy(
-                        instances = listOf(instance),
-                        settings =
-                            it.settings.copy(
-                                extraJvmArgs = "-Dpadding=" + "x".repeat(30_000),
-                                advancedLaunch =
-                                    AdvancedLaunchSettings(
-                                        "--server example.test",
-                                        mapOf("SECRET_TOKEN" to "must-not-leak"),
-                                    ),
-                            ),
-                    )
-                }
-                writeJson(
-                    controller.store.minecraftRoot.resolve("versions/fixture/fixture.json"),
-                    mapOf(
-                        "id" to "fixture",
-                        "mainClass" to "Fixture",
-                        "javaVersion" to mapOf("majorVersion" to 17),
-                        "libraries" to emptyList<Any>(),
-                        "arguments" to
-                            mapOf("game" to listOf("--accessToken", "${'$'}{auth_access_token}")),
-                    ),
-                )
-
-                fun snapshot() =
-                    Files.walk(temporary).use { paths ->
-                        paths
-                            .filter {
-                                it.isRegularFile() && it.fileName.toString() != "instance.lock"
-                            }.map { it.toString() to digest(it) }
-                            .toList()
-                            .toMap()
-                    }
-                val before = snapshot()
+                preparePreviewFixture(controller, instance)
+                val before = snapshot(temporary)
                 val preview = controller.previewLaunch(instance.id)
-                assertEquals(before, snapshot())
+                assertEquals(before, snapshot(temporary))
                 assertFalse(
                     controller.store
                         .instancePath(instance.id)
@@ -163,26 +129,8 @@ class AdvancedLaunchTest {
     fun `real Java receives arguments and environment in an isolated directory`() =
         runBlocking {
             val variable = "MOLIFOX_TEST_" + UUID.randomUUID().toString().replace("-", "")
-            val source = temporary.resolve("LaunchOptionsFixture.java")
-            source.writeText(
-                """public class LaunchOptionsFixture { public static void main(String[] args) { System.out.println("OPTIONS_ARGS=" + String.join("|", args)); System.out.println("OPTIONS_ENV=" + System.getenv("$variable")); System.out.println("OPTIONS_CWD=" + java.nio.file.Path.of("").toAbsolutePath().normalize()); } }""",
-            )
-            assertEquals(
-                0,
-                ToolProvider
-                    .getSystemJavaCompiler()
-                    .run(
-                        null,
-                        null,
-                        null,
-                        "--release",
-                        "17",
-                        "-d",
-                        temporary.toString(),
-                        source.toString(),
-                    ),
-            )
             val platform = DesktopPlatform()
+            compileLaunchOptionsFixture(variable)
             val store = LauncherStore(platform, temporary.resolve("profile"))
             val instance =
                 GameInstance(
@@ -194,119 +142,236 @@ class AdvancedLaunchTest {
                     managedGameDirectory = true,
                     isolation = VersionIsolation.Enabled,
                 )
-            store.mutate {
-                it.copy(
-                    instances = listOf(instance),
-                    settings =
-                        it.settings.copy(
-                            gameRoot = temporary.resolve("中文 game root with spaces").toString(),
-                            javaPath =
-                                Path
-                                    .of(
-                                        System.getProperty("java.home"),
-                                        "bin",
-                                        platform.javaExecutable,
-                                    ).toString(),
-                            memoryMb = 512,
-                            advancedLaunch =
-                                AdvancedLaunchSettings(
-                                    "--server global.example --port 25565",
-                                    mapOf(variable to "全局 value=a b"),
-                                ),
-                        ),
+            configureLaunchOptions(store, platform, variable, instance)
+            installFixtureRuntime(store)
+            runWithLauncher(store, instance, variable)
+        }
+
+    /** 用真实 Java 进程启动一次并验证参数、环境变量与工作目录。 */
+    private suspend fun runWithLauncher(
+        store: LauncherStore,
+        instance: GameInstance,
+        variable: String,
+    ) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        NetworkClient().use { network ->
+            val accounts = AccountService(store, network, scope)
+            accounts.addOffline("OptionsTester")
+            val java = JavaService(store, network)
+            val launcher =
+                GameLauncher(
+                    store,
+                    MinecraftInstaller(store, network, java),
+                    java,
+                    accounts,
+                    scope,
                 )
-            }
-            val jar =
-                store.minecraftRoot.resolve("versions/fixture/fixture.jar").apply {
-                    parent.createDirectories()
-                }
-            JarOutputStream(Files.newOutputStream(jar)).use { zip ->
-                zip.putNextEntry(JarEntry("LaunchOptionsFixture.class"))
-                zip.write(temporary.resolve("LaunchOptionsFixture.class").readBytes())
-                zip.closeEntry()
-            }
-            writeJson(
-                jar.resolveSibling("fixture.json"),
-                mapOf(
-                    "id" to "fixture",
-                    "mainClass" to "LaunchOptionsFixture",
-                    "javaVersion" to mapOf("majorVersion" to Runtime.version().feature()),
-                    "libraries" to emptyList<Any>(),
-                    "arguments" to mapOf("game" to emptyList<Any>()),
-                ),
-            )
-            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            NetworkClient().use { network ->
-                val accounts = AccountService(store, network, scope)
-                accounts.addOffline("OptionsTester")
-                val java = JavaService(store, network)
-                val launcher =
-                    GameLauncher(
-                        store,
-                        MinecraftInstaller(store, network, java),
-                        java,
-                        accounts,
-                        scope,
-                    )
-                val jobs = JobQueue(store, scope)
-                try {
-                    suspend fun run(expectedEnvironment: String): List<String> {
-                        val id =
-                            jobs.enqueue("launch options fixture") {
-                                launcher.launch(instance.id, this)
-                            }
-                        withTimeout(30_000) {
-                            jobs.awaitIdle()
-                            while (store.state.value.runningInstanceId != null) delay(25)
-                        }
-                        val job =
-                            store.state.value.jobs
-                                .first { it.id == id }
-                        assertEquals(JobStatus.Completed, job.status, job.error)
-                        val logs =
-                            store.state.value.logs
-                                .map { it.message }
-                        assertTrue(
-                            logs.contains("OPTIONS_ENV=$expectedEnvironment"),
-                            logs.joinToString("\n"),
-                        )
-                        assertTrue(
-                            logs.contains(
-                                "OPTIONS_CWD=${store.instancePath(
-                                    instance.id,
-                                ).toAbsolutePath().normalize()}",
-                            ),
-                        )
-                        return logs
-                    }
-                    assertTrue(
-                        run("全局 value=a b")
-                            .last { it.startsWith("OPTIONS_ARGS=") }
-                            .contains("--server|global.example|--port|25565"),
-                    )
-                    store.updateInstance(instance.id) {
-                        it.copy(
-                            advancedLaunch =
-                                AdvancedLaunchSettings(
-                                    "--server \"instance host\"",
-                                    mapOf(variable to "独立 value"),
-                                ),
-                        )
-                    }
-                    val overridden = run("独立 value").last { it.startsWith("OPTIONS_ARGS=") }
-                    assertTrue(overridden.contains("--server|instance host"))
-                    assertFalse(overridden.contains("global.example"))
-                    store.updateInstance(instance.id) {
-                        it.copy(advancedLaunch = AdvancedLaunchSettings())
-                    }
-                    assertFalse(
-                        run("null").last { it.startsWith("OPTIONS_ARGS=") }.contains("--server"),
-                    )
-                    assertNull(System.getenv(variable))
-                } finally {
-                    launcher.stop()
-                    scope.cancel()
-                }
+            val jobs = JobQueue(store, scope)
+            try {
+                assertLaunchOptions(store, instance, jobs, launcher, variable)
+            } finally {
+                launcher.stop()
+                scope.cancel()
             }
         }
+    }
+
+    /** 准备预览实例的全局设置与版本清单；预览期间不应产生任何文件。 */
+    private fun preparePreviewFixture(
+        controller: LauncherController,
+        instance: GameInstance,
+    ) {
+        controller.store.mutate {
+            it.copy(
+                instances = listOf(instance),
+                settings =
+                    it.settings.copy(
+                        extraJvmArgs = "-Dpadding=" + "x".repeat(30_000),
+                        advancedLaunch =
+                            AdvancedLaunchSettings(
+                                "--server example.test",
+                                mapOf("SECRET_TOKEN" to "must-not-leak"),
+                            ),
+                    ),
+            )
+        }
+        writeJson(
+            controller.store.minecraftRoot.resolve("versions/fixture/fixture.json"),
+            mapOf(
+                "id" to "fixture",
+                "mainClass" to "Fixture",
+                "javaVersion" to mapOf("majorVersion" to 17),
+                "libraries" to emptyList<Any>(),
+                "arguments" to
+                    mapOf("game" to listOf("--accessToken", "${'$'}{auth_access_token}")),
+            ),
+        )
+    }
+
+    private fun snapshot(root: Path): Map<String, String> =
+        Files.walk(root).use { paths ->
+            paths
+                .filter {
+                    it.isRegularFile() && it.fileName.toString() != "instance.lock"
+                }.map { it.toString() to digest(it) }
+                .toList()
+                .toMap()
+        }
+
+    /** 写一个读取参数、环境变量与工作目录的 Java 主类，并编译到临时目录。 */
+    private fun compileLaunchOptionsFixture(variable: String) {
+        val source = temporary.resolve("LaunchOptionsFixture.java")
+        source.writeText(
+            """public class LaunchOptionsFixture {
+                    public static void main(String[] args) {
+                        System.out.println("OPTIONS_ARGS=" + String.join("|", args));
+                        System.out.println("OPTIONS_ENV=" + System.getenv("$variable"));
+                        System.out.println(
+                            "OPTIONS_CWD=" +
+                                java.nio.file.Path.of("").toAbsolutePath().normalize());
+                    } }""",
+        )
+        assertEquals(
+            0,
+            ToolProvider
+                .getSystemJavaCompiler()
+                .run(
+                    null,
+                    null,
+                    null,
+                    "--release",
+                    "17",
+                    "-d",
+                    temporary.toString(),
+                    source.toString(),
+                ),
+        )
+    }
+
+    private fun configureLaunchOptions(
+        store: LauncherStore,
+        platform: DesktopPlatform,
+        variable: String,
+        instance: GameInstance,
+    ) {
+        store.mutate {
+            it.copy(
+                instances = listOf(instance),
+                settings =
+                    it.settings.copy(
+                        gameRoot = temporary.resolve("中文 game root with spaces").toString(),
+                        javaPath =
+                            Path
+                                .of(
+                                    System.getProperty("java.home"),
+                                    "bin",
+                                    platform.javaExecutable,
+                                ).toString(),
+                        memoryMb = 512,
+                        advancedLaunch =
+                            AdvancedLaunchSettings(
+                                "--server global.example --port 25565",
+                                mapOf(variable to "全局 value=a b"),
+                            ),
+                    ),
+            )
+        }
+    }
+
+    private fun installFixtureRuntime(store: LauncherStore) {
+        val jar =
+            store.minecraftRoot.resolve("versions/fixture/fixture.jar").apply {
+                parent.createDirectories()
+            }
+        JarOutputStream(Files.newOutputStream(jar)).use { zip ->
+            zip.putNextEntry(JarEntry("LaunchOptionsFixture.class"))
+            zip.write(temporary.resolve("LaunchOptionsFixture.class").readBytes())
+            zip.closeEntry()
+        }
+        writeJson(
+            jar.resolveSibling("fixture.json"),
+            mapOf(
+                "id" to "fixture",
+                "mainClass" to "LaunchOptionsFixture",
+                "javaVersion" to mapOf("majorVersion" to Runtime.version().feature()),
+                "libraries" to emptyList<Any>(),
+                "arguments" to mapOf("game" to emptyList<Any>()),
+            ),
+        )
+    }
+
+    /** 依次验证全局设置生效、实例覆盖全局、空实例设置清空参数。 */
+    private suspend fun assertLaunchOptions(
+        store: LauncherStore,
+        instance: GameInstance,
+        jobs: JobQueue,
+        launcher: GameLauncher,
+        variable: String,
+    ) {
+        assertTrue(
+            runLaunchAndCollectLogs(store, instance, jobs, launcher, "全局 value=a b")
+                .last { it.startsWith("OPTIONS_ARGS=") }
+                .contains("--server|global.example|--port|25565"),
+        )
+        store.updateInstance(instance.id) {
+            it.copy(
+                advancedLaunch =
+                    AdvancedLaunchSettings(
+                        "--server \"instance host\"",
+                        mapOf(variable to "独立 value"),
+                    ),
+            )
+        }
+        val overridden =
+            runLaunchAndCollectLogs(store, instance, jobs, launcher, "独立 value")
+                .last { it.startsWith("OPTIONS_ARGS=") }
+        assertTrue(overridden.contains("--server|instance host"))
+        assertFalse(overridden.contains("global.example"))
+        store.updateInstance(instance.id) {
+            it.copy(advancedLaunch = AdvancedLaunchSettings())
+        }
+        assertFalse(
+            runLaunchAndCollectLogs(store, instance, jobs, launcher, "null")
+                .last { it.startsWith("OPTIONS_ARGS=") }
+                .contains("--server"),
+        )
+        assertNull(System.getenv(variable))
+    }
+
+    /** 启动一次真实 Java 进程并等待退出，返回该次启动的日志。 */
+    private suspend fun runLaunchAndCollectLogs(
+        store: LauncherStore,
+        instance: GameInstance,
+        jobs: JobQueue,
+        launcher: GameLauncher,
+        expectedEnvironment: String,
+    ): List<String> {
+        val id =
+            jobs.enqueue("launch options fixture") {
+                launcher.launch(instance.id, this)
+            }
+        withTimeout(30_000) {
+            jobs.awaitIdle()
+            while (store.state.value.runningInstanceId != null) delay(25)
+        }
+        val job =
+            store.state.value.jobs
+                .first { it.id == id }
+        assertEquals(JobStatus.Completed, job.status, job.error)
+        val logs =
+            store.state.value.logs
+                .map { it.message }
+        assertTrue(
+            logs.contains("OPTIONS_ENV=$expectedEnvironment"),
+            logs.joinToString("\n"),
+        )
+        assertTrue(
+            logs.contains(
+                "OPTIONS_CWD=${store.instancePath(
+                    instance.id,
+                ).toAbsolutePath().normalize()}",
+            ),
+        )
+        return logs
+    }
 }

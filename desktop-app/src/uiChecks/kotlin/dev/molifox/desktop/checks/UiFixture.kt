@@ -63,7 +63,7 @@ internal class UiFixture(
                         themeMode = "light",
                         animationsEnabled = false,
                         isolateVersions = true,
-                        javaPath = platform.javaExecutable,
+                        javaPath = platform.javaPath,
                         memoryMb = 2048,
                     ),
             )

@@ -16,7 +16,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import okhttp3.Response
+import okhttp3.ResponseBody
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -36,6 +39,9 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
+
+private const val MAX_SEGMENT_MARKER_BYTES = 2048
+private const val HTTP_PARTIAL_CONTENT = 206
 
 private class RangeUnsupported : IOException("下载服务器不支持有效的分段响应")
 
@@ -63,10 +69,13 @@ internal suspend fun <T> Response.readCancellable(block: suspend (Response) -> T
                 }
             }
         try {
-            block(response)
-        } catch (failure: Exception) {
-            coroutineContext.ensureActive()
-            throw failure
+            runCatching {
+                block(response)
+            }.getOrElse { failure ->
+                // block 是调用方传入的传输 lambda，可能抛出任意运行时异常；这里只做取消优先判定后原样重抛。
+                coroutineContext.ensureActive()
+                throw failure
+            }
         } finally {
             finished.set(true)
             closer.cancel()
@@ -91,7 +100,7 @@ internal class SegmentedDownloader(
             if (
                 !marker.isRegularFile(NOFOLLOW_LINKS) ||
                 marker.isSymbolicLink() ||
-                marker.fileSize() > 2048
+                marker.fileSize() > MAX_SEGMENT_MARKER_BYTES
             ) {
                 return
             }
@@ -122,112 +131,168 @@ internal class SegmentedDownloader(
             return false
         }
         val count = minOf(segments.coerceAtMost(8), (artifact.size / MINIMUM_SEGMENT_SIZE).toInt())
-        try {
-            request(url, "bytes=0-0").use { probe ->
-                if (!matches(probe, 0, 0, artifact.size)) return false
-            }
-            val folder = prepare(artifact, count)
-            val done = LongArray(count)
-            for (index in 0 until count) {
-                val piece = folder.resolve("$index.part")
-                require(
-                    !piece.isSymbolicLink() &&
-                        (!piece.exists(NOFOLLOW_LINKS) || piece.isRegularFile(NOFOLLOW_LINKS)),
-                ) {
-                    "分段缓存路径无效"
-                }
-                val length = artifact.size * (index + 1) / count - artifact.size * index / count
-                if (piece.exists() && piece.fileSize() > length) piece.deleteExisting()
-                done[index] = if (piece.exists()) piece.fileSize() else 0L
-            }
-            progress(done.sum(), artifact.size)
-            val monitor = Any()
-            coroutineScope {
-                (0 until count)
-                    .map { index ->
-                        async(Dispatchers.IO) {
-                            val start = artifact.size * index / count
-                            val end = artifact.size * (index + 1) / count - 1
-                            val piece = folder.resolve("$index.part")
-                            require(
-                                !piece.isSymbolicLink() &&
-                                    (
-                                        !piece.exists(NOFOLLOW_LINKS) ||
-                                            piece.isRegularFile(NOFOLLOW_LINKS)
-                                    ),
-                            ) {
-                                "分段缓存路径无效"
+        return try {
+            val supported =
+                request(url, "bytes=0-0").use { probe -> matches(probe, 0, 0, artifact.size) }
+            if (!supported) {
+                false
+            } else {
+                val folder = prepare(artifact, count)
+                val done = existingSegments(artifact, count, folder)
+                progress(done.sum(), artifact.size)
+                val monitor = Any()
+                coroutineScope {
+                    (0 until count)
+                        .map { index ->
+                            async(Dispatchers.IO) {
+                                downloadSegment(
+                                    artifact,
+                                    url,
+                                    folder,
+                                    index,
+                                    count,
+                                    done,
+                                    monitor,
+                                    progress,
+                                )
                             }
-                            if (piece.exists() && piece.fileSize() > end - start + 1) {
-                                piece.deleteExisting()
-                            }
-                            var offset = done[index]
-
-                            fun report() =
-                                synchronized(monitor) {
-                                    done[index] = offset
-                                    progress(done.sum(), artifact.size)
-                                }
-                            report()
-                            if (offset == end - start + 1) return@async
-                            request(url, "bytes=${start + offset}-$end")
-                                .readCancellable { response ->
-                                    if (!matches(response, start + offset, end, artifact.size)) {
-                                        throw RangeUnsupported()
-                                    }
-                                    val body = response.body ?: throw IOException("分段响应为空")
-                                    val expected = end - start + 1 - offset
-                                    if (body.contentLength() >= 0 &&
-                                        body.contentLength() != expected
-                                    ) {
-                                        throw RangeUnsupported()
-                                    }
-                                    body.byteStream().use { input ->
-                                        Files.newOutputStream(piece, CREATE, APPEND).use { output ->
-                                            val buffer = ByteArray(65536)
-                                            while (true) {
-                                                coroutineContext.ensureActive()
-                                                val length = input.read(buffer)
-                                                if (length < 0) break
-                                                if (offset + length > end - start + 1) {
-                                                    throw RangeUnsupported()
-                                                }
-                                                output.write(buffer, 0, length)
-                                                offset += length
-                                                report()
-                                            }
-                                        }
-                                    }
-                                    if (offset != end - start + 1) throw IOException("分段传输中断")
-                                }
-                        }
-                    }.awaitAll()
-            }
-            require(!partial.isSymbolicLink()) { "下载缓存不能是链接" }
-            Files.newOutputStream(partial).use { output ->
-                for (index in 0 until count) {
-                    coroutineContext.ensureActive()
-                    Files.newInputStream(folder.resolve("$index.part")).use { it.copyTo(output) }
+                        }.awaitAll()
                 }
+                mergeSegments(artifact, partial, folder, count, progress)
+                true
             }
-            val problem = artifactProblem(artifact.copy(target = partial))
-            if (problem != null) {
-                partial.deleteIfExists()
-                discard(artifact.target)
-                throw DownloadVerificationException(
-                    "分段文件校验失败：${artifact.target.fileName} · $problem",
-                )
-            }
-            coroutineContext.ensureActive()
-            Files.move(partial, artifact.target, REPLACE_EXISTING)
-            discard(artifact.target)
-            progress(artifact.size, artifact.size)
-            return true
         } catch (_: RangeUnsupported) {
             discard(artifact.target)
-            return false
+            false
         }
     }
+
+    private fun existingSegments(
+        artifact: DownloadArtifact,
+        count: Int,
+        folder: Path,
+    ): LongArray {
+        val done = LongArray(count)
+        for (index in 0 until count) {
+            val piece = folder.resolve("$index.part")
+            validatePiece(piece)
+            val length = artifact.size * (index + 1) / count - artifact.size * index / count
+            if (piece.exists() && piece.fileSize() > length) piece.deleteExisting()
+            done[index] = if (piece.exists()) piece.fileSize() else 0L
+        }
+        return done
+    }
+
+    private suspend fun mergeSegments(
+        artifact: DownloadArtifact,
+        partial: Path,
+        folder: Path,
+        count: Int,
+        progress: (Long, Long) -> Unit,
+    ) {
+        require(!partial.isSymbolicLink()) { "下载缓存不能是链接" }
+        Files.newOutputStream(partial).use { output ->
+            for (index in 0 until count) {
+                coroutineContext.ensureActive()
+                Files
+                    .newInputStream(folder.resolve("$index.part"))
+                    .use { it.copyTo(output) }
+            }
+        }
+        val problem = artifactProblem(artifact.copy(target = partial))
+        if (problem != null) {
+            partial.deleteIfExists()
+            discard(artifact.target)
+            throw DownloadVerificationException(
+                "分段文件校验失败：${artifact.target.fileName} · $problem",
+            )
+        }
+        coroutineContext.ensureActive()
+        Files.move(partial, artifact.target, REPLACE_EXISTING)
+        discard(artifact.target)
+        progress(artifact.size, artifact.size)
+    }
+
+    private fun validatePiece(piece: Path) {
+        require(
+            !piece.isSymbolicLink() &&
+                (!piece.exists(NOFOLLOW_LINKS) || piece.isRegularFile(NOFOLLOW_LINKS)),
+        ) {
+            "分段缓存路径无效"
+        }
+    }
+
+    /** 单个分段的完整传输：请求、校验响应并按块写入缓存文件。 */
+    private suspend fun downloadSegment(
+        artifact: DownloadArtifact,
+        url: String,
+        folder: Path,
+        index: Int,
+        count: Int,
+        done: LongArray,
+        monitor: Any,
+        progress: (Long, Long) -> Unit,
+    ) {
+        val start = artifact.size * index / count
+        val end = artifact.size * (index + 1) / count - 1
+        val piece = folder.resolve("$index.part")
+        validatePiece(piece)
+        if (piece.exists() && piece.fileSize() > end - start + 1) {
+            piece.deleteExisting()
+        }
+        var offset = done[index]
+
+        fun report() =
+            synchronized(monitor) {
+                done[index] = offset
+                progress(done.sum(), artifact.size)
+            }
+        report()
+        if (offset == end - start + 1) return
+        request(url, "bytes=${start + offset}-$end")
+            .readCancellable { response ->
+                val body = segmentBody(response, start, offset, end, artifact.size)
+                val expected = end - start + 1 - offset
+                ensureSegmentLength(body, expected)
+                offset =
+                    copySegment(body, piece, offset, expected) { value ->
+                        offset = value
+                        report()
+                    }
+                if (offset != expected) throw IOException("分段传输中断")
+            }
+    }
+
+    private fun segmentBody(
+        response: Response,
+        start: Long,
+        offset: Long,
+        end: Long,
+        total: Long,
+    ): ResponseBody {
+        if (!matches(response, start + offset, end, total)) throw RangeUnsupported()
+        return response.body ?: throw IOException("分段响应为空")
+    }
+
+    private fun ensureSegmentLength(
+        body: ResponseBody,
+        expected: Long,
+    ) {
+        if (body.contentLength() >= 0 && body.contentLength() != expected) throw RangeUnsupported()
+    }
+
+    private suspend fun copySegment(
+        body: ResponseBody,
+        piece: Path,
+        startOffset: Long,
+        expected: Long,
+        onProgress: (Long) -> Unit,
+    ): Long =
+        body.byteStream().use { input ->
+            Files.newOutputStream(piece, CREATE, APPEND).use { output ->
+                copySegmentBytes(input, output, startOffset, expected, onProgress)
+            }
+        }
 
     private fun prepare(
         artifact: DownloadArtifact,
@@ -235,7 +300,8 @@ internal class SegmentedDownloader(
     ): Path {
         val folder = directory(artifact.target)
         val identity =
-            "$MARKER\n${artifact.size}\n${artifact.hashAlgorithm}\n${artifact.sha1.lowercase()}\n$count\n"
+            "$MARKER\n${artifact.size}\n${artifact.hashAlgorithm}\n" +
+                "${artifact.sha1.lowercase()}\n$count\n"
         require(!folder.isSymbolicLink()) { "分段缓存不能是链接" }
         if (folder.exists(NOFOLLOW_LINKS)) {
             val marker = folder.resolve("manifest")
@@ -243,7 +309,7 @@ internal class SegmentedDownloader(
                 folder.isDirectory(NOFOLLOW_LINKS) &&
                     marker.isRegularFile(NOFOLLOW_LINKS) &&
                     !marker.isSymbolicLink() &&
-                    marker.fileSize() <= 2048 &&
+                    marker.fileSize() <= MAX_SEGMENT_MARKER_BYTES &&
                     marker.readText().startsWith("$MARKER\n"),
             ) {
                 "分段缓存目录已被其他文件占用"
@@ -265,5 +331,27 @@ internal class SegmentedDownloader(
         end: Long,
         total: Long,
     ): Boolean =
-        response.code == 206 && response.header("Content-Range") == "bytes $start-$end/$total"
+        response.code == HTTP_PARTIAL_CONTENT &&
+            response.header("Content-Range") == "bytes $start-$end/$total"
+}
+
+private suspend fun copySegmentBytes(
+    input: InputStream,
+    output: OutputStream,
+    startOffset: Long,
+    expected: Long,
+    onProgress: (Long) -> Unit,
+): Long {
+    var offset = startOffset
+    val buffer = ByteArray(65536)
+    while (true) {
+        coroutineContext.ensureActive()
+        val length = input.read(buffer)
+        if (length < 0) break
+        if (offset + length > expected) throw RangeUnsupported()
+        output.write(buffer, 0, length)
+        offset += length
+        onProgress(offset)
+    }
+    return offset
 }

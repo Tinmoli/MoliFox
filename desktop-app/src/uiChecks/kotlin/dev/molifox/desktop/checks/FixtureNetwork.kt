@@ -49,6 +49,8 @@ internal class FixtureNetwork : Interceptor {
         val (code, body) =
             when {
                 cached != null -> return Triple(HTTP_OK, cached, IMAGE_PNG)
+                // 指纹查询真实返回 {"data":{"exactMatches":[]}}，不能回 {"data":[]} 让解析走错分支。
+                request.url.encodedPath.endsWith("/fingerprints/432") -> HTTP_OK to FINGERPRINTS
                 // CurseForge 镜像的更新检查走公共镜像；夹具只回空数据，让本地内容保持「无法确认」占位。
                 request.url.host.endsWith(MIRROR_HOST) -> HTTP_OK to EMPTY_DATA
                 else -> route(request.url.encodedPath, url)
@@ -112,6 +114,7 @@ internal class FixtureNetwork : Interceptor {
         val APPLICATION_JSON = "application/json".toMediaType()
         const val MIRROR_HOST = "mcimirror.top"
         const val EMPTY_DATA = """{"data":[]}"""
+        const val FINGERPRINTS = """{"data":{"exactMatches":[],"unmatchedFingerprints":[]}}"""
         const val NOT_FOUND = """{"error":"not_found"}"""
         const val NOT_FOUND_RELEASE = """{"message":"Not Found"}"""
         const val GAME_VERSIONS = """[{"version":"1.20.1","version_type":"release"}]"""

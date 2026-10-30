@@ -64,6 +64,16 @@ internal class InstanceSettingsSaver(
         }
         val candidate = snapshot.copy(name = trimmed)
         nameCommitting = true
+        launchRename(instance, candidate, trimmed, currentDraft, onDraftChange)
+    }
+
+    private fun launchRename(
+        instance: GameInstance,
+        candidate: GameInstance,
+        trimmed: String,
+        currentDraft: () -> GameInstance,
+        onDraftChange: (GameInstance) -> Unit,
+    ) {
         scope.launch {
             var renamedId: String? = null
             val failure =
@@ -84,21 +94,33 @@ internal class InstanceSettingsSaver(
                 }.exceptionOrNull()
                     ?.message
             withContext(Dispatchers.Swing) {
-                nameCommitting = false
-                if (failure == null) {
-                    nameNotice = null
-                    saveError = null
-                } else {
-                    nameNotice =
-                        if (renamedId != null) {
-                            "名称已改为「$trimmed」，但其它设置未能保存：$failure"
-                        } else {
-                            "重命名失败，已恢复为「${instance.name}」：$failure"
-                        }
-                    if (renamedId == null) onDraftChange(currentDraft().copy(name = instance.name))
-                    saveError = null
+                showRenameResult(instance, trimmed, renamedId, failure) {
+                    onDraftChange(currentDraft().copy(name = instance.name))
                 }
             }
+        }
+    }
+
+    private fun showRenameResult(
+        instance: GameInstance,
+        trimmed: String,
+        renamedId: String?,
+        failure: String?,
+        restoreDraft: () -> Unit,
+    ) {
+        nameCommitting = false
+        if (failure == null) {
+            nameNotice = null
+            saveError = null
+        } else {
+            nameNotice =
+                if (renamedId != null) {
+                    "名称已改为「$trimmed」，但其它设置未能保存：$failure"
+                } else {
+                    "重命名失败，已恢复为「${instance.name}」：$failure"
+                }
+            if (renamedId == null) restoreDraft()
+            saveError = null
         }
     }
 }

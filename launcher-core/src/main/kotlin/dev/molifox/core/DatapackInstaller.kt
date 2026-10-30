@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import com.google.gson.JsonObject
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.nio.file.Files
@@ -22,6 +23,10 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.readAttributes
+
+private const val MAX_DATAPACK_DOWNLOAD_BYTES = 200L * 1024 * 1024
+private const val MAX_DATAPACK_METADATA_BYTES = 65536
+private const val MAX_WORLD_METADATA_BYTES = 128L * 1024 * 1024
 
 /** A data pack belongs to one existing world, never the instance's top-level directory. */
 internal class DatapackInstaller(
@@ -42,23 +47,19 @@ internal class DatapackInstaller(
         val signature = contentSignature(store, instance)
         val world = worldDirectory(instanceId, worldName)
         val identity = worldIdentity(world)
+        val destination = DatapackDestination(instanceId, worldName, signature, world, identity)
+        val file = resolveFile(hit, versionId, instance)
+        downloadAndInstall(file, destination, context)
+    }
+
+    private suspend fun resolveFile(
+        hit: ContentHit,
+        versionId: String,
+        instance: GameInstance,
+    ): DatapackFile {
         val info = backend.version(versionId)
         val project = backend.project(hit.id)
-        require(
-            project.string("project_type") == "datapack" &&
-                info.string("project_id") == hit.id &&
-                info.string("id") == versionId &&
-                info.array("game_versions").any { it.asString == instance.gameVersion },
-        ) {
-            "数据包版本不属于此项目或不兼容目标游戏版本"
-        }
-        require(
-            info.array("dependencies").none {
-                it.asJsonObject.string("dependency_type") == "required"
-            },
-        ) {
-            "此数据包有必需前置，请先从项目页面确认并手动安装完整组合"
-        }
+        validateVersion(hit, versionId, instance, info, project)
         val file =
             info
                 .array("files")
@@ -77,13 +78,45 @@ internal class DatapackInstaller(
         val hash512 = file.obj("hashes").string("sha512")
         val hash1 = file.obj("hashes").string("sha1")
         require(
-            size in 1..(200L * 1024 * 1024) &&
+            size in 1..(MAX_DATAPACK_DOWNLOAD_BYTES) &&
                 (hash512.isBlank() || hash512.matches(Regex("[a-fA-F0-9]{128}"))) &&
                 (hash1.isBlank() || hash1.matches(Regex("[a-fA-F0-9]{40}"))) &&
                 (hash512.isNotBlank() || hash1.isNotBlank()),
         ) {
             "数据包缺少有效大小或校验信息，或文件超过 200 MB"
         }
+        return DatapackFile(file, filename, size, hash512, hash1)
+    }
+
+    private fun validateVersion(
+        hit: ContentHit,
+        versionId: String,
+        instance: GameInstance,
+        info: JsonObject,
+        project: JsonObject,
+    ) {
+        require(
+            project.string("project_type") == "datapack" &&
+                info.string("project_id") == hit.id &&
+                info.string("id") == versionId &&
+                info.array("game_versions").any { it.asString == instance.gameVersion },
+        ) {
+            "数据包版本不属于此项目或不兼容目标游戏版本"
+        }
+        require(
+            info.array("dependencies").none {
+                it.asJsonObject.string("dependency_type") == "required"
+            },
+        ) {
+            "此数据包有必需前置，请先从项目页面确认并手动安装完整组合"
+        }
+    }
+
+    private suspend fun downloadAndInstall(
+        selectedFile: DatapackFile,
+        destination: DatapackDestination,
+        context: JobContext,
+    ) {
         val cache =
             store.temporaryDirectory.resolve("datapack-staging").apply { createDirectories() }
         val download = cache.resolve("${UUID.randomUUID()}.zip")
@@ -91,66 +124,90 @@ internal class DatapackInstaller(
             network.downloadTracked(
                 context,
                 DownloadArtifact(
-                    contentFileUrl(api, file.string("url")),
+                    contentFileUrl(api, selectedFile.file.string("url")),
                     download,
-                    hash512.ifBlank { hash1 },
-                    size,
-                    if (hash512.isNotBlank()) "SHA-512" else "SHA-1",
+                    selectedFile.hash512.ifBlank { selectedFile.hash1 },
+                    selectedFile.size,
+                    if (selectedFile.hash512.isNotBlank()) "SHA-512" else "SHA-1",
                 ),
             ) { bytes, total ->
                 context.progress(
                     if (total > 0) bytes.toFloat() / total else 0f,
-                    "下载数据包 · $filename",
+                    "下载数据包 · ${selectedFile.filename}",
                 )
             }
-            ZipFile(download.toFile()).use { zip ->
-                val manifest = zip.getEntry("pack.mcmeta") ?: error("ZIP 根目录缺少 pack.mcmeta")
-                require(!manifest.isDirectory && manifest.size in 1..65536) { "数据包说明文件无效" }
-                val text = zip.getInputStream(manifest).use { it.readNBytes(65537) }
-                require(
-                    text.size <= 65536 &&
-                        com.google.gson.JsonParser
-                            .parseString(text.toString(Charsets.UTF_8))
-                            .asJsonObject
-                            .has("pack"),
-                ) {
-                    "数据包说明格式无效"
-                }
-            }
+            validateArchive(download)
             currentCoroutineContext().ensureActive()
-            require(
-                signature == contentSignature(store, store.instance(instanceId)) &&
-                    worldDirectory(instanceId, worldName) == world &&
-                    worldIdentity(world) == identity,
-            ) {
-                "目标实例或存档已经改变，请重新选择"
-            }
-            val directory = world.resolve("datapacks")
-            if (directory.exists(NOFOLLOW_LINKS)) {
-                requireOrdinaryDirectory(directory)
-            } else {
-                directory.createDirectory()
-            }
-            val target = safePath(directory, filename)
-            require(!target.exists(NOFOLLOW_LINKS)) { "存档中已有同名数据包，请先在存档目录整理：$filename" }
-            val staging = directory.resolve(".molifox-${UUID.randomUUID()}.tmp")
-            try {
-                Files.copy(download, staging)
-                currentCoroutineContext().ensureActive()
-                requireOrdinaryDirectory(directory)
-                require(
-                    worldDirectory(instanceId, worldName) == world &&
-                        worldIdentity(world) == identity,
-                ) {
-                    "目标存档已经改变"
-                }
-                Files.move(staging, target)
-            } finally {
-                Files.deleteIfExists(staging)
-            }
-            context.progress(1f, "已安装至 $worldName/datapacks；进入世界后启用或重载")
+            verifyDestinationUnchanged(destination)
+            publishDatapack(download, selectedFile.filename, destination)
+            context.progress(1f, "已安装至 ${destination.worldName}/datapacks；进入世界后启用或重载")
         } finally {
             Files.deleteIfExists(download)
+        }
+    }
+
+    /** 下载期间实例或存档可能被替换，写盘前复核实例签名、存档路径与身份。 */
+    private fun verifyDestinationUnchanged(destination: DatapackDestination) {
+        require(
+            destination.signature ==
+                contentSignature(store, store.instance(destination.instanceId)) &&
+                worldDirectory(destination.instanceId, destination.worldName) ==
+                destination.world &&
+                worldIdentity(destination.world) == destination.identity,
+        ) {
+            "目标实例或存档已经改变，请重新选择"
+        }
+    }
+
+    private fun validateArchive(download: Path) {
+        ZipFile(download.toFile()).use { zip ->
+            val manifest = zip.getEntry("pack.mcmeta") ?: error("ZIP 根目录缺少 pack.mcmeta")
+            require(
+                !manifest.isDirectory && manifest.size in 1..MAX_DATAPACK_METADATA_BYTES,
+            ) {
+                "数据包说明文件无效"
+            }
+            val text = zip.getInputStream(manifest).use { it.readNBytes(65537) }
+            require(
+                text.size <= MAX_DATAPACK_METADATA_BYTES &&
+                    com.google.gson.JsonParser
+                        .parseString(text.toString(Charsets.UTF_8))
+                        .asJsonObject
+                        .has("pack"),
+            ) {
+                "数据包说明格式无效"
+            }
+        }
+    }
+
+    private suspend fun publishDatapack(
+        download: Path,
+        filename: String,
+        destination: DatapackDestination,
+    ) {
+        val world = destination.world
+        val directory = world.resolve("datapacks")
+        if (directory.exists(NOFOLLOW_LINKS)) {
+            requireOrdinaryDirectory(directory)
+        } else {
+            directory.createDirectory()
+        }
+        val target = safePath(directory, filename)
+        require(!target.exists(NOFOLLOW_LINKS)) { "存档中已有同名数据包，请先在存档目录整理：$filename" }
+        val staging = directory.resolve(".molifox-${UUID.randomUUID()}.tmp")
+        try {
+            Files.copy(download, staging)
+            currentCoroutineContext().ensureActive()
+            requireOrdinaryDirectory(directory)
+            require(
+                worldDirectory(destination.instanceId, destination.worldName) == world &&
+                    worldIdentity(world) == destination.identity,
+            ) {
+                "目标存档已经改变"
+            }
+            Files.move(staging, target)
+        } finally {
+            Files.deleteIfExists(staging)
         }
     }
 
@@ -177,7 +234,11 @@ internal class DatapackInstaller(
         val directory = Files.readAttributes(world, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
         val level = world.resolve("level.dat")
         val file = Files.readAttributes(level, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-        require(file.isRegularFile && !file.isSymbolicLink && file.size() <= 128L * 1024 * 1024) {
+        require(
+            file.isRegularFile &&
+                !file.isSymbolicLink &&
+                file.size() <= MAX_WORLD_METADATA_BYTES,
+        ) {
             "存档元数据文件无效"
         }
         return listOf(
@@ -188,3 +249,19 @@ internal class DatapackInstaller(
         )
     }
 }
+
+private data class DatapackDestination(
+    val instanceId: String,
+    val worldName: String,
+    val signature: String,
+    val world: Path,
+    val identity: List<String>,
+)
+
+private data class DatapackFile(
+    val file: JsonObject,
+    val filename: String,
+    val size: Long,
+    val hash512: String,
+    val hash1: String,
+)

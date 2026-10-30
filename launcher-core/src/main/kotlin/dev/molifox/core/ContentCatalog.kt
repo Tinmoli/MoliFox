@@ -6,15 +6,13 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import java.nio.file.Files
-import java.time.Instant
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
+
+private const val DISABLED_FILE_SUFFIX_CHARS = 9
+private const val MAX_PROJECT_DESCRIPTION_CHARS = 60000
+private const val MAX_CHANGELOG_CHARS = 40000
 
 data class ContentVersion(
     val id: String,
@@ -71,7 +69,11 @@ data class ContentUpdateReport(
 )
 
 internal fun contentBaseFilename(filename: String) =
-    if (filename.endsWith(".disabled", true)) filename.dropLast(9) else filename
+    if (filename.endsWith(".disabled", true)) {
+        filename.dropLast(DISABLED_FILE_SUFFIX_CHARS)
+    } else {
+        filename
+    }
 
 internal fun contentSourceRecord(source: ContentSource) =
     JsonObject().apply {
@@ -105,6 +107,29 @@ internal fun verifyContentSource(
     }
 }
 
+internal fun contentCompatible(
+    info: JsonObject,
+    instance: GameInstance,
+    kind: String,
+) = info.array("game_versions").any { it.asString == instance.gameVersion } &&
+    (
+        kind != "mod" ||
+            info.array("loaders").any { it.asString.equals(instance.loader.name, true) }
+    )
+
+internal fun contentVersionOf(info: JsonObject) =
+    ContentVersion(
+        info.string("id"),
+        info.string("name"),
+        info.string("version_number"),
+        info.string("version_type"),
+        info.string("date_published"),
+        info.string("changelog").take(MAX_CHANGELOG_CHARS),
+        info.array("game_versions").map { it.asString },
+        info.array("loaders").map { it.asString.lowercase() },
+        info.boolean("featured"),
+    )
+
 class ContentCatalog
     internal constructor(
         private val store: LauncherStore,
@@ -137,12 +162,12 @@ class ContentCatalog
                 backend
                     .browseVersions(projectId)
                     .filter { it.string("project_id") == projectId }
-                    .map(::version)
+                    .map(::contentVersionOf)
                     .distinctBy { it.id }
                     .sortedByDescending { it.published }
             return ContentDetails(
                 hit,
-                project.string("body").take(60000),
+                project.string("body").take(MAX_PROJECT_DESCRIPTION_CHARS),
                 project.obj("license").string("id"),
                 versions,
                 contentLinks(
@@ -166,7 +191,7 @@ class ContentCatalog
             require(info.string("project_id") == projectId && info.string("id") == versionId) {
                 "资源版本不属于当前项目"
             }
-            return version(info)
+            return contentVersionOf(info)
         }
 
         suspend fun versionDetails(
@@ -178,11 +203,15 @@ class ContentCatalog
             val info = backend.version(versionId)
             require(
                 info.string("project_id") == projectId &&
-                    compatible(info, store.instance(instanceId), project.string("project_type")),
+                    contentCompatible(
+                        info,
+                        store.instance(instanceId),
+                        project.string("project_type"),
+                    ),
             ) {
                 "资源版本与项目、游戏或加载器不匹配"
             }
-            return version(info)
+            return contentVersionOf(info)
         }
 
         suspend fun details(
@@ -208,16 +237,16 @@ class ContentCatalog
                 backend
                     .versions(projectId, instance, kind)
                     .filter {
-                        compatible(
+                        contentCompatible(
                             it,
                             instance,
                             kind,
                         ) && it.string("project_id") == projectId
-                    }.map(::version)
+                    }.map(::contentVersionOf)
                     .sortedByDescending { it.published }
             return ContentDetails(
                 hit,
-                project.string("body").take(60000),
+                project.string("body").take(MAX_PROJECT_DESCRIPTION_CHARS),
                 project.obj("license").string("id"),
                 versions,
             )
@@ -226,205 +255,9 @@ class ContentCatalog
         suspend fun checkUpdates(
             instanceId: String,
             includePrerelease: Boolean = false,
-        ): ContentUpdateReport {
-            val instance = store.instance(instanceId)
-            val root = store.instancePath(instanceId)
-            val registryFile = root.resolve(".molifox-content.json")
-            val registryHash = if (registryFile.exists()) digest(registryFile) else ""
-            val registry = if (registryFile.exists()) readObject(registryFile) else JsonObject()
-
-            data class Local(
-                val folder: String,
-                val filename: String,
-                val hash: String,
-            )
-            val local = mutableListOf<Local>()
-            for (folder in listOf("mods", "resourcepacks", "shaderpacks")) {
-                val directory = root.resolve(folder)
-                if (!directory.exists()) continue
-                for (file in directory.listDirectoryEntries().sortedBy { it.name }) {
-                    currentCoroutineContext().ensureActive()
-                    if (
-                        !file.isRegularFile() ||
-                        Files.isSymbolicLink(file) ||
-                        !Regex(
-                            if (folder == "mods") {
-                                "(?i).*\\.jar(?:\\.disabled)?"
-                            } else {
-                                "(?i).*\\.zip"
-                            },
-                        ).matches(file.name)
-                    ) {
-                        continue
-                    }
-                    local += Local(folder, file.name, digest(file, "SHA-512"))
-                }
-            }
-            val recognized = JsonObject()
-            val latest = JsonObject()
-            val useCurseForge = store.data.settings.contentDownloadSource == "curseforge"
-            if (useCurseForge) {
-                val provider = requireNotNull(curseForge) { "CurseForge 内容源未初始化" }
-                val matches =
-                    provider.fingerprints(
-                        local.map { safePath(root.resolve(it.folder), it.filename) },
-                    )
-                val available = mutableMapOf<String, List<JsonObject>>()
-                for (file in local) {
-                    val matched =
-                        matches[safePath(root.resolve(file.folder), file.filename)] ?: continue
-                    val projectId = "curseforge:${matched.string("modId")}"
-                    val current = backend.version("$projectId:${matched.string("id")}")
-                    recognized.add(file.hash, current)
-                    val kind =
-                        when (file.folder) {
-                            "mods" -> "mod"
-                            "resourcepacks" -> "resourcepack"
-                            else -> "shader"
-                        }
-                    val versions =
-                        available[projectId]
-                            ?: backend.versions(projectId, instance, kind).also {
-                                available[projectId] = it
-                            }
-                    versions
-                        .firstOrNull {
-                            compatible(it, instance, kind) &&
-                                (includePrerelease || it.string("version_type") == "release")
-                        }?.let { latest.add(file.hash, it) }
-                }
-            }
-            // Bound request sizes; a failed batch must not turn into a false 'no updates' result.
-            for (
-            batch in
-            (if (useCurseForge) emptyList() else local.map { it.hash }.distinct().chunked(100))
-            ) {
-                val body =
-                    JsonObject().apply {
-                        add("hashes", gson.toJsonTree(batch))
-                        addProperty("algorithm", "sha512")
-                    }
-                network.post("$api/version_files", body).entrySet().forEach { (key, value) ->
-                    recognized.add(key, value)
-                }
-                body.add(
-                    "loaders",
-                    gson.toJsonTree(
-                        listOf(instance.loader.name.lowercase(), "minecraft", "iris", "optifine"),
-                    ),
-                )
-                body.add("game_versions", gson.toJsonTree(listOf(instance.gameVersion)))
-                body.add(
-                    "version_types",
-                    gson.toJsonTree(
-                        if (includePrerelease) {
-                            listOf(
-                                "release",
-                                "beta",
-                                "alpha",
-                            )
-                        } else {
-                            listOf("release")
-                        },
-                    ),
-                )
-                network.post("$api/version_files/update", body).entrySet().forEach { (key, value) ->
-                    latest.add(key, value)
-                }
-            }
-            val items =
-                local.map { file ->
-                    val current =
-                        recognized
-                            .get(
-                                file.hash,
-                            )?.takeIf { it.isJsonObject }
-                            ?.asJsonObject
-                    val registered =
-                        registry
-                            .entrySet()
-                            .find {
-                                it.value.isJsonObject &&
-                                    it.value.asJsonObject.string("folder") == file.folder &&
-                                    it.value.asJsonObject.string("file") ==
-                                    contentBaseFilename(file.filename)
-                            }?.key
-                    if (registered != null &&
-                        registered.startsWith("curseforge:") != useCurseForge
-                    ) {
-                        ContentUpdate(
-                            file.filename,
-                            file.folder,
-                            warning = "此文件登记在另一内容源，请切换下载来源后检查",
-                        )
-                    } else if (current == null) {
-                        ContentUpdate(file.filename, file.folder, warning = "未识别来源，无法确认更新")
-                    } else {
-                        val projectId = current.string("project_id")
-                        val record = registry.obj(projectId)
-                        val locked =
-                            record.boolean("locked") &&
-                                record.string("folder") == file.folder &&
-                                record.string("file") == contentBaseFilename(file.filename) &&
-                                record.string("versionId") == current.string("id")
-                        val kind =
-                            when (file.folder) {
-                                "mods" -> "mod"
-                                "resourcepacks" -> "resourcepack"
-                                else -> "shader"
-                            }
-                        val source =
-                            ContentSource(
-                                projectId,
-                                current.string("id"),
-                                file.folder,
-                                file.filename,
-                                file.hash,
-                                current.string("name", projectId),
-                                kind,
-                                locked,
-                            )
-                        val candidate =
-                            latest
-                                .get(
-                                    file.hash,
-                                )?.takeIf { it.isJsonObject }
-                                ?.asJsonObject
-                        val newer =
-                            candidate?.takeIf {
-                                it.string("project_id") == projectId &&
-                                    it.string("id") != current.string("id") &&
-                                    compatible(it, instance, kind) &&
-                                    (includePrerelease || it.string("version_type") == "release") &&
-                                    runCatching {
-                                        Instant.parse(it.string("date_published")) >
-                                            Instant.parse(current.string("date_published"))
-                                    }.getOrDefault(false)
-                            }
-                        ContentUpdate(
-                            file.filename,
-                            file.folder,
-                            source,
-                            current.string("version_number", current.string("name")),
-                            if (locked) null else newer?.let(::version),
-                            if (locked) "版本已锁定" else "",
-                        )
-                    }
-                }
-            require(
-                contentSignature(store, store.instance(instanceId)) ==
-                    contentSignature(store, instance) &&
-                    (if (registryFile.exists()) digest(registryFile) else "") == registryHash,
-            ) {
-                "检查期间实例或资源列表已改变，请重试"
-            }
-            return ContentUpdateReport(
-                instanceId,
-                contentSignature(store, instance),
-                registryHash,
-                items,
-            )
-        }
+        ): ContentUpdateReport =
+            ContentUpdateChecker(store, network, api, backend, curseForge)
+                .check(instanceId, includePrerelease)
 
         fun setLocked(
             instanceId: String,
@@ -444,27 +277,4 @@ class ContentCatalog
             registry.add(source.projectId, contentSourceRecord(source.copy(locked = locked)))
             writeJson(registryFile, registry)
         }
-
-        private fun compatible(
-            info: JsonObject,
-            instance: GameInstance,
-            kind: String,
-        ) = info.array("game_versions").any { it.asString == instance.gameVersion } &&
-            (
-                kind != "mod" ||
-                    info.array("loaders").any { it.asString.equals(instance.loader.name, true) }
-            )
-
-        private fun version(info: JsonObject) =
-            ContentVersion(
-                info.string("id"),
-                info.string("name"),
-                info.string("version_number"),
-                info.string("version_type"),
-                info.string("date_published"),
-                info.string("changelog").take(40000),
-                info.array("game_versions").map { it.asString },
-                info.array("loaders").map { it.asString.lowercase() },
-                info.boolean("featured"),
-            )
     }

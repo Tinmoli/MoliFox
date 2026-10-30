@@ -20,6 +20,15 @@ internal fun createTestDirectoryLink(
     if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
         throw IOException("无法建立测试目录符号链接：$link", symbolicFailure)
     }
+    createJunction(link, target, symbolicFailure)
+}
+
+/** 建立 Windows 目录联接并核对结果；失败原因与超时沿用原提示。 */
+private fun createJunction(
+    link: Path,
+    target: Path,
+    symbolicFailure: Throwable,
+) {
     val process =
         ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
             .redirectErrorStream(true)

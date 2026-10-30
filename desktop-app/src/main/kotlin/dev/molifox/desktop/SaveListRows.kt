@@ -35,6 +35,14 @@ import dev.molifox.core.SaveBackupInfo
 import dev.molifox.core.SaveEntry
 import kotlin.io.path.name
 
+private const val SAVE_ZIP_SUFFIX_CHARS = 4
+private const val SAVE_GIB_BYTES = 1073741824L
+private const val SAVE_GIB_DIVISOR = 1073741824f
+private const val SAVE_MIB_BYTES = 1048576L
+private const val SAVE_MIB_DIVISOR = 1048576f
+private const val SAVE_KIB_BYTES = 1024L
+private const val SAVE_KIB_DIVISOR = 1024f
+
 /** 一个存档行：44dp，名称 + 大小与修改时间，`hasLevelDat` 为 false 时给 11sp 提示。 */
 @Composable
 internal fun SaveRow(
@@ -161,7 +169,7 @@ internal fun SaveBackupRow(
 
 /** 存档名去掉 `.zip` 后缀（不区分大小写），用于同名判断；只影响展示逻辑。 */
 internal fun saveBaseName(name: String): String =
-    if (name.endsWith(".zip", true)) name.dropLast(4) else name
+    if (name.endsWith(".zip", true)) name.dropLast(SAVE_ZIP_SUFFIX_CHARS) else name
 
 /** 存档相关时间：本地时区 `yyyy-MM-dd HH:mm`；缺失时如实说明，不伪造时间。 */
 private val saveTimeFormatter: java.time.format.DateTimeFormatter =
@@ -174,8 +182,8 @@ internal fun formatSaveTime(time: java.time.Instant?): String =
 
 internal fun formatSaveSize(bytes: Long): String =
     when {
-        bytes >= 1073741824L -> "%.1f GB".format(bytes / 1073741824f)
-        bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
-        bytes >= 1024L -> "%.1f KB".format(bytes / 1024f)
+        bytes >= SAVE_GIB_BYTES -> "%.1f GB".format(bytes / SAVE_GIB_DIVISOR)
+        bytes >= SAVE_MIB_BYTES -> "%.1f MB".format(bytes / SAVE_MIB_DIVISOR)
+        bytes >= SAVE_KIB_BYTES -> "%.1f KB".format(bytes / SAVE_KIB_DIVISOR)
         else -> bytes.toString() + " B"
     }

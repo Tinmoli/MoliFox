@@ -29,10 +29,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
@@ -58,17 +60,48 @@ fun FontPreferences(
                 GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.sorted()
             }
     }
-    val selectedName =
-        when {
-            settings.fontChoice.isBlank() -> "系统默认"
-            settings.fontChoice.startsWith("file:") ->
-                settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name
-                    ?: "自定义字体"
-            else -> settings.fontChoice.removePrefix("system:")
-        }
+    var supportMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(settings.fontChoice) {
+        supportMessage = withContext(Dispatchers.IO) { fontSupportMessage(settings.fontChoice) }
+    }
+    val selectedName = selectedFontName(settings)
+    FontFamilySection(settings, selectedName, actions, apply) { showPicker = true }
+    supportMessage?.let { MutedText(it) }
+    ImportedFontsSection(settings, actions, apply)
+    DisplayScaleSection(settings, apply)
+    if (showPicker) {
+        FontPickerDialog(
+            settings = settings,
+            families = families,
+            query = query,
+            onQueryChange = { query = it },
+            onDismiss = { showPicker = false },
+            apply = apply,
+        )
+    }
+}
+
+/** 当前字体在界面上显示的名字。 */
+private fun selectedFontName(settings: LauncherSettings): String =
+    when {
+        settings.fontChoice.isBlank() -> "系统默认"
+        settings.fontChoice.startsWith("file:") ->
+            settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name
+                ?: "自定义字体"
+        else -> settings.fontChoice.removePrefix("system:")
+    }
+
+@Composable
+private fun FontFamilySection(
+    settings: LauncherSettings,
+    selectedName: String,
+    actions: UiActions,
+    apply: AppearanceChange,
+    onPick: () -> Unit,
+) {
     SettingsSection("界面字体", "使用本机字体，也可以导入 TTF / OTF；离线可用。", contentGap = 0.dp) {
         SettingRow("当前字体", selectedName) {
-            SecondaryButton({ showPicker = true }) { Text("选择字体") }
+            SecondaryButton(onPick) { Text("选择字体") }
         }
         SettingDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -115,6 +148,14 @@ fun FontPreferences(
             MutedText("这是一段界面字体预览。字体缺少的字符会使用系统回退字体。")
         }
     }
+}
+
+@Composable
+private fun ImportedFontsSection(
+    settings: LauncherSettings,
+    actions: UiActions,
+    apply: AppearanceChange,
+) {
     if (settings.customFonts.isNotEmpty()) {
         // 每个字体一行，行间用 1dp 细线分隔：N 行 → N-1 条，首末不加。
         SettingsSection(
@@ -154,6 +195,13 @@ fun FontPreferences(
             }
         }
     }
+}
+
+@Composable
+private fun DisplayScaleSection(
+    settings: LauncherSettings,
+    apply: AppearanceChange,
+) {
     SettingsSection("显示大小", "界面缩放同时调整控件与文字，文字大小只影响字体。", contentGap = 0.dp) {
         PreferenceSlider(
             "界面缩放",
@@ -172,54 +220,66 @@ fun FontPreferences(
             }
         }
     }
-    if (showPicker) {
-        Modal(
-            "选择界面字体",
-            families.size.toString() + " 种系统字体 · 支持搜索与预览",
-            710.dp,
-            { showPicker = false },
+}
+
+@Composable
+private fun FontPickerDialog(
+    settings: LauncherSettings,
+    families: List<String>,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    apply: AppearanceChange,
+) {
+    Modal(
+        "选择界面字体",
+        families.size.toString() + " 种系统字体 · 支持搜索与预览",
+        710.dp,
+        onDismiss,
+    ) {
+        OutlinedTextField(
+            query,
+            { onQueryChange(it) },
+            Modifier.fillMaxWidth(),
+            label = { Text("搜索字体") },
+            singleLine = true,
+        )
+        val choices =
+            listOf("" to "系统默认") +
+                settings.customFonts.map { ("file:" + it.path) to (it.name + " · 已导入") } +
+                families.map { ("system:" + it) to it }
+        LazyColumn(
+            Modifier.fillMaxWidth().height(340.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            OutlinedTextField(
-                query,
-                { query = it },
-                Modifier.fillMaxWidth(),
-                label = { Text("搜索字体") },
-                singleLine = true,
-            )
-            val choices =
-                listOf("" to "系统默认") +
-                    settings.customFonts.map { ("file:" + it.path) to (it.name + " · 已导入") } +
-                    families.map { ("system:" + it) to it }
-            LazyColumn(
-                Modifier.fillMaxWidth().height(340.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                items(
-                    choices.filter { it.second.contains(query, true) },
-                    key = { it.first },
-                ) { (id, title) ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                apply { it.copy(fontChoice = id) }
-                                showPicker = false
-                            }.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(settings.fontChoice == id, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(title, Modifier.weight(1f))
-                        Text(
-                            "Aa 示例",
-                            fontFamily = remember(id) { launcherFontFamily(id) },
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            items(
+                choices.filter { it.second.contains(query, true) },
+                key = { it.first },
+            ) { (id, title) ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            apply { it.copy(fontChoice = id) }
+                            onDismiss()
+                        }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(settings.fontChoice == id, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(title, Modifier.weight(1f))
+                    val previewFont by produceState<FontFamily>(FontFamily.Default, id) {
+                        value = withContext(Dispatchers.IO) { launcherFontFamily(id) }
                     }
+                    Text(
+                        "Aa 中文示例",
+                        fontFamily = previewFont,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
-            TextButton({ showPicker = false }, Modifier.align(Alignment.End)) { Text("关闭") }
         }
+        TextButton(onDismiss, Modifier.align(Alignment.End)) { Text("关闭") }
     }
 }

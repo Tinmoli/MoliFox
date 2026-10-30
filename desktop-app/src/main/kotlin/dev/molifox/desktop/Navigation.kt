@@ -320,19 +320,25 @@ private fun Modifier.titlebarDoubleClick(onDoubleClick: () -> Unit): Modifier =
             var lastPressPosition = Offset.Zero
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.type != PointerEventType.Press) continue
-                val change = event.changes.firstOrNull() ?: continue
-                val now = change.uptimeMillis
-                val position = change.position
-                val doubleClick =
-                    now - lastPressTime <= 400L &&
-                        (position - lastPressPosition).getDistance() <= 8f
-                if (doubleClick) {
-                    lastPressTime = 0L
-                    onDoubleClick()
-                } else {
-                    lastPressTime = now
-                    lastPressPosition = position
+                val change =
+                    if (event.type == PointerEventType.Press) {
+                        event.changes.firstOrNull()
+                    } else {
+                        null
+                    }
+                if (change != null) {
+                    val now = change.uptimeMillis
+                    val position = change.position
+                    val doubleClick =
+                        now - lastPressTime <= 400L &&
+                            (position - lastPressPosition).getDistance() <= 8f
+                    if (doubleClick) {
+                        lastPressTime = 0L
+                        onDoubleClick()
+                    } else {
+                        lastPressTime = now
+                        lastPressPosition = position
+                    }
                 }
             }
         }

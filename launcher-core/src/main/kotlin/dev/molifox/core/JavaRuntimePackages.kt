@@ -1,12 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责游戏 Java 运行时安装包的选择：只用官方源（Azul 优先，缺失时回退 Adoptium Temurin）。
+// 负责游戏 Java 运行时安装包的选择：从 Azul / Adoptium 查询安装包，自动模式测速排序，手动模式只使用所选厂商。
 
 package dev.molifox.core
 
+import com.google.gson.JsonObject
+import com.google.gson.JsonParseException
 import kotlinx.coroutines.CancellationException
+import java.io.IOException
 import java.net.URI
+import java.net.URISyntaxException
+
+private const val ZULU_X86_BITS = 32
+private const val ZULU_X64_BITS = 64
 
 /**
  * 一个可安装的运行时包。[urls] 已按尝试顺序排好（第一个优先），每个地址都是同一份文件、 同一个 sha256；[size] 来自厂商
@@ -45,9 +52,7 @@ internal class JavaRuntimePackages(
      * 选择安装包。[preferredImageType] 为 "jre" 时优先 JRE、没有该版本 JRE 时回退 JDK 并保留真实类型；
      * 为 "jdk" 时只查 JDK；为空按 JRE → JDK 自动。
      *
-     * 候选顺序固定为 Azul JRE → Azul JDK → Adoptium JRE → Adoptium JDK，全部是厂商官方主机；
-     * 第三方镜像已移除。[downloadSource] 只剩两种取值（旧的 mirror 按 official 读取）：
-     * auto 先用官方元数据接口测延迟、把更快的官方厂商排前面；official 固定 Azul 优先。
+     * 自动模式按官方接口测速排序并在厂商间回退；手动选择时只查询所选厂商。
      */
     suspend fun find(
         major: Int,
@@ -71,26 +76,14 @@ internal class JavaRuntimePackages(
         val failures = mutableListOf<String>()
         val source = normalizedJavaDownloadSource(downloadSource)
         val vendors =
-            if (source == "auto") fastestOfficialVendorOrder() else listOf("zulu", "temurin")
-        for (vendor in vendors) {
-            for (type in types) {
-                try {
-                    val packageInfo =
-                        if (vendor == "zulu") {
-                            zulu(major, os, zuluArch, type)
-                        } else {
-                            adoptium(major, os, zuluArch, type)
-                        }
-                    packageInfo?.let {
-                        return it
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    val title = if (vendor == "zulu") "Zulu" else "Temurin"
-                    failures += "$title ${type.uppercase()}：${error.message ?: "查询失败"}"
-                }
+            when (source) {
+                "azul" -> listOf("zulu")
+                "adoptium" -> listOf("temurin")
+                else -> fastestOfficialVendorOrder()
             }
+        val target = JavaPackageTarget(major, os, zuluArch)
+        for (vendor in vendors) {
+            findFromVendor(target, vendor, types, failures)?.let { return it }
         }
         throw IllegalStateException(
             "没有找到适用于 $os/$zuluArch 的 Java $major 构建（已尝试 " +
@@ -103,6 +96,74 @@ internal class JavaRuntimePackages(
                 failures.joinToString("；") +
                 "。请手动选择已有的 Java",
         )
+    }
+
+    private suspend fun findFromVendor(
+        target: JavaPackageTarget,
+        vendor: String,
+        types: List<String>,
+        failures: MutableList<String>,
+    ): JavaRuntimePackage? {
+        val (major, os, architecture) = target
+        for (type in types) {
+            try {
+                val packageInfo =
+                    if (vendor == "zulu") {
+                        zulu(major, os, architecture, type)
+                    } else {
+                        adoptium(major, os, architecture, type)
+                    }
+                packageInfo?.let { return it }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: IOException) {
+                recordPackageFailure(error, vendor, type, failures)
+            } catch (error: JsonParseException) {
+                recordPackageFailure(error, vendor, type, failures)
+            } catch (error: IllegalArgumentException) {
+                recordPackageFailure(error, vendor, type, failures)
+            } catch (error: IllegalStateException) {
+                recordPackageFailure(error, vendor, type, failures)
+            } catch (error: URISyntaxException) {
+                recordPackageFailure(error, vendor, type, failures)
+            }
+        }
+        return null
+    }
+
+    private fun recordPackageFailure(
+        error: Exception,
+        vendor: String,
+        type: String,
+        failures: MutableList<String>,
+    ) {
+        val title = if (vendor == "zulu") "Zulu" else "Temurin"
+        failures += "$title ${type.uppercase()}：${error.message ?: "查询失败"}"
+    }
+
+    private fun selectZuluCandidate(
+        packages: List<JsonObject>,
+        zuluOs: String,
+        arch: String,
+        imageType: String,
+    ): JsonObject? {
+        // Azul 的文件名形如 zulu21.54.107-ca-jre21.0.13-win_x64.zip：平台段用 '-' 与前缀分隔。
+        val platformTag =
+            when (zuluOs) {
+                "windows" -> "win"
+                "linux" -> "linux"
+                "macos" -> "macosx"
+                else -> zuluOs
+            }
+        return packages.firstOrNull { packageJson ->
+            val name = packageJson.string("name").lowercase()
+            name.contains("-$imageType") &&
+                !name.contains("-fx-") &&
+                !name.contains("-musl") &&
+                !name.contains("_musl") &&
+                !name.contains("-crac-") &&
+                name.contains("-$platformTag" + "_$arch.")
+        }
     }
 
     /**
@@ -138,24 +199,7 @@ internal class JavaRuntimePackages(
                 "&javafx_bundled=false&release_status=ga&availability_types=CA" +
                 "&certifications=tck&page_size=100&latest=true"
         val packages = network.json(query).asJsonArray.map { it.asJsonObject }
-        // Azul 的文件名形如 zulu21.54.107-ca-jre21.0.13-win_x64.zip：平台段用 '-' 与前缀分隔。
-        val platformTag =
-            when (zuluOs) {
-                "windows" -> "win"
-                "linux" -> "linux"
-                "macos" -> "macosx"
-                else -> zuluOs
-            }
-        val candidate =
-            packages.firstOrNull { packageJson ->
-                val name = packageJson.string("name").lowercase()
-                name.contains("-$imageType") &&
-                    !name.contains("-fx-") &&
-                    !name.contains("-musl") &&
-                    !name.contains("_musl") &&
-                    !name.contains("-crac-") &&
-                    name.contains("-$platformTag" + "_$arch.")
-            } ?: return null
+        val candidate = selectZuluCandidate(packages, zuluOs, arch, imageType) ?: return null
         val uuid = candidate.string("package_uuid")
         require(uuid.matches(Regex("[a-fA-F0-9-]{36}"))) { "Zulu 返回的包标识无效" }
         val details =
@@ -171,7 +215,7 @@ internal class JavaRuntimePackages(
         require(URI(url).rawPath.startsWith("/zulu/bin/")) { "Zulu 下载地址路径异常" }
         require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) { "Zulu 未提供有效的 SHA-256" }
         require(size > 0) { "Zulu 未提供安装包大小" }
-        require(bits == if (arch == "x86") 32 else 64) { "Zulu 安装包位数与平台不符" }
+        require(bits == if (arch == "x86") ZULU_X86_BITS else ZULU_X64_BITS) { "Zulu 安装包位数与平台不符" }
         return JavaRuntimePackage(
             urls = listOf(url),
             sha256 = checksum,
@@ -181,11 +225,11 @@ internal class JavaRuntimePackages(
             version = version,
             fileName = details.string("name"),
             sourceUrl = url,
-            sourceLabel = "官方源（Azul）",
+            sourceLabel = "Azul",
         )
     }
 
-    /** Temurin 只在 Zulu 没有对应构建时使用；只走 Adoptium 官方，不再有国内镜像分支。 */
+    /** 从 Adoptium 官方 API 查询 Temurin 构建。 */
     private suspend fun adoptium(
         major: Int,
         os: String,
@@ -223,7 +267,7 @@ internal class JavaRuntimePackages(
             version = version,
             fileName = name,
             sourceUrl = url,
-            sourceLabel = "官方源（Temurin）",
+            sourceLabel = "Adoptium",
         )
     }
 
@@ -232,17 +276,19 @@ internal class JavaRuntimePackages(
         const val ZULU_METADATA_PROBE =
             "https://api.azul.com/metadata/v1/zulu/packages/?java_version=21&os=windows" +
                 "&arch=x64&archive_type=zip&java_package_type=jre&javafx_bundled=false" +
-                "&release_status=ga&availability_types=CA&certifications=tck&page_size=1&latest=true"
+                "&release_status=ga&availability_types=CA&certifications=tck" +
+                "&page_size=1&latest=true"
 
         const val ADOPTIUM_METADATA_PROBE = "https://api.adoptium.net/v3/info/available_releases"
     }
 }
 
-/** 安装进度里显示的来源名；只剩自动（测速）/ 官方源。 */
+/** 进度与设置使用同一套提供商名称。 */
 fun javaDownloadSourceLabel(value: String): String =
     when (normalizedJavaDownloadSource(value)) {
-        "official" -> "官方源"
-        else -> "自动（测速选最快官方源）"
+        "azul" -> "Azul"
+        "adoptium" -> "Adoptium"
+        else -> "自动"
     }
 
 /** 下载进度按当前真正尝试的地址显示来源；只剩 Azul / Temurin 两个官方主机。 */
@@ -250,13 +296,19 @@ internal fun javaDownloadUrlLabel(url: String): String =
     when (runCatching { URI(url).host.orEmpty() }.getOrDefault("")) {
         "cdn.azul.com",
         "api.azul.com",
-        -> "官方源（Azul）"
+        -> "Azul"
         "github.com",
         "objects.githubusercontent.com",
         "api.adoptium.net",
-        -> "官方源（Temurin）"
+        -> "Adoptium"
         else -> "官方源"
     }
 
 private fun com.google.gson.JsonObject.longOrZero(key: String): Long =
     runCatching { get(key)?.takeUnless { it.isJsonNull }?.asLong ?: 0L }.getOrDefault(0L)
+
+private data class JavaPackageTarget(
+    val major: Int,
+    val os: String,
+    val architecture: String,
+)

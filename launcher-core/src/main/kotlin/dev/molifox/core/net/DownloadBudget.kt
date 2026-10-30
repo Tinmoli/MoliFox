@@ -9,6 +9,9 @@ import kotlinx.coroutines.sync.Semaphore
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** 字节换算到 KiB 的进制；日志里的 MB 用浮点除法，保留一位小数。 */
+private const val KIBIBYTE_BYTES = 1024.0
+
 /** 单任务下载预算：并发数 × 平均文件大小不超过该值。 */
 const val DOWNLOAD_BUDGET_BYTES = 256L * 1024 * 1024
 
@@ -40,7 +43,7 @@ fun downloadConcurrency(
 }
 
 private fun megabytes(bytes: Long): String =
-    String.format(Locale.ROOT, "%.1f MB", bytes / 1024.0 / 1024.0)
+    String.format(Locale.ROOT, "%.1f MB", bytes / KIBIBYTE_BYTES / KIBIBYTE_BYTES)
 
 /**
  * 传输闸门：总许可 = 请求的并发数，每个文件按大小占用多份许可，因此

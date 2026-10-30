@@ -1,28 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 内容结果区：结果列表 / 网格、结果行与卡片、分页、空状态与首屏骨架。
+// 内容结果区：结果列表 / 网格、结果行与卡片、分页与空状态。
 
 package dev.molifox.desktop.content
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,7 +47,6 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FilterAlt
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.SearchOff
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -63,7 +58,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,68 +79,6 @@ import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.hoverHighlight
 import dev.molifox.desktop.pressScale
 import kotlinx.coroutines.launch
-
-/** 骨架：28dp 环 + 3 行灰条，稳定占位，避免整页在加载与结果之间跳动。 */
-@Composable
-private fun SkeletonResults() {
-    val alpha =
-        if (LocalAnimationsEnabled.current) {
-            val transition = rememberInfiniteTransition(label = "skeleton")
-            val value by
-                transition.animateFloat(
-                    0.45f,
-                    0.9f,
-                    infiniteRepeatable(tween(760), RepeatMode.Reverse),
-                    label = "skeleton-alpha",
-                )
-            value
-        } else {
-            0.6f
-        }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "正在检索资源…",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        repeat(3) { SkeletonRow(alpha) }
-    }
-}
-
-@Composable
-private fun SkeletonRow(alpha: Float) {
-    val bar = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .18f * alpha)
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(bar))
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Box(
-                Modifier
-                    .fillMaxWidth(.45f)
-                    .height(12.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(bar),
-            )
-            Box(
-                Modifier
-                    .fillMaxWidth(.8f)
-                    .height(9.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(bar),
-            )
-        }
-    }
-}
 
 /** 列表结果行：图标 40/44 + 两行文字 + 标签 + 安装，整行 56dp，悬停淡入、按压缩放。 */
 @Composable
@@ -353,20 +285,44 @@ internal fun ColumnScope.ContentResultsSection(
                 else -> list
             }
         }
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
-    val scope = rememberCoroutineScope()
-    val scrolled =
-        if (listView) {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        } else {
-            gridState.firstVisibleItemIndex > 0
-        }
-    val goTop: () -> Unit = {
-        scope.launch {
-            if (listView) listState.animateScrollToItem(0) else gridState.animateScrollToItem(0)
-        }
-    }
+    ResultsHeader(
+        result = result,
+        query = query,
+        loading = loading,
+        loadedOnce = loadedOnce,
+        offset = offset,
+        listView = listView,
+        onListViewChange = onListViewChange,
+    )
+    ContentResultsBody(
+        result = result,
+        hits = hits,
+        loading = loading,
+        loadedOnce = loadedOnce,
+        error = error,
+        listView = listView,
+        query = query,
+        showAuthors = showAuthors,
+        showDescriptions = showDescriptions,
+        onOpen = onOpen,
+        onRetry = onRetry,
+        onClearQuery = onClearQuery,
+        actions = actions,
+    )
+    ResultsPager(result, offset, onOffsetChange)
+}
+
+/** 统计行：结果数、当前搜索词、页码、列表/网格切换，以及翻页时的细进度条。 */
+@Composable
+private fun ResultsHeader(
+    result: ContentSearch,
+    query: String,
+    loading: Boolean,
+    loadedOnce: Boolean,
+    offset: Int,
+    listView: Boolean,
+    onListViewChange: (Boolean) -> Unit,
+) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
             if (loading && !loadedOnce) "正在检索资源…" else "共 ${result.total} 个结果",
@@ -392,50 +348,45 @@ internal fun ColumnScope.ContentResultsSection(
         ViewToggle(listView, onListViewChange)
     }
     if (loading && loadedOnce) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+}
+
+/** 结果区主体：骨架、错误、空状态、列表或网格，以及右下角的回到顶部。 */
+@Composable
+private fun ColumnScope.ContentResultsBody(
+    result: ContentSearch,
+    hits: List<ContentHit>,
+    loading: Boolean,
+    loadedOnce: Boolean,
+    error: String?,
+    listView: Boolean,
+    query: String,
+    showAuthors: Boolean,
+    showDescriptions: Boolean,
+    onOpen: (ContentHit) -> Unit,
+    onRetry: () -> Unit,
+    onClearQuery: () -> Unit,
+    actions: UiActions,
+) {
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val scrolled =
+        if (listView) {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        } else {
+            gridState.firstVisibleItemIndex > 0
+        }
+    val goTop: () -> Unit = {
+        scope.launch {
+            if (listView) listState.animateScrollToItem(0) else gridState.animateScrollToItem(0)
+        }
+    }
     Box(Modifier.weight(1f).fillMaxWidth()) {
         when {
             loading && !loadedOnce -> SkeletonResults()
-            error != null -> {
-                val failure = error.orEmpty()
-                Panel(Modifier.fillMaxWidth()) {
-                    // 映射失败不是网络问题：标题要区分，正文保留具体阶段与响应片段。
-                    EmptyState(
-                        if (failure.startsWith("CurseForge")) {
-                            "资源库返回的数据无法识别"
-                        } else {
-                            "暂时无法连接资源库"
-                        },
-                        failure,
-                        Icons.Outlined.CloudOff,
-                    ) {
-                        TextButton(onRetry) { Text("重试") }
-                    }
-                }
-            }
-            result.hits.isEmpty() ->
-                Box(
-                    Modifier.fillMaxWidth().fillMaxHeight(),
-                    contentAlignment = Alignment.TopCenter,
-                ) {
-                    EmptyState(
-                        "没有找到合适的资源",
-                        "试试英文名称，或切换游戏版本与加载器。",
-                        Icons.Outlined.SearchOff,
-                    ) {
-                        if (query.isNotBlank()) TextButton(onClearQuery) { Text("清除搜索条件") }
-                    }
-                }
-            hits.isEmpty() ->
-                Box(
-                    Modifier.fillMaxWidth().fillMaxHeight(),
-                    contentAlignment = Alignment.TopCenter,
-                ) {
-                    EmptyState(
-                        "没有符合筛选条件的资源",
-                        "换个关键词或清除筛选条件。",
-                        Icons.Outlined.FilterAlt,
-                    )
-                }
+            error != null -> SearchErrorPanel(error.orEmpty(), onRetry)
+            result.hits.isEmpty() -> NoResultsState(query, onClearQuery)
+            hits.isEmpty() -> FilteredEmptyState()
             listView ->
                 LazyColumn(
                     Modifier.fillMaxSize(),
@@ -477,20 +428,90 @@ internal fun ColumnScope.ContentResultsSection(
                     }
                 }
         }
-        if (LocalAnimationsEnabled.current) {
-            // 显式写全名：外层是 ColumnScope，否则会解析到 ColumnScope.AnimatedVisibility 扩展。
-            androidx.compose.animation.AnimatedVisibility(
-                visible = scrolled,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                enter = fadeIn(tween(120)) + slideInVertically(tween(150)) { it / 2 },
-                exit = fadeOut(tween(90)) + slideOutVertically(tween(120)) { it / 2 },
-            ) {
-                GoTopButton(goTop)
-            }
-        } else if (scrolled) {
-            Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { GoTopButton(goTop) }
+        GoTopOverlay(scrolled, goTop)
+    }
+}
+
+/** 映射失败不是网络问题：标题要区分，正文保留具体阶段与响应片段。 */
+@Composable
+private fun SearchErrorPanel(
+    failure: String,
+    onRetry: () -> Unit,
+) {
+    Panel(Modifier.fillMaxWidth()) {
+        EmptyState(
+            if (failure.startsWith("CurseForge")) {
+                "资源库返回的数据无法识别"
+            } else {
+                "暂时无法连接资源库"
+            },
+            failure,
+            Icons.Outlined.CloudOff,
+        ) {
+            TextButton(onRetry) { Text("重试") }
         }
     }
+}
+
+@Composable
+private fun NoResultsState(
+    query: String,
+    onClearQuery: () -> Unit,
+) {
+    Box(
+        Modifier.fillMaxWidth().fillMaxHeight(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        EmptyState(
+            "没有找到合适的资源",
+            "试试英文名称，或切换游戏版本与加载器。",
+            Icons.Outlined.SearchOff,
+        ) {
+            if (query.isNotBlank()) TextButton(onClearQuery) { Text("清除搜索条件") }
+        }
+    }
+}
+
+@Composable
+private fun FilteredEmptyState() {
+    Box(
+        Modifier.fillMaxWidth().fillMaxHeight(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        EmptyState(
+            "没有符合筛选条件的资源",
+            "换个关键词或清除筛选条件。",
+            Icons.Outlined.FilterAlt,
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.GoTopOverlay(
+    scrolled: Boolean,
+    goTop: () -> Unit,
+) {
+    if (LocalAnimationsEnabled.current) {
+        // 显式写全名：外层是 ColumnScope，否则会解析到 ColumnScope.AnimatedVisibility 扩展。
+        androidx.compose.animation.AnimatedVisibility(
+            visible = scrolled,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            enter = fadeIn(tween(120)) + slideInVertically(tween(150)) { it / 2 },
+            exit = fadeOut(tween(90)) + slideOutVertically(tween(120)) { it / 2 },
+        ) {
+            GoTopButton(goTop)
+        }
+    } else if (scrolled) {
+        Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { GoTopButton(goTop) }
+    }
+}
+
+@Composable
+private fun ResultsPager(
+    result: ContentSearch,
+    offset: Int,
+    onOffsetChange: (Int) -> Unit,
+) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         MutedText("每页 12 条 · 共 ${result.total} 个资源", Modifier)
         Spacer(Modifier.weight(1f))

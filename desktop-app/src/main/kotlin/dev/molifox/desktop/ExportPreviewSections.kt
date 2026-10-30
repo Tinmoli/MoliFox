@@ -115,20 +115,7 @@ internal fun ExportPreviewSection(
 ) {
     with(state) {
         when {
-            loading ->
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    MutedText(
-                        when (format) {
-                            PackExportFormat.Modrinth -> "正在读取实例文件并匹配下载来源…"
-                            PackExportFormat.CurseForge -> "正在读取实例文件并匹配 CurseForge 编号…"
-                            else -> "正在读取实例文件…"
-                        },
-                    )
-                }
+            loading -> ExportLoadingSection(format)
             totalFiles == null ->
                 Panel(Modifier.fillMaxWidth()) {
                     EmptyState(
@@ -148,59 +135,7 @@ internal fun ExportPreviewSection(
                     )
                 }
             else -> {
-                SettingsSection(
-                    "预览",
-                    when (format) {
-                        PackExportFormat.Backup ->
-                            "只读扫描实例目录；日志与崩溃报告仅在勾选后写入，疑似含登录凭据的日志会跳过。"
-                        PackExportFormat.CurseForge ->
-                            "只读扫描实例目录并联网匹配 CurseForge 文件编号；导出时复核文件哈希。"
-                        PackExportFormat.Modrinth ->
-                            "只读扫描实例目录并联网核对下载地址；导出时按同一份快照复核文件哈希。"
-                        else -> "只读扫描实例目录；导出时复核文件哈希，将选中内容写入包内。"
-                    },
-                ) {
-                    SettingRow(
-                        "将包含的文件",
-                        "按上方勾选的顶层内容写入；未勾选的文件夹整段不写入",
-                    ) {
-                        Text("$selectedFiles / $totalFiles 个", fontSize = 13.sp)
-                    }
-                    if (format == PackExportFormat.Modrinth) {
-                        SettingRow("导入时联网下载", "只写入下载链接，包里不含这些文件的内容") {
-                            Text("$downloads 个", fontSize = 13.sp)
-                        }
-                    }
-                    if (format == PackExportFormat.CurseForge) {
-                        SettingRow(
-                            "写入受管清单",
-                            if (managedFiles ==
-                                0
-                            ) {
-                                "没有匹配到 CurseForge 编号；全部内容放进 overrides/，不会自动更新"
-                            } else {
-                                "已匹配 projectID/fileID；未匹配内容放进 overrides/"
-                            },
-                        ) {
-                            Text("$managedFiles 个", fontSize = 13.sp)
-                        }
-                    }
-                    if (format != PackExportFormat.Backup) {
-                        SettingRow(
-                            "按本地文件分发",
-                            if (localResources == 0) {
-                                "模组、资源包和光影都匹配到了下载来源"
-                            } else {
-                                "这些模组、资源包或光影会原样写入包内"
-                            },
-                        ) {
-                            Text(
-                                "${if (options.includeLocalResources) localResources else 0} 个",
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
-                }
+                ExportPreviewStatistics(state)
                 SettingsSection("导出选项", "在已勾选内容的基础上进一步筛选写入的文件。") {
                     ExportOptionRow(
                         "仅保留已启用的模组",
@@ -213,33 +148,132 @@ internal fun ExportPreviewSection(
                         !exporting,
                     ) { onOptionsChange(options.copy(enabledModsOnly = it)) }
                 }
-                if (format == PackExportFormat.Backup) {
-                    Text(
-                        "这是完整备份，不是可导入的整合包：其他启动器不会把它识别成整合包，只用于还原或留档。" +
-                            "游戏运行库（assets / libraries / versions）与启动器私有数据不会写入。",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else if (localResources > 0) {
-                    ExportOptionRow(
-                        "确认有权打包这些本地资源（$localResources 个）",
-                        "未走下载清单的模组、资源包或光影会原样写入包内；取消勾选则不含。",
-                        options.includeLocalResources,
-                        !exporting,
-                    ) { onOptionsChange(options.copy(includeLocalResources = it)) }
+                ExportAdditionalOptions(
+                    format = format,
+                    localResources = localResources,
+                    disabledMods = disabledMods,
+                    options = options,
+                    exporting = exporting,
+                    warnings = warnings,
+                    onOptionsChange = onOptionsChange,
+                )
+            }
+        }
+    }
+}
+
+/** 预览阶段的进度提示：不同目标格式匹配的内容不同，文案随之变化。 */
+@Composable
+private fun ExportLoadingSection(format: PackExportFormat) {
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        MutedText(
+            when (format) {
+                PackExportFormat.Modrinth -> "正在读取实例文件并匹配下载来源…"
+                PackExportFormat.CurseForge -> "正在读取实例文件并匹配 CurseForge 编号…"
+                else -> "正在读取实例文件…"
+            },
+        )
+    }
+}
+
+/** 统计下方的补充选项与提示：备份说明、本地资源授权、禁用模组与警告列表。 */
+@Composable
+private fun ExportAdditionalOptions(
+    format: PackExportFormat,
+    localResources: Int,
+    disabledMods: Int,
+    options: PackExportOptions,
+    exporting: Boolean,
+    warnings: List<String>,
+    onOptionsChange: (PackExportOptions) -> Unit,
+) {
+    if (format == PackExportFormat.Backup) {
+        Text(
+            "这是完整备份，不是可导入的整合包：其他启动器不会把它识别成整合包，只用于还原或留档。" +
+                "游戏运行库（assets / libraries / versions）与启动器私有数据不会写入。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else if (localResources > 0) {
+        ExportOptionRow(
+            "确认有权打包这些本地资源（$localResources 个）",
+            "未走下载清单的模组、资源包或光影会原样写入包内；取消勾选则不含。",
+            options.includeLocalResources,
+            !exporting,
+        ) { onOptionsChange(options.copy(includeLocalResources = it)) }
+    }
+    if (options.enabledModsOnly && disabledMods > 0) {
+        Text(
+            "已排除 $disabledMods 个禁用的模组文件。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    warnings.forEach { warning ->
+        Text(
+            warning,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ExportPreviewStatistics(state: ExportPreviewState) {
+    with(state) {
+        SettingsSection(
+            "预览",
+            when (format) {
+                PackExportFormat.Backup ->
+                    "只读扫描实例目录；日志与崩溃报告仅在勾选后写入，疑似含登录凭据的日志会跳过。"
+                PackExportFormat.CurseForge ->
+                    "只读扫描实例目录并联网匹配 CurseForge 文件编号；导出时复核文件哈希。"
+                PackExportFormat.Modrinth ->
+                    "只读扫描实例目录并联网核对下载地址；导出时按同一份快照复核文件哈希。"
+                else -> "只读扫描实例目录；导出时复核文件哈希，将选中内容写入包内。"
+            },
+        ) {
+            SettingRow(
+                "将包含的文件",
+                "按上方勾选的顶层内容写入；未勾选的文件夹整段不写入",
+            ) {
+                Text("$selectedFiles / $totalFiles 个", fontSize = 13.sp)
+            }
+            if (format == PackExportFormat.Modrinth) {
+                SettingRow("导入时联网下载", "只写入下载链接，包里不含这些文件的内容") {
+                    Text("$downloads 个", fontSize = 13.sp)
                 }
-                if (options.enabledModsOnly && disabledMods > 0) {
-                    Text(
-                        "已排除 $disabledMods 个禁用的模组文件。",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            }
+            if (format == PackExportFormat.CurseForge) {
+                SettingRow(
+                    "写入受管清单",
+                    if (managedFiles ==
+                        0
+                    ) {
+                        "没有匹配到 CurseForge 编号；全部内容放进 overrides/，不会自动更新"
+                    } else {
+                        "已匹配 projectID/fileID；未匹配内容放进 overrides/"
+                    },
+                ) {
+                    Text("$managedFiles 个", fontSize = 13.sp)
                 }
-                warnings.forEach { warning ->
+            }
+            if (format != PackExportFormat.Backup) {
+                SettingRow(
+                    "按本地文件分发",
+                    if (localResources == 0) {
+                        "模组、资源包和光影都匹配到了下载来源"
+                    } else {
+                        "这些模组、资源包或光影会原样写入包内"
+                    },
+                ) {
                     Text(
-                        warning,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "${if (options.includeLocalResources) localResources else 0} 个",
+                        fontSize = 13.sp,
                     )
                 }
             }

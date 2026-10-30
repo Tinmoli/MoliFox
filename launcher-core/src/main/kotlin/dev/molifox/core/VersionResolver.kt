@@ -11,6 +11,13 @@ import com.google.gson.JsonObject
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
+/** 版本继承最多回溯的层数；达到上限说明配置成环或层级异常。 */
+private const val MAX_INHERITANCE_DEPTH = 20
+
+/** Maven 坐标 `group:artifact:version[:classifier]` 的段数范围。 */
+private const val MAVEN_COORDINATE_MIN_PARTS = 3
+private const val MAVEN_COORDINATE_MAX_PARTS = 4
+
 data class ResolvedProfile(
     val id: String,
     val jarId: String,
@@ -59,7 +66,7 @@ class VersionResolver(
         chain: Set<String> = emptySet(),
     ): ResolvedProfile {
         safeFilename(id)
-        require(id !in chain && chain.size < 20) { "游戏版本继承出现循环" }
+        require(id !in chain && chain.size < MAX_INHERITANCE_DEPTH) { "游戏版本继承出现循环" }
         val child = readObject(root.resolve("versions").resolve(id).resolve("$id.json"))
         val parentId = child.string("inheritsFrom")
         if (parentId.isBlank()) return ResolvedProfile(id, child.string("jar", id), child)
@@ -234,30 +241,37 @@ fun rulesAllow(
     var result = false
     for (entry in rules) {
         val rule = entry.asJsonObject
-        val restriction = rule.obj("os")
-        if (restriction.has("name") && restriction.string("name") != os) continue
-        if (
-            restriction.has("arch") &&
-            !Regex(restriction.string("arch")).containsMatchIn(architecture)
-        ) {
-            continue
+        // 只有与当前系统、版本和特性都匹配的条目才改写结果，其余条目直接忽略。
+        if (ruleApplies(rule, os, architecture, osVersion, features)) {
+            result = rule.string("action") == "allow"
         }
-        if (
-            restriction.has("version") &&
-            !Regex(restriction.string("version")).containsMatchIn(osVersion)
-        ) {
-            continue
-        }
-        if (
-            rule.obj("features").entrySet().any { (key, value) ->
-                (features[key] ?: false) != value.asBoolean
-            }
-        ) {
-            continue
-        }
-        result = rule.string("action") == "allow"
     }
     return result
+}
+
+/** 条目规则是否作用于当前系统；判断顺序与原逐条 `continue` 一致，正则校验保持短路。 */
+private fun ruleApplies(
+    rule: JsonObject,
+    os: String,
+    architecture: String,
+    osVersion: String,
+    features: Map<String, Boolean>,
+): Boolean {
+    val restriction = rule.obj("os")
+    return (
+        (!restriction.has("name") || restriction.string("name") == os) &&
+            (
+                !restriction.has("arch") ||
+                    Regex(restriction.string("arch")).containsMatchIn(architecture)
+            ) &&
+            (
+                !restriction.has("version") ||
+                    Regex(restriction.string("version")).containsMatchIn(osVersion)
+            ) &&
+            rule.obj("features").entrySet().none { (key, value) ->
+                (features[key] ?: false) != value.asBoolean
+            }
+    )
 }
 
 fun mavenPath(
@@ -267,7 +281,7 @@ fun mavenPath(
     val extension = coordinate.substringAfter('@', "jar")
     val parts = coordinate.substringBefore('@').split(':')
     require(
-        parts.size in 3..4 &&
+        parts.size in MAVEN_COORDINATE_MIN_PARTS..MAVEN_COORDINATE_MAX_PARTS &&
             parts.none { it.isBlank() } &&
             extension.matches(Regex("[a-zA-Z0-9]+")),
     ) {
@@ -291,27 +305,33 @@ internal fun expandArguments(
         if (argument.isJsonPrimitive) {
             result += substitute(argument.asString, values)
         } else {
-            val objectArgument = argument.asJsonObject
-            if (
-                !rulesAllow(
-                    objectArgument.getAsJsonArray("rules"),
-                    platform.osName,
-                    System.getProperty("os.arch"),
-                    System.getProperty("os.version"),
-                    features,
-                )
-            ) {
-                continue
-            }
-            val value = objectArgument.get("value") ?: continue
-            if (value.isJsonArray) {
-                value.asJsonArray.forEach { result += substitute(it.asString, values) }
-            } else {
-                result += substitute(value.asString, values)
-            }
+            argumentValue(argument.asJsonObject, values, platform, features)?.let { result += it }
         }
     }
     return result
+}
+
+/** 带规则的条件参数；不适用于当前系统或缺少 `value` 时返回 null。 */
+private fun argumentValue(
+    objectArgument: JsonObject,
+    values: Map<String, String>,
+    platform: PlatformServices,
+    features: Map<String, Boolean>,
+): List<String>? {
+    val applies =
+        rulesAllow(
+            objectArgument.getAsJsonArray("rules"),
+            platform.osName,
+            System.getProperty("os.arch"),
+            System.getProperty("os.version"),
+            features,
+        )
+    val value = if (applies) objectArgument.get("value") else null
+    return when {
+        value == null -> null
+        value.isJsonArray -> value.asJsonArray.map { substitute(it.asString, values) }
+        else -> listOf(substitute(value.asString, values))
+    }
 }
 
 internal fun substitute(

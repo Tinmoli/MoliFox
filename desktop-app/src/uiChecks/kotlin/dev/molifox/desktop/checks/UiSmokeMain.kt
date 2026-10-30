@@ -23,6 +23,7 @@ import dev.molifox.desktop.AppHeader
 import dev.molifox.desktop.MoliApp
 import dev.molifox.desktop.MoliTheme
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.platform.nativeWindowTransparencySupported
 import java.awt.EventQueue
 import java.awt.event.WindowEvent
 import java.nio.file.Path
@@ -48,6 +49,7 @@ fun main() {
                 onCloseRequest = ::exitApplication,
                 title = "MoliFox UI Checks",
                 undecorated = true,
+                transparent = remember { nativeWindowTransparencySupported() },
                 state =
                     rememberWindowState(
                         width = 1180.dp,
@@ -123,6 +125,13 @@ private fun runScenarios(
 ) {
     ui.await("首页可操作") { ui.exists("版本设置") }
     ui.capture("home")
+    if (java.lang.Boolean.getBoolean("molifox.ui.refinements")) {
+        checkAppearanceRefinements(ui, fixture)
+        passed += "appearance-scale-transparency-fonts-dropdowns"
+        checkStartupErrorDialog(ui, fixture)
+        passed += "startup-error-window"
+        return
+    }
     val scenarios =
         listOf<Pair<String, () -> Unit>>(
             "account-input-and-persistence" to { checkAccount(ui, fixture) },

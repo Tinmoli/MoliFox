@@ -18,12 +18,17 @@ internal class FixturePlatform(
 ) : PlatformServices {
     override val osName = "windows"
     override val architecture = "x86_64"
-    override val javaExecutable =
+
+    // 与真实平台一致：javaExecutable 只是文件名，扫描时由调用方拼到 bin/ 下。
+    override val javaExecutable = "java.exe"
+
+    /** 本机正在运行的 Java 完整路径；仅作为「已配置的 Java」写入设置。 */
+    val javaPath: String =
         Path
             .of(
                 System.getProperty("java.home"),
                 "bin",
-                "java.exe",
+                javaExecutable,
             ).toString()
     override val classpathSeparator = ";"
     override val totalMemoryMb = 8192

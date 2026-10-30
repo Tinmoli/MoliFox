@@ -51,6 +51,21 @@ import org.jetbrains.skia.Image as SkiaImage
 /** 背景快照的缩小倍数：整图按 1/8 缩小后模糊，绘制时再把对应区域放大回面板尺寸。 */
 private const val SNAPSHOT_DIVISOR = 8
 
+/** 模糊半径 = 缩略图短边 / 该值：同一张图在任何窗口尺寸下模糊观感一致。 */
+private const val BLUR_RADIUS_DIVISOR = 24
+
+/** 方框模糊的遍数：三遍叠加足够接近高斯，且在 1/8 的缩略图上只需几毫秒。 */
+private const val BLUR_PASS_COUNT = 3
+
+/** ARGB 像素里各通道的位偏移。 */
+private const val ALPHA_SHIFT = 24
+private const val RED_SHIFT = 16
+private const val GREEN_SHIFT = 8
+
+/** 单个 8 位颜色通道的掩码与上限。 */
+private const val CHANNEL_MASK = 0xFF
+private const val CHANNEL_MAX = 255
+
 /** 模糊后的背景图缩略图（1/8、RGBA 像素）：只跟背景图片有关，可跨主题 / 背景浓度复用。 */
 private class BlurredWallpaper(
     val pixels: IntArray,
@@ -102,7 +117,7 @@ private fun buildWallpaper(path: String): BlurredWallpaper? {
     }
     val pixels = scaled.getRGB(0, 0, width, height, null, 0, width)
     // 半径按短边取比例：同一张图在任何窗口尺寸下模糊观感一致。
-    boxBlur(pixels, width, height, max(2, min(width, height) / 24))
+    boxBlur(pixels, width, height, max(2, min(width, height) / BLUR_RADIUS_DIVISOR))
     return BlurredWallpaper(pixels, width, height)
 }
 
@@ -123,15 +138,15 @@ private fun compositeSnapshot(
     val pixels = IntArray(wallpaper.pixels.size)
     for (index in pixels.indices) {
         val pixel = wallpaper.pixels[index]
-        val alpha = (pixel ushr 24) and 0xFF
-        val red = baseRed * keep + ((pixel ushr 16) and 0xFF) * take
-        val green = baseGreen * keep + ((pixel ushr 8) and 0xFF) * take
-        val blue = baseBlue * keep + (pixel and 0xFF) * take
+        val alpha = (pixel ushr ALPHA_SHIFT) and CHANNEL_MASK
+        val red = baseRed * keep + ((pixel ushr RED_SHIFT) and CHANNEL_MASK) * take
+        val green = baseGreen * keep + ((pixel ushr GREEN_SHIFT) and CHANNEL_MASK) * take
+        val blue = baseBlue * keep + (pixel and CHANNEL_MASK) * take
         pixels[index] =
-            (alpha shl 24) or
-            (red.roundToInt().coerceIn(0, 255) shl 16) or
-            (green.roundToInt().coerceIn(0, 255) shl 8) or
-            blue.roundToInt().coerceIn(0, 255)
+            (alpha shl ALPHA_SHIFT) or
+            (red.roundToInt().coerceIn(0, CHANNEL_MAX) shl RED_SHIFT) or
+            (green.roundToInt().coerceIn(0, CHANNEL_MAX) shl GREEN_SHIFT) or
+            blue.roundToInt().coerceIn(0, CHANNEL_MAX)
     }
     return encodeSnapshot(pixels, wallpaper.width, wallpaper.height)
 }
@@ -163,7 +178,7 @@ private fun boxBlur(
 ) {
     if (radius <= 0) return
     val scratch = IntArray(pixels.size)
-    repeat(3) {
+    repeat(BLUR_PASS_COUNT) {
         blurPass(pixels, scratch, width, height, radius, horizontal = true)
         blurPass(scratch, pixels, width, height, radius, horizontal = false)
     }
@@ -179,27 +194,28 @@ private fun blurPass(
     horizontal: Boolean,
 ) {
     val span = radius * 2 + 1
-    for (y in 0 until height) {
-        for (x in 0 until width) {
-            var alpha = 0
-            var red = 0
-            var green = 0
-            var blue = 0
-            for (step in -radius..radius) {
-                val sx = if (horizontal) (x + step).coerceIn(0, width - 1) else x
-                val sy = if (horizontal) y else (y + step).coerceIn(0, height - 1)
-                val pixel = src[sy * width + sx]
-                alpha += (pixel ushr 24) and 0xFF
-                red += (pixel ushr 16) and 0xFF
-                green += (pixel ushr 8) and 0xFF
-                blue += pixel and 0xFF
-            }
-            dst[y * width + x] =
-                ((alpha / span) shl 24) or
-                ((red / span) shl 16) or
-                ((green / span) shl 8) or
-                (blue / span)
+    // 一维下标即 (y * width + x)：单层遍历取代双层循环，少一层嵌套且写入顺序不变。
+    for (index in 0 until width * height) {
+        val x = index % width
+        val y = index / width
+        var alpha = 0
+        var red = 0
+        var green = 0
+        var blue = 0
+        for (step in -radius..radius) {
+            val sx = if (horizontal) (x + step).coerceIn(0, width - 1) else x
+            val sy = if (horizontal) y else (y + step).coerceIn(0, height - 1)
+            val pixel = src[sy * width + sx]
+            alpha += (pixel ushr ALPHA_SHIFT) and CHANNEL_MASK
+            red += (pixel ushr RED_SHIFT) and CHANNEL_MASK
+            green += (pixel ushr GREEN_SHIFT) and CHANNEL_MASK
+            blue += pixel and CHANNEL_MASK
         }
+        dst[index] =
+            ((alpha / span) shl ALPHA_SHIFT) or
+            ((red / span) shl RED_SHIFT) or
+            ((green / span) shl GREEN_SHIFT) or
+            (blue / span)
     }
 }
 
@@ -246,48 +262,94 @@ private fun DrawScope.drawBackdropRegion(
     val imageWidth = bitmap.width.toFloat()
     val imageHeight = bitmap.height.toFloat()
     if (imageWidth <= 0f || imageHeight <= 0f) return
-    val scaleX: Float
-    val scaleY: Float
-    val offsetX: Float
-    val offsetY: Float
+    val placement =
+        backdropPlacement(imageWidth, imageHeight, windowWidth, windowHeight, fit, alignment)
+    val region = backdropRegion(bitmap, placement, panelLeft, panelTop, panelSize) ?: return
+    drawImage(
+        image = bitmap,
+        srcOffset = region.source,
+        srcSize = region.sourceSize,
+        dstOffset = region.target,
+        dstSize = region.targetSize,
+        filterQuality = FilterQuality.Low,
+    )
+}
+
+/** 背景图在窗口里的显示缩放与对齐偏移，对应 ContentScale 的 fit / stretch 规则。 */
+private data class BackdropPlacement(
+    val scaleX: Float,
+    val scaleY: Float,
+    val offsetX: Float,
+    val offsetY: Float,
+)
+
+/** 快照上的一块源区域与它在面板内的目标矩形（都是像素）。 */
+private data class BackdropRegion(
+    val source: IntOffset,
+    val sourceSize: IntSize,
+    val target: IntOffset,
+    val targetSize: IntSize,
+)
+
+/** 按 ContentScale 规则算缩放与居中/贴边偏移：`stretch` 各自铺满，`fit` / 其它按等比缩放。 */
+private fun backdropPlacement(
+    imageWidth: Float,
+    imageHeight: Float,
+    windowWidth: Float,
+    windowHeight: Float,
+    fit: String,
+    alignment: String,
+): BackdropPlacement {
     if (fit == "stretch") {
-        scaleX = windowWidth / imageWidth
-        scaleY = windowHeight / imageHeight
-        offsetX = 0f
-        offsetY = 0f
-    } else {
-        val scale =
-            if (fit == "fit") {
-                min(windowWidth / imageWidth, windowHeight / imageHeight)
-            } else {
-                max(windowWidth / imageWidth, windowHeight / imageHeight)
-            }
-        scaleX = scale
-        scaleY = scale
-        val freeX = windowWidth - imageWidth * scale
-        val freeY = windowHeight - imageHeight * scale
-        offsetX =
-            when {
-                alignment.endsWith("Left") -> 0f
-                alignment.endsWith("Right") -> freeX
-                else -> freeX / 2f
-            }
-        offsetY =
-            when {
-                alignment.startsWith("top") -> 0f
-                alignment.startsWith("bottom") -> freeY
-                else -> freeY / 2f
-            }
+        return BackdropPlacement(
+            scaleX = windowWidth / imageWidth,
+            scaleY = windowHeight / imageHeight,
+            offsetX = 0f,
+            offsetY = 0f,
+        )
     }
+    val scale =
+        if (fit == "fit") {
+            min(windowWidth / imageWidth, windowHeight / imageHeight)
+        } else {
+            max(windowWidth / imageWidth, windowHeight / imageHeight)
+        }
+    val freeX = windowWidth - imageWidth * scale
+    val freeY = windowHeight - imageHeight * scale
+    val offsetX =
+        when {
+            alignment.endsWith("Left") -> 0f
+            alignment.endsWith("Right") -> freeX
+            else -> freeX / 2f
+        }
+    val offsetY =
+        when {
+            alignment.startsWith("top") -> 0f
+            alignment.startsWith("bottom") -> freeY
+            else -> freeY / 2f
+        }
+    return BackdropPlacement(scaleX = scale, scaleY = scale, offsetX = offsetX, offsetY = offsetY)
+}
+
+/** 面板落在快照上的源区域与对应目标矩形；面板完全落在留白里时返回 null。 */
+private fun backdropRegion(
+    bitmap: ImageBitmap,
+    placement: BackdropPlacement,
+    panelLeft: Float,
+    panelTop: Float,
+    panelSize: Size,
+): BackdropRegion? {
+    val imageWidth = bitmap.width.toFloat()
+    val imageHeight = bitmap.height.toFloat()
     // 面板像素 → 快照像素：(窗口坐标 - 图片偏移) / 显示缩放。
-    val rawLeft = (panelLeft - offsetX) / scaleX
-    val rawRight = (panelLeft + panelSize.width - offsetX) / scaleX
-    val rawTop = (panelTop - offsetY) / scaleY
-    val rawBottom = (panelTop + panelSize.height - offsetY) / scaleY
+    val rawLeft = (panelLeft - placement.offsetX) / placement.scaleX
+    val rawRight = (panelLeft + panelSize.width - placement.offsetX) / placement.scaleX
+    val rawTop = (panelTop - placement.offsetY) / placement.scaleY
+    val rawBottom = (panelTop + panelSize.height - placement.offsetY) / placement.scaleY
     // 「完整显示」时图片两侧可能留白：面板完全落在留白里就不画，避免把边缘像素拉成一条色带。
     val outsideImage =
         rawRight <= 0f || rawLeft >= imageWidth || rawBottom <= 0f || rawTop >= imageHeight
-    if (outsideImage) return
+    if (outsideImage) return null
     val left = rawLeft.coerceIn(0f, imageWidth)
     val right = rawRight.coerceIn(0f, imageWidth)
     val top = rawTop.coerceIn(0f, imageHeight)
@@ -297,17 +359,15 @@ private fun DrawScope.drawBackdropRegion(
     val srcTop = top.roundToInt().coerceIn(0, bitmap.height - 1)
     val srcBottom = bottom.roundToInt().coerceIn(srcTop + 1, bitmap.height)
     // 快照像素 → 面板内的目标位置（保证放大后与背景完全对齐）。
-    val dstLeft = (srcLeft * scaleX + offsetX - panelLeft).roundToInt()
-    val dstTop = (srcTop * scaleY + offsetY - panelTop).roundToInt()
-    val dstWidth = ((srcRight - srcLeft) * scaleX).roundToInt().coerceAtLeast(1)
-    val dstHeight = ((srcBottom - srcTop) * scaleY).roundToInt().coerceAtLeast(1)
-    drawImage(
-        image = bitmap,
-        srcOffset = IntOffset(srcLeft, srcTop),
-        srcSize = IntSize(srcRight - srcLeft, srcBottom - srcTop),
-        dstOffset = IntOffset(dstLeft, dstTop),
-        dstSize = IntSize(dstWidth, dstHeight),
-        filterQuality = FilterQuality.Low,
+    val dstLeft = (srcLeft * placement.scaleX + placement.offsetX - panelLeft).roundToInt()
+    val dstTop = (srcTop * placement.scaleY + placement.offsetY - panelTop).roundToInt()
+    val dstWidth = ((srcRight - srcLeft) * placement.scaleX).roundToInt().coerceAtLeast(1)
+    val dstHeight = ((srcBottom - srcTop) * placement.scaleY).roundToInt().coerceAtLeast(1)
+    return BackdropRegion(
+        source = IntOffset(srcLeft, srcTop),
+        sourceSize = IntSize(srcRight - srcLeft, srcBottom - srcTop),
+        target = IntOffset(dstLeft, dstTop),
+        targetSize = IntSize(dstWidth, dstHeight),
     )
 }
 

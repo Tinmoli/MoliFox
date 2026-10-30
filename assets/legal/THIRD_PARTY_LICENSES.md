@@ -1,6 +1,6 @@
 # 第三方许可
 
-本页只列随程序分发或运行时下载的第三方组件。各组件保留其上游许可，具体条款以项目或许可原文为准。
+本页列出随程序分发或运行时下载的第三方组件，以及独立实现时参考的联机协议。各组件保留其上游许可，具体条款以项目或许可原文为准。
 
 | 组件 | 许可 | 用途 | 项目 / 许可链接 |
 | --- | --- | --- | --- |
@@ -20,5 +20,6 @@
 | miniz | MIT | 原生启动器的 ZIP 解压。 | https://github.com/richgel999/miniz |
 | Azul Zulu JRE | GPLv2 with Classpath Exception | 首次启动下载的 Java 运行时，许可全文在其 legal/ 目录。 | https://www.azul.com/downloads/ |
 | Eclipse Temurin JRE | GPLv2 with Classpath Exception | Zulu 不可用时下载的 Java 运行时，许可全文在其 legal/ 目录。 | https://adoptium.net/ |
+| Terracotta（陶瓦）联机核心 0.4.2 | AGPL-3.0 | 经用户确认后从官方发布页或其镜像下载并在独立进程中运行，按上游元数据校验 SHA-512；不打包其二进制、源码或素材，也不通过 JNI 链接。 | https://github.com/burningtnt/Terracotta |
 | JUnit 5 (Jupiter) | EPL-2.0 | 仅测试：单元测试框架。 | https://github.com/junit-team/junit |
 | MockWebServer / OkHttp TLS | Apache-2.0 | 仅测试：HTTP 与 TLS 模拟。 | https://github.com/square/okhttp |

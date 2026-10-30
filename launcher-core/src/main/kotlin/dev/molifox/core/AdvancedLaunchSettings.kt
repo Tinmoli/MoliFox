@@ -5,6 +5,10 @@
 
 package dev.molifox.core
 
+private const val MAX_EXTRA_JVM_ARGUMENT_CHARS = 4096
+private const val MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS = 3600
+private const val REDACTION_LENGTH_THRESHOLD = 5
+
 /**
  * An instance either inherits this whole group or owns an explicit copy, including empty values.
  */
@@ -26,7 +30,7 @@ fun effectiveLaunchSettings(
 ): AdvancedLaunchSettings = instance.advancedLaunch ?: settings.advancedLaunch
 
 internal fun validateExtraJvmArguments(value: String) {
-    require(value.length <= 4096) { "JVM 参数过长" }
+    require(value.length <= MAX_EXTRA_JVM_ARGUMENT_CHARS) { "JVM 参数过长" }
     extraJvmArguments(value)
 }
 
@@ -88,7 +92,9 @@ fun validateAdvancedLaunchSettings(
     os: String,
 ) {
     extraGameArguments(settings)
-    require(settings.commandTimeoutSeconds in 1..3600) { "命令超时需为 1–3600 秒" }
+    require(settings.commandTimeoutSeconds in 1..MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS) {
+        "命令超时需为 1–3600 秒"
+    }
     require(settings.launcherVisibility in setOf("", "keep", "minimize", "hide")) { "启动器显示方式无效" }
     for (
     (label, command) in
@@ -146,7 +152,7 @@ internal fun environmentSecrets(values: Map<String, String>): List<String> =
         .filterKeys {
             Regex("(?i)token|secret|password|credential|api.?key|authorization").containsMatchIn(it)
         }.values
-        .filter { it.length > 5 }
+        .filter { it.length > REDACTION_LENGTH_THRESHOLD }
 
 data class GameRunEvent(
     val id: String,

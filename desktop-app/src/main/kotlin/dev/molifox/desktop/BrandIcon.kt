@@ -54,30 +54,40 @@ internal fun importBrandIcon(
 ): Path {
     require(Files.isRegularFile(source)) { "请选择 PNG 或 JPEG 图片" }
     require(Files.size(source) in 1..BRAND_ICON_MAX_BYTES) { "图片不能超过 2 MB" }
-    val format =
-        ImageIO.createImageInputStream(source.toFile()).use { input ->
-            require(input != null) { "无法读取这张图片" }
-            val readers = ImageIO.getImageReaders(input)
-            require(readers.hasNext()) { "请选择 PNG 或 JPEG 图片" }
-            val reader = readers.next()
-            try {
-                reader.input = input
-                val name = reader.formatName.lowercase()
-                require(name in brandIconFormats) { "请选择 PNG 或 JPEG 图片" }
-                val width = reader.getWidth(0)
-                val height = reader.getHeight(0)
-                require(
-                    width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
-                        height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
-                ) {
-                    "图片边长需在 16–1024 像素之间"
-                }
-                require(reader.read(0) != null) { "图片已损坏，无法读取" }
-                name
-            } finally {
-                reader.dispose()
+    val format = validateBrandIcon(source)
+    return storeBrandIcon(dataDirectory, source, format)
+}
+
+private fun validateBrandIcon(source: Path): String =
+    ImageIO.createImageInputStream(source.toFile()).use { input ->
+        require(input != null) { "无法读取这张图片" }
+        val readers = ImageIO.getImageReaders(input)
+        require(readers.hasNext()) { "请选择 PNG 或 JPEG 图片" }
+        val reader = readers.next()
+        try {
+            reader.input = input
+            val name = reader.formatName.lowercase()
+            require(name in brandIconFormats) { "请选择 PNG 或 JPEG 图片" }
+            val width = reader.getWidth(0)
+            val height = reader.getHeight(0)
+            require(
+                width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
+                    height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
+            ) {
+                "图片边长需在 16–1024 像素之间"
             }
+            require(reader.read(0) != null) { "图片已损坏，无法读取" }
+            name
+        } finally {
+            reader.dispose()
         }
+    }
+
+private fun storeBrandIcon(
+    dataDirectory: Path,
+    source: Path,
+    format: String,
+): Path {
     val directory = brandIconDirectory(dataDirectory)
     val target = directory.resolve(if (format == "png") BRAND_ICON_PNG else BRAND_ICON_JPEG)
     val temporary = Files.createTempFile(directory, "brand-", ".tmp")

@@ -122,73 +122,88 @@ class CurseForgeMirrorPayloadTest {
         action: suspend Fixture.() -> Unit,
     ) = runBlocking {
         MockWebServer().use { server ->
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            val instance =
-                GameInstance(
-                    name = "Mirror fixture",
-                    gameVersion = "26.3",
-                    loader = LoaderType.Fabric,
-                    versionId = "26.3-fabric",
-                    installed = true,
-                )
-            store.mutate {
-                it.copy(
-                    settings =
-                        it.settings.copy(
-                            contentDownloadSource = "curseforge",
-                            curseForgeBaseUrl = server.loopbackUrl("").toString().trimEnd('/'),
-                        ),
-                    instances = listOf(instance),
-                )
-            }
+            val (store, instance) = prepareMirrorFixture(server)
             NetworkClient().use { network ->
                 val fixture =
-                    Fixture(
-                        store,
-                        network,
-                        ContentService(
-                            store,
-                            network,
-                            MinecraftInstaller(store, network, JavaService(store, network), ""),
-                        ),
-                        instance,
-                        CopyOnWriteArrayList(),
-                    ).apply {
+                    newFixture(store, network, instance).apply {
                         this.classesPayload = classesPayload
                         this.searchBody = searchBody
                         this.projectBody = projectBody
                         this.filesBody = filesBody
                         this.categoriesPayload = recorded("categories-mod.json")
                     }
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse {
-                            fixture.requests += request
-                            val url = checkNotNull(request.requestUrl)
-                            val body =
-                                when {
-                                    url.encodedPath == "/v1/categories" &&
-                                        url.queryParameter("classesOnly") == "true" ->
-                                        fixture.classesPayload
-                                    url.encodedPath == "/v1/categories" ->
-                                        fixture.categoriesPayload
-                                    url.encodedPath == "/v1/mods/search" -> fixture.searchBody
-                                    url.encodedPath == "/v1/mods/238222" &&
-                                        fixture.projectBody.isNotBlank() ->
-                                        fixture.projectBody
-                                    url.encodedPath == "/v1/mods/238222/files" ->
-                                        fixture.filesBody
-                                    else -> return MockResponse().setResponseCode(404)
-                                }
-                            return MockResponse()
-                                .setBody(body)
-                                .addHeader("Content-Type", "application/json")
-                        }
-                    }
+                server.dispatcher = mirrorDispatcher(fixture)
                 fixture.action()
             }
         }
     }
+
+    /** 装配一份共享 store 与网络客户端的内容服务，供镜像调度器回放录制样本。 */
+    private fun newFixture(
+        store: LauncherStore,
+        network: NetworkClient,
+        instance: GameInstance,
+    ): Fixture =
+        Fixture(
+            store,
+            network,
+            ContentService(
+                store,
+                network,
+                MinecraftInstaller(store, network, JavaService(store, network), ""),
+            ),
+            instance,
+            CopyOnWriteArrayList(),
+        )
+
+    private fun prepareMirrorFixture(server: MockWebServer): Pair<LauncherStore, GameInstance> {
+        val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+        val instance =
+            GameInstance(
+                name = "Mirror fixture",
+                gameVersion = "26.3",
+                loader = LoaderType.Fabric,
+                versionId = "26.3-fabric",
+                installed = true,
+            )
+        store.mutate {
+            it.copy(
+                settings =
+                    it.settings.copy(
+                        contentDownloadSource = "curseforge",
+                        curseForgeBaseUrl = server.loopbackUrl("").toString().trimEnd('/'),
+                    ),
+                instances = listOf(instance),
+            )
+        }
+        return store to instance
+    }
+
+    private fun mirrorDispatcher(fixture: Fixture): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                fixture.requests += request
+                val url = checkNotNull(request.requestUrl)
+                val body =
+                    when {
+                        url.encodedPath == "/v1/categories" &&
+                            url.queryParameter("classesOnly") == "true" ->
+                            fixture.classesPayload
+                        url.encodedPath == "/v1/categories" ->
+                            fixture.categoriesPayload
+                        url.encodedPath == "/v1/mods/search" -> fixture.searchBody
+                        url.encodedPath == "/v1/mods/238222" &&
+                            fixture.projectBody.isNotBlank() ->
+                            fixture.projectBody
+                        url.encodedPath == "/v1/mods/238222/files" ->
+                            fixture.filesBody
+                        else -> return MockResponse().setResponseCode(404)
+                    }
+                return MockResponse()
+                    .setBody(body)
+                    .addHeader("Content-Type", "application/json")
+            }
+        }
 
     @Test
     fun `version tags come from real versions and never from directory ids`() {

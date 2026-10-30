@@ -9,6 +9,7 @@ import com.google.gson.JsonObject
 import com.sun.jna.platform.win32.Crypt32Util
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
@@ -30,6 +31,23 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
+
+private const val MAX_TOKEN_PLAINTEXT_BYTES = 32768
+private const val TOKEN_GCM_TAG_BITS = 128
+private const val MAX_WINDOWS_CREDENTIAL_BYTES = 65536
+private const val CREDENTIAL_TOOL_TIMEOUT_SECONDS = 5L
+
+/** AES-GCM 安全随机 nonce 长度（字节）。 */
+private const val GCM_NONCE_BYTES = 12
+
+/** 凭据信封文件的最大体积；超过视为损坏，不再解析。 */
+private const val MAX_ENVELOPE_FILE_BYTES = 65536
+
+/** 信封 payload 的最小长度：1 字节明文 + GCM 认证标签。 */
+private const val MIN_ENVELOPE_PAYLOAD_BYTES = 17
+
+/** 信封 payload 的最大长度：明文上限 + GCM 认证标签。 */
+private const val MAX_ENVELOPE_PAYLOAD_BYTES = 32784
 
 /**
  * Portable AES-GCM credential storage. The application key is intentionally shared between
@@ -57,21 +75,10 @@ class TokenVault
         ) {
             val target = file(id)
             val bytes = token.toByteArray(Charsets.UTF_8)
-            require(token.isNotBlank() && bytes.size <= 32768) { "登录凭据格式无效，请重新登录" }
-            val nonce = ByteArray(12).also(random::nextBytes)
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
-            cipher.updateAAD(associatedData(id))
-            val envelope =
-                JsonObject().apply {
-                    addProperty("formatVersion", 1)
-                    addProperty("protection", PROTECTION)
-                    addProperty("nonce", Base64.getEncoder().encodeToString(nonce))
-                    addProperty(
-                        "payload",
-                        Base64.getEncoder().encodeToString(cipher.doFinal(bytes)),
-                    )
-                }
+            require(token.isNotBlank() && bytes.size <= MAX_TOKEN_PLAINTEXT_BYTES) {
+                "登录凭据格式无效，请重新登录"
+            }
+            val envelope = encryptEnvelope(id, bytes)
             target.parent.createDirectories()
             val temporary = target.resolveSibling(".${target.name}-${UUID.randomUUID()}.tmp")
             try {
@@ -99,48 +106,34 @@ class TokenVault
 
         @Synchronized
         fun read(id: String): String? {
-            memory[id]?.let {
-                return it
-            }
+            val cached = memory[id]
+            if (cached != null) return cached
             val target = file(id)
-            if (target.exists()) {
+            return if (target.exists()) {
                 val decoded =
                     runCatching {
-                        require(
-                            target.isRegularFile() &&
-                                !Files.isSymbolicLink(target) &&
-                                target.fileSize() <= 65536,
-                        )
-                        val envelope = readObject(target)
-                        require(
-                            envelope.int("formatVersion") == 1 &&
-                                envelope.string("protection") == PROTECTION,
-                        )
-                        val nonce = Base64.getDecoder().decode(envelope.string("nonce"))
-                        require(nonce.size == 12)
-                        val payload = Base64.getDecoder().decode(envelope.string("payload"))
-                        require(payload.size in 17..32784)
-                        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce))
-                        cipher.updateAAD(associatedData(id))
-                        cipher.doFinal(payload).toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
+                        decodeEnvelope(target, id)
                     }.getOrNull()
-                if (decoded ==
-                    null
-                ) {
+                if (decoded == null) {
                     store.log("账户凭据文件无法读取，请重新登录微软账户", true)
                 } else {
                     memory[id] = decoded
                 }
                 // Never resurrect an older credential when a newer portable file is corrupt.
-                return decoded
+                decoded
+            } else {
+                val previous = legacy.read(id)?.takeIf { it.isNotBlank() }
+                if (previous != null) {
+                    // Only retire the old entry after the new encrypted file has been written
+                    // successfully.
+                    save(id, previous)
+                    runCatching { legacy.remove(id) }.onFailure {
+                        store.log("便携凭据已迁移，旧系统凭据未能清理", true)
+                    }
+                    store.log("账户登录凭据已迁移为便携保存")
+                }
+                previous
             }
-            val previous = legacy.read(id)?.takeIf { it.isNotBlank() } ?: return null
-            // Only retire the old entry after the new encrypted file has been written successfully.
-            save(id, previous)
-            runCatching { legacy.remove(id) }.onFailure { store.log("便携凭据已迁移，旧系统凭据未能清理", true) }
-            store.log("账户登录凭据已迁移为便携保存")
-            return previous
         }
 
         @Synchronized
@@ -148,6 +141,49 @@ class TokenVault
             file(id).deleteIfExists()
             legacy.remove(id)
             memory.remove(id)
+        }
+
+        private fun encryptEnvelope(
+            id: String,
+            bytes: ByteArray,
+        ): JsonObject {
+            val nonce = ByteArray(12).also(random::nextBytes)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TOKEN_GCM_TAG_BITS, nonce))
+            cipher.updateAAD(associatedData(id))
+            return JsonObject().apply {
+                addProperty("formatVersion", 1)
+                addProperty("protection", PROTECTION)
+                addProperty("nonce", Base64.getEncoder().encodeToString(nonce))
+                addProperty(
+                    "payload",
+                    Base64.getEncoder().encodeToString(cipher.doFinal(bytes)),
+                )
+            }
+        }
+
+        private fun decodeEnvelope(
+            target: Path,
+            id: String,
+        ): String? {
+            require(
+                target.isRegularFile() &&
+                    !Files.isSymbolicLink(target) &&
+                    target.fileSize() <= MAX_ENVELOPE_FILE_BYTES,
+            )
+            val envelope = readObject(target)
+            require(
+                envelope.int("formatVersion") == 1 &&
+                    envelope.string("protection") == PROTECTION,
+            )
+            val nonce = Base64.getDecoder().decode(envelope.string("nonce"))
+            require(nonce.size == GCM_NONCE_BYTES)
+            val payload = Base64.getDecoder().decode(envelope.string("payload"))
+            require(payload.size in MIN_ENVELOPE_PAYLOAD_BYTES..MAX_ENVELOPE_PAYLOAD_BYTES)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TOKEN_GCM_TAG_BITS, nonce))
+            cipher.updateAAD(associatedData(id))
+            return cipher.doFinal(payload).toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
         }
 
         private fun associatedData(id: String) = "$PROTECTION|$id".toByteArray(Charsets.UTF_8)
@@ -188,7 +224,7 @@ private class SystemLegacyTokenStore(
         runCatching {
             if (store.platform.osName == "windows") {
                 val file = windowsFile(id)
-                if (!file.isRegularFile() || file.fileSize() > 65536) {
+                if (!file.isRegularFile() || file.fileSize() > MAX_WINDOWS_CREDENTIAL_BYTES) {
                     null
                 } else {
                     Crypt32Util.cryptUnprotectData(file.readBytes()).toString(Charsets.UTF_8)
@@ -216,7 +252,8 @@ private class SystemLegacyTokenStore(
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start()
             try {
-                if (!process.waitFor(5, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                val finished = process.waitFor(CREDENTIAL_TOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                if (!finished || process.exitValue() != 0) {
                     null
                 } else {
                     process.inputStream

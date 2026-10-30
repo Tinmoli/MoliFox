@@ -17,14 +17,429 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
+// 贴图与画布的合法区间，以及渲染参数的默认值。
+private const val SKIN_TEXTURE_MIN_SIZE = 64
+private const val SKIN_TEXTURE_MAX_SIZE = 4096
+private const val SKIN_TEXTURE_TILE = 64
+private const val MIN_RENDER_SIZE = 16
+private const val MAX_RENDER_SIZE = 1024
+private const val DEFAULT_YAW_DEGREES = -25f
+private const val DEFAULT_PITCH_DEGREES = 12f
+private const val DEFAULT_RENDER_WIDTH = 240
+private const val DEFAULT_RENDER_HEIGHT = 320
+private const val DEFAULT_HEAD_FRONT_SIZE = 64
+private const val DEFAULT_HEAD_MODEL_SIZE = 128
+private const val MAX_HEAD_FRONT_SIZE = 1024
+private const val DEFAULT_HEAD_MODEL_PITCH = -20f
+
+// 64 像素纹理坐标下的部件尺寸与高度（y 轴向上，躯干中心为原点）。
+private const val HEAD_SIZE = 8
+private const val HEAD_Y = 28f
+private const val BODY_W = 8
+private const val BODY_H = 12
+private const val BODY_D = 4
+private const val BODY_Y = 18f
+private const val LIMB_W = 4
+private const val LIMB_H = 12
+private const val LIMB_D = 4
+private const val SLIM_ARM_W = 3
+private const val ARM_Y = 18f
+private const val LEG_Y = 6f
+private const val ARM_X_OFFSET = 4f
+private const val LEGACY_ARM_X = 6f
+private const val LEFT_LEG_X = -2f
+private const val RIGHT_LEG_X = 2f
+
+// 各部件在贴图中的起始坐标，U 为横坐标、V 为纵坐标；OV 表示外层（帽子/护甲）区域。
+private const val BODY_U = 16
+private const val BODY_V = 16
+private const val ARM_U = 40
+private const val ARM_V = 16
+private const val R_ARM_U = 32
+private const val R_ARM_V = 48
+private const val LEG_V = 16
+private const val R_LEG_U = 16
+private const val R_LEG_V = 48
+private const val HAT_U = 32
+private const val BODY_OV_V = 32
+private const val ARM_OV_V = 32
+private const val R_ARM_OV_U = 48
+private const val R_ARM_OV_V = 48
+private const val LEG_OV_V = 32
+private const val R_LEG_OV_V = 48
+private const val HAT_INFLATE = 0.5f
+private const val OVERLAY_INFLATE = 0.25f
+
+// 相机、投影与光照参数。
+private const val FULL_TURN_DEGREES = 360f
+private const val MAX_PITCH_DEGREES = 80f
+private const val HEAD_ONLY_PIVOT = 28f
+private const val BODY_PIVOT = 16f
+private const val HEAD_ONLY_SCALE_DIVISOR = 12f
+private const val MODEL_SCALE_WIDTH_DIVISOR = 24f
+private const val MODEL_SCALE_HEIGHT_DIVISOR = 39f
+private const val BACK_FACE_SHADE = 0.84f
+private const val LEFT_FACE_SHADE = 0.78f
+private const val RIGHT_FACE_SHADE = 0.9f
+private const val BOTTOM_FACE_SHADE = 0.65f
+
+// 光栅化容差、像素采样与颜色通道位移。
+private const val BACKFACE_MIN_DEPTH = 0.0001f
+private const val DEGENERATE_TRIANGLE_EPSILON = 0.0001f
+private const val TRIANGLE_EDGE_EPSILON = 0.0001f
+private const val DEPTH_BUFFER_BIAS = 0.0001f
+private const val PIXEL_CENTER_OFFSET = 0.5f
+private const val REGION_UV_INSET = 0.001f
+private const val TEXTURE_ATLAS_TILE = 64f
+private const val ALPHA_SHIFT = 24
+private const val RED_SHIFT = 16
+private const val GREEN_SHIFT = 8
+private const val CHANNEL_MAX = 255
+private const val OPAQUE_ALPHA = 255
+private const val QUAD_LAST_VERTEX_INDEX = 3
+
+/** 皮肤宽度必须是 64 的整数倍且在支持范围内，高度另按 64×64 或旧版 64×32 校验。 */
+private fun hasSupportedSkinWidth(width: Int): Boolean =
+    width in SKIN_TEXTURE_MIN_SIZE..SKIN_TEXTURE_MAX_SIZE && width % SKIN_TEXTURE_TILE == 0
+
+private data class Point(
+    val x: Float,
+    val y: Float,
+    val z: Float,
+)
+
+private data class Projected(
+    val x: Float,
+    val y: Float,
+    val z: Float,
+    val u: Float,
+    val v: Float,
+)
+
+private data class Region(
+    val u: Int,
+    val v: Int,
+    val w: Int,
+    val h: Int,
+)
+
+private data class Box(
+    val x: Float,
+    val y: Float,
+    val w: Int,
+    val h: Int,
+    val d: Int,
+    val u: Int,
+    val v: Int,
+    val inflate: Float = 0f,
+    val mirror: Boolean = false,
+)
+
+/** 立方体在模型坐标里的六个边界，按面取四角时使用。 */
+private class BoxBounds(
+    box: Box,
+) {
+    val x0: Float = box.x - box.w / 2f - box.inflate
+    val x1: Float = box.x + box.w / 2f + box.inflate
+    val y0: Float = box.y - box.h / 2f - box.inflate
+    val y1: Float = box.y + box.h / 2f + box.inflate
+    val z0: Float = -box.d / 2f - box.inflate
+    val z1: Float = box.d / 2f + box.inflate
+}
+
+/** 正交投影相机：先绕 y 轴偏转，再按俯仰倾斜，最后按画布尺寸缩放。 */
+private class SkinCamera(
+    val cy: Float,
+    val sy: Float,
+    val cp: Float,
+    val sp: Float,
+    val pivot: Float,
+    val scale: Float,
+) {
+    companion object {
+        fun of(
+            yaw: Float,
+            pitch: Float,
+            headOnly: Boolean,
+            width: Int,
+            height: Int,
+        ): SkinCamera {
+            val angle = Math.toRadians((yaw % FULL_TURN_DEGREES).toDouble())
+            val tiltDegrees = pitch.coerceIn(-MAX_PITCH_DEGREES, MAX_PITCH_DEGREES)
+            val tilt = Math.toRadians(tiltDegrees.toDouble())
+            val pivot = if (headOnly) HEAD_ONLY_PIVOT else BODY_PIVOT
+            val scale =
+                if (headOnly) {
+                    min(width, height) / HEAD_ONLY_SCALE_DIVISOR
+                } else {
+                    min(width / MODEL_SCALE_WIDTH_DIVISOR, height / MODEL_SCALE_HEIGHT_DIVISOR)
+                }
+            return SkinCamera(
+                cos(angle).toFloat(),
+                sin(angle).toFloat(),
+                cos(tilt).toFloat(),
+                sin(tilt).toFloat(),
+                pivot,
+                scale,
+            )
+        }
+    }
+}
+
+/** 带深度缓冲的软件光栅化器：把一组立方体按面投影、贴图并混合到画布。 */
+private class SkinRasterizer(
+    private val texture: IntArray,
+    private val textureWidth: Int,
+    private val textureHeight: Int,
+    private val width: Int,
+    private val height: Int,
+    private val camera: SkinCamera,
+) {
+    private val pixels = IntArray(width * height)
+    private val depth = FloatArray(pixels.size) { Float.NEGATIVE_INFINITY }
+
+    fun rasterize(boxes: List<Box>): IntArray {
+        for (box in boxes) {
+            val bounds = BoxBounds(box)
+            drawFrontAndBackFaces(box, bounds)
+            drawSideFaces(box, bounds)
+            drawTopAndBottomFaces(box, bounds)
+        }
+        return pixels
+    }
+
+    private fun drawFrontAndBackFaces(
+        box: Box,
+        bounds: BoxBounds,
+    ) {
+        drawFace(
+            listOf(
+                Point(bounds.x0, bounds.y1, bounds.z1),
+                Point(bounds.x1, bounds.y1, bounds.z1),
+                Point(bounds.x1, bounds.y0, bounds.z1),
+                Point(bounds.x0, bounds.y0, bounds.z1),
+            ),
+            Region(box.u + box.d, box.v + box.d, box.w, box.h),
+            Point(0f, 0f, 1f),
+            1f,
+            box.mirror,
+        )
+        drawFace(
+            listOf(
+                Point(bounds.x1, bounds.y1, bounds.z0),
+                Point(bounds.x0, bounds.y1, bounds.z0),
+                Point(bounds.x0, bounds.y0, bounds.z0),
+                Point(bounds.x1, bounds.y0, bounds.z0),
+            ),
+            Region(box.u + 2 * box.d + box.w, box.v + box.d, box.w, box.h),
+            Point(0f, 0f, -1f),
+            BACK_FACE_SHADE,
+            box.mirror,
+        )
+    }
+
+    private fun drawSideFaces(
+        box: Box,
+        bounds: BoxBounds,
+    ) {
+        val leftU = if (box.mirror) box.u + box.d + box.w else box.u
+        val rightU = if (box.mirror) box.u else box.u + box.d + box.w
+        drawFace(
+            listOf(
+                Point(bounds.x0, bounds.y1, bounds.z0),
+                Point(bounds.x0, bounds.y1, bounds.z1),
+                Point(bounds.x0, bounds.y0, bounds.z1),
+                Point(bounds.x0, bounds.y0, bounds.z0),
+            ),
+            Region(leftU, box.v + box.d, box.d, box.h),
+            Point(-1f, 0f, 0f),
+            LEFT_FACE_SHADE,
+            box.mirror,
+        )
+        drawFace(
+            listOf(
+                Point(bounds.x1, bounds.y1, bounds.z1),
+                Point(bounds.x1, bounds.y1, bounds.z0),
+                Point(bounds.x1, bounds.y0, bounds.z0),
+                Point(bounds.x1, bounds.y0, bounds.z1),
+            ),
+            Region(rightU, box.v + box.d, box.d, box.h),
+            Point(1f, 0f, 0f),
+            RIGHT_FACE_SHADE,
+            box.mirror,
+        )
+    }
+
+    private fun drawTopAndBottomFaces(
+        box: Box,
+        bounds: BoxBounds,
+    ) {
+        drawFace(
+            listOf(
+                Point(bounds.x0, bounds.y1, bounds.z0),
+                Point(bounds.x1, bounds.y1, bounds.z0),
+                Point(bounds.x1, bounds.y1, bounds.z1),
+                Point(bounds.x0, bounds.y1, bounds.z1),
+            ),
+            Region(box.u + box.d, box.v, box.w, box.d),
+            Point(0f, 1f, 0f),
+            1f,
+            box.mirror,
+        )
+        drawFace(
+            listOf(
+                Point(bounds.x0, bounds.y0, bounds.z1),
+                Point(bounds.x1, bounds.y0, bounds.z1),
+                Point(bounds.x1, bounds.y0, bounds.z0),
+                Point(bounds.x0, bounds.y0, bounds.z0),
+            ),
+            Region(box.u + box.d + box.w, box.v, box.w, box.d),
+            Point(0f, -1f, 0f),
+            BOTTOM_FACE_SHADE,
+            box.mirror,
+        )
+    }
+
+    private fun drawFace(
+        points: List<Point>,
+        region: Region,
+        normal: Point,
+        shade: Float,
+        mirror: Boolean,
+    ) {
+        if (rotate(normal).z <= BACKFACE_MIN_DEPTH) return
+        val vertices = project(points, region, mirror)
+        drawTriangle(vertices[0], vertices[1], vertices[2], region, shade)
+        drawTriangle(vertices[0], vertices[2], vertices[QUAD_LAST_VERTEX_INDEX], region, shade)
+    }
+
+    private fun project(
+        points: List<Point>,
+        region: Region,
+        mirror: Boolean,
+    ): List<Projected> {
+        val uv = listOf(0f to 0f, 1f to 0f, 1f to 1f, 0f to 1f)
+        return points.mapIndexed { index, point ->
+            val rotated = rotate(Point(point.x, point.y - camera.pivot, point.z))
+            val (u, v) = uv[index]
+            Projected(
+                width / 2f + rotated.x * camera.scale,
+                height / 2f - rotated.y * camera.scale,
+                rotated.z,
+                region.u + (if (mirror) 1f - u else u) * region.w,
+                region.v + v * region.h,
+            )
+        }
+    }
+
+    private fun drawTriangle(
+        a: Projected,
+        b: Projected,
+        c: Projected,
+        region: Region,
+        shade: Float,
+    ) {
+        val denominator = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
+        if (abs(denominator) < DEGENERATE_TRIANGLE_EPSILON) return
+        val x0 = floor(minOf(a.x, b.x, c.x)).toInt().coerceIn(0, width - 1)
+        val x1 = ceil(maxOf(a.x, b.x, c.x)).toInt().coerceIn(0, width - 1)
+        val y0 = floor(minOf(a.y, b.y, c.y)).toInt().coerceIn(0, height - 1)
+        val y1 = ceil(maxOf(a.y, b.y, c.y)).toInt().coerceIn(0, height - 1)
+        val triangle = Triangle(a, b, c, region, shade, denominator)
+        for (y in y0..y1) {
+            for (x in x0..x1) shadePixel(triangle, x, y)
+        }
+    }
+
+    /** 三角面内单个像素：权重越界或未通过深度、透明测试时不写缓冲。 */
+    private fun shadePixel(
+        triangle: Triangle,
+        x: Int,
+        y: Int,
+    ) {
+        val a = triangle.a
+        val b = triangle.b
+        val c = triangle.c
+        val region = triangle.region
+        val px = x + PIXEL_CENTER_OFFSET
+        val py = y + PIXEL_CENTER_OFFSET
+        val wa = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / triangle.denominator
+        val wb = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / triangle.denominator
+        val wc = 1f - wa - wb
+        val outsideEdge =
+            wa < -TRIANGLE_EDGE_EPSILON ||
+                wb < -TRIANGLE_EDGE_EPSILON ||
+                wc < -TRIANGLE_EDGE_EPSILON
+        if (outsideEdge) return
+        val z = wa * a.z + wb * b.z + wc * c.z
+        val offset = y * width + x
+        val u =
+            (wa * a.u + wb * b.u + wc * c.u).coerceIn(
+                region.u.toFloat(),
+                region.u + region.w - REGION_UV_INSET,
+            )
+        val v =
+            (wa * a.v + wb * b.v + wc * c.v).coerceIn(
+                region.v.toFloat(),
+                region.v + region.h - REGION_UV_INSET,
+            )
+        val tx = (u * textureWidth / TEXTURE_ATLAS_TILE).toInt().coerceIn(0, textureWidth - 1)
+        val ty = (v * textureWidth / TEXTURE_ATLAS_TILE).toInt().coerceIn(0, textureHeight - 1)
+        val color = texture[ty * textureWidth + tx]
+        val alpha = color ushr ALPHA_SHIFT
+        if (z <= depth[offset] + DEPTH_BUFFER_BIAS || alpha == 0) return
+        blendPixel(offset, color, alpha, z, triangle.shade)
+    }
+
+    /** 把单个像素按覆盖权重混合进颜色与深度缓冲。 */
+    private fun blendPixel(
+        offset: Int,
+        color: Int,
+        alpha: Int,
+        z: Float,
+        shade: Float,
+    ) {
+        val backgroundAlpha = pixels[offset] ushr ALPHA_SHIFT
+        val outAlpha = alpha + (backgroundAlpha * (CHANNEL_MAX - alpha)) / CHANNEL_MAX
+
+        fun channel(shift: Int): Int {
+            val foreground =
+                (((color ushr shift) and CHANNEL_MAX) * shade)
+                    .toInt()
+                    .coerceIn(0, CHANNEL_MAX)
+            val background = (pixels[offset] ushr shift) and CHANNEL_MAX
+            return (
+                foreground * alpha * CHANNEL_MAX +
+                    background * backgroundAlpha * (CHANNEL_MAX - alpha)
+            ) / (outAlpha * CHANNEL_MAX)
+        }
+        pixels[offset] =
+            (outAlpha shl ALPHA_SHIFT) or
+            (channel(RED_SHIFT) shl RED_SHIFT) or
+            (channel(GREEN_SHIFT) shl GREEN_SHIFT) or
+            channel(0)
+        depth[offset] = z
+    }
+
+    private fun rotate(p: Point): Point {
+        val x = p.x * camera.cy + p.z * camera.sy
+        val z = -p.x * camera.sy + p.z * camera.cy
+        return Point(x, p.y * camera.cp - z * camera.sp, p.y * camera.sp + z * camera.cp)
+    }
+}
+
+/** 三角面在屏幕空间的数据，供逐像素着色复用。 */
+private data class Triangle(
+    val a: Projected,
+    val b: Projected,
+    val c: Projected,
+    val region: Region,
+    val shade: Float,
+    val denominator: Float,
+)
+
 /** A small, CPU-rendered textured model; no GPU-specific runtime or external skin service. */
 object SkinModelRenderer {
-    private data class Point(
-        val x: Float,
-        val y: Float,
-        val z: Float,
-    )
-
     // 64 像素纹理坐标下的头部正面与帽子/外层正面区域；高清皮肤按 width / 64 等比放大。
     private const val HEAD_REGION_U = 8
     private const val HEAD_REGION_V = 8
@@ -32,250 +447,101 @@ object SkinModelRenderer {
     private const val HAT_REGION_V = 8
     private const val HEAD_TILE = 8
 
-    private data class Projected(
-        val x: Float,
-        val y: Float,
-        val z: Float,
-        val u: Float,
-        val v: Float,
-    )
-
-    private data class Region(
-        val u: Int,
-        val v: Int,
-        val w: Int,
-        val h: Int,
-    )
-
-    private data class Box(
-        val x: Float,
-        val y: Float,
-        val w: Int,
-        val h: Int,
-        val d: Int,
-        val u: Int,
-        val v: Int,
-        val inflate: Float = 0f,
-        val mirror: Boolean = false,
-    )
-
     fun render(
         textureWidth: Int,
         textureHeight: Int,
         texture: IntArray,
         variant: SkinVariant,
         overlays: Boolean = true,
-        yaw: Float = -25f,
-        pitch: Float = 12f,
+        yaw: Float = DEFAULT_YAW_DEGREES,
+        pitch: Float = DEFAULT_PITCH_DEGREES,
         headOnly: Boolean = false,
-        width: Int = 240,
-        height: Int = 320,
+        width: Int = DEFAULT_RENDER_WIDTH,
+        height: Int = DEFAULT_RENDER_HEIGHT,
     ): BufferedImage {
         require(
-            textureWidth in 64..4096 &&
-                textureWidth % 64 == 0 &&
+            hasSupportedSkinWidth(textureWidth) &&
                 (textureHeight == textureWidth || textureHeight * 2 == textureWidth) &&
                 texture.size == textureWidth * textureHeight,
         )
-        require(width in 16..1024 && height in 16..1024 && yaw.isFinite() && pitch.isFinite())
-        val modern = textureHeight == textureWidth
-        val arm = if (modern && variant == SkinVariant.Slim) 3 else 4
-        val boxes = mutableListOf(Box(0f, 28f, 8, 8, 8, 0, 0))
-        if (!headOnly) {
-            boxes +=
-                listOf(
-                    Box(0f, 18f, 8, 12, 4, 16, 16),
-                    Box(-4f - arm / 2f, 18f, arm, 12, 4, 40, 16),
-                    if (modern) {
-                        Box(4f + arm / 2f, 18f, arm, 12, 4, 32, 48)
-                    } else {
-                        Box(6f, 18f, 4, 12, 4, 40, 16, mirror = true)
-                    },
-                    Box(-2f, 6f, 4, 12, 4, 0, 16),
-                    if (modern) {
-                        Box(2f, 6f, 4, 12, 4, 16, 48)
-                    } else {
-                        Box(2f, 6f, 4, 12, 4, 0, 16, mirror = true)
-                    },
-                )
-        }
-        if (overlays) {
-            boxes += Box(0f, 28f, 8, 8, 8, 32, 0, .5f)
-            if (modern && !headOnly) {
-                boxes +=
-                    listOf(
-                        Box(0f, 18f, 8, 12, 4, 16, 32, .25f),
-                        Box(-4f - arm / 2f, 18f, arm, 12, 4, 40, 32, .25f),
-                        Box(4f + arm / 2f, 18f, arm, 12, 4, 48, 48, .25f),
-                        Box(-2f, 6f, 4, 12, 4, 0, 32, .25f),
-                        Box(2f, 6f, 4, 12, 4, 0, 48, .25f),
-                    )
-            }
-        }
-        val pixels = IntArray(width * height)
-        val depth = FloatArray(pixels.size) { Float.NEGATIVE_INFINITY }
-        val angle = Math.toRadians((yaw % 360f).toDouble())
-        val tilt = Math.toRadians(pitch.coerceIn(-80f, 80f).toDouble())
-        val cy = cos(angle).toFloat()
-        val sy = sin(angle).toFloat()
-        val cp = cos(tilt).toFloat()
-        val sp = sin(tilt).toFloat()
-        val pivot = if (headOnly) 28f else 16f
-        val scale = if (headOnly) min(width, height) / 12f else min(width / 24f, height / 39f)
-
-        fun rotate(p: Point): Point {
-            val x = p.x * cy + p.z * sy
-            val z = -p.x * sy + p.z * cy
-            return Point(x, p.y * cp - z * sp, p.y * sp + z * cp)
-        }
-
-        fun face(
-            points: List<Point>,
-            region: Region,
-            normal: Point,
-            shade: Float,
-            mirror: Boolean,
-        ) {
-            if (rotate(normal).z <= .0001f) return
-            val uv = listOf(0f to 0f, 1f to 0f, 1f to 1f, 0f to 1f)
-            val vertices =
-                points.mapIndexed { index, p ->
-                    val r = rotate(Point(p.x, p.y - pivot, p.z))
-                    val (u, v) = uv[index]
-                    Projected(
-                        width / 2f + r.x * scale,
-                        height / 2f - r.y * scale,
-                        r.z,
-                        region.u + (if (mirror) 1f - u else u) * region.w,
-                        region.v + v * region.h,
-                    )
-                }
-
-            fun triangle(
-                a: Projected,
-                b: Projected,
-                c: Projected,
-            ) {
-                val denominator = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
-                if (abs(denominator) < .0001f) return
-                val x0 = floor(minOf(a.x, b.x, c.x)).toInt().coerceIn(0, width - 1)
-                val x1 = ceil(maxOf(a.x, b.x, c.x)).toInt().coerceIn(0, width - 1)
-                val y0 = floor(minOf(a.y, b.y, c.y)).toInt().coerceIn(0, height - 1)
-                val y1 = ceil(maxOf(a.y, b.y, c.y)).toInt().coerceIn(0, height - 1)
-                for (y in y0..y1) {
-                    for (x in x0..x1) {
-                        val px = x + .5f
-                        val py = y + .5f
-                        val wa = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denominator
-                        val wb = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denominator
-                        val wc = 1f - wa - wb
-                        if (wa < -.0001f || wb < -.0001f || wc < -.0001f) continue
-                        val z = wa * a.z + wb * b.z + wc * c.z
-                        val offset = y * width + x
-                        if (z <= depth[offset] + .0001f) continue
-                        val u =
-                            (wa * a.u + wb * b.u + wc * c.u).coerceIn(
-                                region.u.toFloat(),
-                                region.u + region.w - .001f,
-                            )
-                        val v =
-                            (wa * a.v + wb * b.v + wc * c.v).coerceIn(
-                                region.v.toFloat(),
-                                region.v + region.h - .001f,
-                            )
-                        val tx = (u * textureWidth / 64f).toInt().coerceIn(0, textureWidth - 1)
-                        val ty = (v * textureWidth / 64f).toInt().coerceIn(0, textureHeight - 1)
-                        val color = texture[ty * textureWidth + tx]
-                        val alpha = color ushr 24
-                        if (alpha == 0) continue
-                        val backgroundAlpha = pixels[offset] ushr 24
-                        val outAlpha = alpha + (backgroundAlpha * (255 - alpha)) / 255
-
-                        fun channel(shift: Int): Int {
-                            val foreground =
-                                (((color ushr shift) and 255) * shade).toInt().coerceIn(0, 255)
-                            val background = (pixels[offset] ushr shift) and 255
-                            return (
-                                foreground * alpha * 255 +
-                                    background * backgroundAlpha * (255 - alpha)
-                            ) / (outAlpha * 255)
-                        }
-                        pixels[offset] =
-                            (outAlpha shl 24) or
-                            (channel(16) shl 16) or
-                            (channel(8) shl 8) or
-                            channel(0)
-                        depth[offset] = z
-                    }
-                }
-            }
-            triangle(vertices[0], vertices[1], vertices[2])
-            triangle(vertices[0], vertices[2], vertices[3])
-        }
-        for (box in boxes) {
-            val x0 = box.x - box.w / 2f - box.inflate
-            val x1 = box.x + box.w / 2f + box.inflate
-            val y0 = box.y - box.h / 2f - box.inflate
-            val y1 = box.y + box.h / 2f + box.inflate
-            val z0 = -box.d / 2f - box.inflate
-            val z1 = box.d / 2f + box.inflate
-            val u = box.u
-            val v = box.v
-            val w = box.w
-            val h = box.h
-            val d = box.d
-
-            fun p(
-                x: Float,
-                y: Float,
-                z: Float,
-            ) = Point(x, y, z)
-            face(
-                listOf(p(x0, y1, z1), p(x1, y1, z1), p(x1, y0, z1), p(x0, y0, z1)),
-                Region(u + d, v + d, w, h),
-                p(0f, 0f, 1f),
-                1f,
-                box.mirror,
+        require(
+            width in MIN_RENDER_SIZE..MAX_RENDER_SIZE &&
+                height in MIN_RENDER_SIZE..MAX_RENDER_SIZE &&
+                yaw.isFinite() &&
+                pitch.isFinite(),
+        )
+        val boxes = buildBoxes(variant, textureHeight == textureWidth, headOnly, overlays)
+        val rasterizer =
+            SkinRasterizer(
+                texture,
+                textureWidth,
+                textureHeight,
+                width,
+                height,
+                SkinCamera.of(yaw, pitch, headOnly, width, height),
             )
-            face(
-                listOf(p(x1, y1, z0), p(x0, y1, z0), p(x0, y0, z0), p(x1, y0, z0)),
-                Region(u + 2 * d + w, v + d, w, h),
-                p(0f, 0f, -1f),
-                .84f,
-                box.mirror,
-            )
-            face(
-                listOf(p(x0, y1, z0), p(x0, y1, z1), p(x0, y0, z1), p(x0, y0, z0)),
-                Region(if (box.mirror) u + d + w else u, v + d, d, h),
-                p(-1f, 0f, 0f),
-                .78f,
-                box.mirror,
-            )
-            face(
-                listOf(p(x1, y1, z1), p(x1, y1, z0), p(x1, y0, z0), p(x1, y0, z1)),
-                Region(if (box.mirror) u else u + d + w, v + d, d, h),
-                p(1f, 0f, 0f),
-                .9f,
-                box.mirror,
-            )
-            face(
-                listOf(p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)),
-                Region(u + d, v, w, d),
-                p(0f, 1f, 0f),
-                1f,
-                box.mirror,
-            )
-            face(
-                listOf(p(x0, y0, z1), p(x1, y0, z1), p(x1, y0, z0), p(x0, y0, z0)),
-                Region(u + d + w, v, w, d),
-                p(0f, -1f, 0f),
-                .65f,
-                box.mirror,
-            )
-        }
+        val pixels = rasterizer.rasterize(boxes)
         return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).apply {
             setRGB(0, 0, width, height, pixels, 0, width)
         }
+    }
+
+    private fun buildBoxes(
+        variant: SkinVariant,
+        modern: Boolean,
+        headOnly: Boolean,
+        overlays: Boolean,
+    ): List<Box> {
+        val arm = if (modern && variant == SkinVariant.Slim) SLIM_ARM_W else LIMB_W
+        val boxes = mutableListOf(Box(0f, HEAD_Y, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE, 0, 0))
+        if (!headOnly) boxes += baseBoxes(arm, modern)
+        if (overlays) boxes += overlayBoxes(arm, modern, headOnly)
+        return boxes
+    }
+
+    private fun baseBoxes(
+        arm: Int,
+        modern: Boolean,
+    ): List<Box> {
+        val armHalfOffset = ARM_X_OFFSET + arm / 2f
+        val rightArm =
+            if (modern) {
+                Box(armHalfOffset, ARM_Y, arm, LIMB_H, LIMB_D, R_ARM_U, R_ARM_V)
+            } else {
+                Box(LEGACY_ARM_X, ARM_Y, LIMB_W, LIMB_H, LIMB_D, ARM_U, ARM_V, mirror = true)
+            }
+        val rightLeg =
+            if (modern) {
+                Box(RIGHT_LEG_X, LEG_Y, LIMB_W, LIMB_H, LIMB_D, R_LEG_U, R_LEG_V)
+            } else {
+                Box(RIGHT_LEG_X, LEG_Y, LIMB_W, LIMB_H, LIMB_D, 0, LEG_V, mirror = true)
+            }
+        return listOf(
+            Box(0f, BODY_Y, BODY_W, BODY_H, BODY_D, BODY_U, BODY_V),
+            Box(-armHalfOffset, ARM_Y, arm, LIMB_H, LIMB_D, ARM_U, ARM_V),
+            rightArm,
+            Box(LEFT_LEG_X, LEG_Y, LIMB_W, LIMB_H, LIMB_D, 0, LEG_V),
+            rightLeg,
+        )
+    }
+
+    private fun overlayBoxes(
+        arm: Int,
+        modern: Boolean,
+        headOnly: Boolean,
+    ): List<Box> {
+        val armOffset = ARM_X_OFFSET + arm / 2f
+        val boxes =
+            mutableListOf(
+                Box(0f, HEAD_Y, HEAD_SIZE, HEAD_SIZE, HEAD_SIZE, HAT_U, 0, HAT_INFLATE),
+            )
+        if (!modern || headOnly) return boxes
+        boxes += Box(0f, BODY_Y, BODY_W, BODY_H, BODY_D, BODY_U, BODY_OV_V, OVERLAY_INFLATE)
+        boxes += Box(-armOffset, ARM_Y, arm, LIMB_H, LIMB_D, ARM_U, ARM_OV_V, OVERLAY_INFLATE)
+        boxes += Box(armOffset, ARM_Y, arm, LIMB_H, LIMB_D, R_ARM_OV_U, R_ARM_OV_V, OVERLAY_INFLATE)
+        boxes += Box(LEFT_LEG_X, LEG_Y, LIMB_W, LIMB_H, LIMB_D, 0, LEG_OV_V, OVERLAY_INFLATE)
+        boxes += Box(RIGHT_LEG_X, LEG_Y, LIMB_W, LIMB_H, LIMB_D, 0, R_LEG_OV_V, OVERLAY_INFLATE)
+        return boxes
     }
 
     /**
@@ -285,16 +551,16 @@ object SkinModelRenderer {
      */
     fun renderHeadFront(
         skin: ByteArray,
-        size: Int = 64,
+        size: Int = DEFAULT_HEAD_FRONT_SIZE,
     ): ByteArray? =
         runCatching {
             require(skin.isNotEmpty()) { "皮肤数据为空" }
-            require(size in HEAD_TILE..1024) { "头像尺寸无效" }
+            require(size in HEAD_TILE..MAX_HEAD_FRONT_SIZE) { "头像尺寸无效" }
             val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
             val width = image.width
             val height = image.height
             // 只接受 64 的整数倍宽度：64×64（含高清）或旧版 64×32；其它布局不猜位置。
-            require(width in 64..4096 && width % 64 == 0) { "皮肤宽度无效" }
+            require(hasSupportedSkinWidth(width)) { "皮肤宽度无效" }
             require(height == width || height * 2 == width) { "皮肤高度无效" }
             val scale = width / 64
 
@@ -359,15 +625,15 @@ object SkinModelRenderer {
     /** 立体头像：复用 [render] 只渲染头部，正对镜头（水平不偏转，仅略微俯视露出顶面）， 输出 PNG 字节；皮肤不可解析时返回 null。 */
     fun renderHeadModel(
         skin: ByteArray,
-        size: Int = 128,
+        size: Int = DEFAULT_HEAD_MODEL_SIZE,
         yaw: Float = 0f,
-        pitch: Float = -20f,
+        pitch: Float = DEFAULT_HEAD_MODEL_PITCH,
     ): ByteArray? =
         runCatching {
             val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
             val width = image.width
             val height = image.height
-            require(width in 64..4096 && width % 64 == 0) { "皮肤宽度无效" }
+            require(hasSupportedSkinWidth(width)) { "皮肤宽度无效" }
             require(height == width || height * 2 == width) { "皮肤高度无效" }
             val pixels =
                 IntArray(width * height).also { image.getRGB(0, 0, width, height, it, 0, width) }
@@ -398,18 +664,21 @@ object SkinModelRenderer {
         source: Int,
         destination: Int,
     ): Int {
-        val sourceAlpha = source ushr 24
+        val sourceAlpha = source ushr ALPHA_SHIFT
         if (sourceAlpha == 0) return destination
-        if (sourceAlpha == 255) return source
-        val destinationAlpha = destination ushr 24
-        val alpha = sourceAlpha + destinationAlpha * (255 - sourceAlpha) / 255
+        if (sourceAlpha == OPAQUE_ALPHA) return source
+        val destinationAlpha = destination ushr ALPHA_SHIFT
+        val alpha = sourceAlpha + destinationAlpha * (CHANNEL_MAX - sourceAlpha) / CHANNEL_MAX
         if (alpha == 0) return 0
 
         fun channel(shift: Int): Int {
-            val foreground = ((source ushr shift) and 255) * sourceAlpha
-            val background = ((destination ushr shift) and 255) * destinationAlpha
-            return (foreground + background * (255 - sourceAlpha) / 255) / alpha
+            val foreground = ((source ushr shift) and CHANNEL_MAX) * sourceAlpha
+            val background = ((destination ushr shift) and CHANNEL_MAX) * destinationAlpha
+            return (foreground + background * (CHANNEL_MAX - sourceAlpha) / CHANNEL_MAX) / alpha
         }
-        return (alpha shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
+        return (alpha shl ALPHA_SHIFT) or
+            (channel(RED_SHIFT) shl RED_SHIFT) or
+            (channel(GREEN_SHIFT) shl GREEN_SHIFT) or
+            channel(0)
     }
 }

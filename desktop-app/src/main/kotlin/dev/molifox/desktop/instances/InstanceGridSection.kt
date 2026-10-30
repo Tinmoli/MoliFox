@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -152,21 +153,8 @@ private fun InstanceGridCard(
                 }.hoverable(hoverSource)
                 .clickable(onClick = onSelect),
             shape = shape,
-            color =
-                if (hovered) {
-                    lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primary, .04f)
-                } else {
-                    MaterialTheme.colorScheme.surface
-                },
-            border =
-                BorderStroke(
-                    1.dp,
-                    when {
-                        selected -> MaterialTheme.colorScheme.primary.copy(alpha = .7f)
-                        hovered -> MaterialTheme.colorScheme.primary.copy(alpha = .45f)
-                        else -> hairline()
-                    },
-                ),
+            color = cardSurfaceColor(hovered),
+            border = cardBorder(selected, hovered),
         ) {
             Column(Modifier.fillMaxSize().padding(14.dp)) {
                 InstanceArtwork(instance, actions, Modifier.size(32.dp))
@@ -179,47 +167,10 @@ private fun InstanceGridCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    if (instance.broken) {
-                        "无法识别 · " + instance.brokenReason
-                    } else {
-                        instance.gameVersion + " · " + instance.loader.title
-                    },
-                    fontSize = 12.sp,
-                    color =
-                        if (instance.broken) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                InstanceCardSubtitle(instance)
                 // 弹性间隔吃掉剩余高度：无论名称长短，操作行都贴在卡片底部，跨卡片对齐。
                 Spacer(Modifier.weight(1f))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    InstanceTextAction(
-                        "开始游戏",
-                        onLaunch,
-                        enabled = !busy && !instance.broken,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    InstanceTextAction(
-                        if (instance.favorite) "已收藏" else "收藏",
-                        onFavorite,
-                        tint =
-                            if (instance.favorite) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                    )
-                    InstanceTextAction("设置", onManage)
-                    InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
-                }
+                InstanceCardActions(instance, busy, onLaunch, onFavorite, onManage, onDelete)
             }
         }
         // 网格卡没有空间再放一个图标按钮：右键菜单与列表行是同一份内容。
@@ -236,5 +187,85 @@ private fun InstanceGridCard(
             onExport = onExport,
             onDelete = onDelete,
         )
+    }
+}
+
+/** 卡片底色：悬停时向主题色靠 4%。 */
+@Composable
+private fun cardSurfaceColor(hovered: Boolean): Color =
+    if (hovered) {
+        lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primary, .04f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+
+/** 卡片边框：选中用主题色 70%，悬停 45%，其余细线。 */
+@Composable
+private fun cardBorder(
+    selected: Boolean,
+    hovered: Boolean,
+): BorderStroke =
+    BorderStroke(
+        1.dp,
+        when {
+            selected -> MaterialTheme.colorScheme.primary.copy(alpha = .7f)
+            hovered -> MaterialTheme.colorScheme.primary.copy(alpha = .45f)
+            else -> hairline()
+        },
+    )
+
+/** 卡片副标题：无法识别时给出原因并标红。 */
+@Composable
+private fun InstanceCardSubtitle(instance: GameInstance) {
+    Text(
+        if (instance.broken) {
+            "无法识别 · " + instance.brokenReason
+        } else {
+            instance.gameVersion + " · " + instance.loader.title
+        },
+        fontSize = 12.sp,
+        color =
+            if (instance.broken) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** 底部操作行：开始 / 收藏 / 设置 / 删除。 */
+@Composable
+private fun InstanceCardActions(
+    instance: GameInstance,
+    busy: Boolean,
+    onLaunch: () -> Unit,
+    onFavorite: () -> Unit,
+    onManage: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        InstanceTextAction(
+            "开始游戏",
+            onLaunch,
+            enabled = !busy && !instance.broken,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        InstanceTextAction(
+            if (instance.favorite) "已收藏" else "收藏",
+            onFavorite,
+            tint =
+                if (instance.favorite) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+        )
+        InstanceTextAction("设置", onManage)
+        InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
     }
 }

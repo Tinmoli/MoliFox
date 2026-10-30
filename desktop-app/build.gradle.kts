@@ -17,6 +17,7 @@ plugins {
 }
 
 evaluationDependsOn(":launcher-bootstrap")
+evaluationDependsOn(":multiplayer-core")
 
 // 界面与文档资源统一放在仓库根的 assets/；legal 与 brand 由打包任务单独处理，不进类路径。
 sourceSets["main"].resources.srcDir(rootProject.file("assets"))
@@ -110,7 +111,7 @@ fun manifestJson(
 }
 
 // 本项目的模块由 MoliFox.jar 自己携带，不进入下载清单。
-val projectModules = setOf("launcher-core", "launcher-bootstrap", "desktop-app")
+val projectModules = setOf("launcher-core", "launcher-bootstrap", "desktop-app", "multiplayer-core")
 
 /**
  * 从解析后的运行时类路径生成清单条目：
@@ -201,7 +202,12 @@ tasks.register<Jar>("portableJar") {
     group = "distribution"
     description =
         "Build the launcher jar: our classes + Swing bootstrap + dependency manifest; runtime jars are downloaded on first launch"
-    dependsOn(preparePortableRuntime, ":launcher-bootstrap:jar", ":launcher-core:jar")
+    dependsOn(
+        preparePortableRuntime,
+        ":launcher-bootstrap:jar",
+        ":launcher-core:jar",
+        ":multiplayer-core:jvmJar",
+    )
     archiveFileName.set("MoliFox.jar")
     destinationDirectory.set(layout.buildDirectory.dir("portable"))
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -212,6 +218,17 @@ tasks.register<Jar>("portableJar") {
         )
     }
     from(sourceSets.main.get().output)
+    from({
+        zipTree(
+            project(":multiplayer-core")
+                .tasks
+                .named<Jar>("jvmJar")
+                .get()
+                .archiveFile
+                .get()
+                .asFile,
+        )
+    })
     // Include the actual vector icons, instead of downloading every icon style on first run.
     from({ zipTree(extendedIcons.get()) }) { include(usedIconPaths) }
     from(bootstrapSourceSets.getByName("main").output)
@@ -287,6 +304,10 @@ val compileWindowsResource =
 // miniz.h 会随压缩 API 一起禁用归档写入，只声明压缩开关。
 val windowsNativeDefinitions = listOf("-DMINIZ_NO_DEFLATE_APIS")
 
+// 发布文件名带上版本与目标平台，避免不同系统的包互相覆盖。
+val windowsPackageName = "MoliFox-${project.version}-windows-x86_64.exe"
+val linuxPackageName = "MoliFox-${project.version}-linux-x86_64.run"
+
 tasks.register<Exec>("portableWindows") {
     group = "distribution"
     dependsOn(compileWindowsResource)
@@ -294,7 +315,7 @@ tasks.register<Exec>("portableWindows") {
     inputs.dir(rootProject.file("launcher-bootstrap/native/miniz"))
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
-    outputs.file(rootProject.file("MoliFox.exe"))
+    outputs.file(rootProject.file(windowsPackageName))
     outputs.file(rootProject.file("build/validation/windows-package.sha256"))
     commandLine(
         nativeCompiler("g++"),
@@ -321,14 +342,23 @@ tasks.register<Exec>("portableWindows") {
         "-lcomctl32",
         "-ladvapi32",
         "-o",
-        rootProject.file("MoliFox.exe"),
+        rootProject.file(windowsPackageName),
     )
     doLast {
-        val executable = rootProject.file("MoliFox.exe")
+        val executable = rootProject.file(windowsPackageName)
+        val imports =
+            providers
+                .exec {
+                    commandLine(nativeCompiler("objdump"), "-p", executable.absolutePath)
+                }.standardOutput.asText
+                .get()
+        check(!imports.contains("TaskDialogIndirect")) {
+            "TaskDialogIndirect must remain optional; a static import prevents startup on older common controls"
+        }
         val digest = sha256Of(executable)
         val checksum = rootProject.file("build/validation/windows-package.sha256")
         checksum.parentFile.mkdirs()
-        checksum.writeText("$digest  MoliFox.exe\n")
+        checksum.writeText("$digest  $windowsPackageName\n")
     }
 }
 
@@ -429,7 +459,7 @@ tasks.register("portableLinux") {
     val payload = layout.buildDirectory.file("portable/linux/MoliFox-linux.jar")
     inputs.file(rootProject.file("launcher-bootstrap/native/LinuxMain.sh"))
     inputs.file(payload)
-    outputs.file(rootProject.file("MoliFox-linux-x64.run"))
+    outputs.file(rootProject.file(linuxPackageName))
     outputs.file(rootProject.file("build/validation/linux-package.sha256"))
     doLast {
         val jar = payload.get().asFile
@@ -441,7 +471,7 @@ tasks.register("portableLinux") {
                 .replace("\r\n", "\n")
                 .replace("@VERSION@", project.version.toString())
                 .replace("@PAYLOAD_SHA256@", digest)
-        val output = rootProject.file("MoliFox-linux-x64.run")
+        val output = rootProject.file(linuxPackageName)
         output.outputStream().buffered().use { destination ->
             destination.write(header.toByteArray(Charsets.UTF_8))
             jar.inputStream().buffered().use { it.copyTo(destination) }
@@ -450,7 +480,7 @@ tasks.register("portableLinux") {
         val checksum = rootProject.file("build/validation/linux-package.sha256")
         checksum.parentFile.mkdirs()
         val hash = sha256Of(output)
-        checksum.writeText(hash + "  MoliFox-linux-x64.run\n")
+        checksum.writeText("$hash  $linuxPackageName\n")
     }
 }
 
@@ -481,6 +511,12 @@ tasks.register("verifyDesktopPackages") {
             )
         for ((platform, file) in platforms) {
             ZipFile(file).use { zip ->
+                for (entry in listOf(
+                    "dev/molifox/multiplayer/domain/MultiplayerBackend.class",
+                    "dev/molifox/multiplayer/data/TerracottaInstaller.class",
+                )) {
+                    check(zip.getEntry(entry) != null) { "$platform 包缺少联机入口 $entry" }
+                }
                 for (icon in requiredBundledIcons) {
                     check(zip.getEntry(icon) != null) { "$platform 包缺少界面图标 $icon" }
                 }
@@ -554,12 +590,15 @@ java {
 
 dependencies {
     implementation(project(":launcher-core"))
+    implementation(project(":multiplayer-core"))
+    implementation(project(":launcher-bootstrap"))
     implementation("net.java.dev.jna:jna-platform:5.17.0")
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
     implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
     testImplementation(kotlin("test"))
+    testImplementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -578,6 +617,16 @@ val uiChecksCompilation =
             implementation("com.squareup.okhttp3:okhttp:4.12.0")
         }
     }
+tasks.register<JavaExec>("multiplayerUiSmoke") {
+    dependsOn("uiChecksClasses")
+    classpath =
+        files(uiChecksCompilation.output.allOutputs, uiChecksCompilation.runtimeDependencyFiles)
+    mainClass.set("dev.molifox.desktop.multiplayer.MultiplayerUiSmokeKt")
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dcompose.accessibility.enable=true")
+    workingDir(rootProject.projectDir)
+    timeout.set(Duration.ofMinutes(3))
+}
+
 sourceSets["uiChecks"].java.apply {
     srcDir(rootProject.file("tools"))
     include("TestWindowFocus.java")
@@ -658,13 +707,15 @@ fun registerGuiSmoke(
                 rootProject.file("tools/RefinementActions.java").absolutePath,
                 rootProject.file("tools/PackDragChecks.java").absolutePath,
                 rootProject.file("tools/NativeRuntimeCache.java").absolutePath,
+                rootProject.file("tools/NativeMemoryProbe.java").absolutePath,
             ) == 0,
         ) {
             "$probe compilation failed"
         }
         if (native) {
+            // 沙箱里保留固定文件名，探针按 MoliFox.exe 启动；发布名不影响运行。
             rootProject
-                .file("MoliFox.exe")
+                .file(windowsPackageName)
                 .copyTo(File(testDirectory, "MoliFox.exe"), overwrite = true)
             setArgs(
                 listOf(
@@ -775,6 +826,14 @@ val nativeSmoke = registerGuiSmoke("nativeSmoke", "NativeSmoke", true)
 nativeSmoke.configure {
     timeout.set(Duration.ofMinutes(8))
     systemProperty(
+        "molifox.native.memoryProfile",
+        providers.gradleProperty("nativeMemoryProfile").getOrElse(""),
+    )
+    systemProperty(
+        "molifox.native.memoryFlags",
+        providers.gradleProperty("nativeMemoryFlags").getOrElse(""),
+    )
+    systemProperty(
         "molifox.native.report",
         rootProject.file("build/validation/native-startup.json").absolutePath,
     )
@@ -815,4 +874,16 @@ tasks.register<JavaExec>("nativePickerSmoke") {
         )
         setArgs(listOf(File(root, "fixtures").absolutePath))
     }
+}
+
+tasks.register<JavaExec>("appearanceUiSmoke") {
+    group = "verification"
+    dependsOn("uiChecksClasses")
+    classpath =
+        files(uiChecksCompilation.output.allOutputs, uiChecksCompilation.runtimeDependencyFiles)
+    mainClass.set("dev.molifox.desktop.checks.UiSmokeMainKt")
+    systemProperty("molifox.ui.refinements", "true")
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dcompose.accessibility.enable=true")
+    workingDir(rootProject.projectDir)
+    timeout.set(Duration.ofMinutes(4))
 }

@@ -47,6 +47,10 @@ import dev.molifox.core.EntryKind
 import java.time.Duration
 import java.time.Instant
 
+private const val SECONDS_PER_MINUTE = 60
+private const val SECONDS_PER_HOUR = 3600
+private const val SECONDS_PER_DAY = 86400
+
 @Composable
 internal fun RecentPlayRow(
     item: RecentPlayItem,
@@ -304,18 +308,20 @@ private fun RecentRowMenu(
 
 private fun durationLabel(seconds: Long): String =
     when {
-        seconds < 60 -> "不足 1 分钟"
-        seconds < 3600 -> "${seconds / 60} 分钟"
-        else -> "${seconds / 3600} 小时 ${(seconds % 3600) / 60} 分钟"
+        seconds < SECONDS_PER_MINUTE -> "不足 1 分钟"
+        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟"
+        else ->
+            "${seconds / SECONDS_PER_HOUR} 小时 " +
+                "${(seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE} 分钟"
     }
 
 private fun recentTimeLabel(time: Instant?): String {
     if (time == null) return "尚未游玩"
     val seconds = Duration.between(time, Instant.now()).seconds.coerceAtLeast(0)
     return when {
-        seconds < 60 -> "刚刚"
-        seconds < 3600 -> "${seconds / 60} 分钟前"
-        seconds < 86400 -> "${seconds / 3600} 小时前"
-        else -> "${seconds / 86400} 天前"
+        seconds < SECONDS_PER_MINUTE -> "刚刚"
+        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟前"
+        seconds < SECONDS_PER_DAY -> "${seconds / SECONDS_PER_HOUR} 小时前"
+        else -> "${seconds / SECONDS_PER_DAY} 天前"
     }
 }

@@ -19,6 +19,13 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.walk
 
+/** 继承链层级上限：正常实例只有几级，挡住自引用或构造出的超长链。 */
+private const val MAX_VERSION_CHAIN_DEPTH = 64
+
+/** 单个版本配置与整条链的总大小上限，避免异常数据写满备份目录。 */
+private const val MAX_VERSION_FILE_BYTES = 8L * 1024 * 1024
+private const val MAX_VERSION_CHAIN_BYTES = 32L * 1024 * 1024
+
 internal class ComponentBackup(
     private val store: LauncherStore,
 ) {
@@ -31,22 +38,38 @@ internal class ComponentBackup(
         folder.createDirectories()
         val root = store.minecraftRoot(instance)
         val records = mutableListOf<Map<String, String>>()
+        captureVersionChain(root, folder, instance.versionId, records)
+        captureAlias(instance, root, folder, records)
+        writeJson(
+            folder.resolve("manifest.json"),
+            mapOf("instance" to instance, "root" to taskPathKey(root), "profiles" to records),
+        )
+        return id
+    }
+
+    /** 沿 `inheritsFrom` 逐级复制版本配置，直到链尾、重复或文件缺失为止。 */
+    private fun captureVersionChain(
+        root: java.nio.file.Path,
+        folder: java.nio.file.Path,
+        startVersion: String,
+        records: MutableList<Map<String, String>>,
+    ) {
         val visited = mutableSetOf<String>()
-        var version = instance.versionId
+        var version = startVersion
         var total = 0L
         while (version.isNotBlank() && visited.add(version)) {
-            require(visited.size <= 64) { "版本配置继承层级过深" }
+            require(visited.size <= MAX_VERSION_CHAIN_DEPTH) { "版本配置继承层级过深" }
             val file = safePath(root, "versions/${safeFilename(version)}/$version.json")
             if (!file.exists(NOFOLLOW_LINKS)) break
             require(
                 file.isRegularFile(NOFOLLOW_LINKS) &&
                     !file.isSymbolicLink() &&
-                    file.fileSize() <= 8 * 1024 * 1024,
+                    file.fileSize() <= MAX_VERSION_FILE_BYTES,
             ) {
                 "版本配置路径不安全：$file"
             }
             total += file.fileSize()
-            require(total <= 32 * 1024 * 1024) { "版本配置过大" }
+            require(total <= MAX_VERSION_CHAIN_BYTES) { "版本配置过大" }
             val target = folder.resolve("${records.size}.json")
             Files.copy(file, target)
             records.add(
@@ -58,6 +81,15 @@ internal class ComponentBackup(
             )
             version = readObject(file).string("inheritsFrom")
         }
+    }
+
+    /** 备份实例自己的版本别名文件；继承链里已经备过同一路径时跳过。 */
+    private fun captureAlias(
+        instance: GameInstance,
+        root: java.nio.file.Path,
+        folder: java.nio.file.Path,
+        records: MutableList<Map<String, String>>,
+    ) {
         val alias =
             store
                 .versionGamePath(instance)
@@ -66,7 +98,7 @@ internal class ComponentBackup(
             alias.isRegularFile(NOFOLLOW_LINKS) &&
             records.none { it["path"] == root.relativize(alias).joinToString("/") }
         ) {
-            require(!alias.isSymbolicLink() && alias.fileSize() <= 8 * 1024 * 1024)
+            require(!alias.isSymbolicLink() && alias.fileSize() <= MAX_VERSION_FILE_BYTES)
             val file = "${records.size}.json"
             Files.copy(alias, folder.resolve(file))
             records.add(
@@ -77,11 +109,6 @@ internal class ComponentBackup(
                 ),
             )
         }
-        writeJson(
-            folder.resolve("manifest.json"),
-            mapOf("instance" to instance, "root" to taskPathKey(root), "profiles" to records),
-        )
-        return id
     }
 
     fun restore(

@@ -20,52 +20,10 @@ fun main() =
             )
         try {
             val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            val root = Path.of(System.getProperty("molifox.reference.games"))
-            GameDirectoryService(store).add(root)
-            require(store.data.instances.isNotEmpty()) { "No reference profiles found" }
+            addReferenceGames(store)
             NetworkClient(systemProxyEnabled = { true }).use { network ->
-                val content =
-                    ContentService(
-                        store,
-                        network,
-                        MinecraftInstaller(store, network, JavaService(store, network)),
-                    )
-                val results = mutableListOf<Map<String, Any>>()
-                for (instance in store.data.instances.filter { it.loader == LoaderType.Fabric }) {
-                    check(instance.gameVersion != instance.versionId) {
-                        "Custom profile name leaked into game version filter"
-                    }
-                    val blank = content.search("", "mod", instance.id)
-                    val search = content.search("Sodium", "mod", instance.id)
-                    val versions = content.catalog.details("AANobbMI", instance.id).versions
-                    results +=
-                        mapOf(
-                            "gameVersion" to instance.gameVersion,
-                            "blankSearchTotal" to blank.total,
-                            "sodiumSearchTotal" to search.total,
-                            "compatibleSodiumVersions" to versions.size,
-                        )
-                    println(
-                        "SEARCH_CHECK ${instance.gameVersion}: ${blank.total} / ${search.total}",
-                    )
-                }
-                check(results.isNotEmpty())
-                report["searchResults"] = results
-                val accounts =
-                    readObject(Path.of(System.getProperty("molifox.reference.config")))
-                        .array("accounts")
-                val account =
-                    accounts
-                        .map { gson.fromJson(it, Account::class.java) }
-                        .firstOrNull { it.type == AccountType.Microsoft && it.skinUrl.isNotBlank() }
-                requireNotNull(account) { "No public Microsoft skin URL in reference metadata" }
-                val cache = AccountSkinCache(store, network)
-                val texture =
-                    requireNotNull(
-                        cache.load(account, false),
-                    ) { "Official skin CDN request failed" }
-                check(validSkinTexture(texture))
-                report["officialSkinTexture"] = "passed"
+                report["searchResults"] = searchReferenceProfiles(store, network)
+                report["officialSkinTexture"] = checkOfficialSkin(store, network)
                 report["result"] = "passed"
             }
         } catch (failure: Throwable) {
@@ -77,3 +35,65 @@ fun main() =
             println(gson.toJson(report))
         }
     }
+
+/** 参考实例来自用户已有的游戏目录；没有任何实例说明环境准备失败。 */
+private fun addReferenceGames(store: LauncherStore) {
+    val root = Path.of(System.getProperty("molifox.reference.games"))
+    GameDirectoryService(store).add(root)
+    require(store.data.instances.isNotEmpty()) { "No reference profiles found" }
+}
+
+/** 对参考实例逐个校验版本搜索：空关键词、具名关键词与版本列表都要有结果。 */
+private suspend fun searchReferenceProfiles(
+    store: LauncherStore,
+    network: NetworkClient,
+): List<Map<String, Any>> {
+    val content =
+        ContentService(
+            store,
+            network,
+            MinecraftInstaller(store, network, JavaService(store, network)),
+        )
+    val results = mutableListOf<Map<String, Any>>()
+    for (instance in store.data.instances.filter { it.loader == LoaderType.Fabric }) {
+        check(instance.gameVersion != instance.versionId) {
+            "Custom profile name leaked into game version filter"
+        }
+        val blank = content.search("", "mod", instance.id)
+        val search = content.search("Sodium", "mod", instance.id)
+        val versions = content.catalog.details("AANobbMI", instance.id).versions
+        results +=
+            mapOf(
+                "gameVersion" to instance.gameVersion,
+                "blankSearchTotal" to blank.total,
+                "sodiumSearchTotal" to search.total,
+                "compatibleSodiumVersions" to versions.size,
+            )
+        println(
+            "SEARCH_CHECK ${instance.gameVersion}: ${blank.total} / ${search.total}",
+        )
+    }
+    check(results.isNotEmpty())
+    return results
+}
+
+/** 官方皮肤 CDN 必须能取到可用纹理，否则按失败上报。 */
+private suspend fun checkOfficialSkin(
+    store: LauncherStore,
+    network: NetworkClient,
+): String {
+    val accounts =
+        readObject(Path.of(System.getProperty("molifox.reference.config"))).array("accounts")
+    val account =
+        accounts
+            .map { gson.fromJson(it, Account::class.java) }
+            .firstOrNull { it.type == AccountType.Microsoft && it.skinUrl.isNotBlank() }
+    requireNotNull(account) { "No public Microsoft skin URL in reference metadata" }
+    val cache = AccountSkinCache(store, network)
+    val texture =
+        requireNotNull(
+            cache.load(account, false),
+        ) { "Official skin CDN request failed" }
+    check(validSkinTexture(texture))
+    return "passed"
+}

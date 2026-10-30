@@ -149,7 +149,8 @@ class CacheLifetimeTest {
                     if (request.url.queryParameter("classesOnly") == "true") {
                         """{"data":[{"id":6,"name":"Mods","slug":"mc-mods"}]}"""
                     } else {
-                        """{"data":[{"id":101,"name":"Category ${categories.incrementAndGet()}","slug":"fixture"}]}"""
+                        """{"data":[{"id":101,"name":"Category ${categories.incrementAndGet()}",
+                          "slug": "fixture"}]}"""
                     }
                 }
             NetworkClient(interceptors = listOf(fake)).use { network ->

@@ -5,6 +5,9 @@
 
 package dev.molifox.core.net
 
+private const val SOURCE_DISABLE_COOLDOWN_MS = 5 * 60_000L
+private const val MAX_RATE_LIMIT_STEP = 5
+
 /**
  * 每个源在当前任务里的状态：成功/失败次数、连续失败、禁用与限流到期时间。
  * 403/429 只记限流，不进 [failures]，也不影响 [consecutiveFailures]。
@@ -14,7 +17,7 @@ class SourceHealth(
     /** 连续多少次真实失败后禁用该源。 */
     private val disableAfter: Int = 3,
     /** 禁用冷却：到期后重新参加；一次安装任务内通常不会到期。 */
-    private val disableMillis: Long = 5 * 60_000L,
+    private val disableMillis: Long = SOURCE_DISABLE_COOLDOWN_MS,
     /** 403/429 的首次退避与上限：1s → 2s → 4s …（上限 30s）。 */
     private val rateLimitBaseMillis: Long = 1_000L,
     private val rateLimitCapMillis: Long = 30_000L,
@@ -75,7 +78,7 @@ class SourceHealth(
         states[key] =
             current.copy(
                 rateLimitHits = current.rateLimitHits + 1,
-                rateLimitStep = (step + 1).coerceAtMost(5),
+                rateLimitStep = (step + 1).coerceAtMost(MAX_RATE_LIMIT_STEP),
                 rateLimitedUntil = clock() + wait,
             )
         return wait

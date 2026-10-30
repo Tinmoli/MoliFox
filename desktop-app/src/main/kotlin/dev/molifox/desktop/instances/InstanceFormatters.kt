@@ -12,6 +12,13 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 
+private const val SECONDS_PER_MINUTE = 60L
+private const val SECONDS_PER_HOUR = 3600L
+private const val SECONDS_PER_DAY = 86400L
+private const val BYTES_PER_KIB = 1024L
+private const val BYTES_PER_MIB = 1048576L
+private const val BYTES_PER_GIB = 1073741824L
+
 /** 列表行信息：版本 · 加载器 · 最后游玩 · 占用大小；选中显示备注时把备注接在末尾（先被省略）。 */
 internal fun instanceMetaLine(
     instance: GameInstance,
@@ -40,10 +47,10 @@ private fun lastPlayedText(lastPlayed: String?): String {
     val instant = runCatching { Instant.parse(played) }.getOrNull() ?: return "未游玩"
     val seconds = Duration.between(instant, Instant.now()).seconds.coerceAtLeast(0)
     return when {
-        seconds < 60 -> "刚刚"
-        seconds < 3600 -> "${seconds / 60} 分钟前"
-        seconds < 86400 -> "${seconds / 3600} 小时前"
-        else -> "${seconds / 86400} 天前"
+        seconds < SECONDS_PER_MINUTE -> "刚刚"
+        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟前"
+        seconds < SECONDS_PER_DAY -> "${seconds / SECONDS_PER_HOUR} 小时前"
+        else -> "${seconds / SECONDS_PER_DAY} 天前"
     }
 }
 
@@ -52,9 +59,9 @@ private fun instanceSizeText(bytes: Long?): String =
     when {
         bytes == null -> "统计中…"
         bytes < 0 -> "占用未知"
-        bytes >= 1073741824L -> "%.1f GB".format(bytes / 1073741824f)
-        bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
-        bytes >= 1024L -> "%.0f KB".format(bytes / 1024f)
+        bytes >= BYTES_PER_GIB -> "%.1f GB".format(bytes / BYTES_PER_GIB.toFloat())
+        bytes >= BYTES_PER_MIB -> "%.1f MB".format(bytes / BYTES_PER_MIB.toFloat())
+        bytes >= BYTES_PER_KIB -> "%.0f KB".format(bytes / BYTES_PER_KIB.toFloat())
         else -> bytes.toString() + " B"
     }
 

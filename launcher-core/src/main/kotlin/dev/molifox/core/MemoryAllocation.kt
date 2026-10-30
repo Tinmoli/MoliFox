@@ -5,6 +5,9 @@
 
 package dev.molifox.core
 
+private const val AUTOMATIC_MEMORY_STEP_MB = 256
+private const val MINIMUM_AUTOMATIC_MEMORY_MB = 512
+
 /** 每次启动重新计算，给系统、启动器与堆外分配留出余量。 */
 fun automaticMemoryMb(
     totalMb: Int,
@@ -19,7 +22,8 @@ fun automaticMemoryMb(
     val suggested = minOf(budget * 3L / 5, total / 2L, 12288L).toInt()
     val javaLimit =
         if (architecture.lowercase() in setOf("x86", "i386", "i686", "32")) 1024 else 12288
-    return (suggested / 256 * 256).coerceIn(512, javaLimit)
+    val stepped = suggested / AUTOMATIC_MEMORY_STEP_MB * AUTOMATIC_MEMORY_STEP_MB
+    return stepped.coerceIn(MINIMUM_AUTOMATIC_MEMORY_MB, javaLimit)
 }
 
 fun effectiveGameMemory(

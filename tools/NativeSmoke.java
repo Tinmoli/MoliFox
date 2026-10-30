@@ -122,9 +122,14 @@ public final class NativeSmoke {
                             "JAVA_TOOL_OPTIONS",
                             "-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -DsocksProxyHost=127.0.0.1 -DsocksProxyPort=9");
         }
+        String memoryFlags = System.getProperty("molifox.native.memoryFlags", "");
+        if (!memoryFlags.isBlank()) {
+            builder.environment().merge("JAVA_TOOL_OPTIONS", memoryFlags, (current, extra) -> current + " " + extra);
+        }
         builder.redirectErrorStream(true)
                 .redirectOutput(root.resolve("native-console.log").toFile());
         Process process = builder.start();
+        long processStarted = System.nanoTime();
         System.out.println("NATIVE_PROCESS " + process.pid());
         Set<Long> processIds = new HashSet<>();
         processIds.add(process.pid());
@@ -177,6 +182,8 @@ public final class NativeSmoke {
                                 + ownTitles
                                 + "; processes: "
                                 + processIds);
+            long windowVisibleMillis = (System.nanoTime() - processStarted) / 1_000_000;
+            NativeMemoryProbe.observe(process, root, windowVisibleMillis);
             TestWindowFocus.activate(target.get());
             Thread.sleep(2000);
             for (int attempt = 0;

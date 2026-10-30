@@ -229,36 +229,11 @@ class InstanceToolsTest {
             val tools = InstanceTools(store)
             val source = instance(store)
             val root = store.instancePath(source.id)
-            val payload = ByteArray(64 * 1024) { it.toByte() }
-            repeat(200) { index ->
-                val file = root.resolve("mods/f%03d.jar".format(index))
-                file.parent.createDirectories()
-                file.writeBytes(payload)
-            }
+            writeCopyFixtures(root)
             val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("versions")
             val job = Job()
             val cancelled = AtomicBoolean(false)
-            val watcher =
-                Thread {
-                    val deadline = System.nanoTime() + 15_000_000_000L
-                    while (System.nanoTime() < deadline) {
-                        val fresh =
-                            runCatching {
-                                instancesRoot.listDirectoryEntries().any {
-                                    it.name != source.gameDirectoryName
-                                }
-                            }.getOrDefault(false)
-                        if (fresh) {
-                            job.cancel()
-                            cancelled.set(true)
-                            return@Thread
-                        }
-                        Thread.yield()
-                    }
-                }.apply {
-                    isDaemon = true
-                    start()
-                }
+            val watcher = startCopyWatcher(instancesRoot, source, job, cancelled)
             try {
                 assertFailsWith<CancellationException> {
                     withContext(job) {
@@ -269,18 +244,65 @@ class InstanceToolsTest {
                 watcher.join(5_000)
             }
             assertTrue(cancelled.get(), "watcher did not cancel the copy")
-            assertEquals(1, store.data.instances.size)
-            assertEquals(
-                source.id,
-                store.data.instances
-                    .single()
-                    .id,
-            )
-            assertEquals(
-                listOf(source.gameDirectoryName),
-                instancesRoot.listDirectoryEntries().map { it.name },
-            )
+            assertCopyRolledBack(store, source, instancesRoot)
         }
+
+    /** 复制前写入足够多的文件，保证取消发生在复制途中而不是开始之前。 */
+    private fun writeCopyFixtures(root: Path) {
+        val payload = ByteArray(64 * 1024) { it.toByte() }
+        repeat(200) { index ->
+            val file = root.resolve("mods/f%03d.jar".format(index))
+            file.parent.createDirectories()
+            file.writeBytes(payload)
+        }
+    }
+
+    /** 轮询版本目录，一出现别的目录就取消复制；15 秒后放弃取消，让断言暴露问题。 */
+    private fun startCopyWatcher(
+        instancesRoot: Path,
+        source: GameInstance,
+        job: Job,
+        cancelled: AtomicBoolean,
+    ): Thread =
+        Thread {
+            val deadline = System.nanoTime() + 15_000_000_000L
+            while (System.nanoTime() < deadline) {
+                val fresh =
+                    runCatching {
+                        instancesRoot.listDirectoryEntries().any {
+                            it.name != source.gameDirectoryName
+                        }
+                    }.getOrDefault(false)
+                if (fresh) {
+                    job.cancel()
+                    cancelled.set(true)
+                    return@Thread
+                }
+                Thread.yield()
+            }
+        }.apply {
+            isDaemon = true
+            start()
+        }
+
+    /** 取消后只留下原实例：记录与版本目录都必须回到复制前。 */
+    private fun assertCopyRolledBack(
+        store: LauncherStore,
+        source: GameInstance,
+        instancesRoot: Path,
+    ) {
+        assertEquals(1, store.data.instances.size)
+        assertEquals(
+            source.id,
+            store.data.instances
+                .single()
+                .id,
+        )
+        assertEquals(
+            listOf(source.gameDirectoryName),
+            instancesRoot.listDirectoryEntries().map { it.name },
+        )
+    }
 
     // ---- 整理实例目录 ----
 

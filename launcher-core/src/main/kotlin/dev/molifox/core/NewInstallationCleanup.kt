@@ -7,7 +7,7 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import kotlin.io.path.Path
+import java.nio.file.Path
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.isSymbolicLink
@@ -26,48 +26,67 @@ internal class NewInstallationCleanup(
         context.onFinished(
             "new-installation:${instance.id}",
             cancel = {
-                if (folder.exists(NOFOLLOW_LINKS)) {
-                    require(context.canRemoveDownload(folder)) { "新版本目录已被其他实例引用，未删除" }
-                    require(folder.toRealPath() == folder) { "新版本目录已变为链接，未删除" }
-                    val paths = Files.walk(folder).use { it.toList() }
-                    require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
-                        "新版本目录包含链接，未删除"
-                    }
-                    paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
-                }
-                val current = store.data.instances.find { it.id == instance.id }
-                if (current?.packFile?.isNotBlank() == true) {
-                    val archive =
-                        java.nio.file.Path
-                            .of(current.packFile)
-                            .toAbsolutePath()
-                            .normalize()
-                    require(
-                        archive.parent ==
-                            store.directories.packArchives
-                                .toAbsolutePath()
-                                .normalize(),
-                    )
-                    require(archive.fileName.toString().substringBefore('.') == instance.id)
-                    Files.deleteIfExists(archive)
-                }
-                store.mutate { data ->
-                    val remaining = data.instances.filter { it.id != instance.id }
-                    data.copy(
-                        instances = remaining,
-                        selectedInstanceId =
-                            if (data.selectedInstanceId == instance.id) {
-                                remaining
-                                    .firstOrNull {
-                                        it.gameDirectoryId == data.activeGameDirectoryId
-                                    }?.id
-                            } else {
-                                data.selectedInstanceId
-                            },
-                    )
-                }
+                removeVersionFolder(context, folder)
+                removePackArchive(instance)
+                removeInstanceRecord(instance)
             },
             complete = {},
         )
+    }
+
+    /** 删除专属版本目录；目录本身或其中任一条目变成链接时拒绝删除。 */
+    private fun removeVersionFolder(
+        context: JobContext,
+        folder: Path,
+    ) {
+        if (!folder.exists(NOFOLLOW_LINKS)) return
+        require(context.canRemoveDownload(folder)) { "新版本目录已被其他实例引用，未删除" }
+        require(folder.toRealPath() == folder) { "新版本目录已变为链接，未删除" }
+        val paths = Files.walk(folder).use { it.toList() }
+        require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
+            "新版本目录包含链接，未删除"
+        }
+        paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
+    }
+
+    /** 删除该实例的整合包副本；文件必须仍在 packArchives 目录内并以实例 id 命名。 */
+    private fun removePackArchive(instance: GameInstance) {
+        val packFile =
+            store.data.instances
+                .find { it.id == instance.id }
+                ?.packFile
+        if (packFile.isNullOrBlank()) return
+        val archive =
+            java.nio.file.Path
+                .of(packFile)
+                .toAbsolutePath()
+                .normalize()
+        require(
+            archive.parent ==
+                store.directories.packArchives
+                    .toAbsolutePath()
+                    .normalize(),
+        )
+        require(archive.fileName.toString().substringBefore('.') == instance.id)
+        Files.deleteIfExists(archive)
+    }
+
+    /** 移除实例记录；被移除的是当前选中实例时改选同一游戏目录下的其它实例。 */
+    private fun removeInstanceRecord(instance: GameInstance) {
+        store.mutate { data ->
+            val remaining = data.instances.filter { it.id != instance.id }
+            data.copy(
+                instances = remaining,
+                selectedInstanceId =
+                    if (data.selectedInstanceId == instance.id) {
+                        remaining
+                            .firstOrNull {
+                                it.gameDirectoryId == data.activeGameDirectoryId
+                            }?.id
+                    } else {
+                        data.selectedInstanceId
+                    },
+            )
+        }
     }
 }

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -13,7 +14,6 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.createDirectories
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.isDirectory
@@ -21,7 +21,6 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.walk
-import kotlin.io.path.writeText
 
 /** 实例的目录语义：共用游戏目录（多个实例共用 mods/存档），或版本隔离（实例独占目录）。 */
 enum class IsolationMode(
@@ -135,51 +134,7 @@ object IsolationMigrationPlanner {
         // 版本隔离目录可能位于共用游戏目录之内（instances/<id>），只跳过目标子树，不能跳过整棵源树。
         val nested = if (target.startsWith(source)) target else null
         for ((relative, file) in candidates(source, nested, copySaves, blockers)) {
-            val size = runCatching { file.fileSize() }.getOrDefault(0L)
-            val destination = runCatching { safePath(target, relative) }.getOrNull()
-            if (destination == null) {
-                entries += MigrationEntry(relative, MigrationAction.Conflict, size, "目标路径不安全，未迁移")
-                blockers += "目标路径不安全：$relative"
-                continue
-            }
-            when {
-                !destination.exists(LinkOption.NOFOLLOW_LINKS) ->
-                    entries +=
-                        MigrationEntry(
-                            relative,
-                            if (moving) MigrationAction.Move else MigrationAction.Copy,
-                            size,
-                            transferReason(moving, to) + copyOnlyNote,
-                        )
-                Files.isSymbolicLink(destination) -> {
-                    entries +=
-                        MigrationEntry(relative, MigrationAction.Conflict, size, "目标是符号链接，未覆盖")
-                    blockers += "目标已是符号链接：$relative"
-                }
-                destination.isDirectory(LinkOption.NOFOLLOW_LINKS) -> {
-                    entries +=
-                        MigrationEntry(relative, MigrationAction.Conflict, size, "目标已有同名目录，未覆盖")
-                    blockers += "目标已存在同名目录：$relative"
-                }
-                else -> {
-                    val same =
-                        destination.fileSize() == size &&
-                            runCatching { digest(file) == digest(destination) }.getOrDefault(false)
-                    if (same) {
-                        entries +=
-                            MigrationEntry(relative, MigrationAction.Skip, size, "目标已有相同内容，跳过")
-                    } else {
-                        entries +=
-                            MigrationEntry(
-                                relative,
-                                MigrationAction.Conflict,
-                                size,
-                                "目标已有不同内容的文件，未覆盖",
-                            )
-                        blockers += "目标已存在不同内容的文件：$relative"
-                    }
-                }
-            }
+            planEntry(relative, file, target, moving, to, copyOnlyNote, entries, blockers)
         }
         if (!copySaves) savesSkip(source)?.let { entries += it }
         return IsolationPlan(
@@ -192,6 +147,83 @@ object IsolationMigrationPlanner {
             blockers = blockers.toList(),
         )
     }
+
+    /** 单条源文件的计划：目标不存在才搬运，已存在时按内容与类型判定 Skip 或 Conflict。 */
+    private fun planEntry(
+        relative: String,
+        file: Path,
+        target: Path,
+        moving: Boolean,
+        to: IsolationMode,
+        copyOnlyNote: String,
+        entries: MutableList<MigrationEntry>,
+        blockers: MutableList<String>,
+    ) {
+        val size = runCatching { file.fileSize() }.getOrDefault(0L)
+        val destination = runCatching { safePath(target, relative) }.getOrNull()
+        if (destination == null) {
+            entries += MigrationEntry(relative, MigrationAction.Conflict, size, "目标路径不安全，未迁移")
+            blockers += "目标路径不安全：$relative"
+            return
+        }
+        if (!destination.exists(LinkOption.NOFOLLOW_LINKS)) {
+            entries +=
+                MigrationEntry(
+                    relative,
+                    if (moving) MigrationAction.Move else MigrationAction.Copy,
+                    size,
+                    transferReason(moving, to) + copyOnlyNote,
+                )
+            return
+        }
+        planExistingDestination(relative, file, destination, size, entries, blockers)
+    }
+
+    /** 目标已存在时的判定：符号链接、同名目录、相同内容、不同内容，顺序与判定结果保持不变。 */
+    private fun planExistingDestination(
+        relative: String,
+        file: Path,
+        destination: Path,
+        size: Long,
+        entries: MutableList<MigrationEntry>,
+        blockers: MutableList<String>,
+    ) {
+        when {
+            Files.isSymbolicLink(destination) -> {
+                entries +=
+                    MigrationEntry(relative, MigrationAction.Conflict, size, "目标是符号链接，未覆盖")
+                blockers += "目标已是符号链接：$relative"
+            }
+            destination.isDirectory(LinkOption.NOFOLLOW_LINKS) -> {
+                entries +=
+                    MigrationEntry(relative, MigrationAction.Conflict, size, "目标已有同名目录，未覆盖")
+                blockers += "目标已存在同名目录：$relative"
+            }
+            sameContent(file, destination, size) -> {
+                entries +=
+                    MigrationEntry(relative, MigrationAction.Skip, size, "目标已有相同内容，跳过")
+            }
+            else -> {
+                entries +=
+                    MigrationEntry(
+                        relative,
+                        MigrationAction.Conflict,
+                        size,
+                        "目标已有不同内容的文件，未覆盖",
+                    )
+                blockers += "目标已存在不同内容的文件：$relative"
+            }
+        }
+    }
+
+    /** 目标与源同尺寸且摘要一致时视为已迁移；读不到时按不同内容处理。 */
+    private fun sameContent(
+        file: Path,
+        destination: Path,
+        size: Long,
+    ): Boolean =
+        destination.fileSize() == size &&
+            runCatching { digest(file) == digest(destination) }.getOrDefault(false)
 
     /** 生成整体移动实例目录的计划：源目录下所有普通文件都要搬走，符号链接无法搬运时只记 blocker。 移动不改变隔离方式，因此 `from` 与 `to` 相同。 */
     fun planMove(
@@ -210,36 +242,11 @@ object IsolationMigrationPlanner {
         }
         require(source.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "实例目录不存在，无法移动" }
         val problems = blockers.toMutableList()
-        val files = mutableListOf<Pair<String, Path>>()
-        var links = 0
-        Files.walk(source).use { paths ->
-            val iterator = paths.iterator()
-            while (iterator.hasNext()) {
-                val path = iterator.next()
-                if (path == source) continue
-                if (Files.isSymbolicLink(path)) {
-                    links++
-                    continue
-                }
-                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue
-                files += source.relativize(path).toString().replace('\\', '/') to path
-            }
-        }
+        val (files, links) = instanceFiles(source)
         if (links > 0) problems += "实例目录含 $links 个符号链接，暂不支持整体移动"
         val entries = mutableListOf<MigrationEntry>()
         for ((relative, file) in files.sortedBy { it.first }) {
-            val size = runCatching { file.fileSize() }.getOrDefault(0L)
-            val destination = runCatching { safePath(target, relative) }.getOrNull()
-            if (destination == null) {
-                problems += "目标路径不安全：$relative"
-                continue
-            }
-            if (destination.exists(LinkOption.NOFOLLOW_LINKS)) {
-                entries += MigrationEntry(relative, MigrationAction.Conflict, size, "目标已有同名文件，未覆盖")
-                problems += "目标已存在同名文件：$relative"
-            } else {
-                entries += MigrationEntry(relative, MigrationAction.Copy, size, "复制到新的游戏目录")
-            }
+            planMoveEntry(relative, file, target, entries, problems)
         }
         return IsolationPlan(
             instanceId = instance.id,
@@ -250,6 +257,47 @@ object IsolationMigrationPlanner {
             entries = entries,
             blockers = problems.toList(),
         )
+    }
+
+    /** 收集实例目录下的普通文件与符号链接数量；符号链接无法整体搬运，只计数供 blocker 使用。 */
+    private fun instanceFiles(source: Path): Pair<List<Pair<String, Path>>, Int> {
+        val files = mutableListOf<Pair<String, Path>>()
+        var links = 0
+        Files.walk(source).use { paths ->
+            val iterator = paths.iterator()
+            while (iterator.hasNext()) {
+                val path = iterator.next()
+                if (path == source) continue
+                if (Files.isSymbolicLink(path)) {
+                    links++
+                } else if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    files += source.relativize(path).toString().replace('\\', '/') to path
+                }
+            }
+        }
+        return files to links
+    }
+
+    /** 整体移动的单条计划：目标已有同名文件时记为 Conflict，绝不覆盖。 */
+    private fun planMoveEntry(
+        relative: String,
+        file: Path,
+        target: Path,
+        entries: MutableList<MigrationEntry>,
+        problems: MutableList<String>,
+    ) {
+        val size = runCatching { file.fileSize() }.getOrDefault(0L)
+        val destination = runCatching { safePath(target, relative) }.getOrNull()
+        if (destination == null) {
+            problems += "目标路径不安全：$relative"
+            return
+        }
+        if (destination.exists(LinkOption.NOFOLLOW_LINKS)) {
+            entries += MigrationEntry(relative, MigrationAction.Conflict, size, "目标已有同名文件，未覆盖")
+            problems += "目标已存在同名文件：$relative"
+        } else {
+            entries += MigrationEntry(relative, MigrationAction.Copy, size, "复制到新的游戏目录")
+        }
     }
 
     private fun transferReason(
@@ -270,12 +318,12 @@ object IsolationMigrationPlanner {
             val root = source.resolve(name)
             if (Files.isSymbolicLink(root)) {
                 blockers += "$name 是符号链接，暂不支持迁移"
-                continue
-            }
-            when {
-                root.isDirectory(LinkOption.NOFOLLOW_LINKS) ->
-                    walk(root, excluded, source, blockers, result)
-                root.isRegularFile(LinkOption.NOFOLLOW_LINKS) -> result += name to root
+            } else {
+                when {
+                    root.isDirectory(LinkOption.NOFOLLOW_LINKS) ->
+                        walk(root, excluded, source, blockers, result)
+                    root.isRegularFile(LinkOption.NOFOLLOW_LINKS) -> result += name to root
+                }
             }
         }
         for (name in migrationFiles) {
@@ -304,10 +352,9 @@ object IsolationMigrationPlanner {
                 if (path == root || (excluded != null && path.startsWith(excluded))) continue
                 if (Files.isSymbolicLink(path)) {
                     links++
-                    continue
+                } else if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    result += source.relativize(path).toString().replace('\\', '/') to path
                 }
-                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue
-                result += source.relativize(path).toString().replace('\\', '/') to path
             }
         }
         if (links > 0) {
@@ -352,16 +399,123 @@ internal class IsolationMigrationTransaction(
         moveSource: Boolean = false,
         updateInstance: (GameInstance) -> Unit,
     ): Int {
-        require(plan.blockers.isEmpty()) { plan.blockers.first() }
+        validatePlan(plan)
         val original = store.instance(plan.instanceId)
         val sourceRoot = plan.sourceRoot.toAbsolutePath().normalize()
         val targetRoot = plan.targetRoot.toAbsolutePath().normalize()
         val root = instanceRoot.toAbsolutePath().normalize()
-        require(root == sourceRoot || root == targetRoot) { "迁移计划与实例目录不一致，请重新生成计划" }
-        val transfer =
-            plan.entries.filter {
-                it.action == MigrationAction.Copy || it.action == MigrationAction.Move
+        validateRoots(root, sourceRoot, targetRoot)
+        val transfer = transferEntries(plan)
+        validateTransfer(transfer, copySaves)
+        val state = TransferState(original, targetRoot, backupRoot.toAbsolutePath().normalize())
+        val label = if (plan.from == plan.to) "移动实例" else "切换隔离"
+        state.backup.createDirectories()
+        MigrationManifest.write(state.backup, plan)
+        guardedTransfer(state) {
+            copyEntries(transfer, sourceRoot, state, moveSource, label, context)
+            context.checkCancelled()
+            updateInstance(recordFor(plan, original))
+        }
+        MigrationManifest.deleteTree(state.backup)
+        return transfer.size
+    }
+
+    /** 迁移现场：逐条记录已复制、已移动与已创建的目录，失败时按相反顺序回滚。 */
+    private class TransferState(
+        val original: GameInstance,
+        val targetRoot: Path,
+        val backup: Path,
+    ) {
+        val copied = mutableListOf<Path>()
+        val moved = mutableListOf<Pair<Path, Path>>()
+        val createdDirectories = mutableListOf<Path>()
+    }
+
+    /**
+     * 执行搬运并在失败时回滚。
+     *
+     * 这里只能兜底：调用方传入的 `updateInstance` 可以抛出任意运行时异常，回滚必须覆盖所有这些情况；
+     * 具体类型按实际会抛出的 IO、记录缺失与路径校验失败收窄。
+     */
+    private suspend fun guardedTransfer(
+        state: TransferState,
+        body: suspend () -> Unit,
+    ) {
+        val failure =
+            try {
+                body()
+                return
+            } catch (error: CancellationException) {
+                error
+            } catch (error: IOException) {
+                error
+            } catch (error: IllegalStateException) {
+                error
+            } catch (error: IllegalArgumentException) {
+                error
             }
+        throw rollback(failure, state)
+    }
+
+    private fun transferEntries(plan: IsolationPlan): List<MigrationEntry> =
+        plan.entries.filter {
+            it.action == MigrationAction.Copy ||
+                it.action == MigrationAction.Move
+        }
+
+    private fun recordFor(
+        plan: IsolationPlan,
+        original: GameInstance,
+    ): GameInstance =
+        if (plan.from == plan.to) {
+            original
+        } else {
+            original.copy(isolation = plan.to.versionIsolation())
+        }
+
+    private suspend fun copyEntries(
+        transfer: List<MigrationEntry>,
+        sourceRoot: Path,
+        state: TransferState,
+        moveSource: Boolean,
+        label: String,
+        context: JobContext,
+    ) {
+        transfer.forEachIndexed { index, entry ->
+            context.checkCancelled()
+            val source = transferSource(sourceRoot, entry.relativePath)
+            val target = safePath(state.targetRoot, entry.relativePath)
+            ensureParent(target, state.createdDirectories)
+            if (moveSource && entry.action == MigrationAction.Move) {
+                Files.move(source, target)
+                state.moved.add(target to source)
+            } else {
+                Files.copy(source, target)
+                state.copied.add(target)
+            }
+            context.progress(
+                (index + 1).toFloat() / transfer.size,
+                "$label · 文件 ${index + 1}/${transfer.size}",
+            )
+        }
+    }
+
+    private fun validatePlan(plan: IsolationPlan) {
+        require(plan.blockers.isEmpty()) { plan.blockers.first() }
+    }
+
+    private fun validateRoots(
+        root: Path,
+        sourceRoot: Path,
+        targetRoot: Path,
+    ) {
+        require(root == sourceRoot || root == targetRoot) { "迁移计划与实例目录不一致，请重新生成计划" }
+    }
+
+    private fun validateTransfer(
+        transfer: List<MigrationEntry>,
+        copySaves: Boolean,
+    ) {
         require(
             copySaves ||
                 transfer.none {
@@ -373,85 +527,51 @@ internal class IsolationMigrationTransaction(
         ) {
             "迁移计划包含存档，但已选择不迁移存档，请重新生成计划"
         }
-        val backup = backupRoot.toAbsolutePath().normalize()
-        val label = if (plan.from == plan.to) "移动实例" else "切换隔离"
-        val copied = mutableListOf<Path>()
-        val moved = mutableListOf<Pair<Path, Path>>()
-        val createdDirectories = mutableListOf<Path>()
-        var recordUpdated = false
-        var committed = false
-        backup.createDirectories()
-        writeManifest(backup, plan)
-        try {
-            transfer.forEachIndexed { index, entry ->
-                context.checkCancelled()
-                val source = safePath(sourceRoot, entry.relativePath)
-                require(
-                    source.isRegularFile(
-                        LinkOption.NOFOLLOW_LINKS,
-                    ) && !Files.isSymbolicLink(source),
-                ) {
-                    "源文件已不存在，请重新生成迁移计划：${entry.relativePath}"
-                }
-                val target = safePath(targetRoot, entry.relativePath)
-                ensureParent(target, createdDirectories)
-                if (moveSource && entry.action == MigrationAction.Move) {
-                    Files.move(source, target)
-                    moved.add(target to source)
-                } else {
-                    Files.copy(source, target)
-                    copied.add(target)
-                }
-                context.progress(
-                    (index + 1).toFloat() / transfer.size,
-                    "$label · 文件 ${index + 1}/${transfer.size}",
-                )
-            }
-            context.checkCancelled()
-            val record =
-                if (plan.from == plan.to) {
-                    original
-                } else {
-                    original.copy(isolation = plan.to.versionIsolation())
-                }
-            updateInstance(record)
-            recordUpdated = true
-            committed = true
-            deleteTree(backup)
-            return transfer.size
-        } catch (error: Throwable) {
-            if (committed) throw error
-            val failures = mutableListOf<Throwable>()
-            moved.asReversed().forEach { (target, source) ->
-                runCatching {
-                    source.parent?.createDirectories()
-                    Files.move(target, source, StandardCopyOption.REPLACE_EXISTING)
-                }.onFailure { failures += it }
-            }
-            copied.asReversed().forEach { target ->
-                runCatching { Files.deleteIfExists(target) }.onFailure { failures += it }
-            }
-            createdDirectories
-                .sortedByDescending { it.nameCount }
-                .forEach { directory ->
-                    runCatching { Files.deleteIfExists(directory) }
-                }
-            if (recordUpdated) {
-                runCatching { store.updateInstance(original.id) { original } }
-                    .onFailure { failures += it }
-            }
-            if (failures.isNotEmpty()) {
-                val failure =
-                    IOException(
-                        "迁移未完成，迁移清单保留在 $backup，未恢复的文件仍在 $targetRoot，请先手动恢复后再操作",
-                        error,
-                    )
-                failures.forEach { failure.addSuppressed(it) }
-                throw failure
-            }
-            deleteTree(backup)
-            throw error
+    }
+
+    private fun transferSource(
+        sourceRoot: Path,
+        relativePath: String,
+    ): Path {
+        val source = safePath(sourceRoot, relativePath)
+        require(
+            source.isRegularFile(
+                LinkOption.NOFOLLOW_LINKS,
+            ) && !Files.isSymbolicLink(source),
+        ) {
+            "源文件已不存在，请重新生成迁移计划：$relativePath"
         }
+        return source
+    }
+
+    /** 回滚已移动/复制的文件与本次创建的目录；有未恢复项时保留迁移清单并返回带说明的异常。 */
+    private fun rollback(
+        error: Throwable,
+        state: TransferState,
+    ): Throwable {
+        val failures = mutableListOf<Throwable>()
+        state.moved.asReversed().forEach { (target, source) ->
+            runCatching {
+                source.parent?.createDirectories()
+                Files.move(target, source, StandardCopyOption.REPLACE_EXISTING)
+            }.onFailure { failures += it }
+        }
+        state.copied.asReversed().forEach { target ->
+            runCatching { Files.deleteIfExists(target) }.onFailure { failures += it }
+        }
+        state.createdDirectories
+            .sortedByDescending { it.nameCount }
+            .forEach { directory ->
+                runCatching { Files.deleteIfExists(directory) }
+            }
+        if (failures.isNotEmpty()) {
+            return IOException(
+                "迁移未完成，迁移清单保留在 ${state.backup}，未恢复的文件仍在 ${state.targetRoot}，请先手动恢复后再操作",
+                error,
+            ).also { result -> failures.forEach { result.addSuppressed(it) } }
+        }
+        MigrationManifest.deleteTree(state.backup)
+        return error
     }
 
     /** 目标目录逐级创建，并记录本次新建的目录，回滚时按由深到浅删除空目录。 */
@@ -466,33 +586,6 @@ internal class IsolationMigrationTransaction(
                 .toList()
         parent.createDirectories()
         created.addAll(missing)
-    }
-
-    /** 迁移清单供回滚失败时人工核对；成功或完整回滚后整个目录删除。 */
-    private fun writeManifest(
-        directory: Path,
-        plan: IsolationPlan,
-    ) {
-        val text =
-            buildString {
-                appendLine("MoliFox 迁移清单")
-                appendLine("实例：${plan.instanceId}")
-                appendLine("方向：${plan.from.title} → ${plan.to.title}")
-                appendLine("源目录：${plan.sourceRoot.toAbsolutePath()}")
-                appendLine("目标目录：${plan.targetRoot.toAbsolutePath()}")
-                appendLine("条目：${plan.entries.size}")
-                plan.entries.forEach {
-                    appendLine("${it.action} ${it.relativePath} ${it.size} ${it.reason}")
-                }
-            }
-        directory.resolve("isolation-plan.txt").writeText(text)
-    }
-
-    private fun deleteTree(directory: Path) {
-        if (!directory.exists(LinkOption.NOFOLLOW_LINKS)) return
-        Files.walk(directory).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
-        }
     }
 }
 
@@ -634,16 +727,7 @@ class IsolationMigration(
             val targetRoot = plan.targetRoot
             val destination = destinationGameDirectory.toAbsolutePath().normalize()
             val registered = gameDirectoryAt(destination)
-            val directory =
-                registered
-                    ?: GameDirectory(
-                        name =
-                            destination.fileName
-                                ?.toString()
-                                .orEmpty()
-                                .ifBlank { "游戏目录" },
-                        path = destination.toString(),
-                    )
+            val directory = registered ?: newGameDirectory(destination)
             destination.createDirectories()
             context.progress(0f, "准备移动实例 · ${plan.transferCount} 个文件")
             val transaction =
@@ -656,25 +740,7 @@ class IsolationMigration(
                 transaction.apply(plan, context, copySaves = true, moveSource = false) {
                     verifyCopy(plan)
                     store.mutate { data ->
-                        data.copy(
-                            gameDirectories =
-                                if (registered == null) {
-                                    data.gameDirectories + directory
-                                } else {
-                                    data.gameDirectories
-                                },
-                            instances =
-                                data.instances.map { current ->
-                                    if (current.id == instanceId) {
-                                        current.copy(
-                                            gameDirectoryId = directory.id,
-                                            managedGameDirectory = true,
-                                        )
-                                    } else {
-                                        current
-                                    }
-                                },
-                        )
+                        registerMovedInstance(data, instanceId, registered, directory)
                     }
                 }
             val removed = runCatching { store.platform.moveToTrash(sourceRoot) }
@@ -685,6 +751,44 @@ class IsolationMigration(
             store.log("已移动实例：${instance.name} → $targetRoot（$executed 个文件）")
             targetRoot
         }
+
+    /** 未登记的目标目录按文件夹名生成一条待登记记录；名称取不到时用「游戏目录」。 */
+    private fun newGameDirectory(destination: Path): GameDirectory =
+        GameDirectory(
+            name =
+                destination.fileName
+                    ?.toString()
+                    .orEmpty()
+                    .ifBlank { "游戏目录" },
+            path = destination.toString(),
+        )
+
+    /** 把实例记录指向新游戏目录，并在目标目录尚未登记时补一条记录。 */
+    private fun registerMovedInstance(
+        data: LauncherData,
+        instanceId: String,
+        registered: GameDirectory?,
+        directory: GameDirectory,
+    ): LauncherData =
+        data.copy(
+            gameDirectories =
+                if (registered == null) {
+                    data.gameDirectories + directory
+                } else {
+                    data.gameDirectories
+                },
+            instances =
+                data.instances.map { current ->
+                    if (current.id == instanceId) {
+                        current.copy(
+                            gameDirectoryId = directory.id,
+                            managedGameDirectory = true,
+                        )
+                    } else {
+                        current
+                    }
+                },
+        )
 
     private fun currentMode(instance: GameInstance): IsolationMode =
         if (store.isolated(instance)) IsolationMode.Isolated else IsolationMode.Shared
@@ -719,10 +823,12 @@ class IsolationMigration(
             val iterator = paths.iterator()
             while (iterator.hasNext()) {
                 val path = iterator.next()
-                if (Files.isSymbolicLink(path)) continue
-                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue
-                files++
-                bytes += runCatching { path.fileSize() }.getOrDefault(0L)
+                if (!Files.isSymbolicLink(path) &&
+                    Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                ) {
+                    files++
+                    bytes += runCatching { path.fileSize() }.getOrDefault(0L)
+                }
             }
         }
         return files to bytes

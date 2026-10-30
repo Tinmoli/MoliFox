@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.net.MachineRegion
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -30,10 +31,14 @@ class DownloadSourcePolicyTest {
         assertEquals("auto", store.data.settings.versionListSource)
         NetworkClient().use { network ->
             val url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-            assertEquals(
-                listOf(url, "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"),
-                network.downloadCandidates(url, "auto"),
-            )
+            val mirrorUrl = "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
+            val autoOrder =
+                if (MachineRegion.prefersMirror()) {
+                    listOf(mirrorUrl, url)
+                } else {
+                    listOf(url, mirrorUrl)
+                }
+            assertEquals(autoOrder, network.downloadCandidates(url, "auto"))
             assertEquals(listOf(url), network.downloadCandidates(url, "official"))
             assertEquals(
                 listOf("https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"),

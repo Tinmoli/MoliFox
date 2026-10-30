@@ -58,7 +58,11 @@ fun CopyInstanceDialog(
                 try {
                     actions.controller.copyInstance(instance.id, trimmed, copySaves, copyMods)
                     onDismiss()
-                } catch (failure: Exception) {
+                } catch (failure: IllegalStateException) {
+                    // 后台任务繁忙、实例不存在或队列拒绝登记时只更新对话框内的错误文案。
+                    error = failure.message ?: "无法开始复制，请稍后重试"
+                } catch (failure: IllegalArgumentException) {
+                    // 参数校验失败（与 requireIdle 的取值检查同类）同样只提示，不关闭对话框。
                     error = failure.message ?: "无法开始复制，请稍后重试"
                 }
             },

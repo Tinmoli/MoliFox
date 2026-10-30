@@ -114,14 +114,18 @@ private class RangedFiles(
         requests.incrementAndGet()
         val range = request.getHeader("Range")
         ranges += range
-        if (range == null) return full()
         val size = content.size.toLong()
-        val start = range.removePrefix("bytes=").removeSuffix("-").toLongOrNull() ?: return full()
-        if (start >= size) return MockResponse().setResponseCode(416)
-        return MockResponse()
-            .setResponseCode(206)
-            .setHeader("Content-Range", "bytes $start-${size - 1}/$size")
-            .setBody(Buffer().write(content.copyOfRange(start.toInt(), content.size)))
+        val start = range?.removePrefix("bytes=")?.removeSuffix("-")?.toLongOrNull()
+        return if (range == null || start == null) {
+            full()
+        } else if (start >= size) {
+            MockResponse().setResponseCode(416)
+        } else {
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("Content-Range", "bytes $start-${size - 1}/$size")
+                .setBody(Buffer().write(content.copyOfRange(start.toInt(), content.size)))
+        }
     }
 
     fun full() =
@@ -500,7 +504,10 @@ class NetworkClientTest {
                 }
             }
         }
+}
 
+/** 下载重试、取消与断点保留：与 [NetworkClientTest] 共用同一批测试夹具。 */
+class NetworkClientResumeTest {
     @Test
     fun `server errors retry with backoff and then succeed`() =
         runBlocking {
@@ -580,14 +587,7 @@ class NetworkClientTest {
             val content = payload(400_000, seed = 17)
             withWorkDirectory("cancel") { work ->
                 MockWebServer().use { server ->
-                    server.dispatcher =
-                        object : Dispatcher() {
-                            override fun dispatch(request: RecordedRequest) =
-                                MockResponse()
-                                    .setResponseCode(200)
-                                    .setBody(Buffer().write(content))
-                                    .throttleBody(4096, 40, TimeUnit.MILLISECONDS)
-                        }
+                    server.dispatcher = throttledFull(content)
                     val client = NetworkClient()
                     try {
                         val target = work.resolve("core.jar")
@@ -602,31 +602,13 @@ class NetworkClientTest {
                                     ),
                                 )
                             }
-                        withTimeout(30_000) {
-                            while (!partial.isRegularFile() || partial.fileSize() < 4096L) delay(20)
-                        }
+                        awaitPartialBytes(partial, 4096L)
                         job.cancelAndJoin()
                         assertFalse(target.exists())
                         assertFalse(partial.exists(), "显式取消必须删除断点")
                         val preserved = 4096L
                         partial.writeBytes(content.copyOfRange(0, preserved.toInt()))
-
-                        // 之后的网络失败也不能删掉断点（只有校验失败和 discardPartial 才删）。
-                        server.dispatcher =
-                            object : Dispatcher() {
-                                override fun dispatch(request: RecordedRequest) =
-                                    MockResponse().setResponseCode(503)
-                            }
-                        assertFailsWith<DownloadHttpException> {
-                            client.download(
-                                artifact(
-                                    server.loopbackUrl("/core.jar").toString(),
-                                    target,
-                                    content,
-                                ),
-                                attempts = 1,
-                            )
-                        }
+                        assertNetworkFailureKeepsCheckpoint(server, client, target, content)
                         assertTrue(partial.isRegularFile(), "网络失败不得删除断点")
                         assertEquals(preserved, partial.fileSize())
                         assertFalse(target.exists())
@@ -699,4 +681,43 @@ class NetworkClientTest {
                 }
             }
         }
+
+    /** 200 + 限速的完整响应，用于制造可取消的慢速传输。 */
+    private fun throttledFull(content: ByteArray): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) =
+                MockResponse()
+                    .setResponseCode(200)
+                    .setBody(Buffer().write(content))
+                    .throttleBody(4096, 40, TimeUnit.MILLISECONDS)
+        }
+
+    private suspend fun awaitPartialBytes(
+        partial: Path,
+        minimumBytes: Long,
+    ) {
+        withTimeout(30_000) {
+            while (!partial.isRegularFile() || partial.fileSize() < minimumBytes) delay(20)
+        }
+    }
+
+    /** 让下一次下载以 503 失败，证明网络失败不会删除已有断点。 */
+    private suspend fun assertNetworkFailureKeepsCheckpoint(
+        server: MockWebServer,
+        client: NetworkClient,
+        target: Path,
+        content: ByteArray,
+    ) {
+        server.dispatcher =
+            object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) =
+                    MockResponse().setResponseCode(503)
+            }
+        assertFailsWith<DownloadHttpException> {
+            client.download(
+                artifact(server.loopbackUrl("/core.jar").toString(), target, content),
+                attempts = 1,
+            )
+        }
+    }
 }

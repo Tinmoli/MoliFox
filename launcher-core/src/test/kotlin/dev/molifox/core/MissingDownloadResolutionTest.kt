@@ -36,61 +36,18 @@ class MissingDownloadResolutionTest {
     @Test
     fun `version json without downloads resolves libraries through maven and never piston-data`() {
         val root = temporary.resolve(".minecraft")
-        writeJson(
-            root.resolve("versions/26.3/26.3.json"),
-            mapOf(
-                "id" to "26.3",
-                "mainClass" to "net.minecraft.client.main.Main",
-                "libraries" to
-                    listOf(
-                        // 完全没有 downloads 段：按坐标取 Maven。
-                        library("commons-io:commons-io:2.20.0"),
-                        // 只有 path、没有 url：仍然按 Maven 仓库拼地址。
-                        library(
-                            "org.jspecify:jspecify:1.0.0",
-                            mapOf(
-                                "downloads" to
-                                    mapOf(
-                                        "artifact" to
-                                            mapOf(
-                                                "path" to
-                                                    "org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar",
-                                            ),
-                                    ),
-                            ),
-                        ),
-                        // 错误地指向对象存储的库地址：改回该库声明的 Maven 仓库，不能请求 piston-data。
-                        library(
-                            "com.example:mapped:1.0",
-                            mapOf(
-                                "downloads" to
-                                    mapOf(
-                                        "artifact" to
-                                            mapOf(
-                                                "url" to
-                                                    "https://piston-data.mojang.com/v1/objects/deadbeef/mapped-1.0.jar",
-                                                "path" to "com/example/mapped/1.0/mapped-1.0.jar",
-                                            ),
-                                    ),
-                            ),
-                        ),
-                        // 加载器库只声明了自己的 Maven 仓库。
-                        library(
-                            "net.fabricmc:fabric-loader:0.20.1",
-                            mapOf("url" to "https://maven.fabricmc.net/"),
-                        ),
-                    ),
-            ),
-        )
+        writeLibraryManifest(root)
         val resolver = VersionResolver(root, DesktopPlatform())
         val profile = resolver.resolve("26.3")
         val artifacts = resolver.libraries(profile).flatMap { resolver.libraryArtifacts(it) }
         assertEquals(
             listOf(
-                "https://libraries.minecraft.net/commons-io/commons-io/2.20.0/commons-io-2.20.0.jar",
+                "https://libraries.minecraft.net/commons-io/" +
+                    "commons-io/2.20.0/commons-io-2.20.0.jar",
                 "https://libraries.minecraft.net/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar",
                 "https://libraries.minecraft.net/com/example/mapped/1.0/mapped-1.0.jar",
-                "https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar",
+                "https://maven.fabricmc.net/net/fabricmc/" +
+                    "fabric-loader/0.20.1/fabric-loader-0.20.1.jar",
             ),
             artifacts.map { it.first.url },
         )
@@ -113,69 +70,72 @@ class MissingDownloadResolutionTest {
         artifacts.forEach { assertTrue(it.first.target.startsWith(root.resolve("libraries"))) }
     }
 
+    /** 版本 JSON 里的四类依赖库：无 downloads、只有 path、错误对象存储地址、自带仓库。 */
+    private fun writeLibraryManifest(root: Path) {
+        writeJson(
+            root.resolve("versions/26.3/26.3.json"),
+            mapOf(
+                "id" to "26.3",
+                "mainClass" to "net.minecraft.client.main.Main",
+                "libraries" to
+                    listOf(
+                        // 完全没有 downloads 段：按坐标取 Maven。
+                        library("commons-io:commons-io:2.20.0"),
+                        pathOnlyLibrary(),
+                        objectStorageLibrary(),
+                        // 加载器库只声明了自己的 Maven 仓库。
+                        library(
+                            "net.fabricmc:fabric-loader:0.20.1",
+                            mapOf("url" to "https://maven.fabricmc.net/"),
+                        ),
+                    ),
+            ),
+        )
+    }
+
+    /** 只有 path、没有 url：仍然按 Maven 仓库拼地址。 */
+    private fun pathOnlyLibrary(): Map<String, Any> =
+        library(
+            "org.jspecify:jspecify:1.0.0",
+            mapOf(
+                "downloads" to
+                    mapOf(
+                        "artifact" to
+                            mapOf(
+                                "path" to
+                                    "org/jspecify/jspecify/1.0.0/" +
+                                    "jspecify-1.0.0.jar",
+                            ),
+                    ),
+            ),
+        )
+
+    /** 错误地指向对象存储的库地址：改回该库声明的 Maven 仓库，不能请求 piston-data。 */
+    private fun objectStorageLibrary(): Map<String, Any> =
+        library(
+            "com.example:mapped:1.0",
+            mapOf(
+                "downloads" to
+                    mapOf(
+                        "artifact" to
+                            mapOf(
+                                "url" to
+                                    "https://piston-data.mojang.com/v1/objects/" +
+                                    "deadbeef/mapped-1.0.jar",
+                                "path" to "com/example/mapped/1.0/mapped-1.0.jar",
+                            ),
+                    ),
+            ),
+        )
+
     @Test
     fun `missing downloads client is resolved from the real version json not a guessed path`() =
         runBlocking {
             val root = temporary.resolve(".minecraft")
-            // 基础版本 JSON 没有 downloads.client；只有 id 和主类。
-            writeJson(
-                root.resolve("versions/26.3/26.3.json"),
-                mapOf(
-                    "id" to "26.3",
-                    "mainClass" to "net.minecraft.client.main.Main",
-                    "libraries" to emptyList<String>(),
-                ),
-            )
-            writeJson(
-                root.resolve("versions/Broken/Broken.json"),
-                mapOf(
-                    "id" to "Broken",
-                    "inheritsFrom" to "26.3",
-                    "libraries" to emptyList<String>(),
-                ),
-            )
+            writeBrokenVersions(root)
             MockWebServer().use { server ->
-                val versionUrl = server.loopbackUrl("/v1/packages/26.3.json")
-                server.enqueue(
-                    MockResponse()
-                        .setBody(
-                            gson.toJson(
-                                mapOf(
-                                    "latest" to
-                                        mapOf("release" to "26.3", "snapshot" to "26.3"),
-                                    "versions" to
-                                        listOf(
-                                            mapOf(
-                                                "id" to "26.3",
-                                                "type" to "release",
-                                                "url" to versionUrl.toString(),
-                                                "releaseTime" to "2026-09-15T11:23:02+00:00",
-                                            ),
-                                        ),
-                                ),
-                            ),
-                        ),
-                )
-                server.enqueue(
-                    MockResponse()
-                        .setBody(
-                            gson.toJson(
-                                mapOf(
-                                    "id" to "26.3",
-                                    "downloads" to
-                                        mapOf(
-                                            "client" to
-                                                mapOf(
-                                                    "url" to
-                                                        "https://cdn.example.invalid/real-26.3-client.jar",
-                                                    "sha1" to "a".repeat(40),
-                                                    "size" to 123L,
-                                                ),
-                                        ),
-                                ),
-                            ),
-                        ),
-                )
+                enqueueVersionList(server)
+                enqueueVersionDetail(server)
                 NetworkClient(source = { "official" }).use { network ->
                     val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
                     val installer =
@@ -198,6 +158,76 @@ class MissingDownloadResolutionTest {
                 }
             }
         }
+
+    /** 基础版本 JSON 没有 downloads.client；Broken 继承它，同样没有下载地址。 */
+    private fun writeBrokenVersions(root: Path) {
+        // 基础版本 JSON 只有 id 和主类。
+        writeJson(
+            root.resolve("versions/26.3/26.3.json"),
+            mapOf(
+                "id" to "26.3",
+                "mainClass" to "net.minecraft.client.main.Main",
+                "libraries" to emptyList<String>(),
+            ),
+        )
+        writeJson(
+            root.resolve("versions/Broken/Broken.json"),
+            mapOf(
+                "id" to "Broken",
+                "inheritsFrom" to "26.3",
+                "libraries" to emptyList<String>(),
+            ),
+        )
+    }
+
+    /** 第一份响应：版本的清单，只列 26.3。 */
+    private fun enqueueVersionList(server: MockWebServer) {
+        val versionUrl = server.loopbackUrl("/v1/packages/26.3.json")
+        server.enqueue(
+            MockResponse()
+                .setBody(
+                    gson.toJson(
+                        mapOf(
+                            "latest" to mapOf("release" to "26.3", "snapshot" to "26.3"),
+                            "versions" to
+                                listOf(
+                                    mapOf(
+                                        "id" to "26.3",
+                                        "type" to "release",
+                                        "url" to versionUrl.toString(),
+                                        "releaseTime" to "2026-09-15T11:23:02+00:00",
+                                    ),
+                                ),
+                        ),
+                    ),
+                ),
+        )
+    }
+
+    /** 第二份响应：只带 downloads.client 的版本 JSON。 */
+    private fun enqueueVersionDetail(server: MockWebServer) {
+        server.enqueue(
+            MockResponse()
+                .setBody(
+                    gson.toJson(
+                        mapOf(
+                            "id" to "26.3",
+                            "downloads" to
+                                mapOf(
+                                    "client" to
+                                        mapOf(
+                                            "url" to
+                                                "https://cdn.example.invalid/" +
+                                                "real-26.3-client.jar",
+                                            "sha1" to "a".repeat(40),
+                                            "size" to 123L,
+                                        ),
+                                ),
+                        ),
+                    ),
+                ),
+        )
+    }
 
     @Test
     fun `optional log config 404 is logged and does not abort the required installation`() =
@@ -233,25 +263,34 @@ class MissingDownloadResolutionTest {
                     assertTrue(optional.toString() in warnings.single())
 
                     // 同一套逻辑下，必需文件 404 仍然要明确失败。
-                    val failure =
-                        assertFailsWith<IOException> {
-                            verifier.ensure(
-                                listOf(
-                                    DownloadArtifact(
-                                        server.loopbackUrl("/missing-required.jar").toString(),
-                                        temporary.resolve("libraries/missing.jar"),
-                                    ),
-                                ),
-                                context,
-                                InstallPhase.LIBRARIES,
-                            )
-                        }
-                    assertTrue("游戏文件自动补全失败" in (failure.message ?: ""))
-                    assertTrue(
-                        "missing.jar" in (failure.message ?: ""),
-                        "失败信息必须点名缺失的必需文件",
-                    )
+                    assertRequiredFileFailure(verifier, server, context)
                 }
             }
         }
+
+    /** 必需文件 404：必须抛出点名缺失文件的补全失败。 */
+    private suspend fun assertRequiredFileFailure(
+        verifier: GameFileVerifier,
+        server: MockWebServer,
+        context: JobContext,
+    ) {
+        val failure =
+            assertFailsWith<IOException> {
+                verifier.ensure(
+                    listOf(
+                        DownloadArtifact(
+                            server.loopbackUrl("/missing-required.jar").toString(),
+                            temporary.resolve("libraries/missing.jar"),
+                        ),
+                    ),
+                    context,
+                    InstallPhase.LIBRARIES,
+                )
+            }
+        assertTrue("游戏文件自动补全失败" in (failure.message ?: ""))
+        assertTrue(
+            "missing.jar" in (failure.message ?: ""),
+            "失败信息必须点名缺失的必需文件",
+        )
+    }
 }

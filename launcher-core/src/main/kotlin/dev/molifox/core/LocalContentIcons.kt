@@ -18,6 +18,10 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
+private const val MIN_PNG_ICON_BYTES = 24
+private const val PNG_SIGNATURE_LENGTH = 8
+private const val MAX_PNG_ICON_EDGE = 2048
+
 fun localContentIcon(
     path: Path,
     world: Boolean,
@@ -87,7 +91,7 @@ fun shaderPackIcon(path: Path): ByteArray? =
                         if (
                             entry == null ||
                             entry.isDirectory ||
-                            entry.size !in 24..MAXIMUM_ICON_BYTES.toLong()
+                            entry.size !in MIN_PNG_ICON_BYTES..MAXIMUM_ICON_BYTES.toLong()
                         ) {
                             null
                         } else {
@@ -186,10 +190,10 @@ private fun validIconOrNull(bytes: ByteArray): ByteArray? = if (isBoundedPng(byt
 
 /** PNG 头、大小和像素数都在可解码范围内；不依赖 ImageIO，核心测试可直接断言。 */
 private fun isBoundedPng(bytes: ByteArray): Boolean {
-    if (bytes.size !in 24..MAXIMUM_ICON_BYTES) return false
-    if (!bytes.take(8).toByteArray().contentEquals(PNG_SIGNATURE)) return false
+    if (bytes.size !in MIN_PNG_ICON_BYTES..MAXIMUM_ICON_BYTES) return false
+    if (!bytes.take(PNG_SIGNATURE_LENGTH).toByteArray().contentEquals(PNG_SIGNATURE)) return false
     val header = ByteBuffer.wrap(bytes, 16, 8)
-    return header.int in 1..2048 && header.int in 1..2048
+    return header.int in 1..MAX_PNG_ICON_EDGE && header.int in 1..MAX_PNG_ICON_EDGE
 }
 
 private val PNG_SIGNATURE = byteArrayOf(-119, 80, 78, 71, 13, 10, 26, 10)

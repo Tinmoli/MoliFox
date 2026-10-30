@@ -22,6 +22,14 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
+private const val MAX_SERVER_URL_LENGTH = 2048
+private const val MIN_PRINTABLE_CHAR_CODE = 0x20
+private const val HTTP_MIN_SUCCESS = 200
+private const val HTTP_MAX_SUCCESS = 299
+private const val HTTP_UNAUTHORIZED = 401
+private const val HTTP_FORBIDDEN = 403
+private const val HTTP_NOT_FOUND = 404
+
 /** 外置认证（authlib-injector / Yggdrasil）失败类别；界面据此区分提示，不必解析文案。 */
 enum class AuthlibError {
     /** 地址格式无效或服务器不提供 Yggdrasil 接口。 */
@@ -82,8 +90,8 @@ data class AuthlibMetadata(
 /** 规范化用户输入的认证服务器地址：补 https://、去首尾空白与末尾 `/`。 只接受 http(s) 且不含账号密码、查询串或片段的地址；无法识别时返回 null。 */
 fun normalizeAuthlibServerUrl(raw: String): String? {
     val trimmed = raw.trim()
-    if (trimmed.isEmpty() || trimmed.length > 2048) return null
-    if (trimmed.any { it.isWhitespace() || it.code < 0x20 }) return null
+    if (trimmed.isEmpty() || trimmed.length > MAX_SERVER_URL_LENGTH) return null
+    if (trimmed.any { it.isWhitespace() || it.code < MIN_PRINTABLE_CHAR_CODE }) return null
     val candidate = if ("://" in trimmed) trimmed else "https://$trimmed"
     val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
     val scheme = uri.scheme?.lowercase() ?: return null
@@ -124,40 +132,65 @@ class AuthlibClient(
             }
         var lastError: AuthlibException = invalidServer()
         for (candidate in candidates) {
-            val result =
-                try {
-                    request(candidate, null)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: AuthlibException) {
-                    if (error.error == AuthlibError.Network) {
-                        lastError = error
-                        continue
-                    }
-                    throw error
-                }
-            if (result.code == 401 || result.code == 403 || result.code == 404) {
-                lastError = invalidServer()
-                continue
-            }
-            if (result.code !in 200..299) {
-                lastError =
-                    AuthlibException(
-                        AuthlibError.ServerError,
-                        "认证服务器返回错误 (${result.code})",
-                    )
-                continue
-            }
-            val text = result.body.orEmpty()
-            val json = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
-            if (json == null || !isYggdrasilMetadata(json)) {
-                lastError = notYggdrasil()
-                continue
-            }
-            return AuthlibMetadata(candidate, metadataName(json, candidate), text)
+            val found = fetchMetadata(candidate) { lastError = it }
+            if (found != null) return found
         }
         throw lastError
     }
+
+    /** 读取一个候选地址的元数据；可继续尝试的失败交给 [onFailure]，其余异常原样抛出。 */
+    private suspend fun fetchMetadata(
+        candidate: String,
+        onFailure: (AuthlibException) -> Unit,
+    ): AuthlibMetadata? {
+        val result =
+            try {
+                request(candidate, null)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: AuthlibException) {
+                if (error.error == AuthlibError.Network) {
+                    onFailure(error)
+                    return null
+                }
+                throw error
+            }
+        return evaluateMetadataResponse(candidate, result, onFailure)
+    }
+
+    /** 按 HTTP 状态归类元数据响应：可继续尝试的失败交给 [onFailure] 并返回 null。 */
+    private fun evaluateMetadataResponse(
+        candidate: String,
+        result: HttpResult,
+        onFailure: (AuthlibException) -> Unit,
+    ): AuthlibMetadata? =
+        when {
+            result.code == HTTP_UNAUTHORIZED ||
+                result.code == HTTP_FORBIDDEN ||
+                result.code == HTTP_NOT_FOUND -> {
+                onFailure(invalidServer())
+                null
+            }
+            result.code !in HTTP_MIN_SUCCESS..HTTP_MAX_SUCCESS -> {
+                onFailure(
+                    AuthlibException(
+                        AuthlibError.ServerError,
+                        "认证服务器返回错误 (${result.code})",
+                    ),
+                )
+                null
+            }
+            else -> {
+                val text = result.body.orEmpty()
+                val json = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
+                if (json == null || !isYggdrasilMetadata(json)) {
+                    onFailure(notYggdrasil())
+                    null
+                } else {
+                    AuthlibMetadata(candidate, metadataName(json, candidate), text)
+                }
+            }
+        }
 
     /** 用户名密码登录；[server] 应为已规范化的 API 根地址。 */
     suspend fun authenticate(
@@ -225,7 +258,8 @@ class AuthlibClient(
                 addProperty("accessToken", accessToken)
                 addProperty("clientToken", clientToken)
             }
-        return request("$server/authserver/validate", body).code in 200..299
+        return request("$server/authserver/validate", body)
+            .code in HTTP_MIN_SUCCESS..HTTP_MAX_SUCCESS
     }
 
     private suspend fun authJson(
@@ -235,18 +269,21 @@ class AuthlibClient(
         deniedMessage: String,
     ): JsonObject {
         val result = request(url, body)
-        if (result.code == 401 || result.code == 403) {
+        if (result.code == HTTP_UNAUTHORIZED || result.code == HTTP_FORBIDDEN) {
             throw AuthlibException(deniedError, deniedMessage)
         }
-        if (result.code !in 200..299) {
+        if (result.code !in HTTP_MIN_SUCCESS..HTTP_MAX_SUCCESS) {
             throw AuthlibException(
                 AuthlibError.ServerError,
                 "认证服务器请求失败 (${result.code})",
             )
         }
-        return runCatching { JsonParser.parseString(result.body.orEmpty()).asJsonObject }
-            .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+        return parseAuthJson(result.body.orEmpty())
     }
+
+    private fun parseAuthJson(text: String): JsonObject =
+        runCatching { JsonParser.parseString(text).asJsonObject }
+            .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
 
     private fun session(
         server: String,
@@ -286,30 +323,6 @@ class AuthlibClient(
         val name = value.string("name").trim()
         if (!Regex("[0-9a-fA-F]{32}").matches(id) || name.isBlank()) return null
         return AuthlibProfile(id.lowercase(), name)
-    }
-
-    private fun isYggdrasilMetadata(json: JsonObject): Boolean {
-        val meta = json.get("meta")
-        return (meta != null && meta.isJsonObject) ||
-            json.has("signaturePublickey") ||
-            json.has("skinDomains")
-    }
-
-    private fun metadataName(
-        json: JsonObject,
-        candidate: String,
-    ): String {
-        val minecraft = json.get("meta")?.takeIf { it.isJsonObject }?.asJsonObject
-        val serverName =
-            minecraft
-                ?.get("serverName")
-                ?.takeUnless { it.isJsonNull }
-                ?.asString
-                ?.trim()
-                .orEmpty()
-        return serverName.ifBlank {
-            runCatching { URI(candidate).host }.getOrNull().orEmpty().ifBlank { candidate }
-        }
     }
 
     private data class HttpResult(
@@ -399,5 +412,29 @@ class AuthlibClient(
         fun notYggdrasil() = AuthlibException(AuthlibError.NotYggdrasil, "该地址返回的不是 Yggdrasil 元数据")
 
         fun connectionError() = AuthlibException(AuthlibError.Network, "无法连接认证服务器（超时或网络错误）")
+    }
+}
+
+private fun isYggdrasilMetadata(json: JsonObject): Boolean {
+    val meta = json.get("meta")
+    return (meta != null && meta.isJsonObject) ||
+        json.has("signaturePublickey") ||
+        json.has("skinDomains")
+}
+
+private fun metadataName(
+    json: JsonObject,
+    candidate: String,
+): String {
+    val minecraft = json.get("meta")?.takeIf { it.isJsonObject }?.asJsonObject
+    val serverName =
+        minecraft
+            ?.get("serverName")
+            ?.takeUnless { it.isJsonNull }
+            ?.asString
+            ?.trim()
+            .orEmpty()
+    return serverName.ifBlank {
+        runCatching { URI(candidate).host }.getOrNull().orEmpty().ifBlank { candidate }
     }
 }

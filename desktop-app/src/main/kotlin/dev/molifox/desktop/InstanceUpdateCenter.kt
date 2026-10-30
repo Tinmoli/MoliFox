@@ -8,6 +8,7 @@ package dev.molifox.desktop
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.google.gson.JsonParseException
 import dev.molifox.core.LauncherController
 import dev.molifox.core.ModUpdateReport
 import dev.molifox.core.PackUpdateReport
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /**
  * 本次进入实例详情页时的更新检查结果：模组一份，资源包与光影一份（同一次检查）。
@@ -65,7 +67,11 @@ internal class InstanceUpdateCenter(
                         }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (failure: Exception) {
+                } catch (failure: IOException) {
+                    modsError = failure.message ?: "检查模组更新失败"
+                } catch (failure: IllegalStateException) {
+                    modsError = failure.message ?: "检查模组更新失败"
+                } catch (failure: JsonParseException) {
                     modsError = failure.message ?: "检查模组更新失败"
                 } finally {
                     if (modsJob == coroutineContext[Job]) modsChecking = false
@@ -86,7 +92,11 @@ internal class InstanceUpdateCenter(
                         }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (failure: Exception) {
+                } catch (failure: IOException) {
+                    packsError = failure.message ?: "检查资源包与光影更新失败"
+                } catch (failure: IllegalStateException) {
+                    packsError = failure.message ?: "检查资源包与光影更新失败"
+                } catch (failure: JsonParseException) {
                     packsError = failure.message ?: "检查资源包与光影更新失败"
                 } finally {
                     if (packsJob == coroutineContext[Job]) packsChecking = false

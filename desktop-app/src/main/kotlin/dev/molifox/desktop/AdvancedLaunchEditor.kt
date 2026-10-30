@@ -105,7 +105,8 @@ fun AdvancedLaunchEditor(
         singleLine = true,
     )
     MutedText(
-        "留空不执行；命令在游戏目录运行，不自动解析管道或变量。复杂操作请显式调用脚本解释器。可从环境读取 MOLIFOX_GAME_DIR、MOLIFOX_JAVA_PATH；退出后还提供 MOLIFOX_EXIT_CODE。",
+        "留空不执行；命令在游戏目录运行，不自动解析管道或变量。复杂操作请显式调用脚本解释器。" +
+            "可从环境读取 MOLIFOX_GAME_DIR、MOLIFOX_JAVA_PATH；退出后还提供 MOLIFOX_EXIT_CODE。",
     )
     SettingRow("游戏运行时的启动器") {
         val visibility = value.launcherVisibility

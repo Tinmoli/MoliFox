@@ -8,7 +8,6 @@ package dev.molifox.desktop
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,19 +23,27 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
+import dev.molifox.core.InstanceDeletionReport
+import dev.molifox.core.InstanceDeletionWorld
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+/** 字节换算单位：阈值用 Long、除法用 Float，避免整型除法把小数位抹掉。 */
+private const val BYTES_PER_GIGABYTE = 1073741824L
+private const val BYTES_PER_MEGABYTE = 1048576L
+private const val BYTES_PER_KILOBYTE = 1024L
+
 /** 删除实例的字节数：只用于提示与对话框展示，不参与业务计算。 */
 private fun deletionSizeText(bytes: Long): String =
     when {
-        bytes >= 1073741824L -> "%.2f GB".format(bytes / 1073741824f)
-        bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
-        bytes >= 1024L -> "%.1f KB".format(bytes / 1024f)
+        bytes >= BYTES_PER_GIGABYTE -> "%.2f GB".format(bytes / BYTES_PER_GIGABYTE.toFloat())
+        bytes >= BYTES_PER_MEGABYTE -> "%.1f MB".format(bytes / BYTES_PER_MEGABYTE.toFloat())
+        bytes >= BYTES_PER_KILOBYTE -> "%.1f KB".format(bytes / BYTES_PER_KILOBYTE.toFloat())
         else -> bytes.toString() + " B"
     }
 
@@ -85,85 +92,19 @@ fun DeleteInstanceDialog(
             instance.versionId.ifBlank { instance.gameVersion }
         }
     val close: () -> Unit = { if (!busy) onDismiss() }
+    // 独立游戏目录且未被共用时存档会一起删除：「一并删除」与存档名单两处提示共用同一个判断。
+    val showWorlds = separate && blockReason == null
     Modal("删除实例", onDismiss = close) {
         Text("你确定要删除实例「" + instance.name + "」吗？", fontSize = 13.sp)
         Text(
             "将删除 versions/" + versionName + " 及其中的存档与模组；共享的 libraries/assets 不受影响。",
             fontSize = 13.sp,
         )
-        if (blockReason != null) {
-            Text(blockReason, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
-            Text(
-                "版本目录被其他实例共用时不能删除；请先处理占用它的实例。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (separate && blockReason == null) {
-            Text(
-                "该实例的存档、资源包、Mod 等文件也将被一并删除！",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        if (separate && blockReason == null && shownWorlds.isNotEmpty()) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    "将一并删除的存档（" + worlds.size + " 个，最多列出 6 个）：",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                shownWorlds.forEach { world ->
-                    Text(
-                        "· " + world.name + " · 上次修改 " + deletionTimeText(world.modified),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (worlds.size > shownWorlds.size) {
-                    Text(
-                        "…另有 " + (worlds.size - shownWorlds.size) + " 个存档",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        if (targets.isNotEmpty()) {
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    targets.forEach { path ->
-                        Text(
-                            path.toString(),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        } else if (blockReason == null) {
-            Text(
-                "没有可删除的实例文件夹，只会移除失效的实例记录。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (preserved.isNotEmpty()) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    "以下内容仍被其他实例使用，将保留不删：",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                preserved.forEach { reason ->
-                    Text(
-                        "· " + reason,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        DeletionBlockedNotice(blockReason)
+        SeparateDirectoryNotice(showWorlds)
+        DeletionWorldsNotice(showWorlds, worlds, shownWorlds)
+        DeletionTargetsNotice(targets, blockReason)
+        PreservedDirectoriesNotice(preserved)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         DialogActions(
             confirmText = "删除",
@@ -182,51 +123,14 @@ fun DeleteInstanceDialog(
                         busy = false
                         result
                             .onSuccess { report ->
-                                // 提示必须和实际结果一致：保留了什么就明说，删除的文件数/字节如实报告。
-                                val removed = report.removedPaths.size
-                                val removedText =
-                                    if (removed == 0) {
-                                        "未删除文件"
-                                    } else {
-                                        "已删除 " +
-                                            removed +
-                                            " 项（" +
-                                            if (report.movedToTrash) {
-                                                "已移入回收站"
-                                            } else {
-                                                "释放 " + deletionSizeText(report.freedBytes) +
-                                                    "）"
-                                            }
-                                    }
-                                val keptText =
-                                    if (report.preserved.isEmpty()) {
-                                        ""
-                                    } else {
-                                        "；保留 " + report.preserved.size + " 项共用目录"
-                                    }
-                                val message =
-                                    if (removed == 0) {
-                                        "已删除实例：" + instance.name + "（目录已不存在，仅移除记录）"
-                                    } else {
-                                        "已删除实例：" +
-                                            instance.name +
-                                            "（" +
-                                            removedText +
-                                            keptText +
-                                            "）"
-                                    }
-                                actions.controller.store.notify(message)
+                                actions.controller.store.notify(
+                                    deletionSuccessMessage(instance.name, report),
+                                )
                                 onDeleted()
                             }.onFailure { failure ->
                                 val message = failure.message ?: "删除实例失败"
                                 error = message
-                                actions.controller.store.notify(
-                                    if (message.startsWith("无法删除")) {
-                                        message
-                                    } else {
-                                        "删除实例失败：" + message
-                                    },
-                                )
+                                actions.controller.store.notify(deletionFailureMessage(message))
                             }
                     }
                 }
@@ -249,3 +153,142 @@ fun DeleteInstanceDialog(
         )
     }
 }
+
+/** 版本目录被其他实例共用：提前说明这次删除会被拒绝，并禁用「删除」。 */
+@Composable
+private fun DeletionBlockedNotice(blockReason: String?) {
+    if (blockReason == null) return
+    Text(blockReason, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+    Text(
+        "版本目录被其他实例共用时不能删除；请先处理占用它的实例。",
+        fontSize = 11.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 有独立游戏目录时的额外警告：存档、资源包、Mod 都会被一并删除。 */
+@Composable
+private fun SeparateDirectoryNotice(show: Boolean) {
+    if (!show) return
+    Text(
+        "该实例的存档、资源包、Mod 等文件也将被一并删除！",
+        fontSize = 13.sp,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/** 会被一并删除的存档名单：名称 + 上次修改时间，最多列出 6 个，其余只报数量。 */
+@Composable
+private fun DeletionWorldsNotice(
+    show: Boolean,
+    worlds: List<InstanceDeletionWorld>,
+    shownWorlds: List<InstanceDeletionWorld>,
+) {
+    if (!show || shownWorlds.isEmpty()) return
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            "将一并删除的存档（" + worlds.size + " 个，最多列出 6 个）：",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        shownWorlds.forEach { world ->
+            Text(
+                "· " + world.name + " · 上次修改 " + deletionTimeText(world.modified),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (worlds.size > shownWorlds.size) {
+            Text(
+                "…另有 " + (worlds.size - shownWorlds.size) + " 个存档",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 会被删除的绝对路径；没有目标且未被阻止时说明只移除失效记录。 */
+@Composable
+private fun DeletionTargetsNotice(
+    targets: List<Path>,
+    blockReason: String?,
+) {
+    if (targets.isNotEmpty()) {
+        SelectionContainer {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                targets.forEach { path ->
+                    Text(
+                        path.toString(),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    } else if (blockReason == null) {
+        Text(
+            "没有可删除的实例文件夹，只会移除失效的实例记录。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 因其他实例真实使用而保留的目录：删除完成后的提示必须与这里的名单一致。 */
+@Composable
+private fun PreservedDirectoriesNotice(preserved: List<String>) {
+    if (preserved.isEmpty()) return
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "以下内容仍被其他实例使用，将保留不删：",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        preserved.forEach { reason ->
+            Text(
+                "· " + reason,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 删除结果摘要（删除项数与去向）；文案与磁盘上的实际结果一一对应。 */
+private fun removalSummary(report: InstanceDeletionReport): String {
+    val removed = report.removedPaths.size
+    if (removed == 0) return "未删除文件"
+    val moved =
+        if (report.movedToTrash) {
+            "已移入回收站"
+        } else {
+            "释放 " + deletionSizeText(report.freedBytes) + "）"
+        }
+    return "已删除 " + removed + " 项（" + moved
+}
+
+/** 成功提示：保留了什么就明说，删除的文件数/字节如实报告。 */
+private fun deletionSuccessMessage(
+    name: String,
+    report: InstanceDeletionReport,
+): String {
+    if (report.removedPaths.isEmpty()) {
+        return "已删除实例：" + name + "（目录已不存在，仅移除记录）"
+    }
+    val kept =
+        if (report.preserved.isEmpty()) {
+            ""
+        } else {
+            "；保留 " + report.preserved.size + " 项共用目录"
+        }
+    return "已删除实例：" + name + "（" + removalSummary(report) + kept + "）"
+}
+
+/** 失败提示：核心给出的「无法删除…」原因原样提示，其余前面补上动作说明。 */
+private fun deletionFailureMessage(message: String): String =
+    if (message.startsWith("无法删除")) {
+        message
+    } else {
+        "删除实例失败：" + message
+    }

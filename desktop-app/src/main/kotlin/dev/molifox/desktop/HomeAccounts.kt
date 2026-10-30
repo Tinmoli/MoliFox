@@ -36,10 +36,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.JsonParseException
+import dev.molifox.core.Account
 import dev.molifox.core.AccountType
 import dev.molifox.core.LauncherState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.io.IOException
 import java.nio.file.Path
 
 /**
@@ -68,21 +71,17 @@ fun HomeAccountSummary(
             value = account?.let { actions.controller.accountSkin(it, refresh = revision > 0) }
         }
 
+    fun reportRefreshFailure(failure: Exception) {
+        actions.controller.store.notify(failure.message ?: "刷新账户资料失败")
+    }
+
     fun refresh() {
         val target = account ?: return
         if (refreshing) return
         refreshing = true
         scope.launch {
             try {
-                // 正版账户的皮肤地址写在正版档案里：先重新拉档案（顺带更新 skinUrl），
-                // 再由 revision 让头像重读纹理缓存；离线与外置认证账户没有这个接口，只重读本地皮肤。
-                if (target.type == AccountType.Microsoft) {
-                    actions.controller.skins.refreshProfile(target.id)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                actions.controller.store.notify(failure.message ?: "刷新账户资料失败")
+                refreshAccountProfile(actions, target) { reportRefreshFailure(it) }
             } finally {
                 revision++
                 refreshing = false
@@ -164,5 +163,30 @@ fun HomeAccountSummary(
             Modifier.size(16.dp),
             MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** 正版账户先重拉档案；离线与外置认证账户没有这个接口，只重读本地皮肤。 */
+private suspend fun refreshAccountProfile(
+    actions: UiActions,
+    account: Account,
+    onFailure: (Exception) -> Unit,
+) {
+    try {
+        // 正版账户的皮肤地址写在正版档案里：先重新拉档案（顺带更新 skinUrl），
+        // 再由 revision 让头像重读纹理缓存；离线与外置认证账户没有这个接口，只重读本地皮肤。
+        if (account.type == AccountType.Microsoft) {
+            actions.controller.skins.refreshProfile(account.id)
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: IOException) {
+        onFailure(failure)
+    } catch (failure: JsonParseException) {
+        onFailure(failure)
+    } catch (failure: IllegalStateException) {
+        onFailure(failure)
+    } catch (failure: IllegalArgumentException) {
+        onFailure(failure)
     }
 }

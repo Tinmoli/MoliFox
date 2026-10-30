@@ -31,7 +31,16 @@ class ModularLaunchTest {
             val json =
                 com.google.gson.JsonParser
                     .parseString(
-                        """{"mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","arguments":{"jvm":["-cp","${'$'}{classpath}","-DignoreList=client-extra,${'$'}{version_name}.jar"],"game":["--version","${'$'}{version_name}"]}}""",
+                        """
+                        {
+                          "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
+                          "arguments": {
+                            "jvm": ["-cp", "${'$'}{classpath}",
+                              "-DignoreList=client-extra,${'$'}{version_name}.jar"],
+                            "game": ["--version", "${'$'}{version_name}"]
+                          }
+                        }
+                        """,
                     ).asJsonObject
             val plan =
                 LaunchPlanner(store)
@@ -60,7 +69,17 @@ class ModularLaunchTest {
             val json =
                 com.google.gson.JsonParser
                     .parseString(
-                        """{"mainClass":"Fixture","arguments":{"jvm":["-DignoreList=client-extra,explicit.jar,custom.jar-suffix"],"game":[]}}""",
+                        """
+                        {
+                          "mainClass": "Fixture",
+                          "arguments": {
+                            "jvm": [
+                              "-DignoreList=client-extra,explicit.jar,custom.jar-suffix"
+                            ],
+                            "game": []
+                          }
+                        }
+                        """,
                     ).asJsonObject
             val plan =
                 LaunchPlanner(store)

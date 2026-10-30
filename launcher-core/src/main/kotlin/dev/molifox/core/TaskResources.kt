@@ -73,13 +73,19 @@ internal class TaskResourceGate {
     @Synchronized
     private fun tryStart(id: String): Boolean {
         val resources = waiting[id] ?: error("任务已不在队列中")
-        for ((otherId, otherResources) in waiting) {
-            if (otherId == id) break
-            if (taskResourcesConflict(resources, otherResources)) return false
+        // 只检查排在当前任务之前登记的条目，再检查正在运行的任务；任一处冲突即视为不可启动。
+        val blocked =
+            waiting.entries
+                .asSequence()
+                .takeWhile { it.key != id }
+                .any { taskResourcesConflict(resources, it.value) } ||
+                active.any { taskResourcesConflict(resources, waiting.getValue(it)) }
+        return if (blocked) {
+            false
+        } else {
+            active.add(id)
+            true
         }
-        if (active.any { taskResourcesConflict(resources, waiting.getValue(it)) }) return false
-        active.add(id)
-        return true
     }
 
     @Synchronized

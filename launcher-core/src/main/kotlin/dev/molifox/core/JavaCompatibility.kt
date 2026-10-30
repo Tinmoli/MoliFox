@@ -5,6 +5,25 @@
 
 package dev.molifox.core
 
+/** 需要安装/校验的 Java 主版本；名称即版本号，避免在规则表里散落裸数字。 */
+private const val JAVA_MAJOR_8 = 8
+private const val JAVA_MAJOR_17 = 17
+private const val JAVA_MAJOR_21 = 21
+private const val JAVA_MAJOR_25 = 25
+
+/** 2026 版本线（26.x 与 26w 快照）的分界。 */
+private const val VERSION_YEAR_2026 = 26
+
+/** 快照 ID 的两位年份与「从该周起按新 Java」的周次分界。 */
+private const val SNAPSHOT_YEAR_2021 = 21
+private const val SNAPSHOT_YEAR_2024 = 24
+private const val SNAPSHOT_YEAR_2025 = 25
+private const val SNAPSHOT_JAVA_21_WEEK = 14
+
+/** 1.20.5（快照 24w14a）起官方改用 Java 21 的游戏小版本与补丁号分界。 */
+private const val GAME_MINOR_20 = 20
+private const val GAME_PATCH_5 = 5
+
 internal fun normalizedJavaArchitecture(value: String): String =
     when (value.lowercase()) {
         "amd64",
@@ -35,34 +54,51 @@ internal fun normalizedJavaArchitecture(value: String): String =
  */
 fun gameJavaMajor(gameVersion: String): Int? {
     val id = gameVersion.trim()
-    if (id.isEmpty()) return null
+    return if (id.isEmpty()) {
+        null
+    } else {
+        snapshotJavaMajor(id) ?: headlineJavaMajor(id)
+    }
+}
+
+/**
+ * 快照 ID（24w14a、25w31a、26w01a）按年份/周次换算：24w14a 起 21，更早的 24w 仍是 17，25w 为 21，
+ * 26w 起为 25；更早的快照按 1.x 年代归入 17 或 8。不是快照时返回 null。
+ */
+private fun snapshotJavaMajor(id: String): Int? {
     // 允许带前缀的实例名（TwilightMC-26.3、fabric-loader-0.16.9-1.21.4）。
-    Regex("(?<![0-9A-Za-z])(\\d{2})w(\\d{1,2})[a-z](?![0-9A-Za-z])", RegexOption.IGNORE_CASE)
-        .find(id)
-        ?.let { match ->
-            val year = match.groupValues[1].toInt()
-            val week = match.groupValues[2].toInt()
-            return when {
-                year >= 26 -> 25
-                year == 25 -> 21
-                year == 24 -> if (week >= 14) 21 else 17
-                year >= 21 -> 17
-                else -> 8
-            }
-        }
-    // 容忍 26.3-pre1 / 26.3-rc1 / 1.20.5-pre2：只取开头的数字段。
+    val snapshot =
+        Regex("(?<![0-9A-Za-z])(\\d{2})w(\\d{1,2})[a-z](?![0-9A-Za-z])", RegexOption.IGNORE_CASE)
+            .find(id) ?: return null
+    val year = snapshot.groupValues[1].toInt()
+    val week = snapshot.groupValues[2].toInt()
+    return when {
+        year >= VERSION_YEAR_2026 -> JAVA_MAJOR_25
+        year == SNAPSHOT_YEAR_2025 -> JAVA_MAJOR_21
+        year == SNAPSHOT_YEAR_2024 ->
+            if (week >= SNAPSHOT_JAVA_21_WEEK) JAVA_MAJOR_21 else JAVA_MAJOR_17
+        year >= SNAPSHOT_YEAR_2021 -> JAVA_MAJOR_17
+        else -> JAVA_MAJOR_8
+    }
+}
+
+/** 数字版本号换算；容忍 26.3-pre1 / 26.3-rc1 / 1.20.5-pre2：只取开头的数字段。 */
+private fun headlineJavaMajor(id: String): Int? {
     val headline = Regex("^\\d+(?:\\.\\d+)*").find(id)?.value ?: embeddedGameVersion(id)
     if (headline == null) return null
     val parts = headline.split('.').mapNotNull { it.toIntOrNull() }
-    val major = parts.firstOrNull() ?: return null
-    if (major >= 26) return 25
-    if (major != 1) return null
-    val minor = parts.getOrNull(1) ?: return 8
-    val patch = parts.getOrNull(2) ?: 0
+    val major = parts.firstOrNull()
+    val minor = parts.getOrNull(1)
     return when {
-        minor > 20 || (minor == 20 && patch >= 5) -> 21
-        minor >= 17 -> 17
-        else -> 8
+        major == null -> null
+        major >= VERSION_YEAR_2026 -> JAVA_MAJOR_25
+        major != 1 -> null
+        minor == null -> JAVA_MAJOR_8
+        minor > GAME_MINOR_20 ||
+            (minor == GAME_MINOR_20 && (parts.getOrNull(2) ?: 0) >= GAME_PATCH_5) ->
+            JAVA_MAJOR_21
+        minor >= JAVA_MAJOR_17 -> JAVA_MAJOR_17
+        else -> JAVA_MAJOR_8
     }
 }
 
@@ -73,7 +109,7 @@ private fun embeddedGameVersion(id: String): String? =
         .map { it.value }
         .firstOrNull { value ->
             val major = value.substringBefore('.').toIntOrNull()
-            major != null && (major == 1 || major >= 26)
+            major != null && (major == 1 || major >= VERSION_YEAR_2026)
         }
 
 /** 版本清单声明的下限与本机版本规则取较高者：例如 26.3 的清单仍写 21 时，实际要装 25。 */
@@ -113,7 +149,8 @@ internal data class JavaRequirement(
                     .orEmpty()
             val minimum = requiredJavaMajor(gameVersion, profile.requiredJava)
             val legacy =
-                minimum <= 8 && libraries.any { it.startsWith("net.minecraft:launchwrapper:") }
+                minimum <= JAVA_MAJOR_8 &&
+                    libraries.any { it.startsWith("net.minecraft:launchwrapper:") }
             val modded =
                 libraries.any {
                     it.startsWith("net.fabricmc:fabric-loader:") ||
@@ -123,7 +160,11 @@ internal data class JavaRequirement(
                 }
             // Use the declared runtime for modded/old games unless the user explicitly overrides
             // it.
-            return JavaRequirement(minimum, if (legacy) 8 else null, modded || minimum <= 8)
+            return JavaRequirement(
+                minimum,
+                if (legacy) JAVA_MAJOR_8 else null,
+                modded || minimum <= JAVA_MAJOR_8,
+            )
         }
     }
 }

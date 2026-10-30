@@ -1,4 +1,4 @@
-﻿// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
 // 负责验证资源包与光影更新检查的识别顺序与游戏版本过滤规则。
@@ -353,62 +353,13 @@ class PackUpdatesTest {
             val store = store()
             val instance = instance(store)
             val root = store.instancePath(instance.id)
-            val installed =
-                (0 until 4).map { index ->
-                    val name = "FoxPack-$index-1.0.zip"
-                    val file = zip(root.resolve("resourcepacks/$name"))
-                    name to sha512(file.readBytes())
-                }
-            val current =
-                JsonObject().apply {
-                    installed.forEachIndexed { index, (name, hash) ->
-                        add(hash, packVersionJson("pack$index", "1.0", name, listOf("1.20.1")))
-                    }
-                }
-            val latest =
-                JsonObject().apply {
-                    installed.forEachIndexed { index, (name, hash) ->
-                        add(
-                            hash,
-                            packVersionJson(
-                                "pack$index",
-                                "1.1",
-                                name.replace("1.0", "1.1"),
-                                listOf("1.20.1"),
-                            ),
-                        )
-                    }
-                }
-            val kinds =
-                JsonArray().apply {
-                    installed.forEachIndexed { index, _ ->
-                        add(
-                            JsonObject().apply {
-                                addProperty("id", "pack$index")
-                                addProperty("project_type", "resourcepack")
-                            },
-                        )
-                    }
-                }
+            val installed = installedPacks(root)
+            val current = packVersionIndex(installed, "1.0") { it }
+            val latest = packVersionIndex(installed, "1.1") { it.replace("1.0", "1.1") }
+            val kinds = packKinds(installed)
             val requests = mutableListOf<String>()
             MockWebServer().use { server ->
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse {
-                            val path = request.path.orEmpty().substringBefore('?')
-                            requests += path
-                            val body: Any =
-                                when (path) {
-                                    "/v2/version_files" -> current
-                                    "/v2/version_files/update" -> latest
-                                    "/v2/projects" -> kinds
-                                    else -> JsonObject()
-                                }
-                            return MockResponse()
-                                .setBody(body.toString())
-                                .setHeader("Content-Type", "application/json")
-                        }
-                    }
+                server.dispatcher = packUpdateDispatcher(requests, current, latest, kinds)
                 server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
                 val report =
                     PackUpdateService(
@@ -426,6 +377,59 @@ class PackUpdatesTest {
                 assertEquals(1, requests.count { it == "/v2/version_files/update" })
                 assertEquals(1, requests.count { it == "/v2/projects" })
                 assertTrue(requests.none { it.startsWith("/v2/project/") })
+            }
+        }
+
+    private fun installedPacks(root: Path): List<Pair<String, String>> =
+        (0 until 4).map { index ->
+            val name = "FoxPack-$index-1.0.zip"
+            val file = zip(root.resolve("resourcepacks/$name"))
+            name to sha512(file.readBytes())
+        }
+
+    private fun packVersionIndex(
+        installed: List<Pair<String, String>>,
+        number: String,
+        filename: (String) -> String,
+    ): JsonObject =
+        JsonObject().apply {
+            installed.forEachIndexed { index, (name, hash) ->
+                add(hash, packVersionJson("pack$index", number, filename(name), listOf("1.20.1")))
+            }
+        }
+
+    private fun packKinds(installed: List<Pair<String, String>>): JsonArray =
+        JsonArray().apply {
+            installed.forEachIndexed { index, _ ->
+                add(
+                    JsonObject().apply {
+                        addProperty("id", "pack$index")
+                        addProperty("project_type", "resourcepack")
+                    },
+                )
+            }
+        }
+
+    private fun packUpdateDispatcher(
+        requests: MutableList<String>,
+        current: JsonObject,
+        latest: JsonObject,
+        kinds: JsonArray,
+    ): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty().substringBefore('?')
+                requests += path
+                val body: Any =
+                    when (path) {
+                        "/v2/version_files" -> current
+                        "/v2/version_files/update" -> latest
+                        "/v2/projects" -> kinds
+                        else -> JsonObject()
+                    }
+                return MockResponse()
+                    .setBody(body.toString())
+                    .setHeader("Content-Type", "application/json")
             }
         }
 

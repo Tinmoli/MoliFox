@@ -5,6 +5,11 @@
 
 package dev.molifox.desktop.content
 
+private const val MILLION_COUNT = 1_000_000
+private const val MILLION_DIVISOR = 1_000_000f
+private const val THOUSAND_COUNT = 1_000
+private const val THOUSAND_DIVISOR = 1_000f
+
 internal fun contentKindLabel(type: String): String =
     when (type) {
         "modpack" -> "整合包"
@@ -125,8 +130,8 @@ internal fun categoriesFor(kind: String): List<Pair<String, String>> =
 
 internal fun formatDownloads(value: Long): String =
     when {
-        value >= 1_000_000 -> "%.1fM".format(value / 1_000_000f)
-        value >= 1_000 -> "%.1fk".format(value / 1_000f)
+        value >= MILLION_COUNT -> "%.1fM".format(value / MILLION_DIVISOR)
+        value >= THOUSAND_COUNT -> "%.1fk".format(value / THOUSAND_DIVISOR)
         else -> value.toString()
     }
 

@@ -5,6 +5,9 @@
 
 package dev.molifox.core
 
+private const val MAX_PACK_LAUNCH_ARGUMENTS = 256
+private const val MAX_PACK_LAUNCH_ARGUMENT_CHARS = 4096
+
 /** Source arguments become editable instance overrides; repair never reapplies them. */
 internal data class PackLaunchOptions(
     val jvm: List<String>,
@@ -46,7 +49,7 @@ internal data class PackLaunchDefaults(
 
 /** The existing text editor supports single or double quoting; refuse lossy conversions. */
 internal fun packArgumentsText(arguments: List<String>): String {
-    require(arguments.size <= 256) { "整合包启动参数过多" }
+    require(arguments.size <= MAX_PACK_LAUNCH_ARGUMENTS) { "整合包启动参数过多" }
     val text =
         arguments.joinToString(" ") { value ->
             require(
@@ -60,6 +63,6 @@ internal fun packArgumentsText(arguments: List<String>): String {
                 else -> error("整合包参数同时含单双引号，暂不能无损导入")
             }
         }
-    require(text.length <= 4096) { "整合包启动参数过长" }
+    require(text.length <= MAX_PACK_LAUNCH_ARGUMENT_CHARS) { "整合包启动参数过长" }
     return text
 }

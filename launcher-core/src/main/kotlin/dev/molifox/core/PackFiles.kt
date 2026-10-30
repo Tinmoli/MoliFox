@@ -94,50 +94,74 @@ internal class PackFileTransaction(
     suspend fun commit(context: JobContext) {
         val backups = linkedMapOf<Path, Path>()
         val installed = mutableListOf<Path>()
-        try {
-            val files =
-                Files.walk(content).use { paths ->
-                    paths
-                        .filter { it.isRegularFile() && !Files.isSymbolicLink(it) }
-                        .sorted()
-                        .toList()
-                }
-            for (file in files) {
-                context.checkCancelled()
-                val target = packPath(root, content.relativize(file).joinToString("/"))
-                if (target.exists()) {
-                    require(target.isRegularFile() && !Files.isSymbolicLink(target)) {
-                        "整合包目标不是普通文件：$target"
-                    }
-                    val backup = safePath(directory, "backup/${backups.size}/${target.fileName}")
-                    backup.parent.createDirectories()
-                    Files.move(target, backup)
-                    backups[target] = backup
-                }
-                target.parent.createDirectories()
-                Files.move(file, target)
-                installed.add(target)
-            }
-        } catch (error: Throwable) {
-            val rollback =
-                runCatching {
-                    installed.asReversed().forEach { Files.deleteIfExists(it) }
-                    for ((target, backup) in backups.entries.toList().asReversed()) {
-                        Files.move(
-                            backup,
-                            target,
-                            StandardCopyOption.REPLACE_EXISTING,
-                        )
-                    }
-                }
-            if (rollback.isFailure) {
-                retain = true
-                throw IOException("整合包安装未完成，原文件备份保留在 $directory", error).also {
-                    rollback.exceptionOrNull()?.let(it::addSuppressed)
-                }
-            }
-            throw error
+        runCatching {
+            installContent(context, backups, installed)
+        }.onFailure { error ->
+            // 安装中途失败（含协程取消）必须回滚已落盘文件，故此处兜底而不收窄具体类型。
+            throw rollback(error, backups, installed)
         }
+        discardBackups(backups)
+    }
+
+    /** 把暂存内容逐个移动到目标位置：已有文件先移到备份目录，移动完成才算安装成功。 */
+    private suspend fun installContent(
+        context: JobContext,
+        backups: MutableMap<Path, Path>,
+        installed: MutableList<Path>,
+    ) {
+        val files =
+            Files.walk(content).use { paths ->
+                paths
+                    .filter { it.isRegularFile() && !Files.isSymbolicLink(it) }
+                    .sorted()
+                    .toList()
+            }
+        for (file in files) {
+            context.checkCancelled()
+            val target = packPath(root, content.relativize(file).joinToString("/"))
+            if (target.exists()) {
+                require(target.isRegularFile() && !Files.isSymbolicLink(target)) {
+                    "整合包目标不是普通文件：$target"
+                }
+                val backup = safePath(directory, "backup/${backups.size}/${target.fileName}")
+                backup.parent.createDirectories()
+                Files.move(target, backup)
+                backups[target] = backup
+            }
+            target.parent.createDirectories()
+            Files.move(file, target)
+            installed.add(target)
+        }
+    }
+
+    /** 回滚已安装文件并还原备份；回滚本身失败时保留目录并返回带原始原因的异常。 */
+    private fun rollback(
+        error: Throwable,
+        backups: Map<Path, Path>,
+        installed: List<Path>,
+    ): Throwable {
+        val result =
+            runCatching {
+                installed.asReversed().forEach { Files.deleteIfExists(it) }
+                for ((target, backup) in backups.entries.toList().asReversed()) {
+                    Files.move(
+                        backup,
+                        target,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }
+            }
+        if (result.isFailure) {
+            retain = true
+            return IOException("整合包安装未完成，原文件备份保留在 $directory", error).also {
+                result.exceptionOrNull()?.let(it::addSuppressed)
+            }
+        }
+        return error
+    }
+
+    /** 安装成功后把备份移入回收站；移除失败时保留目录，避免用户旧文件被无声删除。 */
+    private fun discardBackups(backups: Map<Path, Path>) {
         backups.values.forEach { backup ->
             runCatching { store.platform.moveToTrash(backup) }
                 .onFailure {

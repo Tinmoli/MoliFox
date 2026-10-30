@@ -150,28 +150,8 @@ class DownloadEngineTest {
                 NetworkClient(source = { "official" }).use { network ->
                     val store = LauncherStore(DesktopPlatform(), directory.resolve("profile"))
                     val context = JobContext(store, "test")
-                    val good =
-                        listOf(
-                            DownloadArtifact(
-                                server.loopbackUrl("/good-1").toString(),
-                                directory.resolve("out/good-1.bin"),
-                            ),
-                            DownloadArtifact(
-                                server.loopbackUrl("/good-2").toString(),
-                                directory.resolve("out/good-2.bin"),
-                            ),
-                        )
-                    val bad =
-                        listOf(
-                            DownloadArtifact(
-                                server.loopbackUrl("/bad-1").toString(),
-                                directory.resolve("out/bad-1.bin"),
-                            ),
-                            DownloadArtifact(
-                                server.loopbackUrl("/bad-2").toString(),
-                                directory.resolve("out/bad-2.bin"),
-                            ),
-                        )
+                    val good = artifacts(server, listOf("good-1", "good-2"))
+                    val bad = artifacts(server, listOf("bad-1", "bad-2"))
                     val scheduler = DownloadScheduler(network)
                     val failures = scheduler.run(good + bad, context, concurrency = 4)
                     assertEquals(2, failures.size)
@@ -179,23 +159,38 @@ class DownloadEngineTest {
                     assertTrue(failures.all { it.host == "127.0.0.1" }, "失败信息要带来源：$failures")
                     // 一个 404 不能中断整批：成功文件必须真的落盘。
                     assertTrue(good.all { it.target.exists() }, "其余文件应继续下载完成")
-
-                    val error =
-                        assertFailsWith<DownloadBatchException> {
-                            network.downloadAll(
-                                good + bad,
-                                DEFAULT_FILE_CONCURRENCY,
-                                context,
-                                "下载资源",
-                            )
-                        }
-                    val message = error.message.orEmpty()
-                    assertTrue("bad-1" in message && "bad-2" in message, "需要列出每个失败文件：$message")
-                    assertTrue("HTTP 404" in message, "需要列出状态码：$message")
-                    assertEquals(2, error.failures.size)
+                    assertBatchFailureReported(network, good + bad, context)
                 }
             }
         }
+
+    /** 按名称生成指向 mock 服务器的下载工件：路径决定成功或 404。 */
+    private fun artifacts(
+        server: MockWebServer,
+        names: List<String>,
+    ): List<DownloadArtifact> =
+        names.map { name ->
+            DownloadArtifact(
+                server.loopbackUrl("/$name").toString(),
+                directory.resolve("out/$name.bin"),
+            )
+        }
+
+    /** 整批失败只上报一次，消息里需要列出每个失败文件、状态码与来源。 */
+    private suspend fun assertBatchFailureReported(
+        network: NetworkClient,
+        artifacts: List<DownloadArtifact>,
+        context: JobContext,
+    ) {
+        val error =
+            assertFailsWith<DownloadBatchException> {
+                network.downloadAll(artifacts, DEFAULT_FILE_CONCURRENCY, context, "下载资源")
+            }
+        val message = error.message.orEmpty()
+        assertTrue("bad-1" in message && "bad-2" in message, "需要列出每个失败文件：$message")
+        assertTrue("HTTP 404" in message, "需要列出状态码：$message")
+        assertEquals(2, error.failures.size)
+    }
 
     @Test
     fun `cancelling a batch stops scheduling and removes every partial`() =

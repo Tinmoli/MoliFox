@@ -67,7 +67,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -75,6 +74,9 @@ import java.nio.file.Path
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 import dev.molifox.core.data.instance.InstanceDirectoryEntry as FolderEntry
+
+private const val BYTES_PER_KB = 1024f
+private const val BYTES_PER_MB = 1048576f
 
 /** 内容文件夹浏览：原理图专用（可导入、可逐级进入、可删除）；大小与修改时间来自文件系统。 */
 @Composable
@@ -111,40 +113,28 @@ internal fun InstanceFolderBrowser(
     LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.status }, directory) {
         loading = true
         error = null
-        try {
-            entries =
-                actions.controller.instanceWorkspace
-                    .listDirectory(instance.id, folder, subPath)
-                    .getOrThrow()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            entries = emptyList()
-            error = failure.message
-        } finally {
-            loading = false
-        }
+        loadFolderEntries(actions, instance.id, folder, subPath)
+            .onSuccess { entries = it }
+            .onFailure { failure ->
+                entries = emptyList()
+                error = failure.message
+            }
+        loading = false
     }
     // 原理图删除会移入回收站，这里先确认再执行。
     deletingFile?.let { file ->
-        AlertDialog(
-            onDismissRequest = { deletingFile = null },
-            title = { Text("移至回收站？") },
-            text = { Text("「" + file.name + "」会从原理图目录移至回收站，需要时可以再找回。") },
-            confirmButton = {
-                TextButton({
-                    val name = file.name
-                    deletingFile = null
-                    actions.run {
-                        actions.controller.requireIdle(instance.id)
-                        actions.controller.content.deleteSchematic(instance.id, name)
-                        withContext(Dispatchers.Swing) { refresh++ }
-                    }
-                }) {
-                    Text("移至回收站", color = MaterialTheme.colorScheme.error)
+        SchematicTrashDialog(
+            file = file,
+            onDismiss = { deletingFile = null },
+            onConfirm = {
+                val name = file.name
+                deletingFile = null
+                actions.run {
+                    actions.controller.requireIdle(instance.id)
+                    actions.controller.content.deleteSchematic(instance.id, name)
+                    withContext(Dispatchers.Swing) { refresh++ }
                 }
             },
-            dismissButton = { TextButton({ deletingFile = null }) { Text("取消") } },
         )
     }
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -195,73 +185,140 @@ internal fun InstanceFolderBrowser(
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         }
         val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
+        // 空目录文案区分「目录本身为空」和「子目录为空」。
+        val emptyFolderTitle = if (subPath.isEmpty()) "这个目录还没有文件" else "这个子目录是空的"
         val list: @Composable () -> Unit = {
-            when {
-                loading && entries.isEmpty() -> ListSkeleton()
-                error != null ->
-                    Panel(Modifier.fillMaxWidth()) {
-                        EmptyState("无法读取这个目录", error.orEmpty(), Icons.Outlined.CloudOff) {
-                            TextButton({ refresh++ }) { Text("重试") }
-                        }
+            FolderEntryList(
+                entries = entries,
+                filtered = filtered,
+                loading = loading,
+                error = error,
+                emptyFolderTitle = emptyFolderTitle,
+                allowDelete = allowDelete,
+                busy = busy,
+                onOpen = { entry ->
+                    if (entry.isDirectory) {
+                        subPath = subPath + entry.path.name
+                        query = ""
                     }
-                entries.isEmpty() ->
-                    Panel(Modifier.fillMaxWidth()) {
-                        EmptyState(
-                            if (subPath.isEmpty()) "这个目录还没有文件" else "这个子目录是空的",
-                            "游戏生成或安装的内容会显示在这里。",
-                            Icons.Outlined.FolderOpen,
-                        )
-                    }
-                filtered.isEmpty() ->
-                    Panel(Modifier.fillMaxWidth()) {
-                        EmptyState("没有匹配的文件", "换个关键词试试", Icons.Outlined.SearchOff) {
-                            TextButton({ query = "" }) { Text("清除搜索") }
-                        }
-                    }
-                else ->
-                    LazyColumn(
-                        Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        items(filtered, key = { it.path.toString() }) { entry ->
-                            FolderRow(
-                                entry,
-                                modifier = Modifier.animateItem(),
-                                allowDelete = allowDelete && !entry.isDirectory,
-                                onOpen = {
-                                    if (entry.isDirectory) {
-                                        subPath = subPath + entry.path.name
-                                        query = ""
-                                    }
-                                },
-                                onDelete = { deletingFile = entry.path },
-                                busy = actions.controller.isInstanceBusy(instance.id),
-                            )
-                        }
-                    }
-            }
+                },
+                onDelete = { entry -> deletingFile = entry.path },
+                onRetry = { refresh++ },
+                onClearSearch = { query = "" },
+            )
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            // 进入 / 返回子目录时整块淡入并轻微位移 4dp，告诉用户“换了一层目录”。
-            if (LocalAnimationsEnabled.current) {
-                AnimatedContent(
-                    subPath,
-                    label = "folder-drill",
-                    transitionSpec = {
-                        (
-                            fadeIn(tween(150)) +
-                                slideInHorizontally(tween(150)) { it / 24 }
-                        ) togetherWith
-                            fadeOut(tween(120))
-                    },
-                ) {
-                    Box(Modifier.fillMaxSize()) { list() }
-                }
-            } else {
-                Box(Modifier.fillMaxSize()) { list() }
-            }
-        }
+        AnimatedFolderContent(subPath, list)
     }
+}
+
+/** 读取当前目录条目：网络无关，失败信息交给调用方提示。 */
+private suspend fun loadFolderEntries(
+    actions: UiActions,
+    instanceId: String,
+    folder: String,
+    subPath: List<String>,
+): Result<List<FolderEntry>> =
+    actions.controller.instanceWorkspace.listDirectory(instanceId, folder, subPath)
+
+/** 进入 / 返回子目录时整块淡入并轻微位移 4dp，告诉用户“换了一层目录”。 */
+@Composable
+private fun AnimatedFolderContent(
+    subPath: List<String>,
+    content: @Composable () -> Unit,
+) {
+    if (LocalAnimationsEnabled.current) {
+        AnimatedContent(
+            subPath,
+            label = "folder-drill",
+            transitionSpec = {
+                (
+                    fadeIn(tween(150)) +
+                        slideInHorizontally(tween(150)) { it / 24 }
+                ) togetherWith
+                    fadeOut(tween(120))
+            },
+        ) {
+            Box(Modifier.fillMaxSize()) { content() }
+        }
+    } else {
+        Box(Modifier.fillMaxSize()) { content() }
+    }
+}
+
+/** 目录条目列表与骨架、错误、空态：列表常驻，只有筛选后为空时才提示换关键词。 */
+@Composable
+private fun FolderEntryList(
+    entries: List<FolderEntry>,
+    filtered: List<FolderEntry>,
+    loading: Boolean,
+    error: String?,
+    emptyFolderTitle: String,
+    allowDelete: Boolean,
+    busy: Boolean,
+    onOpen: (FolderEntry) -> Unit,
+    onDelete: (FolderEntry) -> Unit,
+    onRetry: () -> Unit,
+    onClearSearch: () -> Unit,
+) {
+    when {
+        loading && entries.isEmpty() -> ListSkeleton()
+        error != null ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState("无法读取这个目录", error.orEmpty(), Icons.Outlined.CloudOff) {
+                    TextButton(onRetry) { Text("重试") }
+                }
+            }
+        entries.isEmpty() ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState(
+                    emptyFolderTitle,
+                    "游戏生成或安装的内容会显示在这里。",
+                    Icons.Outlined.FolderOpen,
+                )
+            }
+        filtered.isEmpty() ->
+            Panel(Modifier.fillMaxWidth()) {
+                EmptyState("没有匹配的文件", "换个关键词试试", Icons.Outlined.SearchOff) {
+                    TextButton(onClearSearch) { Text("清除搜索") }
+                }
+            }
+        else ->
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(filtered, key = { it.path.toString() }) { entry ->
+                    FolderRow(
+                        entry,
+                        modifier = Modifier.animateItem(),
+                        allowDelete = allowDelete && !entry.isDirectory,
+                        onOpen = { onOpen(entry) },
+                        onDelete = { onDelete(entry) },
+                        busy = busy,
+                    )
+                }
+            }
+    }
+}
+
+/** 说明「移至回收站」的后果，并给出确认与取消两个动作。 */
+@Composable
+private fun SchematicTrashDialog(
+    file: Path,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移至回收站？") },
+        text = { Text("「" + file.name + "」会从原理图目录移至回收站，需要时可以再找回。") },
+        confirmButton = {
+            TextButton(onConfirm) {
+                Text("移至回收站", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -339,8 +396,8 @@ private fun FolderRow(
 
 internal fun formatFileSize(bytes: Long): String =
     when {
-        bytes >= 1048576 -> "%.1f MB".format(bytes / 1048576f)
-        bytes >= 1024 -> "%.1f KB".format(bytes / 1024f)
+        bytes >= BYTES_PER_MB -> "%.1f MB".format(bytes / BYTES_PER_MB)
+        bytes >= BYTES_PER_KB -> "%.1f KB".format(bytes / BYTES_PER_KB)
         else -> bytes.toString() + " B"
     }
 

@@ -260,73 +260,104 @@ class GameDirectoryTest {
         runBlocking {
             val root = temporary.resolve("中文 with spaces/.minecraft")
             val folder = version(root)
-            val source = temporary.resolve("FixtureMinecraft.java")
-            source.writeText(
-                "public class FixtureMinecraft { public static void main(String[] args) { System.out.println(\"DIRECTORY_PROBE=\" + java.nio.file.Path.of(\"\").toAbsolutePath()); System.out.println(\"ARGS=\" + String.join(\"|\", args)); } }",
-            )
-            assertEquals(
-                0,
-                ToolProvider
-                    .getSystemJavaCompiler()
-                    .run(
-                        null,
-                        null,
-                        null,
-                        "--release",
-                        "17",
-                        "-d",
-                        temporary.toString(),
-                        source.toString(),
-                    ),
-            )
-            JarOutputStream(folder.resolve("fixture.jar").outputStream()).use { jar ->
-                jar.putNextEntry(JarEntry("FixtureMinecraft.class"))
-                jar.write(temporary.resolve("FixtureMinecraft.class").readBytes())
-                jar.closeEntry()
-            }
+            buildFixtureJar(folder)
             LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
                 controller.directories.add(root)
                 controller.accounts.addOffline("MoliTester")
                 val instance =
                     controller.store.data.instances
                         .single()
-                for (
-                (isolation, expected) in
-                listOf(
-                    VersionIsolation.Enabled to folder.toRealPath(),
-                    VersionIsolation.Disabled to root.toRealPath(),
-                )
-                ) {
-                    controller.saveSettings(
-                        controller.store.data.settings.copy(
-                            isolateVersions = isolation == VersionIsolation.Enabled,
-                        ),
-                    )
-                    controller.updateInstance(
-                        instance.id,
-                        instance.name,
-                        768,
-                        Path
-                            .of(
-                                System.getProperty("java.home"),
-                                "bin",
-                                controller.platform.javaExecutable,
-                            ).toString(),
-                        isolation,
-                    )
-                    controller.launch(instance.id)
-                    withTimeout(20_000) {
-                        controller.jobs.awaitIdle()
-                        while (controller.state.value.runningInstanceId != null) delay(20)
-                    }
-                    val logs =
-                        controller.state.value.logs
-                            .map { it.message }
-                    assertTrue(logs.contains("DIRECTORY_PROBE=$expected"), logs.joinToString("\n"))
-                    assertTrue(
-                        logs.any { it.contains("ARGS=--username|MoliTester|--gameDir|$expected") },
-                    )
-                }
+                assertBothIsolationModes(controller, instance, folder, root)
             }
         }
+
+    /** 编译最小的 Java 探针并打包成版本 JAR，供真实启动使用。 */
+    private fun buildFixtureJar(folder: Path) {
+        val source = temporary.resolve("FixtureMinecraft.java")
+        source.writeText(
+            """public class FixtureMinecraft {
+                    public static void main(String[] args) {
+                        System.out.println(
+                            "DIRECTORY_PROBE=" +
+                                java.nio.file.Path.of("").toAbsolutePath());
+                        System.out.println("ARGS=" + String.join("|", args));
+                    } }""",
+        )
+        assertEquals(
+            0,
+            ToolProvider
+                .getSystemJavaCompiler()
+                .run(
+                    null,
+                    null,
+                    null,
+                    "--release",
+                    "17",
+                    "-d",
+                    temporary.toString(),
+                    source.toString(),
+                ),
+        )
+        JarOutputStream(folder.resolve("fixture.jar").outputStream()).use { jar ->
+            jar.putNextEntry(JarEntry("FixtureMinecraft.class"))
+            jar.write(temporary.resolve("FixtureMinecraft.class").readBytes())
+            jar.closeEntry()
+        }
+    }
+
+    /** 隔离与共用两种模式各真实启动一次。 */
+    private suspend fun assertBothIsolationModes(
+        controller: LauncherController,
+        instance: GameInstance,
+        folder: Path,
+        root: Path,
+    ) {
+        for (
+        (isolation, expected) in
+        listOf(
+            VersionIsolation.Enabled to folder.toRealPath(),
+            VersionIsolation.Disabled to root.toRealPath(),
+        )
+        ) {
+            assertOneIsolationMode(controller, instance, isolation, expected)
+        }
+    }
+
+    /** 真实启动一次并检查工作目录、参数与该模式一致。 */
+    private suspend fun assertOneIsolationMode(
+        controller: LauncherController,
+        instance: GameInstance,
+        isolation: VersionIsolation,
+        expected: Path,
+    ) {
+        controller.saveSettings(
+            controller.store.data.settings.copy(
+                isolateVersions = isolation == VersionIsolation.Enabled,
+            ),
+        )
+        controller.updateInstance(
+            instance.id,
+            instance.name,
+            768,
+            Path
+                .of(
+                    System.getProperty("java.home"),
+                    "bin",
+                    controller.platform.javaExecutable,
+                ).toString(),
+            isolation,
+        )
+        controller.launch(instance.id)
+        withTimeout(20_000) {
+            controller.jobs.awaitIdle()
+            while (controller.state.value.runningInstanceId != null) delay(20)
+        }
+        val logs =
+            controller.state.value.logs
+                .map { it.message }
+        assertTrue(logs.contains("DIRECTORY_PROBE=$expected"), logs.joinToString("\n"))
+        assertTrue(
+            logs.any { it.contains("ARGS=--username|MoliTester|--gameDir|$expected") },
+        )
+    }
 }

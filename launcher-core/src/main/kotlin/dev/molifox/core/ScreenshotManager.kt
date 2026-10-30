@@ -30,6 +30,11 @@ import kotlin.io.path.name
 import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.reader
 
+private const val MIN_THUMBNAIL_SIZE = 64
+private const val MAX_THUMBNAIL_SIZE = 1024
+private const val MAX_SCREENSHOT_SELECTION = 1000
+private const val MAX_EXPORT_SUFFIX = 10000
+
 data class GameScreenshot(
     val instanceId: String,
     val name: String,
@@ -144,7 +149,11 @@ class ScreenshotManager(
         maximum: Int = 480,
     ): ByteArray =
         withContext(Dispatchers.IO) {
-            require(maximum in 64..1024 && screenshot.previewable && screenshot.size <= maxBytes) {
+            require(
+                maximum in MIN_THUMBNAIL_SIZE..MAX_THUMBNAIL_SIZE &&
+                    screenshot.previewable &&
+                    screenshot.size <= maxBytes,
+            ) {
                 "此截图暂不支持预览"
             }
             val file = resolve(screenshot)
@@ -170,74 +179,98 @@ class ScreenshotManager(
             }
         }
 
+    private fun requireExportSelection(screenshots: List<GameScreenshot>) {
+        require(
+            screenshots.isNotEmpty() &&
+                screenshots.size <= MAX_SCREENSHOT_SELECTION &&
+                screenshots
+                    .map { Triple(it.instanceId, it.directory, it.name) }
+                    .distinct()
+                    .size == screenshots.size,
+        ) {
+            "请选择 1–1000 张不同的截图"
+        }
+    }
+
     /** Never overwrite an existing export, and clean only files created by this call on failure. */
     suspend fun export(
         screenshots: List<GameScreenshot>,
         targetDirectory: Path,
     ): List<Path> =
         withContext(Dispatchers.IO) {
-            require(
-                screenshots.isNotEmpty() &&
-                    screenshots.size <= 1000 &&
-                    screenshots
-                        .map { Triple(it.instanceId, it.directory, it.name) }
-                        .distinct()
-                        .size == screenshots.size,
-            ) {
-                "请选择 1–1000 张不同的截图"
-            }
+            requireExportSelection(screenshots)
             val sources = screenshots.map { resolve(it) }
             val destination = targetDirectory.toAbsolutePath().normalize()
             require(screenshots.none { destination == Path.of(it.directory) }) { "请选择截图目录以外的导出位置" }
             require(!Files.isSymbolicLink(destination)) { "导出目录不能是符号链接" }
             destination.createDirectories()
             val written = mutableListOf<Path>()
+            var completed = false
             try {
-                for ((i, source) in sources.withIndex()) {
-                    coroutineContext.ensureActive()
-                    resolve(screenshots[i])
-                    var target = safePath(destination, source.name)
-                    var suffix = 2
-                    while (target.exists()) {
-                        require(suffix <= 10000) { "导出目录存在过多重名文件" }
-                        target =
-                            safePath(
-                                destination,
-                                "${source.nameWithoutExtension} (${suffix++}).${source.extension}",
-                            )
-                    }
-                    val staging =
-                        safePath(destination, ".molifox-screenshot-${UUID.randomUUID()}.tmp")
-                    try {
-                        Files.copy(source, staging)
-                        coroutineContext.ensureActive()
-                        resolve(screenshots[i])
-                        require(staging.fileSize() == screenshots[i].size) { "截图在导出时改变" }
-                        Files.move(staging, target)
-                        written.add(target)
-                    } finally {
-                        staging.deleteIfExists()
-                    }
-                }
+                copyExportedScreenshots(screenshots, sources, destination, written)
+                completed = true
                 written.toList()
-            } catch (failure: Throwable) {
-                written.asReversed().forEach { runCatching { it.deleteIfExists() } }
-                throw failure
+            } finally {
+                // 失败或取消时回收本次已写出的文件，成功时保持不动。
+                if (!completed) written.asReversed().forEach { runCatching { it.deleteIfExists() } }
             }
         }
 
+    private suspend fun copyExportedScreenshots(
+        screenshots: List<GameScreenshot>,
+        sources: List<Path>,
+        destination: Path,
+        written: MutableList<Path>,
+    ) {
+        for ((index, source) in sources.withIndex()) {
+            coroutineContext.ensureActive()
+            resolve(screenshots[index])
+            var target = safePath(destination, source.name)
+            var suffix = 2
+            while (target.exists()) {
+                require(suffix <= MAX_EXPORT_SUFFIX) { "导出目录存在过多重名文件" }
+                target =
+                    safePath(
+                        destination,
+                        "${source.nameWithoutExtension} (${suffix++}).${source.extension}",
+                    )
+            }
+            val staging = safePath(destination, ".molifox-screenshot-${UUID.randomUUID()}.tmp")
+            try {
+                Files.copy(source, staging)
+                coroutineContext.ensureActive()
+                resolve(screenshots[index])
+                require(staging.fileSize() == screenshots[index].size) { "截图在导出时改变" }
+                Files.move(staging, target)
+                written.add(target)
+            } finally {
+                staging.deleteIfExists()
+            }
+        }
+    }
+
+    private fun requireRemovalSelection(screenshots: List<GameScreenshot>) {
+        require(
+            screenshots.isNotEmpty() &&
+                screenshots.size <= MAX_SCREENSHOT_SELECTION &&
+                screenshots
+                    .map { Triple(it.instanceId, it.directory, it.name) }
+                    .distinct()
+                    .size == screenshots.size,
+        ) {
+            "请选择要移入回收站的截图"
+        }
+    }
+
+    private fun removalFailure(
+        removed: Int,
+        failure: Exception,
+    ): java.io.IOException =
+        java.io.IOException("已移入回收站 $removed 张，后续操作停止：${failure.message}", failure)
+
     suspend fun remove(screenshots: List<GameScreenshot>) =
         withContext(Dispatchers.IO) {
-            require(
-                screenshots.isNotEmpty() &&
-                    screenshots.size <= 1000 &&
-                    screenshots
-                        .map { Triple(it.instanceId, it.directory, it.name) }
-                        .distinct()
-                        .size == screenshots.size,
-            ) {
-                "请选择要移入回收站的截图"
-            }
+            requireRemovalSelection(screenshots)
             screenshots.forEach { resolve(it) }
             var removed = 0
             try {
@@ -246,9 +279,14 @@ class ScreenshotManager(
                     store.platform.moveToTrash(resolve(screenshot))
                     removed++
                 }
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                throw java.io.IOException("已移入回收站 $removed 张，后续操作停止：${failure.message}", failure)
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: java.io.IOException) {
+                throw removalFailure(removed, failure)
+            } catch (failure: IllegalStateException) {
+                throw removalFailure(removed, failure)
+            } catch (failure: IllegalArgumentException) {
+                throw removalFailure(removed, failure)
             }
         }
 }

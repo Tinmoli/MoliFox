@@ -50,6 +50,9 @@ import dev.molifox.desktop.ScrollColumn
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.title
 
+/** 原理图页签的标题；实例没有 schematics 目录时隐藏，索引保持不变。 */
+internal const val SCHEMATICS_TAB_TITLE = "原理图"
+
 /** 实例详情页签：左侧二级列表的 7 个页签。 */
 private data class InstanceTab(
     val title: String,
@@ -64,7 +67,7 @@ private val instanceTabs =
         InstanceTab("光影", Icons.Outlined.AutoAwesome),
         InstanceTab("存档", Icons.Outlined.Save),
         InstanceTab("数据包", Icons.Outlined.FolderZip),
-        InstanceTab("原理图", Icons.Outlined.Architecture),
+        InstanceTab(SCHEMATICS_TAB_TITLE, Icons.Outlined.Architecture),
     )
 
 /**
@@ -84,6 +87,8 @@ internal fun InstanceDetailsRail(
     onTidy: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    /** 实例里没有 schematics 目录时不显示「原理图」页签；其余页签行为不变。 */
+    showSchematics: Boolean = true,
 ) {
     var foldersOpen by remember { mutableStateOf(false) }
     // 「管理」每次进入页面都从收起开始，不持久化展开状态。
@@ -114,6 +119,7 @@ internal fun InstanceDetailsRail(
     FrostedPanel(Modifier.width(158.dp).fillMaxHeight()) {
         ScrollColumn(Modifier.fillMaxSize(), gap = 4.dp) {
             instanceTabs.forEachIndexed { index, item ->
+                if (!showSchematics && item.title == SCHEMATICS_TAB_TITLE) return@forEachIndexed
                 InstanceRailItem(item.title, item.icon, selectedTab == index) {
                     onSelectTab(index)
                 }

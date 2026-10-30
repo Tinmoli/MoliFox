@@ -20,4 +20,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MoliFox"
 
-include(":launcher-core", ":desktop-app", ":launcher-bootstrap")
+include(":launcher-core", ":desktop-app", ":launcher-bootstrap", ":multiplayer-core")

@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.JsonParseException
 import dev.molifox.core.ContentCategoryOption
 import dev.molifox.core.ContentFilter
 import dev.molifox.core.ContentHit
@@ -75,6 +76,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /** 结果排序：只在当前页内重排（后端分页接口只按相关度返回，不改业务参数）。 */
 private val contentSortOptions = listOf("downloads" to "下载量", "relevance" to "相关度", "name" to "名称")
@@ -118,20 +120,7 @@ fun ColumnScope.ContentBrowser(
         mutableStateOf(emptyList<ContentCategoryOption>())
     }
     LaunchedEffect(kind, source) {
-        if (source != "curseforge") {
-            sourceCategories = emptyList()
-            return@LaunchedEffect
-        }
-        sourceCategories =
-            try {
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.contentCategories(kind)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                emptyList()
-            }
+        sourceCategories = loadSourceCategories(actions, kind, source)
     }
     val categoryOptions =
         if (source == "curseforge") {
@@ -142,19 +131,17 @@ fun ColumnScope.ContentBrowser(
     var gameVersions by remember { mutableStateOf(emptyList<String>()) }
     var versionListError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
-        try {
-            gameVersions =
-                withContext(Dispatchers.IO) {
-                    actions.controller.installer
-                        .versions()
-                        .filter { it.type == "release" }
-                        .map { it.id }
-                }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            versionListError = failure.message
-        }
+        val message =
+            runContentRequest {
+                gameVersions =
+                    withContext(Dispatchers.IO) {
+                        actions.controller.installer
+                            .versions()
+                            .filter { it.type == "release" }
+                            .map { it.id }
+                    }
+            }
+        if (message != null) versionListError = message
     }
     // 筛选只用这两个值：默认等于当前实例，改选就是显式筛选。
     val filter =
@@ -202,20 +189,22 @@ fun ColumnScope.ContentBrowser(
         error = null
         delay(350)
         try {
-            result =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.search(
-                        query,
-                        kind,
-                        if (kind == "modpack") null else state.data.selectedInstanceId,
-                        offset,
-                        filter,
-                    )
+            val message =
+                runContentRequest {
+                    result =
+                        withContext(Dispatchers.IO) {
+                            actions.controller.content.search(
+                                query,
+                                kind,
+                                if (kind == "modpack") null else state.data.selectedInstanceId,
+                                offset,
+                                filter,
+                            )
+                        }
                 }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (exception: Exception) {
-            error = exception.message
+            if (message != null) {
+                error = message
+            }
         } finally {
             if (isActive) {
                 loading = false
@@ -264,35 +253,15 @@ fun ColumnScope.ContentBrowser(
                 // 游戏版本：默认就是当前实例的真实版本（没有实例时为「全部游戏版本」）。
                 SimpleDropdown(
                     gameVersion,
-                    buildList<Pair<String, String>> {
-                        instanceVersion?.let { add(it to it) }
-                        add("" to "全部游戏版本")
-                        gameVersions.filter { it != instanceVersion }.forEach { add(it to it) }
-                        // 实例版本可能不在官方正式版列表里（例如快照），兜底补一项。
-                        if (
-                            gameVersion.isNotBlank() &&
-                            gameVersion != instanceVersion &&
-                            gameVersion !in gameVersions
-                        ) {
-                            add(gameVersion to gameVersion)
-                        }
-                    },
+                    gameVersionOptions(gameVersion, instanceVersion, gameVersions),
                     { picked -> gameVersion = picked },
                     Modifier.width(140.dp),
                 )
                 if (kind == "mod") {
                     val instanceLoader = selected?.loader
-                    val loaderOptions =
-                        buildList<Pair<String, String>> {
-                            instanceLoader?.let { add(it.name to it.title) }
-                            LoaderType.entries
-                                .filter { it != LoaderType.Vanilla && it != instanceLoader }
-                                .forEach { add(it.name to it.title) }
-                            add("" to "全部加载器")
-                        }
                     SimpleDropdown(
                         loader?.name.orEmpty(),
-                        loaderOptions,
+                        loaderOptions(instanceLoader),
                         { picked ->
                             loader = LoaderType.entries.find { entry -> entry.name == picked }
                         },
@@ -333,16 +302,15 @@ fun ColumnScope.ContentBrowser(
                     }
                 }
             }
-            val followsInstance =
-                selected != null &&
-                    gameVersion == instanceVersion.orEmpty() &&
-                    (kind != "mod" || loader == selected.loader)
             val hint =
-                when {
-                    versionListError != null -> "游戏版本列表暂不可用；项目详情仍可选择作者提供的版本。"
-                    followsInstance -> contentHint(kind, selected)
-                    else -> "按所选游戏版本 / 加载器筛选，不会更换安装实例。"
-                }
+                contentFormHint(
+                    kind,
+                    selected,
+                    gameVersion,
+                    instanceVersion,
+                    loader,
+                    versionListError != null,
+                )
             if (hint.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -402,6 +370,94 @@ private fun contentHint(
                 " 筛选，下载时会补全必需的前置资源。"
     }
 
+/** 表单底部的筛选说明：优先解释版本列表不可用，其次区分跟随实例与显式筛选。 */
+private fun contentFormHint(
+    kind: String,
+    selected: GameInstance?,
+    gameVersion: String,
+    instanceVersion: String?,
+    loader: LoaderType?,
+    versionListFailed: Boolean,
+): String {
+    val followsInstance =
+        selected != null &&
+            gameVersion == instanceVersion.orEmpty() &&
+            (kind != "mod" || loader == selected.loader)
+    return when {
+        versionListFailed -> "游戏版本列表暂不可用；项目详情仍可选择作者提供的版本。"
+        followsInstance -> contentHint(kind, selected)
+        else -> "按所选游戏版本 / 加载器筛选，不会更换安装实例。"
+    }
+}
+
+/** 游戏版本下拉项：实例版本优先，其后是官方正式版列表；实例版本不在列表里时兜底补一项。 */
+private fun gameVersionOptions(
+    gameVersion: String,
+    instanceVersion: String?,
+    gameVersions: List<String>,
+): List<Pair<String, String>> =
+    buildList<Pair<String, String>> {
+        instanceVersion?.let { add(it to it) }
+        add("" to "全部游戏版本")
+        gameVersions.filter { it != instanceVersion }.forEach { add(it to it) }
+        if (
+            gameVersion.isNotBlank() &&
+            gameVersion != instanceVersion &&
+            gameVersion !in gameVersions
+        ) {
+            add(gameVersion to gameVersion)
+        }
+    }
+
+/** 加载器下拉项：实例加载器优先，其余加载器随后，最后是「全部加载器」。 */
+private fun loaderOptions(instanceLoader: LoaderType?): List<Pair<String, String>> =
+    buildList<Pair<String, String>> {
+        instanceLoader?.let { add(it.name to it.title) }
+        LoaderType.entries
+            .filter { it != LoaderType.Vanilla && it != instanceLoader }
+            .forEach { add(it.name to it.title) }
+        add("" to "全部加载器")
+    }
+
+/** 当前内容源可用的分类；非 CurseForge 来源改用内置分类表。 */
+private suspend fun loadSourceCategories(
+    actions: UiActions,
+    kind: String,
+    source: String,
+): List<ContentCategoryOption> {
+    if (source != "curseforge") return emptyList()
+    return try {
+        withContext(Dispatchers.IO) {
+            actions.controller.content.contentCategories(kind)
+        }
+    } catch (cancelled: CancellationException) {
+        rethrowCancellation(cancelled)
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+/**
+ * 执行一次网络检索或版本列表请求，返回可展示的失败原因。
+ *
+ * 只把网络、JSON 解析与状态/参数校验失败交给界面；取消继续上抛，其余异常（程序错误）保持原样抛出。
+ */
+private suspend fun runContentRequest(block: suspend () -> Unit): String? =
+    try {
+        block()
+        null
+    } catch (cancelled: CancellationException) {
+        rethrowCancellation(cancelled)
+    } catch (failure: IOException) {
+        failure.message
+    } catch (failure: JsonParseException) {
+        failure.message
+    } catch (failure: IllegalStateException) {
+        failure.message
+    } catch (failure: IllegalArgumentException) {
+        failure.message
+    }
+
 @Composable
 internal fun ViewToggle(
     listView: Boolean,
@@ -459,3 +515,6 @@ internal fun GoTopButton(onClick: () -> Unit) {
         }
     }
 }
+
+/** 协程取消必须原样抛出，不能当成普通检索失败显示在界面上。 */
+private fun rethrowCancellation(cancelled: CancellationException): Nothing = throw cancelled

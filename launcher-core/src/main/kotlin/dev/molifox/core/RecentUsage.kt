@@ -13,6 +13,10 @@ import java.time.Instant
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 
+private const val FILE_NAME = "recent-usage.json"
+private const val FILE_VERSION = 1
+private const val MAX_ENTRIES_PER_INSTANCE = 100
+
 /** 最近使用记录的两类条目：世界存档（`saves/` 目录名）与多人服务器（地址）。 */
 enum class EntryKind {
     World,
@@ -42,10 +46,10 @@ class RecentUsage(
         hidden: Boolean,
     ) {
         require(key.isNotBlank())
-        val entries = load()
+        val entries = readRecentUsage { file }
         val previous =
             entries.find { it.kind == kind && it.instanceId == instanceId && it.key == key }
-                ?: Usage(kind, instanceId, key, Instant.EPOCH)
+                ?: RecentUsageRecord(kind, instanceId, key, Instant.EPOCH)
         entries.removeAll { it.kind == kind && it.instanceId == instanceId && it.key == key }
         entries.add(previous.copy(hidden = hidden))
         save(entries)
@@ -57,7 +61,9 @@ class RecentUsage(
         instanceId: String,
         key: String,
     ): Boolean =
-        load().any { it.kind == kind && it.instanceId == instanceId && it.key == key && it.hidden }
+        readRecentUsage { file }.any {
+            it.kind == kind && it.instanceId == instanceId && it.key == key && it.hidden
+        }
 
     @Synchronized
     fun summary(
@@ -66,7 +72,9 @@ class RecentUsage(
         key: String,
     ): UsageSummary {
         val previous =
-            load().find { it.kind == kind && it.instanceId == instanceId && it.key == key }
+            readRecentUsage { file }.find {
+                it.kind == kind && it.instanceId == instanceId && it.key == key
+            }
         val active =
             sessions.values.filter {
                 it.kind == kind && it.instanceId == instanceId && it.key == key
@@ -107,7 +115,7 @@ class RecentUsage(
     ) {
         val active = sessions.remove(runId) ?: return
         val elapsed = Duration.between(active.entered, clock()).seconds.coerceAtLeast(0)
-        val entries = load()
+        val entries = readRecentUsage { file }
         val index =
             entries.indexOfFirst {
                 it.kind == active.kind && it.instanceId == active.instanceId && it.key == active.key
@@ -141,7 +149,7 @@ class RecentUsage(
     ) {
         if (instanceId.isBlank() || key.isBlank()) return
         runCatching {
-            val entries = load()
+            val entries = readRecentUsage { file }
             val previous =
                 entries.find {
                     it.kind == kind && it.instanceId == instanceId && it.key == key
@@ -151,9 +159,10 @@ class RecentUsage(
             }
             entries.add(
                 0,
-                (previous ?: Usage(kind, instanceId, key, entered)).copy(lastUsed = entered),
+                (previous ?: RecentUsageRecord(kind, instanceId, key, entered))
+                    .copy(lastUsed = entered),
             )
-            save(cap(entries))
+            save(capRecentUsage(entries))
         }.onFailure { store.log("记录最近使用失败：${it.message ?: key}", true) }
     }
 
@@ -165,7 +174,7 @@ class RecentUsage(
         key: String,
     ): Instant? =
         runCatching {
-            load()
+            readRecentUsage { file }
                 .firstOrNull {
                     it.kind == kind && it.instanceId == instanceId && it.key == key
                 }?.lastUsed
@@ -181,7 +190,7 @@ class RecentUsage(
     ): List<String> {
         if (limit <= 0) return emptyList()
         return runCatching {
-            load()
+            readRecentUsage { file }
                 .filter {
                     it.kind == kind && it.instanceId == instanceId && it.lastUsed > Instant.EPOCH
                 }.sortedByDescending { it.lastUsed }
@@ -199,7 +208,7 @@ class RecentUsage(
         key: String,
     ) {
         runCatching {
-            val entries = load()
+            val entries = readRecentUsage { file }
             val remaining =
                 entries.filterNot {
                     it.kind == kind && it.instanceId == instanceId && it.key == key
@@ -223,7 +232,7 @@ class RecentUsage(
     ): Int {
         if (instanceId.isBlank()) return 0
         return runCatching {
-            val entries = load()
+            val entries = readRecentUsage { file }
             val remaining =
                 entries.filterNot {
                     it.kind == kind && it.instanceId == instanceId && it.key !in existingKeys
@@ -240,42 +249,8 @@ class RecentUsage(
         }
     }
 
-    /** 读取文件并按文件内顺序（新到旧）返回；损坏或版本不认识时当作空记录。 */
-    private fun load(): MutableList<Usage> {
-        if (!file.isRegularFile()) return mutableListOf()
-        val root = runCatching { readObject(file) }.getOrNull() ?: return mutableListOf()
-        if (root.int("version") != FILE_VERSION) return mutableListOf()
-        return root
-            .array("entries")
-            .mapNotNull { element ->
-                val item =
-                    element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-                val kind =
-                    runCatching { EntryKind.valueOf(item.string("kind")) }.getOrNull()
-                        ?: return@mapNotNull null
-                val instanceId = item.string("instanceId")
-                val key = item.string("key")
-                val lastUsed =
-                    runCatching { Instant.parse(item.string("lastUsed")) }.getOrNull()
-                        ?: return@mapNotNull null
-                if (instanceId.isBlank() || key.isBlank()) {
-                    null
-                } else {
-                    Usage(
-                        kind,
-                        instanceId,
-                        key,
-                        lastUsed,
-                        item.boolean("hidden"),
-                        item.get("seconds")?.asLong?.coerceAtLeast(0) ?: 0,
-                        item.boolean("estimated"),
-                    )
-                }
-            }.toMutableList()
-    }
-
     /** 用 [writeJson] 原子写入（临时文件 + 改名）；数组顺序即新到旧。 */
-    private fun save(entries: List<Usage>) {
+    private fun save(entries: List<RecentUsageRecord>) {
         val json =
             JsonObject().apply {
                 addProperty("version", FILE_VERSION)
@@ -302,43 +277,12 @@ class RecentUsage(
         store.updateState { it.copy(recentUsageRevision = it.recentUsageRevision + 1) }
     }
 
-    /** 每个实例只留最新的 [MAX_ENTRIES_PER_INSTANCE] 条；列表已按新到旧排列。 */
-    private fun cap(entries: List<Usage>): List<Usage> {
-        val perInstance = mutableMapOf<String, Int>()
-        return entries.filter { entry ->
-            if (entry.hidden) return@filter true
-            val count = perInstance[entry.instanceId] ?: 0
-            if (count >= MAX_ENTRIES_PER_INSTANCE) {
-                false
-            } else {
-                perInstance[entry.instanceId] = count + 1
-                true
-            }
-        }
-    }
-
-    private data class Usage(
-        val kind: EntryKind,
-        val instanceId: String,
-        val key: String,
-        val lastUsed: Instant,
-        val hidden: Boolean = false,
-        val seconds: Long = 0,
-        val estimated: Boolean = false,
-    )
-
     private data class ActiveUsage(
         val kind: EntryKind,
         val instanceId: String,
         val key: String,
         val entered: Instant,
     )
-
-    private companion object {
-        const val FILE_NAME = "recent-usage.json"
-        const val FILE_VERSION = 1
-        const val MAX_ENTRIES_PER_INSTANCE = 100
-    }
 }
 
 data class UsageSummary(
@@ -347,4 +291,63 @@ data class UsageSummary(
     val activeSeconds: Long,
     val estimated: Boolean,
     val active: Boolean,
+)
+
+/** 读取文件并按文件内顺序（新到旧）返回；损坏或版本不认识时当作空记录。 */
+private fun readRecentUsage(file: () -> Path): MutableList<RecentUsageRecord> {
+    if (!file().isRegularFile()) return mutableListOf()
+    val root = runCatching { readObject(file()) }.getOrNull() ?: return mutableListOf()
+    if (root.int("version") != FILE_VERSION) return mutableListOf()
+    return root
+        .array("entries")
+        .mapNotNull { element ->
+            val item =
+                element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val kind =
+                runCatching { EntryKind.valueOf(item.string("kind")) }.getOrNull()
+                    ?: return@mapNotNull null
+            val instanceId = item.string("instanceId")
+            val key = item.string("key")
+            val lastUsed =
+                runCatching { Instant.parse(item.string("lastUsed")) }.getOrNull()
+                    ?: return@mapNotNull null
+            if (instanceId.isBlank() || key.isBlank()) {
+                null
+            } else {
+                RecentUsageRecord(
+                    kind,
+                    instanceId,
+                    key,
+                    lastUsed,
+                    item.boolean("hidden"),
+                    item.get("seconds")?.asLong?.coerceAtLeast(0) ?: 0,
+                    item.boolean("estimated"),
+                )
+            }
+        }.toMutableList()
+}
+
+/** 每个实例只留最新的 [MAX_ENTRIES_PER_INSTANCE] 条；列表已按新到旧排列。 */
+private fun capRecentUsage(entries: List<RecentUsageRecord>): List<RecentUsageRecord> {
+    val perInstance = mutableMapOf<String, Int>()
+    return entries.filter { entry ->
+        if (entry.hidden) return@filter true
+        val count = perInstance[entry.instanceId] ?: 0
+        if (count >= MAX_ENTRIES_PER_INSTANCE) {
+            false
+        } else {
+            perInstance[entry.instanceId] = count + 1
+            true
+        }
+    }
+}
+
+private data class RecentUsageRecord(
+    val kind: EntryKind,
+    val instanceId: String,
+    val key: String,
+    val lastUsed: Instant,
+    val hidden: Boolean = false,
+    val seconds: Long = 0,
+    val estimated: Boolean = false,
 )

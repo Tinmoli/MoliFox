@@ -14,7 +14,6 @@ import java.nio.file.Path
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.io.path.createDirectories
-import kotlin.io.path.deleteRecursively
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
@@ -86,6 +85,153 @@ class InstanceDeletionTest {
         return folder
     }
 
+    /** 版本目录里的玩家内容：mods、config、saves 与日志。 */
+    private fun createTrashedVersionContent(folder: Path) {
+        folder
+            .resolve("mods")
+            .createDirectories()
+            .resolve("a.jar")
+            .writeText("mod")
+        folder
+            .resolve("config")
+            .createDirectories()
+            .resolve("options.toml")
+            .writeText("cfg")
+        folder
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("save")
+        folder
+            .resolve("logs")
+            .createDirectories()
+            .resolve("latest.log")
+            .writeText("log")
+    }
+
+    /** 与实例无关的共用游戏文件：saves、libraries 与 assets。 */
+    private fun createSharedGameContent(root: Path) {
+        root
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("shared")
+        root
+            .resolve("libraries")
+            .createDirectories()
+            .resolve("x.jar")
+            .writeText("lib")
+        root
+            .resolve("assets")
+            .createDirectories()
+            .resolve("a.bin")
+            .writeText("asset")
+    }
+
+    /** 删除前确认框要展示的细节：目标就是版本目录，另给出独立游戏目录与存档名单。 */
+    private fun assertDeletionPlanForDialog(
+        controller: LauncherController,
+        instanceId: String,
+        expected: Path,
+    ) {
+        assertEquals(listOf(expected), controller.deletionTargets(instanceId))
+        assertTrue(controller.hasSeparateGameDirectory(instanceId))
+        assertEquals(listOf("world"), controller.deletionWorlds(instanceId).map { it.name })
+        assertNotNull(controller.deletionWorlds(instanceId).single().modified)
+    }
+
+    /** 默认删除只交给回收站一次，报告里的路径与释放空间也要对得上。 */
+    private fun assertTrashOnlyReport(
+        report: InstanceDeletionReport,
+        platform: TrashPlatform,
+        expected: Path,
+    ) {
+        assertTrue(report.movedToTrash)
+        assertEquals(1, platform.trashCalls)
+        assertEquals(listOf(expected), platform.trashed)
+        assertEquals(listOf(expected), report.removedPaths.map { Path.of(it) })
+        assertTrue(report.freedBytes > 0)
+    }
+
+    /** 版本目录与本地内容消失，回收站里就是它；同名其它版本与共享目录原样保留。 */
+    private fun assertVersionFolderGoneAndSharedFilesKept(
+        root: Path,
+        folder: Path,
+        sibling: Path,
+        id: String,
+    ) {
+        assertFalse(folder.exists())
+        assertTrue(
+            temporary
+                .resolve("trash")
+                .listDirectoryEntries()
+                .single { it.name.endsWith(id) }
+                .isDirectory(),
+        )
+        assertTrue(sibling.resolve("KeepMe[1.21]_v2.json").isRegularFile())
+        assertTrue(root.resolve("versions").isDirectory())
+        assertEquals("shared", root.resolve("saves/world/level.dat").readText())
+        assertTrue(root.resolve("libraries/x.jar").isRegularFile())
+        assertTrue(root.resolve("assets/a.bin").isRegularFile())
+    }
+
+    /** 独立实例目录里的玩家内容，以及共享游戏根里不该被删的 assets。 */
+    private fun createIsolatedInstanceContent(
+        own: Path,
+        root: Path,
+    ) {
+        own
+            .resolve("mods")
+            .createDirectories()
+            .resolve("m.jar")
+            .writeText("mod")
+        own
+            .resolve("config")
+            .createDirectories()
+            .resolve("c.toml")
+            .writeText("cfg")
+        own
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("save")
+        own
+            .resolve("logs")
+            .createDirectories()
+            .resolve("latest.log")
+            .writeText("log")
+        root
+            .resolve("assets")
+            .createDirectories()
+            .resolve("a.bin")
+            .writeText("asset")
+    }
+
+    /** 与 [target] 游戏版本字符串相同、但版本目录不同的另一个实例记录。 */
+    private fun sameVersionInstance(target: GameInstance) =
+        GameInstance(
+            name = "TwilightMC-26.3v1.0",
+            gameVersion = "26.3",
+            versionId = "TwilightMC-26.3v1.0",
+            gameDirectoryName = "TwilightMC-26.3v1.0",
+            gameDirectoryId = target.gameDirectoryId,
+        )
+
+    /** 删除成功后日志必须报告真实释放字节数，且不能出现「保留」提示。 */
+    private fun assertDeletionReported(
+        controller: LauncherController,
+        report: InstanceDeletionReport,
+    ) {
+        val messages =
+            controller.store.state.value.logs
+                .map { it.message }
+        assertTrue(messages.none { "删除实例时保留" in it }, "同版本号不算共用，不应出现保留提示")
+        assertTrue(
+            messages.any { "已删除实例记录" in it && "释放 ${report.freedBytes} 字节" in it },
+            "删除结果必须报告真实释放字节数：$messages",
+        )
+    }
+
     @Test
     fun `missing game root preserves the technical cause without deleting files`() {
         val root = temporary.resolve("game")
@@ -116,42 +262,9 @@ class InstanceDeletionTest {
         val root = temporary.resolve(".minecraft")
         val id = "TwilightMC-1.21.11[彗星版]_v1.3"
         val folder = version(root, id)
-        folder
-            .resolve("mods")
-            .createDirectories()
-            .resolve("a.jar")
-            .writeText("mod")
-        folder
-            .resolve("config")
-            .createDirectories()
-            .resolve("options.toml")
-            .writeText("cfg")
-        folder
-            .resolve("saves/world")
-            .createDirectories()
-            .resolve("level.dat")
-            .writeText("save")
-        folder
-            .resolve("logs")
-            .createDirectories()
-            .resolve("latest.log")
-            .writeText("log")
+        createTrashedVersionContent(folder)
         val sibling = version(root, "KeepMe[1.21]_v2")
-        root
-            .resolve("saves/world")
-            .createDirectories()
-            .resolve("level.dat")
-            .writeText("shared")
-        root
-            .resolve("libraries")
-            .createDirectories()
-            .resolve("x.jar")
-            .writeText("lib")
-        root
-            .resolve("assets")
-            .createDirectories()
-            .resolve("a.bin")
-            .writeText("asset")
+        createSharedGameContent(root)
         val expected = folder.toRealPath()
         val platform = TrashPlatform(temporary.resolve("trash"))
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
@@ -163,31 +276,11 @@ class InstanceDeletionTest {
                 controller.store.data.instances
                     .single { it.id != instance.id }
             controller.store.mutate { it.copy(selectedInstanceId = instance.id) }
-            assertEquals(listOf(expected), controller.deletionTargets(instance.id))
-            // 确认框的细节：独立游戏目录 + saves 名单（名称与上次修改时间）。
-            assertTrue(controller.hasSeparateGameDirectory(instance.id))
-            assertEquals(listOf("world"), controller.deletionWorlds(instance.id).map { it.name })
-            assertNotNull(controller.deletionWorlds(instance.id).single().modified)
+            assertDeletionPlanForDialog(controller, instance.id, expected)
             // 默认不按 Shift：只交给回收站一次，且目标正是用户示例的版本文件夹。
             val report = runBlocking { controller.deleteInstance(instance.id) }.getOrThrow()
-            assertTrue(report.movedToTrash)
-            assertEquals(1, platform.trashCalls)
-            assertEquals(listOf(expected), platform.trashed)
-            assertEquals(listOf(expected), report.removedPaths.map { Path.of(it) })
-            assertTrue(report.freedBytes > 0)
-            assertFalse(folder.exists())
-            assertTrue(
-                temporary
-                    .resolve("trash")
-                    .listDirectoryEntries()
-                    .single { it.name.endsWith(id) }
-                    .isDirectory(),
-            )
-            assertTrue(sibling.resolve("KeepMe[1.21]_v2.json").isRegularFile())
-            assertTrue(root.resolve("versions").isDirectory())
-            assertEquals("shared", root.resolve("saves/world/level.dat").readText())
-            assertTrue(root.resolve("libraries/x.jar").isRegularFile())
-            assertTrue(root.resolve("assets/a.bin").isRegularFile())
+            assertTrashOnlyReport(report, platform, expected)
+            assertVersionFolderGoneAndSharedFilesKept(root, folder, sibling, id)
             assertTrue(
                 controller.store.data.instances
                     .none { it.id == instance.id },
@@ -205,31 +298,7 @@ class InstanceDeletionTest {
             controller.directories.add(root)
             val created = controller.installer.createInstance(InstallRequest("隔离实例", "1.20.1"))
             val own = controller.store.instancePath(created.id)
-            own
-                .resolve("mods")
-                .createDirectories()
-                .resolve("m.jar")
-                .writeText("mod")
-            own
-                .resolve("config")
-                .createDirectories()
-                .resolve("c.toml")
-                .writeText("cfg")
-            own
-                .resolve("saves/world")
-                .createDirectories()
-                .resolve("level.dat")
-                .writeText("save")
-            own
-                .resolve("logs")
-                .createDirectories()
-                .resolve("latest.log")
-                .writeText("log")
-            root
-                .resolve("assets")
-                .createDirectories()
-                .resolve("a.bin")
-                .writeText("asset")
+            createIsolatedInstanceContent(own, root)
             // 实例身份就是版本目录：删除目标只有它自己的 versions/隔离实例，不含别的版本目录。
             val expected = setOf(own.toRealPath())
             assertEquals(expected, controller.deletionTargets(created.id).toSet())
@@ -258,17 +327,7 @@ class InstanceDeletionTest {
                     .single { it.versionId == "26.3" }
             // 另一个实例只是 gameVersion 字符串相同，versionId 和版本目录都不同，不是真实共用。
             controller.store.mutate {
-                it.copy(
-                    instances =
-                        it.instances +
-                            GameInstance(
-                                name = "TwilightMC-26.3v1.0",
-                                gameVersion = "26.3",
-                                versionId = "TwilightMC-26.3v1.0",
-                                gameDirectoryName = "TwilightMC-26.3v1.0",
-                                gameDirectoryId = target.gameDirectoryId,
-                            ),
-                )
+                it.copy(instances = it.instances + sameVersionInstance(target))
             }
             val expected = versionFolder.toRealPath()
             assertEquals(listOf(expected), controller.deletionTargets(target.id))
@@ -279,185 +338,7 @@ class InstanceDeletionTest {
             assertTrue(report.preserved.isEmpty())
             assertTrue(report.freedBytes > 0)
             assertFalse(versionFolder.exists())
-            val messages =
-                controller.store.state.value.logs
-                    .map { it.message }
-            assertTrue(messages.none { "删除实例时保留" in it }, "同版本号不算共用，不应出现保留提示")
-            assertTrue(
-                messages.any { "已删除实例记录" in it && "释放 ${report.freedBytes} 字节" in it },
-                "删除结果必须报告真实释放字节数：$messages",
-            )
-        }
-    }
-
-    @Test
-    fun `a version folder referenced through inheritsFrom blocks deletion and keeps everything`() {
-        val root = temporary.resolve("real-share/.minecraft")
-        val versionFolder = version(root, "26.3")
-        val platform = TrashPlatform(temporary.resolve("trash"))
-        LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
-            controller.directories.add(root)
-            val target =
-                controller.store.data.instances
-                    .single { it.versionId == "26.3" }
-            // 另一个实例的版本 JSON 真的 inheritsFrom 26.3：这是真实共用，必须整次拒绝。
-            writeJson(
-                root.resolve("versions/TwilightMC-26.3v1.0/TwilightMC-26.3v1.0.json"),
-                mapOf("id" to "TwilightMC-26.3v1.0", "inheritsFrom" to "26.3"),
-            )
-            controller.store.mutate {
-                it.copy(
-                    instances =
-                        it.instances +
-                            GameInstance(
-                                name = "TwilightMC-26.3v1.0",
-                                gameVersion = "26.3",
-                                versionId = "TwilightMC-26.3v1.0",
-                                gameDirectoryName = "TwilightMC-26.3v1.0",
-                                gameDirectoryId = target.gameDirectoryId,
-                            ),
-                )
-            }
-            assertTrue(controller.deletionTargets(target.id).isEmpty())
-            assertEquals(
-                "无法删除：版本目录仍被实例「TwilightMC-26.3v1.0」使用；请先处理该实例",
-                controller.deletionBlockReason(target.id),
-            )
-            val failure =
-                runBlocking { controller.deleteInstance(target.id, permanent = true) }
-                    .exceptionOrNull()
-            assertIs<InstanceDeletionBlockedException>(failure)
-            assertEquals(
-                "无法删除：版本目录仍被实例「TwilightMC-26.3v1.0」使用；请先处理该实例",
-                failure.message,
-            )
-            // 记录与文件都原样保留，磁盘一点没动。
-            assertTrue(versionFolder.resolve("26.3.json").isRegularFile())
-            assertTrue(
-                controller.store.data.instances
-                    .any { it.id == target.id },
-            )
-            assertEquals(0, platform.trashCalls)
-            val messages =
-                controller.store.state.value.logs
-                    .map { it.message }
-            assertTrue(
-                messages.any {
-                    it == "无法删除：版本目录仍被实例「TwilightMC-26.3v1.0」使用；请先处理该实例"
-                },
-                "日志必须显示同一条拒绝原因：$messages",
-            )
-            assertTrue(messages.none { "已删除实例记录" in it }, "被拒绝时不能出现已删除记录：$messages")
-        }
-    }
-
-    @Test
-    fun `a version folder shared by two instances blocks both deletions and keeps files intact`() {
-        val root = temporary.resolve("shared/.minecraft")
-        root.createDirectories()
-        val platform = TrashPlatform(temporary.resolve("trash"))
-        LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
-            controller.directories.add(root)
-            val first = controller.installer.createInstance(InstallRequest("第一个", "1.20.1"))
-            val second = controller.installer.createInstance(InstallRequest("第二个", "1.20.1"))
-            val firstOwn = controller.store.versionGamePath(first).apply { createDirectories() }
-            val secondOwn = controller.store.versionGamePath(second).apply { createDirectories() }
-            // 新模型下每个实例有自己的版本目录；只有配置真正互相 inheritsFrom 才算共用。
-            writeJson(
-                firstOwn.resolve("第一个.json"),
-                mapOf(
-                    "id" to "第一个",
-                    "inheritsFrom" to "第二个",
-                    "mainClass" to "FixtureBase",
-                    "gameVersion" to "1.20.1",
-                ),
-            )
-            writeJson(
-                secondOwn.resolve("第二个.json"),
-                mapOf(
-                    "id" to "第二个",
-                    "inheritsFrom" to "第一个",
-                    "mainClass" to "FixtureBase",
-                    "gameVersion" to "1.20.1",
-                ),
-            )
-            firstOwn
-                .resolve("mods")
-                .createDirectories()
-                .resolve("a.jar")
-                .writeText("mod")
-            secondOwn
-                .resolve("saves")
-                .createDirectories()
-                .resolve("level.dat")
-                .writeText("save")
-            val firstFailure = runBlocking { controller.deleteInstance(first.id) }.exceptionOrNull()
-            assertIs<InstanceDeletionBlockedException>(firstFailure)
-            assertEquals(
-                "无法删除：版本目录仍被实例「第二个」使用；请先处理该实例",
-                firstFailure.message,
-            )
-            // 整次拒绝：不删版本目录、不删自己的游戏目录、不移回收站、记录还在。
-            assertEquals(0, platform.trashCalls)
-            assertTrue(firstOwn.resolve("第一个.json").isRegularFile())
-            assertEquals("mod", firstOwn.resolve("mods/a.jar").readText())
-            assertEquals("save", secondOwn.resolve("saves/level.dat").readText())
-            assertEquals(2, controller.store.data.instances.size)
-            // 反过来也一样：占用者还在，第二名实例同样删不掉。
-            val secondFailure =
-                runBlocking {
-                    controller.deleteInstance(
-                        second.id,
-                    )
-                }.exceptionOrNull()
-            assertIs<InstanceDeletionBlockedException>(secondFailure)
-            assertEquals(
-                "无法删除：版本目录仍被实例「第一个」使用；请先处理该实例",
-                secondFailure.message,
-            )
-            assertTrue(
-                controller.store.data.instances
-                    .any { it.id == first.id },
-            )
-            assertTrue(
-                controller.store.data.instances
-                    .any { it.id == second.id },
-            )
-            val messages =
-                controller.store.state.value.logs
-                    .map { it.message }
-            assertTrue(messages.none { "已删除实例记录" in it }, "没有任何一次删除成功：$messages")
-        }
-    }
-
-    @Test
-    fun `startup discovery drops a record whose version directory vanished`() {
-        val root = temporary.resolve("discovery/.minecraft")
-        root.createDirectories()
-        val platform = TrashPlatform(temporary.resolve("trash"))
-        LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
-            controller.directories.add(root)
-            val created = controller.installer.createInstance(InstallRequest("会消失", "1.20.1"))
-            val own = controller.store.instancePath(created.id)
-            assertTrue(own.isDirectory())
-            own.toFile().deleteRecursively()
-            // 模拟下一次启动的发现流程：记录没有对应目录，必须从列表里消失并留一行日志。
-            controller.directories.discover(listOf(StartupRoot(root.toRealPath(), 0)))
-            assertTrue(
-                controller.store.data.instances
-                    .none { it.id == created.id },
-            )
-            assertTrue(
-                controller.store.data.instances
-                    .isEmpty(),
-            )
-            val messages =
-                controller.store.state.value.logs
-                    .map { it.message }
-            assertTrue(
-                messages.any { it == "清理失效实例记录：会消失（目录不存在）" },
-                "启动发现必须记录清理：$messages",
-            )
+            assertDeletionReported(controller, report)
         }
     }
 }

@@ -168,24 +168,31 @@ internal class PathOpener(
     fun open(target: Path): Boolean {
         val path = target.toAbsolutePath().normalize()
         val desktopOpener = openWithDesktop
-        if (desktopOpener != null && Files.exists(path)) {
-            if (attempt("java.awt.Desktop", path) { desktopOpener(path.toFile()) }) return true
+        val opened =
+            (
+                desktopOpener != null &&
+                    Files.exists(path) &&
+                    attempt("java.awt.Desktop", path) { desktopOpener(path.toFile()) }
+            ) ||
+                pathOpenCommands(osName, path).any { (name, command) ->
+                    attempt(name, path) { launch(command) }
+                }
+        return if (opened) {
+            true
+        } else {
+            val copied = runCatching { copyToClipboard(path.toString()) }.getOrDefault(false)
+            log(
+                "打开 $path 的所有方式都失败" + if (copied) "，已复制路径到剪贴板" else "，剪贴板也不可用",
+            )
+            notice(
+                if (copied) {
+                    "系统拒绝打开（可能被安全软件拦截），路径已复制"
+                } else {
+                    "系统拒绝打开（可能被安全软件拦截），请手动打开：$path"
+                },
+            )
+            false
         }
-        for ((name, command) in pathOpenCommands(osName, path)) {
-            if (attempt(name, path) { launch(command) }) return true
-        }
-        val copied = runCatching { copyToClipboard(path.toString()) }.getOrDefault(false)
-        log(
-            "打开 $path 的所有方式都失败" + if (copied) "，已复制路径到剪贴板" else "，剪贴板也不可用",
-        )
-        notice(
-            if (copied) {
-                "系统拒绝打开（可能被安全软件拦截），路径已复制"
-            } else {
-                "系统拒绝打开（可能被安全软件拦截），请手动打开：$path"
-            },
-        )
-        return false
     }
 
     private fun attempt(
@@ -193,11 +200,12 @@ internal class PathOpener(
         path: Path,
         action: () -> Unit,
     ): Boolean =
-        try {
+        // 打开动作由调用方以 lambda 注入（Desktop.open / ProcessBuilder / 测试替身），异常类型无法收窄，按契约不抛出。
+        runCatching {
             action()
             log("已打开 $path（$name）")
             true
-        } catch (error: Exception) {
+        }.getOrElse { error ->
             log("打开 $path 失败（$name）：${error.message ?: error.javaClass.simpleName}")
             false
         }

@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
 import org.jetbrains.skia.Image as SkiaImage
 
@@ -103,12 +104,7 @@ fun InstanceIconDialog(
             busy = true
             error = null
             try {
-                action()
-                onDismiss()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                error = failure.message
+                error = runIconAction(action, onDismiss)
             } finally {
                 busy = false
             }
@@ -169,3 +165,22 @@ fun InstanceIconDialog(
         )
     }
 }
+
+/** 执行图标操作，把可预期的失败转成提示文本；取消继续上抛，成功后关闭弹窗。 */
+private suspend fun runIconAction(
+    action: suspend () -> Unit,
+    onDismiss: () -> Unit,
+): String? =
+    try {
+        action()
+        onDismiss()
+        null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: IOException) {
+        failure.message
+    } catch (failure: IllegalArgumentException) {
+        failure.message
+    } catch (failure: IllegalStateException) {
+        failure.message
+    }

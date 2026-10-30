@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.JsonParseException
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
@@ -36,6 +37,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 internal fun packSourceOf(instance: GameInstance): String =
     when {
@@ -100,13 +102,49 @@ internal fun ColumnScope.InstanceInstallSections(
                 }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (failure: Exception) {
+        } catch (failure: IOException) {
+            versionError = failure.message
+        } catch (failure: IllegalStateException) {
+            versionError = failure.message
+        } catch (failure: JsonParseException) {
             versionError = failure.message
         } finally {
             loadingVersions = false
         }
     }
     val candidates = loaderUpgradeCandidates(instance, versions)
+    CurrentInstallSection(instance, actions)
+    LoaderUpgradeSection(
+        instance = instance,
+        actions = actions,
+        versions = versions,
+        candidates = candidates,
+        ui =
+            LoaderUpgradeUi(
+                loadingVersions = loadingVersions,
+                versionError = versionError,
+                upgradeable = upgradeable,
+                externalBlocker = externalBlocker,
+                onRetry = { versionRetry++ },
+            ),
+    )
+}
+
+/** 升级卡片用到的异步状态：读取中 / 失败原因 / 能否升级 / 外部实例阻塞原因 / 重试入口。 */
+private data class LoaderUpgradeUi(
+    val loadingVersions: Boolean,
+    val versionError: String?,
+    val upgradeable: Boolean,
+    val externalBlocker: String?,
+    val onRetry: () -> Unit,
+)
+
+/** 「当前安装」卡片：只展示当前组件，并提供修复入口。 */
+@Composable
+private fun CurrentInstallSection(
+    instance: GameInstance,
+    actions: UiActions,
+) {
     SettingsSection("当前安装") {
         SettingRow("游戏版本", instance.gameVersion) {
             InstanceArtwork(instance, actions, Modifier.size(24.dp))
@@ -136,105 +174,117 @@ internal fun ColumnScope.InstanceInstallSections(
             }
         }
     }
+}
+
+/** 「升级加载器」卡片：先说明为什么不能升级，再展示候选版本与升级入口。 */
+@Composable
+private fun LoaderUpgradeSection(
+    instance: GameInstance,
+    actions: UiActions,
+    versions: List<LoaderVersion>,
+    candidates: List<LoaderVersion>,
+    ui: LoaderUpgradeUi,
+) {
     SettingsSection("升级加载器", "只升级同一加载器的版本；游戏版本、模组与存档保持不变。") {
-        when {
-            instance.broken && instance.externalProfile ->
+        val blocker = upgradeBlocker(instance, ui)
+        if (blocker != null) {
+            Text(
+                blocker,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            SettingRow("当前加载器", instance.loader.title + " " + instance.loaderVersion) {}
+            LoaderCandidateStatus(instance, actions, versions, candidates, ui)
+        }
+    }
+}
+
+/** 不能升级的原因；顺序与界面展示优先级一致，能升级时返回 null。 */
+private fun upgradeBlocker(
+    instance: GameInstance,
+    ui: LoaderUpgradeUi,
+): String? =
+    when {
+        instance.broken && instance.externalProfile ->
+            (instance.brokenReason.ifBlank { "外部版本配置无法识别" }) +
+                "。请先在原目录补齐该版本，再进行升级。"
+        instance.loader == LoaderType.Vanilla ->
+            "原版实例没有可升级的加载器。"
+        instance.packFile.isNotBlank() ->
+            "整合包的加载器由包清单定义，请通过整合包更新维护。"
+        instance.externalProfile && ui.externalBlocker != null -> ui.externalBlocker.orEmpty()
+        !ui.upgradeable ->
+            "请先完成游戏安装，再升级加载器。"
+        instance.loaderVersion.isBlank() ->
+            "无法识别当前加载器版本，请先修复游戏。"
+        else -> null
+    }
+
+/** 候选版本状态：加载中 / 读取失败 / 无候选 / 已是最新 / 可升级。 */
+@Composable
+private fun LoaderCandidateStatus(
+    instance: GameInstance,
+    actions: UiActions,
+    versions: List<LoaderVersion>,
+    candidates: List<LoaderVersion>,
+    ui: LoaderUpgradeUi,
+) {
+    val latest = candidates.firstOrNull()
+    when {
+        ui.loadingVersions ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LinearProgressIndicator(Modifier.weight(1f))
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    (instance.brokenReason.ifBlank { "外部版本配置无法识别" }) +
-                        "。请先在原目录补齐该版本，再进行升级。",
-                    fontSize = 12.sp,
+                    "正在获取" + instance.loader.title + "版本列表",
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            instance.loader == LoaderType.Vanilla ->
+            }
+        ui.versionError != null ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "原版实例没有可升级的加载器。",
+                    ui.versionError.orEmpty(),
+                    Modifier.weight(1f),
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.error,
                 )
-            instance.packFile.isNotBlank() ->
-                Text(
-                    "整合包的加载器由包清单定义，请通过整合包更新维护。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            instance.externalProfile && externalBlocker != null ->
-                Text(
-                    externalBlocker ?: "",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            !upgradeable ->
-                Text(
-                    "请先完成游戏安装，再升级加载器。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            instance.loaderVersion.isBlank() ->
-                Text(
-                    "无法识别当前加载器版本，请先修复游戏。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            else -> {
-                SettingRow("当前加载器", instance.loader.title + " " + instance.loaderVersion) {}
-                val latest = candidates.firstOrNull()
-                when {
-                    loadingVersions ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            LinearProgressIndicator(Modifier.weight(1f))
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "正在获取" + instance.loader.title + "版本列表",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    versionError != null ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                versionError.orEmpty(),
-                                Modifier.weight(1f),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                            TextButton({ versionRetry++ }) { Text("重试", fontSize = 12.sp) }
-                        }
-                    versions.isEmpty() ->
-                        Text(
-                            "该游戏版本暂无可用的 " + instance.loader.title + " 版本",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                TextButton({ ui.onRetry() }) { Text("重试", fontSize = 12.sp) }
+            }
+        versions.isEmpty() ->
+            Text(
+                "该游戏版本暂无可用的 " + instance.loader.title + " 版本",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        latest == null ->
+            Text(
+                "已是此游戏版本下最新的 " +
+                    instance.loader.title +
+                    " " +
+                    instance.loaderVersion,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        else ->
+            SettingRow(
+                "可升级至",
+                latest.version + if (latest.stable) "" else "（测试版）",
+            ) {
+                PrimaryButton(
+                    "升级",
+                    Icons.Outlined.ArrowUpward,
+                    !actions.controller.isInstanceBusy(instance.id),
+                ) {
+                    actions.run {
+                        actions.controller.upgradeInstanceLoader(
+                            instance.id,
+                            latest.version,
                         )
-                    latest == null ->
-                        Text(
-                            "已是此游戏版本下最新的 " +
-                                instance.loader.title +
-                                " " +
-                                instance.loaderVersion,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    else ->
-                        SettingRow(
-                            "可升级至",
-                            latest.version + if (latest.stable) "" else "（测试版）",
-                        ) {
-                            PrimaryButton(
-                                "升级",
-                                Icons.Outlined.ArrowUpward,
-                                !actions.controller.isInstanceBusy(instance.id),
-                            ) {
-                                actions.run {
-                                    actions.controller.upgradeInstanceLoader(
-                                        instance.id,
-                                        latest.version,
-                                    )
-                                }
-                                actions.taskQueued()
-                            }
-                        }
+                    }
+                    actions.taskQueued()
                 }
             }
-        }
     }
 }

@@ -17,6 +17,8 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 
+private const val MAX_PACK_ICON_PATH_CHARS = 240
+
 /** 模组图标上限 1 MiB：超过上限的图片不当图标，避免把整包资源读进内存。 */
 private const val MOD_ICON_MAX_BYTES = 1024 * 1024
 private const val MAX_MOD_ICON_DIMENSION = 4096
@@ -74,20 +76,14 @@ private fun modIconPayload(zip: ZipFile): ModIconPayload? {
     textEntry(zip, "mcmod.info")?.let { source ->
         mcmodLogo(source)?.let(::declaredIconName)?.let(declared::add)
     }
-    for (name in declared) {
-        iconPayload(zip, name)?.let {
-            return it
+    return declared.firstNotNullOfOrNull { name -> iconPayload(zip, name) }
+        ?: modIconFallbacks.firstNotNullOfOrNull { pattern ->
+            zip
+                .entries()
+                .asSequence()
+                .filter { !it.isDirectory && pattern.matches(it.name) }
+                .firstNotNullOfOrNull { entry -> iconPayload(zip, entry.name) }
         }
-    }
-    for (pattern in modIconFallbacks) {
-        for (entry in zip.entries().asSequence()) {
-            if (entry.isDirectory || !pattern.matches(entry.name)) continue
-            iconPayload(zip, entry.name)?.let {
-                return it
-            }
-        }
-    }
-    return null
 }
 
 /** 读取声明文件文本；目录、空文件和超大文件都视为没有声明。 */
@@ -108,7 +104,7 @@ private fun declaredIconName(value: String): String? {
         value.trim().replace('\\', '/').removePrefix("./").removePrefix("/").takeIf {
             it.isNotBlank()
         } ?: return null
-    if (name.length > 240 || "://" in name) return null
+    if (name.length > MAX_PACK_ICON_PATH_CHARS || "://" in name) return null
     if (name.split('/').any { it.isEmpty() || it == "." || it == ".." }) return null
     return name
 }

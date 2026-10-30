@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -20,6 +21,24 @@ import kotlin.io.path.extension
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.writeBytes
+
+/** 皮肤库最多保留的条目数，超过后拒绝继续导入。 */
+private const val MAX_SKIN_COUNT = 1000
+
+/** 皮肤显示名称的长度上限，与导入校验和库文件校验共用。 */
+private const val MAX_SKIN_NAME_LENGTH = 100
+
+/** 单个皮肤文件的大小上限（1 MiB），导入时按该值 +1 读取以识别超限。 */
+private const val MAX_SKIN_FILE_BYTES = 1024 * 1024
+
+/** 正版与本地皮肤都要求的标准纹理宽度。 */
+private const val STANDARD_SKIN_WIDTH = 64
+
+/** 正版与本地皮肤都支持的标准纹理高度（64×64）。 */
+private const val STANDARD_SKIN_HEIGHT = 64
+
+/** 旧版单层皮肤纹理高度（64×32）。 */
+private const val LEGACY_SKIN_HEIGHT = 32
 
 enum class SkinVariant(
     val title: String,
@@ -62,14 +81,15 @@ class SkinLibrary(
             .map { gson.fromJson(it, LibrarySkin::class.java) }
             .also { entries ->
                 require(
-                    entries.size <= 1000 && entries.map { it.id }.distinct().size == entries.size,
+                    entries.size <= MAX_SKIN_COUNT &&
+                        entries.map { it.id }.distinct().size == entries.size,
                 ) {
                     "皮肤库条目异常"
                 }
                 entries.forEach { entry ->
                     require(
                         runCatching { UUID.fromString(entry.id) }.isSuccess &&
-                            entry.name.length in 1..100 &&
+                            entry.name.length in 1..MAX_SKIN_NAME_LENGTH &&
                             entry.sha256.matches(Regex("[a-f0-9]{64}")),
                     ) {
                         "皮肤库条目无效"
@@ -87,15 +107,17 @@ class SkinLibrary(
         variant: SkinVariant,
     ): LibrarySkin =
         withContext(Dispatchers.IO) {
-            require(name.isNotBlank() && name.trim().length <= 100) { "皮肤名称需为 1–100 字" }
+            require(name.isNotBlank() && name.trim().length <= MAX_SKIN_NAME_LENGTH) {
+                "皮肤名称需为 1–100 字"
+            }
             require(validSkinTexture(source)) { "请选择有效的 Minecraft PNG 皮肤（64×64、64×32 或等比例纹理）" }
             // Snapshot once: do not trust a user-selected file to stay unchanged while being
             // imported.
-            val bytes = Files.newInputStream(source).use { it.readNBytes(1024 * 1024 + 1) }
-            require(bytes.size <= 1024 * 1024) { "皮肤文件已改变或过大" }
+            val bytes = Files.newInputStream(source).use { it.readNBytes(MAX_SKIN_FILE_BYTES + 1) }
+            require(bytes.size <= MAX_SKIN_FILE_BYTES) { "皮肤文件已改变或过大" }
             synchronized(this@SkinLibrary) {
                 val entries = readEntries()
-                require(entries.size < 1000) { "皮肤库已达到 1000 项上限" }
+                require(entries.size < MAX_SKIN_COUNT) { "皮肤库已达到 1000 项上限" }
                 root.createDirectories()
                 val id = UUID.randomUUID().toString()
                 val target = safePath(root, "$id.png")
@@ -113,7 +135,8 @@ class SkinLibrary(
                     Files.move(staging, target)
                     try {
                         save(entries + entry)
-                    } catch (failure: Exception) {
+                    } catch (failure: IOException) {
+                        // 保存索引失败时回滚已写入的纹理，避免留下无索引的孤立文件。
                         target.deleteIfExists()
                         throw failure
                     }
@@ -152,7 +175,8 @@ class SkinLibrary(
                 if (file.exists()) Files.move(file, holding, StandardCopyOption.REPLACE_EXISTING)
                 try {
                     save(entries.filterNot { it.id == id })
-                } catch (failure: Exception) {
+                } catch (failure: IOException) {
+                    // 索引保存失败时把纹理移回原位，保持库目录与索引一致。
                     if (holding.exists()) Files.move(holding, file)
                     throw failure
                 }
@@ -188,10 +212,15 @@ internal fun validateUploadSkin(
 ) {
     require(validSkinTexture(file)) { "皮肤文件无效" }
     val image = ImageIO.read(file.toFile())
-    require(image.width == 64 && image.height in setOf(32, 64)) {
+    require(
+        image.width == STANDARD_SKIN_WIDTH &&
+            image.height in setOf(LEGACY_SKIN_HEIGHT, STANDARD_SKIN_HEIGHT),
+    ) {
         "正版上传需要 64×64 或 64×32 皮肤，不支持高清纹理"
     }
-    require(variant != SkinVariant.Slim || image.height == 64) { "纤细手臂需要 64×64 皮肤" }
+    require(variant != SkinVariant.Slim || image.height == STANDARD_SKIN_HEIGHT) {
+        "纤细手臂需要 64×64 皮肤"
+    }
 }
 
 /**
@@ -206,10 +235,15 @@ internal fun validateLocalSkinFile(
     require(validSkinTexture(file)) { "皮肤文件无效" }
     val image = ImageIO.read(file.toFile()) ?: error("皮肤文件无效")
     try {
-        require(image.width == 64 && image.height in setOf(32, 64)) {
+        require(
+            image.width == STANDARD_SKIN_WIDTH &&
+                image.height in setOf(LEGACY_SKIN_HEIGHT, STANDARD_SKIN_HEIGHT),
+        ) {
             "本地皮肤需要 64×64 或 64×32 的 PNG"
         }
-        require(variant != SkinVariant.Slim || image.height == 64) { "纤细手臂需要 64×64 皮肤" }
+        require(variant != SkinVariant.Slim || image.height == STANDARD_SKIN_HEIGHT) {
+            "纤细手臂需要 64×64 皮肤"
+        }
     } finally {
         image.flush()
     }

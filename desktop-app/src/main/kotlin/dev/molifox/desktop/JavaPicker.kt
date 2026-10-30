@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.add
@@ -32,7 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -40,18 +38,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,9 +67,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -86,17 +76,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import dev.molifox.core.JavaRuntime
-import dev.molifox.core.JavaRuntimeSource
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.swing.Swing
-import kotlinx.coroutines.withContext
-import java.nio.file.Path
-import kotlin.math.max
 
 /** 自动项的固定文案：设置页与实例页共用，避免出现两种说法。 */
-internal const val AUTO_JAVA_LABEL = "自动选择合适的 Java"
+internal const val AUTO_JAVA_LABEL = "自动"
 
 /**
  * Java 单选列表（扁平，不折叠）：第一行是当前生效的选择与来源，下面是所有候选，最后是「添加」。
@@ -124,136 +108,55 @@ internal fun JavaPicker(
     val canManage = onAddCustom != null
     var error by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
-
-    fun matches(
-        left: String,
-        right: String,
-    ) = sameJavaPath(left, right, windows)
-
-    // 启动器安装的与用户添加的可以删（自定义只删记录）；系统 Java 只读。
-    fun removable(runtime: JavaRuntime) =
-        runtime.managed ||
-            (
-                runtime.source == JavaRuntimeSource.Custom &&
-                    knownCustomPaths.any { matches(it, runtime.path) }
-            )
-    // 用户添加的路径才进列表；当前临时指定的自定义路径由下方「自定义」一行承载。
-    val listed =
-        runtimes
-            .filter {
-                it.source != JavaRuntimeSource.Custom ||
-                    knownCustomPaths.any { path -> matches(path, it.path) }
-            }.sortedWith(
-                compareByDescending<JavaRuntime> { it.usable }
-                    .thenByDescending { it.majorVersion }
-                    .thenBy { it.source.ordinal },
-            )
-    val effectivePath = value.ifBlank { inheritedPath }
-    val effectiveRuntime = runtimes.firstOrNull { matches(it.path, effectivePath) }
-    val listedSelection = listed.firstOrNull { matches(it.path, value) }
-    val customPath = if (value.isNotBlank() && listedSelection == null) value else ""
-    val headerLabel =
-        when {
-            effectiveRuntime != null -> javaRuntimeLabel(effectiveRuntime)
-            effectivePath.isBlank() -> AUTO_JAVA_LABEL
-            else -> "自定义"
-        }
-    val autoDetail =
-        if (inheritedPath.isBlank()) {
-            "按游戏版本自动匹配"
-        } else {
-            "跟随全局设置：" + javaChoiceName(inheritedPath, runtimes, windows)
-        }
-
     // 所有路径统一交给 JavaService 探测；探测失败只提示，不写回、不清空已保存的选择。
-    fun browseJava(add: Boolean) {
-        if (picking) return
-        picking = true
-        error = null
-        actions.run {
-            try {
-                val chosen =
-                    actions
-                        .choose(
-                            if (add) "添加 Java 可执行文件" else "选择 Java 可执行文件",
-                            extensions = if (windows) listOf("exe") else emptyList(),
-                        ).firstOrNull()
-                if (chosen != null) {
-                    val runtime =
-                        withContext(Dispatchers.IO) {
-                            runCatching { actions.controller.java.inspect(chosen.toString()) }
-                                .getOrNull()
-                        }
-                    withContext(Dispatchers.Swing) {
-                        if (runtime == null) {
-                            error = "这个文件不是可运行的 Java：" + chosen
-                        } else {
-                            if (add) {
-                                onAddCustom?.invoke(runtime.path)
-                                actions.controller.java.invalidate()
-                                onRefresh?.invoke()
-                            }
-                            onSelect(runtime.path)
-                        }
+    val browse: (Boolean) -> Unit = { add ->
+        browseJava(
+            actions = actions,
+            windows = windows,
+            add = add,
+            isPicking = { picking },
+            onPicking = { picking = it },
+            onError = { error = it },
+            onSelect = onSelect,
+            onAddCustom = onAddCustom,
+            onRefresh = onRefresh,
+        )
+    }
+    val listed = listedJavaRuntimes(runtimes, knownCustomPaths, windows)
+    val effectivePath = value.ifBlank { inheritedPath }
+    val effectiveRuntime = runtimes.firstOrNull { sameJavaPath(it.path, effectivePath, windows) }
+    val listedSelection = listed.firstOrNull { sameJavaPath(it.path, value, windows) }
+    val customPath = if (value.isNotBlank() && listedSelection == null) value else ""
+    val headerLabel = javaPickerHeaderLabel(effectiveRuntime, effectivePath)
+    val autoDetail = javaPickerAutoDetail(inheritedPath, runtimes, windows)
+    // 当前生效的选择、来源与占用（实例作用域可能继承全局设置）。
+    val headerMeta =
+        buildString {
+            effectiveRuntime?.let { runtime ->
+                if (!runtime.usable) {
+                    append(runtime.invalidReason)
+                } else {
+                    append(javaSourceTitle(runtime.source))
+                    if (runtime.sizeBytes > 0) {
+                        append("，")
+                        append(readableJavaSize(runtime.sizeBytes))
                     }
                 }
-            } finally {
-                withContext(Dispatchers.Swing) { picking = false }
             }
         }
-    }
-
-    fun removeJava(runtime: JavaRuntime) {
-        val job = actions.controller.removeJavaRuntime(runtime)
-        // 当前选择指向被删的运行时：回到自动，避免留下失效路径。
-        if (sameJavaPath(value, runtime.path, windows)) onSelect("")
-        actions.run {
-            job.join()
-            withContext(Dispatchers.Swing) { onRefresh?.invoke() }
-        }
-    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        // 当前生效的选择、来源与占用（实例作用域可能继承全局设置）。
-        val headerMeta =
-            buildString {
+        JavaPickerHeader(
+            headerLabel = headerLabel,
+            headerMeta = headerMeta,
+            canRemove =
+                canManage && effectiveRuntime != null &&
+                    removableJava(effectiveRuntime, windows, knownCustomPaths),
+            onRemove = {
                 effectiveRuntime?.let { runtime ->
-                    if (!runtime.usable) {
-                        append(runtime.invalidReason)
-                    } else {
-                        append(javaSourceTitle(runtime.source))
-                        if (runtime.sizeBytes > 0) {
-                            append("，")
-                            append(readableJavaSize(runtime.sizeBytes))
-                        }
-                    }
+                    removeJavaRuntime(actions, value, runtime, windows, onSelect, onRefresh)
                 }
-            }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("当前使用", fontSize = 12.sp, color = colors.onSurfaceVariant)
-            Text(headerLabel, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-            if (headerMeta.isNotBlank()) {
-                Text(
-                    "（" + headerMeta + "）",
-                    fontSize = 12.sp,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            if (canManage && effectiveRuntime != null && removable(effectiveRuntime)) {
-                TextButton(
-                    { removeJava(effectiveRuntime) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                ) {
-                    Text("移除", fontSize = 12.sp)
-                }
-            }
-        }
+            },
+        )
         JavaChoiceRow(
             selected = value.isBlank(),
             label = AUTO_JAVA_LABEL,
@@ -264,107 +167,39 @@ internal fun JavaPicker(
             },
         )
         listed.forEach { runtime ->
-            val invalid = !runtime.usable
-            JavaChoiceRow(
-                selected = matches(runtime.path, value),
-                label = javaRuntimeLabel(runtime),
-                tag =
-                    when {
-                        invalid -> runtime.invalidReason
-                        runtime.source == JavaRuntimeSource.System -> null
-                        else -> javaSourceTitle(runtime.source)
-                    },
-                tagColor = if (invalid) colors.error else sourceColor(runtime.source),
-                path = runtime.path,
+            JavaListedChoice(
+                runtime = runtime,
+                selected = sameJavaPath(runtime.path, value, windows),
+                removable = canManage && removableJava(runtime, windows, knownCustomPaths),
+                onRemove = {
+                    removeJavaRuntime(actions, value, runtime, windows, onSelect, onRefresh)
+                },
                 onClick = {
                     error = null
                     onSelect(runtime.path)
                 },
-                trailing =
-                    if (canManage && removable(runtime)) {
-                        {
-                            TextButton(
-                                { removeJava(runtime) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            ) {
-                                Text("移除", fontSize = 11.sp)
-                            }
-                        }
-                    } else {
-                        null
-                    },
             )
         }
-        JavaChoiceRow(
-            selected = customPath.isNotBlank(),
-            label = "自定义",
-            detail = if (customPath.isBlank()) "尚未选择 Java 可执行文件" else null,
-            path = customPath.ifBlank { null },
-            onClick = {
+        JavaCustomChoice(
+            customPath = customPath,
+            picking = picking,
+            onPickCustom = {
                 if (customPath.isNotBlank()) {
                     error = null
                     onSelect(customPath)
                 } else {
-                    browseJava(add = false)
+                    browse(false)
                 }
             },
-            trailing = {
-                SecondaryButton(
-                    { browseJava(add = false) },
-                    enabled = !picking,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                ) {
-                    Icon(Icons.Outlined.FolderOpen, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (picking) "选择中…" else "选择…", fontSize = 12.sp)
-                }
-            },
+            onBrowse = { browse(false) },
         )
         if (canManage) {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 40.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(Metrics.innerRadius))
-                        .hoverHighlight()
-                        .clickable(role = Role.Button) { browseJava(add = true) }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Add,
-                        null,
-                        Modifier.size(16.dp),
-                        tint = colors.primary,
-                    )
-                    Text("添加 Java", fontSize = 13.sp, color = colors.primary)
-                }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    when {
-                        detecting -> "正在检测…"
-                        detectionError != null -> "检测失败，可重试"
-                        else -> "重新扫描系统与启动器目录"
-                    },
-                    fontSize = 11.sp,
-                    color = if (detectionError != null) colors.error else colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (onRefresh != null) {
-                    SecondaryButton(
-                        { onRefresh() },
-                        enabled = !detecting,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                    ) {
-                        Text(if (detecting) "检测中…" else "检测 Java", fontSize = 12.sp)
-                    }
-                }
-            }
+            JavaDetectRow(
+                detecting = detecting,
+                detectionError = detectionError,
+                onAdd = { browse(true) },
+                onRefresh = onRefresh,
+            )
         }
         error?.let {
             Text(
@@ -692,7 +527,7 @@ private fun JavaSheetOption(
 
 /** 一个单选项：圆点 + 版本标签（+ 来源标签）+ 右侧次级色路径（从左侧省略，文件名始终可见）。 */
 @Composable
-private fun JavaChoiceRow(
+internal fun JavaChoiceRow(
     selected: Boolean,
     label: String,
     onClick: () -> Unit,
@@ -799,137 +634,4 @@ private fun PathLabel(
             overflow = TextOverflow.Clip,
         )
     }
-}
-
-/** 版本标签：`<完整版本或主版本>（<位数> 位）`；位数取启动器探测结果，缺失时退回架构推断。 */
-internal fun javaRuntimeLabel(runtime: JavaRuntime): String = javaRuntimeLabel(runtime, "x64")
-
-/** 兼容调用方显式传入本机架构：探测结果里没有位数时用它兜底。 */
-internal fun javaRuntimeLabel(
-    runtime: JavaRuntime,
-    fallbackArchitecture: String,
-): String {
-    if (runtime.majorVersion <= 0) return "未知版本"
-    val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
-    return version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
-}
-
-internal fun javaBits(
-    runtime: JavaRuntime,
-    fallbackArchitecture: String,
-): String {
-    if (runtime.bits == 32 || runtime.bits == 64) return runtime.bits.toString()
-    return when (runtime.architecture.lowercase()) {
-        "amd64",
-        "x86_64",
-        "x64",
-        "aarch64",
-        "arm64",
-        "ppc64le",
-        "s390x",
-        -> "64"
-        "x86",
-        "i386",
-        "i486",
-        "i586",
-        "i686",
-        "arm",
-        "arm32",
-        -> "32"
-        else ->
-            when (fallbackArchitecture.lowercase()) {
-                "x86" -> "32"
-                else -> "64"
-            }
-    }
-}
-
-/** 来源文案：启动器自己安装的 Java 标成「启动器安装」，与系统安装区分开。 */
-internal fun javaSourceTitle(source: JavaRuntimeSource): String =
-    when (source) {
-        JavaRuntimeSource.Bundled -> "启动器安装"
-        JavaRuntimeSource.System -> "系统"
-        JavaRuntimeSource.Custom -> "自定义"
-    }
-
-/** 占用文案：只有启动器安装的运行时能可靠统计；未知时返回空串。 */
-internal fun readableJavaSize(bytes: Long): String =
-    when {
-        bytes <= 0 -> ""
-        bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / 1073741824f)
-        else -> "%.0f MB".format(bytes / 1048576f)
-    }
-
-@Composable
-private fun sourceColor(source: JavaRuntimeSource): Color =
-    if (source == JavaRuntimeSource.Bundled) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-/** 运行时标题：`Java 21.0.5（64 位）`；不可用条目直接给出原因。 */
-internal fun javaRuntimeHeading(
-    runtime: JavaRuntime,
-    fallbackArchitecture: String = "x64",
-): String {
-    if (!runtime.usable) return "不可用的 Java（" + runtime.invalidReason + "）"
-    val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
-    return "Java " + version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
-}
-
-/** 当前 Java 的可读名称：空路径表示自动，找不到运行时按自定义处理。 */
-internal fun javaChoiceName(
-    path: String,
-    runtimes: List<JavaRuntime>,
-    ignoreCase: Boolean,
-): String {
-    if (path.isBlank()) return "自动按游戏版本匹配"
-    return runtimes.firstOrNull { sameJavaPath(it.path, path, ignoreCase) }?.let {
-        javaRuntimeHeading(it)
-    } ?: "自定义 Java"
-}
-
-/** 路径比较：Windows 忽略大小写；解析失败时只比较原文。 */
-internal fun sameJavaPath(
-    left: String,
-    right: String,
-    ignoreCase: Boolean,
-): Boolean {
-    if (left.isBlank() || right.isBlank()) return false
-    if (left.equals(right, ignoreCase)) return true
-    return runCatching {
-        val a = Path.of(left).toAbsolutePath().normalize()
-        val b = Path.of(right).toAbsolutePath().normalize()
-        a.toString().equals(b.toString(), ignoreCase)
-    }.getOrDefault(false)
-}
-
-/** 从左侧省略路径，保留最后的目录段与文件名；文件名本身放不下时按可用宽度截断。 */
-internal fun leftEllipsizedPath(
-    path: String,
-    maxWidthPx: Int,
-    measurer: TextMeasurer,
-    style: TextStyle,
-): String {
-    if (path.isEmpty() || maxWidthPx <= 0) return path
-
-    fun fits(text: String): Boolean =
-        measurer.measure(AnnotatedString(text), style, maxLines = 1, softWrap = false).size.width <=
-            maxWidthPx
-    if (fits(path)) return path
-    val nameStart = max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1
-    var low = 0
-    var high = nameStart
-    var best = nameStart
-    while (low <= high) {
-        val mid = (low + high) / 2
-        if (fits("…" + path.substring(mid))) {
-            best = mid
-            low = mid + 1
-        } else {
-            high = mid - 1
-        }
-    }
-    return "…" + path.substring(best)
 }

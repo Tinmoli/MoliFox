@@ -149,18 +149,22 @@ class RecentUsageTest {
             val persisted = gson.fromJson(usage.file.readText(), Map::class.java)
             assertEquals(4, (persisted["entries"] as List<*>).size)
 
-            // 全部存在时是纯读：不写文件，内容与修改时间都不变。
-            val before = usage.file.readText()
-            val stamp = usage.file.getLastModifiedTime()
-            assertEquals(
-                0,
-                usage.pruneMissing(EntryKind.World, instance, setOf("world-a", "world-c", "never")),
-            )
-            assertEquals(
-                0,
-                usage.pruneMissing(EntryKind.Server, instance, setOf("mc.example.com")),
-            )
-            assertEquals(before, usage.file.readText())
-            assertEquals(stamp, usage.file.getLastModifiedTime())
+            assertPruningDoesNotWrite(usage)
         }
+
+    private fun assertPruningDoesNotWrite(usage: RecentUsage) {
+        // 全部存在时是纯读：不写文件，内容与修改时间都不变。
+        val before = usage.file.readText()
+        val stamp = usage.file.getLastModifiedTime()
+        assertEquals(
+            0,
+            usage.pruneMissing(EntryKind.World, instance, setOf("world-a", "world-c", "never")),
+        )
+        assertEquals(
+            0,
+            usage.pruneMissing(EntryKind.Server, instance, setOf("mc.example.com")),
+        )
+        assertEquals(before, usage.file.readText())
+        assertEquals(stamp, usage.file.getLastModifiedTime())
+    }
 }

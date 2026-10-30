@@ -5,19 +5,15 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
 
 /** Register standard Minecraft roots by reference; shared assets and user data stay in place. */
 class GameDirectoryService(
     private val store: LauncherStore,
 ) {
+    private val scanner = GameDirectoryScanner(store)
+    private val registry = GameDirectoryRegistry(store)
+
     /** Repair metadata saved by older builds without rescanning/removing or copying instances. */
     fun refreshVersionMetadata() {
         val versions =
@@ -50,7 +46,7 @@ class GameDirectoryService(
 
     /** 用户手动选择目录：登记后设为当前目录，空目录也接受（作为后续安装目标）。 */
     fun add(source: Path): Int {
-        val instances = register(resolveRoot(source), activate = true)
+        val instances = register(registry.resolveRoot(source), activate = true)
         store.notify("已选择游戏目录，识别到 $instances 个版本")
         return instances
     }
@@ -66,15 +62,15 @@ class GameDirectoryService(
         store.pruneMissingInstanceRecords()
         var added: GameDirectory? = null
         for (root in roots) {
-            val existing = registered(root.path)
+            val existing = registry.registered(root.path)
             val instances = register(root.path, activate = false)
             store.log(
                 "启动时识别游戏目录 ${root.path}：${root.versions} 个版本" +
                     if (existing == null) "（新登记）" else "（已登记过，仅刷新实例）",
             )
             val newDiscovery = existing == null && added == null && instances > 0
-            if (newDiscovery && !sameDirectory(root.path, store.minecraftRoot)) {
-                added = registered(root.path)
+            if (newDiscovery && !registry.sameDirectory(root.path, store.minecraftRoot)) {
+                added = registry.registered(root.path)
             }
         }
         // 新发现的目录自动选中，实例列表立刻可见；已登记目录不会抢占用户的选择。
@@ -95,110 +91,51 @@ class GameDirectoryService(
         root: Path,
         activate: Boolean,
     ): Int {
-        val existing = registered(root)
-        val isDefault = sameDirectory(root, store.minecraftRoot)
-        val directory =
-            existing
-                ?: GameDirectory(
-                    name =
-                        if (root.fileName.toString() == ".minecraft") {
-                            root.parent?.fileName?.toString() ?: ".minecraft"
-                        } else {
-                            root.fileName.toString()
-                        },
-                    path = root.toString(),
-                )
+        val existing = registry.registered(root)
+        val isDefault = registry.sameDirectory(root, store.minecraftRoot)
+        val directory = existing ?: registry.newDirectory(root)
         val directoryId = if (isDefault) null else directory.id
-        val allInstances = scan(directory).map { it.copy(gameDirectoryId = directoryId) }
-        // 组件基础配置不重复显示为实例；保留已有实例自己的设置和目录名。
+        val allInstances = scanner.scan(directory).map { it.copy(gameDirectoryId = directoryId) }
         val represented = store.data.instances.filter { it.gameDirectoryId == directoryId }
-        val instances =
-            allInstances.filter { candidate ->
-                represented.none { original ->
-                    original.versionId == candidate.versionId ||
-                        original.gameDirectoryName.ifBlank { original.versionId } ==
-                        candidate.versionId
-                }
-            } +
-                allInstances.filter { candidate ->
-                    represented.any { it.versionId == candidate.versionId }
-                }
-        store.mutate { data ->
-            val current = data.instances.filter { it.gameDirectoryId == directoryId }
-            val fresh =
-                instances.filter { candidate ->
-                    current.none { it.versionId == candidate.versionId }
-                }
-            val refreshed =
-                current.mapNotNull { original ->
-                    if (original.managedGameDirectory && !original.externalProfile) {
-                        return@mapNotNull original
-                    }
-                    instances
-                        .find { it.versionId == original.versionId }
-                        ?.let { scanned ->
-                            original.copy(
-                                installed = scanned.installed,
-                                gameVersion = scanned.gameVersion,
-                                loader = scanned.loader,
-                                loaderVersion = scanned.loaderVersion,
-                            )
-                        }
-                }
-            val candidates = refreshed + fresh
-            data.copy(
-                gameDirectories =
-                    if (existing == null && !isDefault) {
-                        data.gameDirectories + directory
-                    } else {
-                        data.gameDirectories
-                    },
-                instances =
-                    data.instances.filter { it.gameDirectoryId != directoryId } + candidates,
-                activeGameDirectoryId = if (activate) directoryId else data.activeGameDirectoryId,
-                selectedInstanceId =
-                    if (activate) {
-                        data.selectedInstanceId?.takeIf { id -> candidates.any { it.id == id } }
-                            ?: candidates.firstOrNull()?.id
-                    } else {
-                        data.selectedInstanceId
-                    },
+        val instances = registry.mergeScannedInstances(allInstances, represented)
+        val registration =
+            GameDirectoryRegistration(
+                existing = existing,
+                isDefault = isDefault,
+                directory = directory,
+                directoryId = directoryId,
+                instances = instances,
             )
-        }
+        store.mutate { data -> applyRegistration(data, registration, activate) }
         return instances.size
     }
 
-    /** 用户手动选择：含 versions 的目录、含 .minecraft 的上级目录，或空目录（作为安装目标）。 */
-    private fun resolveRoot(source: Path): Path {
-        val sourcePath = source.toAbsolutePath().normalize()
-        val root =
-            when {
-                sourcePath.resolve("versions").isDirectory() -> sourcePath
-                sourcePath.resolve(".minecraft/versions").isDirectory() ->
-                    sourcePath.resolve(".minecraft")
-                sourcePath.resolve(".minecraft").isDirectory() -> sourcePath.resolve(".minecraft")
-                sourcePath.isDirectory() -> sourcePath
-                else -> error("请选择包含 versions 的 Minecraft 目录，或其上一级文件夹")
-            }.toRealPath()
-        require(root.parent != null) { "请选择专用的游戏文件夹，而非磁盘根目录" }
-        return root
-    }
-
-    /** 幂等键：真实路径优先，其次规范化绝对路径；Windows 下按大小写不敏感比较。 */
-    private fun registered(root: Path): GameDirectory? =
-        store.data.gameDirectories.find { sameDirectory(Path.of(it.path), root) }
-
-    private fun sameDirectory(
-        left: Path,
-        right: Path,
-    ): Boolean {
-        val a = runCatching { left.toRealPath() }.getOrElse { left.toAbsolutePath().normalize() }
-        val b = runCatching { right.toRealPath() }.getOrElse { right.toAbsolutePath().normalize() }
-        return if (store.platform.osName == "windows") {
-            a.toString().equals(b.toString(), ignoreCase = true)
-        } else {
-            a == b
-        }
+    private fun applyRegistration(
+        data: LauncherData,
+        registration: GameDirectoryRegistration,
+        activate: Boolean,
+    ): LauncherData {
+        val directoryId = registration.directoryId
+        val current = data.instances.filter { it.gameDirectoryId == directoryId }
+        val candidates =
+            registry.refreshedInstances(current, registration.instances) +
+                registry.freshInstances(current, registration.instances)
+        return data.copy(
+            gameDirectories =
+                if (registration.existing == null && !registration.isDefault) {
+                    data.gameDirectories + registration.directory
+                } else {
+                    data.gameDirectories
+                },
+            instances = data.instances.filter { it.gameDirectoryId != directoryId } + candidates,
+            activeGameDirectoryId = if (activate) directoryId else data.activeGameDirectoryId,
+            selectedInstanceId =
+                if (activate) {
+                    registry.selectedCandidate(data.selectedInstanceId, candidates)
+                } else {
+                    data.selectedInstanceId
+                },
+        )
     }
 
     fun select(id: String?) {
@@ -237,66 +174,13 @@ class GameDirectoryService(
         }
         store.notify("已移除目录记录，游戏文件仍在原目录")
     }
-
-    private fun scan(directory: GameDirectory): List<GameInstance> {
-        val root = Path.of(directory.path)
-        if (!root.resolve("versions").isDirectory()) return emptyList()
-        val resolver = VersionResolver(root, store.platform)
-        return root
-            .resolve("versions")
-            .listDirectoryEntries()
-            .filter { it.isDirectory() && !Files.isSymbolicLink(it) }
-            .mapNotNull { folder ->
-                runCatching {
-                    val profile = resolver.resolve(folder.name)
-                    require(profile.mainClass.isNotBlank())
-                    val libraries = resolver.libraries(profile)
-                    val coordinate =
-                        libraries
-                            .map { it.string("name") }
-                            .firstOrNull {
-                                it.startsWith("net.fabricmc:fabric-loader:") ||
-                                    it.startsWith("org.quiltmc:quilt-loader:") ||
-                                    it.startsWith("net.neoforged:neoforge:") ||
-                                    it.startsWith("net.minecraftforge:forge:")
-                            }
-                    val loader =
-                        when {
-                            coordinate?.contains("fabric-loader") == true -> LoaderType.Fabric
-                            coordinate?.contains("quilt-loader") == true -> LoaderType.Quilt
-                            coordinate?.contains("neoforge") == true -> LoaderType.NeoForge
-                            coordinate != null -> LoaderType.Forge
-                            else -> LoaderType.Vanilla
-                        }
-                    // 只有版本目录里确实存在自己的 mods/saves/config/options.txt 才认定「版本隔离」：
-                    // 那个目录本来就是它的独立目录。反之只能记为「继承全局设置」，不能因为游戏根上
-                    // 有共用的 mods/saves/options.txt 就把新发现的版本硬钉成「共用游戏目录」——
-                    // 全局默认是版本隔离时，那样会让刚下载/刚识别的版本直接落在游戏根上。
-                    // 已登记过的实例由 register() 保留原值，不会被这里重写。
-                    val ownData =
-                        listOf("mods", "saves", "config", "options.txt").any {
-                            folder.resolve(it).exists()
-                        }
-                    GameInstance(
-                        name = folder.name,
-                        gameVersion = resolver.minecraftVersion(profile),
-                        versionId = folder.name,
-                        loader = loader,
-                        loaderVersion = coordinate?.split(':')?.getOrNull(2).orEmpty(),
-                        gameDirectoryId = directory.id,
-                        isolation =
-                            if (ownData) VersionIsolation.Enabled else VersionIsolation.Inherit,
-                        externalProfile = true,
-                        installed =
-                            root
-                                .resolve("versions/${profile.jarId}/${profile.jarId}.jar")
-                                .isRegularFile() &&
-                                libraries
-                                    .filter { resolver.hasClasspathArtifact(it) }
-                                    .all { resolver.libraryPath(it).isRegularFile() },
-                    )
-                }.onFailure { store.log("跳过无法识别的版本 ${folder.name}：${it.message}", true) }
-                    .getOrNull()
-            }
-    }
 }
+
+/** 一次「登记或刷新」所需的目录信息与扫描结果，避免更新函数排出七个参数。 */
+private class GameDirectoryRegistration(
+    val existing: GameDirectory?,
+    val isDefault: Boolean,
+    val directory: GameDirectory,
+    val directoryId: String?,
+    val instances: List<GameInstance>,
+)

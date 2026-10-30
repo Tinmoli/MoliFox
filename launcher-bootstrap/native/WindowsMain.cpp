@@ -211,13 +211,25 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     return body;
 }
 
+// Windows 实测空闲工作集约 396→255 MiB；只降低初始堆和空闲保留，不限制游戏或启动器最大堆。
+static const std::vector<std::wstring> launcherMemoryOptions = {
+    L"-Xms32m", L"-XX:MinHeapFreeRatio=10", L"-XX:MaxHeapFreeRatio=20", L"-XX:G1PeriodicGCInterval=30000"
+};
+static bool launcherMemoryTuningSupported = false;
+
 static bool usableJava(const fs::path& path, const fs::path& directory) {
     if (!fs::is_regular_file(path)) return false;
     try {
-        auto result = run(path, {L"-version"}, directory, true);
+        auto probeOptions = launcherMemoryOptions;
+        probeOptions.push_back(L"-version");
+        auto result = run(path, probeOptions, directory, true);
+        const auto tuningSupported = result.exitCode == 0;
+        if (!tuningSupported) result = run(path, {L"-version"}, directory, true);
         std::smatch match;
         if (result.exitCode != 0 || !std::regex_search(result.output, match, std::regex("version \\\"([0-9]+)"))) return false;
-        return std::stoi(match[1]) >= 17;
+        if (std::stoi(match[1]) < 17) return false;
+        launcherMemoryTuningSupported = tuningSupported;
+        return true;
     } catch (...) { return false; }
 }
 
@@ -363,6 +375,32 @@ struct RunTemporaryDirectory {
     }
 };
 
+// 原生环境尚未准备好时使用系统任务对话框，技术错误折叠显示。
+static void showStartupFailure(const std::wstring& details, const fs::path& log) {
+    const auto location = L"日志位置：" + log.wstring() + L"\n可将日志提供给开发者定位问题。";
+    TASKDIALOGCONFIG configuration{};
+    configuration.cbSize = sizeof(configuration);
+    configuration.dwFlags = TDF_SIZE_TO_CONTENT | TDF_ALLOW_DIALOG_CANCELLATION;
+    configuration.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+    configuration.pszWindowTitle = L"MoliFox · 遇到问题";
+    configuration.pszMainInstruction = L"MoliFox 暂时无法启动";
+    configuration.pszContent = location.c_str();
+    configuration.pszExpandedInformation = details.c_str();
+    configuration.pszExpandedControlText = L"查看技术详情";
+    configuration.pszCollapsedControlText = L"收起技术详情";
+    // 部分环境仍加载旧版公共控件，禁止把新 API 固定写入 EXE 导入表。
+    const auto controls = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    using ShowTaskDialog = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+    const auto showDialog = controls
+        ? reinterpret_cast<ShowTaskDialog>(GetProcAddress(controls, "TaskDialogIndirect"))
+        : nullptr;
+    if (!showDialog || FAILED(showDialog(&configuration, nullptr, nullptr, nullptr))) {
+        const auto fallback = details + L"\n\n" + location;
+        MessageBoxW(nullptr, fallback.c_str(), configuration.pszWindowTitle, MB_ICONERROR);
+    }
+    if (controls) FreeLibrary(controls);
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     fs::path data;
     try {
@@ -394,17 +432,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto javaw = java.parent_path() / L"javaw.exe";
         if (fs::exists(javaw)) java = javaw;
         if (preparationWindow) { DestroyWindow(preparationWindow); preparationWindow = nullptr; }
-        auto result = run(java, {L"--enable-native-access=ALL-UNNAMED", L"-Djava.net.useSystemProxies=true", L"-Dfile.encoding=UTF-8", L"-Dstdout.encoding=UTF-8", L"-Dstderr.encoding=UTF-8",
+        auto options = launcherMemoryTuningSupported ? launcherMemoryOptions : std::vector<std::wstring>{L"-Xms32m"};
+        const std::vector<std::wstring> applicationOptions{L"--enable-native-access=ALL-UNNAMED", L"-Djava.net.useSystemProxies=true", L"-Dfile.encoding=UTF-8", L"-Dstdout.encoding=UTF-8", L"-Dstderr.encoding=UTF-8",
             L"-Dmolifox.data.dir=" + data.wstring(), L"-Djava.io.tmpdir=" + temporary.path.wstring(),
-            L"-Dmolifox.temp.dir=" + temporary.path.wstring(), L"-jar", jar.wstring()}, directory);
+            L"-Dmolifox.temp.dir=" + temporary.path.wstring(), L"-jar", jar.wstring()};
+        options.insert(options.end(), applicationOptions.begin(), applicationOptions.end());
+        auto result = run(java, options, directory);
         return (int)result.exitCode;
     } catch (const std::exception& error) {
         if (preparationWindow) DestroyWindow(preparationWindow);
         if (cancelled) return 1;
         auto log = data / L"logs/bootstrap.log";
         try { std::ofstream output(log, std::ios::binary); output << error.what(); } catch (...) {}
-        auto message = L"MoliFox 未能启动。\n\n" + wide(error.what()) + L"\n\n日志：" + log.wstring();
-        MessageBoxW(nullptr, message.c_str(), L"MoliFox 启动失败", MB_ICONERROR);
+        showStartupFailure(wide(error.what()), log);
         return 1;
     }
 }

@@ -48,12 +48,8 @@ import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentSource
 import dev.molifox.core.ContentVersion
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -79,7 +75,6 @@ fun ContentInstallDialog(
     var versionId by remember(hit.id, instanceId) { mutableStateOf(initialVersionId) }
     var channel by remember { mutableStateOf("all") }
     var expanded by remember { mutableStateOf(false) }
-    var versionMenu by remember { mutableStateOf(false) }
     var changelog by remember(hit.id, instanceId) { mutableStateOf<ContentVersion?>(null) }
     var changelogError by remember(hit.id, instanceId) { mutableStateOf<String?>(null) }
     val instanceRoot =
@@ -92,64 +87,30 @@ fun ContentInstallDialog(
         changelog = null
         changelogError = null
         if (versionId.isBlank()) return@LaunchedEffect
-        try {
-            changelog =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog
-                        .versionDetails(hit.id, versionId, instanceId)
-                }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            changelogError = failure.message
-        }
+        loadChangelog(actions, hit, instanceId, versionId)
+            .onSuccess { changelog = it }
+            .onFailure { changelogError = it.message }
     }
     LaunchedEffect(hit.id, instanceId, selected, retry, versionId, destinationFolder) {
         loading = true
         error = null
         plan = null
-        try {
-            withContext(Dispatchers.IO) {
-                if (details == null) {
-                    details =
-                        actions.controller.content.catalog
-                            .details(hit.id, instanceId)
-                }
-                if (versionId.isBlank()) {
-                    val versions = requireNotNull(details).versions
-                    versionId =
-                        (versions.firstOrNull { it.channel == "release" } ?: versions.firstOrNull())
-                            ?.id
-                            .orEmpty()
-                }
-                require(versionId.isNotBlank()) { "没有兼容当前游戏版本与加载器的版本" }
-                val planned =
-                    actions.controller.content.planContent(
-                        hit,
-                        instanceId,
-                        selected,
-                        versionId,
-                        (relatedSources + listOfNotNull(source)).distinctBy {
-                            Triple(it.projectId, it.folder, it.filename)
-                        },
-                    )
-                // 用户确认的目录就是实际写入的目录：只替换目录名，依赖、哈希与账本校验保持原样。
-                plan =
-                    if (destinationFolder == null) {
-                        planned
-                    } else {
-                        planned.copy(
-                            files = planned.files.map { it.copy(folder = destinationFolder) },
-                        )
-                    }
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            error = failure.message
-        } finally {
-            if (isActive) loading = false
-        }
+        loadInstallPlan(
+            actions = actions,
+            hit = hit,
+            instanceId = instanceId,
+            selected = selected,
+            versionId = versionId,
+            knownDetails = details,
+            source = source,
+            relatedSources = relatedSources,
+            destinationFolder = destinationFolder,
+        ).onSuccess { loaded ->
+            details = loaded.details
+            versionId = loaded.versionId
+            plan = loaded.plan
+        }.onFailure { error = it.message }
+        if (isActive) loading = false
     }
     Modal(
         hit.title,
@@ -161,126 +122,39 @@ fun ContentInstallDialog(
             Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
             TextButton({ retry++ }) { Text("重试") }
         }
-        if (destination != null) {
-            if (destinationFolder == null) {
-                MutedText("所选文件夹不在实例内，资源会安装到实例的 " + contentFolderForType(hit.type) + " 目录。")
-            } else {
-                MutedText("下载位置 · " + destination)
-            }
-        }
+        DestinationNotice(destination, destinationFolder, hit.type)
         Column(
             Modifier.fillMaxWidth().heightIn(max = 390.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(hit.description, style = MaterialTheme.typography.bodyMedium)
             details?.let { info ->
-                MutedText(
-                    "${info.providerName} · " +
-                        "${info.license.ifBlank { "未声明许可" }} · " +
-                        "${info.versions.size} 个兼容版本",
+                ContentProjectDetails(
+                    info = info,
+                    actions = actions,
+                    loading = loading,
+                    channel = channel,
+                    onChannelChange = { channel = it },
+                    versionId = versionId,
+                    onVersionSelect = { chosenId ->
+                        versionId = chosenId
+                        selected = emptySet()
+                    },
+                    changelog = changelog,
+                    changelogError = changelogError,
+                    expanded = expanded,
+                    onToggleExpanded = { expanded = !expanded },
+                    locked = source?.locked == true,
                 )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    info.links.forEach { link ->
-                        TextButton(
-                            {
-                                actions.run { actions.controller.platform.openUrl(link.url) }
-                            },
-                            enabled = !loading,
-                        ) {
-                            Text(link.title, fontSize = 12.sp)
-                        }
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("all" to "全部", "release" to "正式版", "beta" to "测试版", "alpha" to "预览版")
-                        .forEach { (key, title) ->
-                            FilterChip(channel == key, { channel = key }, label = { Text(title) })
-                        }
-                }
-                val versions = info.versions.filter { channel == "all" || it.channel == channel }
-                val chosen = info.versions.find { it.id == versionId }
-                Box {
-                    OutlinedButton(
-                        { versionMenu = true },
-                        modifier = Modifier.semantics { contentDescription = "选择资源版本" },
-                        enabled = !loading,
-                    ) {
-                        Text("选择版本：${chosen?.number?.ifBlank { chosen.name } ?: "无兼容版本"}")
-                    }
-                    DropdownMenu(
-                        versionMenu,
-                        { versionMenu = false },
-                        Modifier.heightIn(max = 240.dp),
-                    ) {
-                        versions.forEach { item ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "${item.number.ifBlank {
-                                            item.name
-                                        }} · ${item.channel} · ${item.published.take(
-                                            10,
-                                        )}",
-                                    )
-                                },
-                                onClick = {
-                                    versionId = item.id
-                                    selected = emptySet()
-                                    versionMenu = false
-                                },
-                            )
-                        }
-                        if (versions.isEmpty()) {
-                            DropdownMenuItem({ Text("此通道没有兼容版本") }, {}, enabled = false)
-                        }
-                    }
-                }
-                chosen?.let {
-                    Text(
-                        "${it.name} · ${it.channel} · ${it.published.take(10)}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    val log =
-                        changelog?.takeIf { log -> log.id == it.id }?.changelog ?: it.changelog
-                    if (log.isNotBlank()) {
-                        Text("更新日志", style = MaterialTheme.typography.titleSmall)
-                        Text(log, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (changelogError != null) MutedText("更新日志读取失败；不影响安装检查。")
-                }
-                TextButton({ expanded = !expanded }) { Text(if (expanded) "收起项目介绍" else "展开项目介绍") }
-                if (expanded) Text(info.body, style = MaterialTheme.typography.bodySmall)
-                if (source?.locked == true) MutedText("此版本已锁定；更换版本前请先在更新管理中解锁。")
-                HorizontalDivider()
             }
             plan?.let { current ->
-                Text("安装内容 · ${current.files.size}", style = MaterialTheme.typography.titleSmall)
-                current.files.forEach { file ->
-                    SettingRow(file.title, "${file.folder}/${file.filename}") { Tag("已匹配") }
-                }
-                if (current.optional.isNotEmpty()) {
-                    HorizontalDivider()
-                    Text("可选前置", style = MaterialTheme.typography.titleSmall)
-                    current.optional.forEach { dependency ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                dependency.id in selected,
-                                { enabled ->
-                                    selected =
-                                        if (enabled) {
-                                            selected + dependency.id
-                                        } else {
-                                            selected - dependency.id
-                                        }
-                                },
-                                enabled = !loading,
-                            )
-                            Text(dependency.title)
+                InstallPlanPreview(current, selected, loading) { dependencyId, enabled ->
+                    selected =
+                        if (enabled) {
+                            selected + dependencyId
+                        } else {
+                            selected - dependencyId
                         }
-                    }
                 }
             }
         }
@@ -289,18 +163,170 @@ fun ContentInstallDialog(
             Spacer(Modifier.width(12.dp))
             PrimaryButton(
                 "开始安装",
-                enabled = !loading && error == null && plan != null && source?.locked != true,
+                enabled = installEnabled(loading, error, plan, source),
                 onClick = {
                     scope.launch {
-                        try {
-                            actions.controller.installContent(requireNotNull(plan))
-                            onInstalled()
-                        } catch (failure: Exception) {
-                            error = failure.message
-                        }
+                        val current = plan ?: return@launch
+                        installContentPlan(actions, current)
+                            .onSuccess { onInstalled() }
+                            .onFailure { error = it.message }
                     }
                 },
             )
+        }
+    }
+}
+
+/** 下载位置提示：确认过的目录不在实例内时，说明会回退到实例的资源目录。 */
+@Composable
+private fun DestinationNotice(
+    destination: Path?,
+    destinationFolder: String?,
+    type: String,
+) {
+    if (destination != null) {
+        if (destinationFolder == null) {
+            MutedText("所选文件夹不在实例内，资源会安装到实例的 " + contentFolderForType(type) + " 目录。")
+        } else {
+            MutedText("下载位置 · " + destination)
+        }
+    }
+}
+
+/** 项目来源、许可、兼容版本数与外部链接。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ContentProjectDetails(
+    info: ContentDetails,
+    actions: UiActions,
+    loading: Boolean,
+    channel: String,
+    onChannelChange: (String) -> Unit,
+    versionId: String,
+    onVersionSelect: (String) -> Unit,
+    changelog: ContentVersion?,
+    changelogError: String?,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    locked: Boolean,
+) {
+    MutedText(
+        "${info.providerName} · " +
+            "${info.license.ifBlank { "未声明许可" }} · " +
+            "${info.versions.size} 个兼容版本",
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        info.links.forEach { link ->
+            TextButton(
+                {
+                    actions.run { actions.controller.platform.openUrl(link.url) }
+                },
+                enabled = !loading,
+            ) {
+                Text(link.title, fontSize = 12.sp)
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("all" to "全部", "release" to "正式版", "beta" to "测试版", "alpha" to "预览版")
+            .forEach { (key, title) ->
+                FilterChip(channel == key, { onChannelChange(key) }, label = { Text(title) })
+            }
+    }
+    val versions = info.versions.filter { channel == "all" || it.channel == channel }
+    val chosen = info.versions.find { it.id == versionId }
+    VersionPicker(versions, chosen, loading, onVersionSelect)
+    chosen?.let {
+        Text(
+            "${it.name} · ${it.channel} · ${it.published.take(10)}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val log =
+            changelog?.takeIf { log -> log.id == it.id }?.changelog ?: it.changelog
+        if (log.isNotBlank()) {
+            Text("更新日志", style = MaterialTheme.typography.titleSmall)
+            Text(log, style = MaterialTheme.typography.bodySmall)
+        }
+        if (changelogError != null) MutedText("更新日志读取失败；不影响安装检查。")
+    }
+    TextButton(onToggleExpanded) { Text(if (expanded) "收起项目介绍" else "展开项目介绍") }
+    if (expanded) Text(info.body, style = MaterialTheme.typography.bodySmall)
+    if (locked) MutedText("此版本已锁定；更换版本前请先在更新管理中解锁。")
+}
+
+/** 兼容版本下拉：按通道过滤后的版本列表与当前选中项。 */
+@Composable
+private fun VersionPicker(
+    versions: List<ContentVersion>,
+    chosen: ContentVersion?,
+    loading: Boolean,
+    onVersionSelect: (String) -> Unit,
+) {
+    var versionMenu by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            { versionMenu = true },
+            modifier = Modifier.semantics { contentDescription = "选择资源版本" },
+            enabled = !loading,
+        ) {
+            Text("选择版本：${chosen?.number?.ifBlank { chosen.name } ?: "无兼容版本"}")
+        }
+        DropdownMenu(
+            versionMenu,
+            { versionMenu = false },
+            Modifier.heightIn(max = 240.dp),
+        ) {
+            versions.forEach { item ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "${item.number.ifBlank {
+                                item.name
+                            }} · ${item.channel} · ${item.published.take(
+                                10,
+                            )}",
+                        )
+                    },
+                    onClick = {
+                        onVersionSelect(item.id)
+                        versionMenu = false
+                    },
+                )
+            }
+            if (versions.isEmpty()) {
+                DropdownMenuItem({ Text("此通道没有兼容版本") }, {}, enabled = false)
+            }
+        }
+    }
+}
+
+/** 安装内容与可选前置：复选框只在计划就绪后启用。 */
+@Composable
+private fun InstallPlanPreview(
+    current: ContentInstallPlan,
+    selected: Set<String>,
+    loading: Boolean,
+    onOptionalToggle: (String, Boolean) -> Unit,
+) {
+    Text("安装内容 · ${current.files.size}", style = MaterialTheme.typography.titleSmall)
+    current.files.forEach { file ->
+        SettingRow(file.title, "${file.folder}/${file.filename}") { Tag("已匹配") }
+    }
+    if (current.optional.isNotEmpty()) {
+        HorizontalDivider()
+        Text("可选前置", style = MaterialTheme.typography.titleSmall)
+        current.optional.forEach { dependency ->
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    dependency.id in selected,
+                    { enabled -> onOptionalToggle(dependency.id, enabled) },
+                    enabled = !loading,
+                )
+                Text(dependency.title)
+            }
         }
     }
 }

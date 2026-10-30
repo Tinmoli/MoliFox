@@ -218,30 +218,8 @@ class InstanceCatalogTest {
 
     @Test
     fun `legacy instance list migrates settings then leaves only the name keyed map`() {
-        val dataDirectory = temporary.resolve("profile")
         val root = temporary.resolve("games").apply { createDirectories() }
-        version(root, "legacy")
-        val legacy =
-            GameInstance(
-                id = UUID.randomUUID().toString(),
-                name = "旧版",
-                gameVersion = "legacy",
-                versionId = "legacy",
-                gameDirectoryName = "legacy",
-                isolation = VersionIsolation.Enabled,
-                javaPath = "C:/Java/bin/java.exe",
-                iconId = "legacy-icon",
-                favorite = true,
-                lastPlayed = "2026-10-29T12:00:00Z",
-                installed = true,
-            )
-        val base = LauncherData(settings = LauncherSettings(gameRoot = root.toString()))
-        val json = gson.toJsonTree(base).asJsonObject
-        json.addProperty("schemaVersion", 2)
-        json.add("instances", JsonArray().apply { add(gson.toJsonTree(legacy)) })
-        json.getAsJsonObject("settings").addProperty("gameRoot", root.toString())
-        dataDirectory.resolve("config").createDirectories()
-        writeJson(dataDirectory.resolve("config/launcher.json"), json)
+        val dataDirectory = writeLegacyInstanceJson(root)
 
         val store = LauncherStore(DesktopPlatform(), dataDirectory)
         val settings = requireNotNull(store.instanceSettings("legacy"))
@@ -257,6 +235,88 @@ class InstanceCatalogTest {
                 it.message.contains("实例列表迁移") && it.message.contains("保留 1 个实例设置")
             },
         )
+        assertMigrationPersisted(dataDirectory)
+    }
+
+    @Test
+    fun `a forge profile whose parent version is missing is still recognised`() {
+        val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+        // 只保留 Forge 补丁目录，基础版本 1.20.1 不在本目录：父版本缺失不能推翻本版本的识别。
+        version(
+            store.minecraftRoot,
+            "1.20.1-Forge_47.2.0",
+            body =
+                gson.toJson(
+                    mapOf(
+                        "id" to "1.20.1-Forge_47.2.0",
+                        "inheritsFrom" to "1.20.1",
+                        "type" to "release",
+                        "mainClass" to "cpw.mods.bootstraplauncher.BootstrapLauncher",
+                        "libraries" to
+                            listOf(
+                                mapOf("name" to "net.minecraftforge:forge:1.20.1-47.2.0"),
+                            ),
+                    ),
+                ),
+            jar = false,
+        )
+        store.refreshInstances()
+        val instance = store.instance("1.20.1-Forge_47.2.0")
+        assertFalse(instance.broken)
+        assertEquals("1.20.1", instance.gameVersion)
+        assertEquals(LoaderType.Forge, instance.loader)
+        assertEquals("47.2.0", instance.loaderVersion)
+    }
+
+    @Test
+    fun `version json named after its id instead of the folder is still recognised`() {
+        val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+        val folder = store.minecraftRoot.resolve("versions/1.21.4").createDirectories()
+        writeJson(
+            folder.resolve("vanilla-1.21.4.json"),
+            mapOf(
+                "id" to "vanilla-1.21.4",
+                "type" to "release",
+                "mainClass" to "net.minecraft.client.main.Main",
+                "libraries" to emptyList<Any>(),
+            ),
+        )
+        store.refreshInstances()
+        val instance = store.instance("1.21.4")
+        assertFalse(instance.broken)
+        assertEquals("1.21.4", instance.gameVersion)
+        assertEquals(LoaderType.Vanilla, instance.loader)
+    }
+
+    @Test
+    fun `a patch profile without mainClass keeps its own loader information`() {
+        val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+        version(
+            store.minecraftRoot,
+            "Fabric 0.18.4",
+            body =
+                gson.toJson(
+                    mapOf(
+                        "id" to "Fabric 0.18.4",
+                        "inheritsFrom" to "1.21.11",
+                        "libraries" to
+                            listOf(
+                                mapOf("name" to "net.fabricmc:fabric-loader:0.18.4"),
+                            ),
+                    ),
+                ),
+            jar = false,
+        )
+        store.refreshInstances()
+        val instance = store.instance("Fabric 0.18.4")
+        assertFalse(instance.broken)
+        assertEquals("1.21.11", instance.gameVersion)
+        assertEquals(LoaderType.Fabric, instance.loader)
+        assertEquals("0.18.4", instance.loaderVersion)
+    }
+
+    /** 迁移后的文件不再含 instances，只保留按名字索引的设置映射。 */
+    private fun assertMigrationPersisted(dataDirectory: Path) {
         val saved = readObject(dataDirectory.resolve("config/launcher.json"))
         assertFalse(saved.has("instances"))
         assertTrue(saved.getAsJsonObject("instanceSettings").has("legacy"))
@@ -266,4 +326,34 @@ class InstanceCatalogTest {
             reopened.instance(requireNotNull(reopened.data.selectedInstanceId)).name,
         )
     }
+
+    /** 写入 schemaVersion 2 的旧版 launcher.json，返回数据目录。 */
+    private fun writeLegacyInstanceJson(root: Path): Path {
+        val dataDirectory = temporary.resolve("profile")
+        version(root, "legacy")
+        val legacy = legacyInstanceFixture()
+        val base = LauncherData(settings = LauncherSettings(gameRoot = root.toString()))
+        val json = gson.toJsonTree(base).asJsonObject
+        json.addProperty("schemaVersion", 2)
+        json.add("instances", JsonArray().apply { add(gson.toJsonTree(legacy)) })
+        json.getAsJsonObject("settings").addProperty("gameRoot", root.toString())
+        dataDirectory.resolve("config").createDirectories()
+        writeJson(dataDirectory.resolve("config/launcher.json"), json)
+        return dataDirectory
+    }
+
+    private fun legacyInstanceFixture(): GameInstance =
+        GameInstance(
+            id = UUID.randomUUID().toString(),
+            name = "旧版",
+            gameVersion = "legacy",
+            versionId = "legacy",
+            gameDirectoryName = "legacy",
+            isolation = VersionIsolation.Enabled,
+            javaPath = "C:/Java/bin/java.exe",
+            iconId = "legacy-icon",
+            favorite = true,
+            lastPlayed = "2026-10-29T12:00:00Z",
+            installed = true,
+        )
 }

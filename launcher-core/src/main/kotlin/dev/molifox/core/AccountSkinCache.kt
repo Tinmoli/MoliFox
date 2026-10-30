@@ -9,11 +9,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.net.URI
+import java.net.URISyntaxException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.security.NoSuchAlgorithmException
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.io.path.createDirectories
@@ -23,6 +26,15 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.reader
 import kotlin.io.path.writeBytes
+
+/** 皮肤纹理缓存的体积上限：超过 1 MiB 的字节一定不是合法的 Minecraft 纹理。 */
+private const val MAX_SKIN_TEXTURE_BYTES = 1024L * 1024
+
+/** 皮肤纹理的最小边长，同时也是宽高必须对齐的步长（纹理边长是它的整数倍）。 */
+private const val SKIN_TEXTURE_EDGE_UNIT = 64
+
+/** 皮肤纹理允许的最大边长：再大就不是客户端会加载的纹理。 */
+private const val MAX_SKIN_TEXTURE_EDGE = 4096
 
 /** Mojang profile responses can contain HTTP CDN URLs; only that exact origin is upgraded. */
 internal fun normalizeSkinTextureUrl(url: String): String {
@@ -46,7 +58,7 @@ internal fun validSkinTexture(path: Path): Boolean =
         if (!path.isRegularFile() ||
             Files.isSymbolicLink(
                 path,
-            ) || path.fileSize() !in 1..1024L * 1024
+            ) || path.fileSize() !in 1..MAX_SKIN_TEXTURE_BYTES
         ) {
             return false
         }
@@ -57,8 +69,8 @@ internal fun validSkinTexture(path: Path): Boolean =
                 val width = reader.getWidth(0)
                 val height = reader.getHeight(0)
                 reader.formatName.equals("png", true) &&
-                    width in 64..4096 &&
-                    width % 64 == 0 &&
+                    width in SKIN_TEXTURE_EDGE_UNIT..MAX_SKIN_TEXTURE_EDGE &&
+                    width % SKIN_TEXTURE_EDGE_UNIT == 0 &&
                     (height == width || height * 2 == width) &&
                     reader.read(0) != null
             } finally {
@@ -84,12 +96,7 @@ internal class AccountSkinCache(
             var cached: Path? = null
             try {
                 val url = normalizeSkinTextureUrl(account.skinUrl)
-                val key =
-                    MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(
-                        "",
-                    ) {
-                        "%02x".format(it)
-                    }
+                val key = textureKey(url)
                 val cache = safePath(store.cacheDirectory, "skins/$key.png")
                 cached = cache
                 if (!refresh && validSkinTexture(cache)) return@withContext cache
@@ -97,17 +104,48 @@ internal class AccountSkinCache(
                 cache.parent.createDirectories()
                 val staging = cache.resolveSibling("${cache.fileName}.${UUID.randomUUID()}.tmp")
                 temporary = staging
-                staging.writeBytes(bytes)
-                require(validSkinTexture(staging)) { "皮肤文件不是有效的 Minecraft PNG 纹理" }
-                Files.move(staging, cache, StandardCopyOption.REPLACE_EXISTING)
+                writeTexture(bytes, staging, cache)
                 cache
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (failure: Exception) {
-                store.log("皮肤纹理获取失败：${failure.message}")
-                cached?.takeIf(::validSkinTexture)
+            } catch (failure: URISyntaxException) {
+                fallbackToCached(failure, cached)
+            } catch (failure: IOException) {
+                fallbackToCached(failure, cached)
+            } catch (failure: IllegalArgumentException) {
+                fallbackToCached(failure, cached)
+            } catch (failure: IllegalStateException) {
+                fallbackToCached(failure, cached)
+            } catch (failure: NoSuchAlgorithmException) {
+                fallbackToCached(failure, cached)
             } finally {
                 temporary?.deleteIfExists()
             }
         }
+
+    private fun textureKey(url: String): String =
+        MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(
+            "",
+        ) {
+            "%02x".format(it)
+        }
+
+    private fun writeTexture(
+        bytes: ByteArray,
+        staging: Path,
+        cache: Path,
+    ) {
+        staging.writeBytes(bytes)
+        require(validSkinTexture(staging)) { "皮肤文件不是有效的 Minecraft PNG 纹理" }
+        Files.move(staging, cache, StandardCopyOption.REPLACE_EXISTING)
+    }
+
+    /** 取回失败时退回上一次成功缓存的纹理；没有可用缓存就当作该账户没有皮肤。 */
+    private fun fallbackToCached(
+        failure: Throwable,
+        cached: Path?,
+    ): Path? {
+        store.log("皮肤纹理获取失败：${failure.message}")
+        return cached?.takeIf(::validSkinTexture)
+    }
 }

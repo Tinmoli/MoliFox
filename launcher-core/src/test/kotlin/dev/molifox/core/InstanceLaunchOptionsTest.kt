@@ -5,91 +5,15 @@
 
 package dev.molifox.core
 
-import com.google.gson.JsonParser
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Path
-import kotlin.io.path.createDirectories
-import kotlin.io.path.name
-import kotlin.io.path.writeBytes
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class InstanceLaunchOptionsTest {
-    @TempDir lateinit var temporary: Path
-
-    private fun settings(
-        memoryMb: Int = 2048,
-        autoMemory: Boolean = false,
-        width: Int = 1280,
-        height: Int = 720,
-        fullscreen: Boolean = false,
-        windowMode: String = "custom",
-        extraJvmArgs: String = "",
-    ): LauncherSettings =
-        LauncherSettings(
-            memoryMb = memoryMb,
-            autoMemory = autoMemory,
-            initialMemoryMb = 512,
-            width = width,
-            height = height,
-            fullscreen = fullscreen,
-            gameWindowMode = windowMode,
-            extraJvmArgs = extraJvmArgs,
-        )
-
-    private fun instance(
-        memoryMb: Int = 0,
-        width: Int = 0,
-        height: Int = 0,
-        windowMode: String = "inherit",
-        extraJvmArgs: String = "",
-        extraGameArgs: String = "",
-    ): GameInstance =
-        GameInstance(
-            name = "Fixture",
-            gameVersion = "1.21.1",
-            versionId = "fixture",
-            memoryMb = memoryMb,
-            width = width,
-            height = height,
-            windowMode = windowMode,
-            extraJvmArgs = extraJvmArgs,
-            extraGameArgs = extraGameArgs,
-        )
-
-    private fun profile(): ResolvedProfile {
-        val json =
-            JsonParser
-                .parseString(
-                    """{"id":"fixture","type":"release","mainClass":"fixture.Main","libraries":[],"minecraftArguments":"--username ${'$'}{auth_player_name}"}""",
-                ).asJsonObject
-        return ResolvedProfile("fixture", "1.21.1", json)
-    }
-
-    private fun plan(
-        instance: GameInstance,
-        settings: LauncherSettings,
-    ): LaunchPlan =
-        runBlocking {
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            store.mutate { it.copy(settings = settings, instances = listOf(instance)) }
-            LaunchPlanner(store)
-                .plan(
-                    instance,
-                    profile(),
-                    JavaRuntime("java", 21, "Test", "amd64"),
-                    GameCredentials("Player", "0".repeat(32), "0", "legacy"),
-                    prepareFiles = false,
-                )
-        }
-
+class InstanceLaunchOptionsTest : InstanceLaunchOptionsTestSupport() {
     @Test
     fun `explicit instance memory beats global and zero falls back`() {
         val global = settings(memoryMb = 2048)
@@ -175,34 +99,7 @@ class InstanceLaunchOptionsTest {
         val windowed =
             plan(instance(windowMode = "windowed"), settings(fullscreen = true))
         assertFalse(windowed.arguments.contains("--fullscreen"))
-        val launcherSized =
-            runBlocking {
-                val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher-size"))
-                val inheritedInstance = instance(memoryMb = 0)
-                store.mutate {
-                    it.copy(
-                        settings = settings(windowMode = "launcher"),
-                        instances = listOf(inheritedInstance),
-                    )
-                }
-                store.launcherWindowSize = 1512 to 982
-                LaunchPlanner(store)
-                    .plan(
-                        inheritedInstance,
-                        profile(),
-                        JavaRuntime("java", 21, "Test", "amd64"),
-                        GameCredentials("Player", "0".repeat(32), "0", "legacy"),
-                        prepareFiles = false,
-                    )
-            }
-        assertEquals(
-            "1512",
-            launcherSized.arguments[launcherSized.arguments.indexOf("--width") + 1],
-        )
-        assertEquals(
-            "982",
-            launcherSized.arguments[launcherSized.arguments.indexOf("--height") + 1],
-        )
+        assertLauncherSizedFallback()
     }
 
     @Test
@@ -270,219 +167,35 @@ class InstanceLaunchOptionsTest {
         assertEquals("--demo", reloaded.instanceSettings("fixture")?.extraGameArgs)
     }
 
-    @Test
-    fun `empty window fields follow global and round-trip through the store`() {
-        LauncherController(dataDirectory = temporary.resolve("windows")).use { controller ->
-            val folder =
-                controller.store.minecraftRoot
-                    .resolve("versions/WindowCfg")
-                    .createDirectories()
-            writeJson(
-                folder.resolve("WindowCfg.json"),
-                mapOf(
-                    "id" to "WindowCfg",
-                    "type" to "release",
-                    "mainClass" to "fixture.Main",
-                    "libraries" to emptyList<Any>(),
-                ),
-            )
-            folder.resolve("WindowCfg.jar").writeBytes(byteArrayOf())
-            controller.store.refreshInstances()
-            val instance = controller.store.instance("WindowCfg")
-            val settings =
-                controller.store.data.settings.copy(
-                    autoMemory = false,
-                    memoryMb = 2048,
-                    initialMemoryMb = 512,
-                    width = 1600,
-                    height = 900,
-                    gameWindowMode = "custom",
-                    fullscreen = false,
-                )
-            controller.saveSettings(settings)
-            // 空白与 0 都是「跟随全局」；输入框回填时不再显示字面 0。
-            assertEquals(0, parseInstanceLaunchNumberInput(""))
-            assertEquals(0, parseInstanceLaunchNumberInput("   "))
-            assertEquals(0, parseInstanceLaunchNumberInput("0"))
-            assertEquals("", normalizeInstanceLaunchNumberInput("0"))
-            assertEquals("", normalizeInstanceLaunchNumberInput(""))
-            assertEquals("1280", normalizeInstanceLaunchNumberInput("1280"))
-            assertEquals("", instanceLaunchNumberField(0))
-            assertEquals("1280", instanceLaunchNumberField(1280))
-            controller.saveInstanceConfiguration(
-                instance.copy(
-                    width = parseInstanceLaunchNumberInput("") ?: -1,
-                    height = parseInstanceLaunchNumberInput("  ") ?: -1,
-                ),
-            )
-            val stored = controller.store.instance(instance.id)
-            assertEquals(0, stored.width)
-            assertEquals(0, stored.height)
-            val resolved =
-                resolveInstanceLaunchOptions(settings, stored, null, 16384, 8192, "x64")
-            assertEquals(1600, resolved.width)
-            assertEquals(900, resolved.height)
-            // 重新加载配置后仍是「跟随全局」，没有被写成伪显式值。
-            val reloaded = LauncherStore(controller.platform, temporary.resolve("windows"))
-            assertEquals(0, reloaded.instanceSettings("WindowCfg")?.width)
-            assertEquals(0, reloaded.instanceSettings("WindowCfg")?.height)
-        }
-    }
-
-    @Test
-    fun `only manual memory policy applies and switching away clears the stored value`() {
-        LauncherController(dataDirectory = temporary.resolve("memory")).use { controller ->
-            val folder =
-                controller.store.minecraftRoot
-                    .resolve("versions/MemoryCfg")
-                    .createDirectories()
-            writeJson(
-                folder.resolve("MemoryCfg.json"),
-                mapOf(
-                    "id" to "MemoryCfg",
-                    "type" to "release",
-                    "mainClass" to "fixture.Main",
-                    "libraries" to emptyList<Any>(),
-                ),
-            )
-            folder.resolve("MemoryCfg.jar").writeBytes(byteArrayOf())
-            controller.store.refreshInstances()
-            val instance = controller.store.instance("MemoryCfg")
-            val settings =
-                controller.store.data.settings.copy(
-                    autoMemory = false,
-                    memoryMb = 2048,
-                    initialMemoryMb = 512,
-                    width = 1280,
-                    height = 720,
-                    gameWindowMode = "custom",
-                    fullscreen = false,
-                )
-            controller.saveSettings(settings)
-            // 滑块按 256 MB 步进，并限制在本机预算内。
-            assertEquals(2048, instanceMemorySliderValue(2100f, 16384))
-            assertEquals(
-                instanceMemoryLimitMb(16384),
-                instanceMemorySliderValue(99999f, 16384),
-            )
-            val manual =
-                applyInstanceMemoryPolicy(
-                    instance,
-                    InstanceMemoryPolicy.Manual,
-                    settings.memoryMb,
-                )
-            assertEquals(false, manual.autoMemory)
-            assertEquals(2048, manual.memoryMb)
-            controller.saveInstanceConfiguration(manual.copy(memoryMb = 3072))
-            val stored = controller.store.instance(instance.id)
-            assertEquals(3072, stored.memoryMb)
-            assertEquals(
-                3072,
-                resolveInstanceLaunchOptions(settings, stored, null, 16384, 8192)
-                    .memory
-                    .maximumMb,
-            )
-            // 自动分配清掉显式值：旧 3072 不再生效。
-            val automatic =
-                applyInstanceMemoryPolicy(
-                    stored,
-                    InstanceMemoryPolicy.Automatic,
-                    settings.memoryMb,
-                )
-            assertEquals(0, automatic.memoryMb)
-            assertEquals(true, automatic.autoMemory)
-            controller.saveInstanceConfiguration(automatic)
-            val autoStored = controller.store.instance(instance.id)
-            assertEquals(0, autoStored.memoryMb)
-            val autoResolved =
-                resolveInstanceLaunchOptions(settings, autoStored, null, 16384, 8192)
-            assertTrue(autoResolved.memory.automatic)
-            assertNotEquals(3072, autoResolved.memory.maximumMb)
-            // 切回手动不会带回旧值，而是从当前默认值起步。
-            assertEquals(
-                4096,
-                applyInstanceMemoryPolicy(
-                    autoStored,
-                    InstanceMemoryPolicy.Manual,
-                    4096,
-                ).memoryMb,
-            )
-            // 继承全局：同样清空显式值，解析成全局 2048。
-            val inherit =
-                applyInstanceMemoryPolicy(
-                    autoStored,
-                    InstanceMemoryPolicy.Inherit,
-                    settings.memoryMb,
-                )
-            assertNull(inherit.autoMemory)
-            assertEquals(0, inherit.memoryMb)
-            controller.saveInstanceConfiguration(inherit)
-            val inherited =
-                resolveInstanceLaunchOptions(
-                    settings,
-                    controller.store.instance(instance.id),
-                    null,
-                    16384,
-                    8192,
-                )
-            assertEquals(2048, inherited.memory.maximumMb)
-            assertFalse(inherited.memory.automatic)
-        }
-    }
-
-    @Test
-    fun `controller saves launch options and rejects invalid values without touching saved data`() {
-        LauncherController(dataDirectory = temporary.resolve("controller")).use { controller ->
-            val folder =
-                controller.store.minecraftRoot
-                    .resolve("versions/Cfg")
-                    .createDirectories()
-            writeJson(
-                folder.resolve("Cfg.json"),
-                mapOf(
-                    "id" to "Cfg",
-                    "type" to "release",
-                    "mainClass" to "fixture.Main",
-                    "libraries" to emptyList<Any>(),
-                ),
-            )
-            folder.resolve("Cfg.jar").writeBytes(byteArrayOf())
-            controller.store.refreshInstances()
-            val instance = controller.store.instance("Cfg")
-            controller.saveInstanceConfiguration(
-                instance.copy(
-                    memoryMb = 2048,
-                    width = 1920,
-                    height = 1080,
-                    windowMode = "fullscreen",
-                    extraJvmArgs = "-Dfixture.option=value",
-                    extraGameArgs = "--demo",
-                ),
-            )
-            val saved = controller.store.instance(instance.id)
-            assertEquals(2048, saved.memoryMb)
-            assertEquals(1920, saved.width)
-            assertEquals(1080, saved.height)
-            assertEquals("fullscreen", saved.windowMode)
-            assertEquals("-Dfixture.option=value", saved.extraJvmArgs)
-            assertEquals("--demo", saved.extraGameArgs)
-            val reloaded = LauncherStore(controller.platform, temporary.resolve("controller"))
-            assertEquals("--demo", reloaded.instanceSettings("Cfg")?.extraGameArgs)
-
-            assertFailsWith<IllegalArgumentException> {
-                controller.saveInstanceConfiguration(saved.copy(extraGameArgs = "--width 800"))
+    /** 窗口模式为 launcher 时沿用上次启动器窗口尺寸，而不是 1280×720 默认值。 */
+    private fun assertLauncherSizedFallback() {
+        val launcherSized =
+            runBlocking {
+                val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher-size"))
+                val inheritedInstance = instance(memoryMb = 0)
+                store.mutate {
+                    it.copy(
+                        settings = settings(windowMode = "launcher"),
+                        instances = listOf(inheritedInstance),
+                    )
+                }
+                store.launcherWindowSize = 1512 to 982
+                LaunchPlanner(store)
+                    .plan(
+                        inheritedInstance,
+                        profile(),
+                        JavaRuntime("java", 21, "Test", "amd64"),
+                        GameCredentials("Player", "0".repeat(32), "0", "legacy"),
+                        prepareFiles = false,
+                    )
             }
-            assertFailsWith<IllegalArgumentException> {
-                controller.saveInstanceConfiguration(saved.copy(memoryMb = 100))
-            }
-            assertFailsWith<IllegalArgumentException> {
-                controller.saveInstanceConfiguration(saved.copy(width = 100))
-            }
-            assertFailsWith<IllegalArgumentException> {
-                controller.saveInstanceConfiguration(saved.copy(extraJvmArgs = "-Xmx2G"))
-            }
-            assertEquals("--demo", controller.store.instance(instance.id).extraGameArgs)
-            assertEquals(2048, controller.store.instance(instance.id).memoryMb)
-        }
+        assertEquals(
+            "1512",
+            launcherSized.arguments[launcherSized.arguments.indexOf("--width") + 1],
+        )
+        assertEquals(
+            "982",
+            launcherSized.arguments[launcherSized.arguments.indexOf("--height") + 1],
+        )
     }
 }

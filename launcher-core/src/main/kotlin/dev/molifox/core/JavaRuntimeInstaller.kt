@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.IOException
@@ -25,14 +26,51 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
-import kotlin.io.path.isDirectory
 import kotlin.io.path.isExecutable
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.setAttribute
 import kotlin.io.path.setPosixFilePermissions
-import kotlin.io.path.walk
+
+/** 查询安装包阶段的进度。 */
+private const val PROGRESS_QUERYING_PACKAGE = .02f
+
+/** 准备下载阶段的进度。 */
+private const val PROGRESS_PREPARING_DOWNLOAD = .05f
+
+/** 解压阶段的进度。 */
+private const val PROGRESS_EXTRACTING = .82f
+
+/** 下载进度在整体进度中的起点。 */
+private const val PROGRESS_DOWNLOAD_BASE = .05f
+
+/** 下载进度在整体进度中占用的区间。 */
+private const val PROGRESS_DOWNLOAD_SPAN = .72f
+
+/** 无法得知总大小时的兜底进度。 */
+private const val PROGRESS_DOWNLOAD_FALLBACK = .3f
+
+/** 磁盘预留：安装包大小按此倍数估算。 */
+private const val DISK_SPACE_FACTOR = 3L
+
+/** 磁盘预留：安装包之外额外需要的余量。 */
+private const val DISK_SPACE_HEADROOM_BYTES = 64L * 1024 * 1024
+
+/** 每 MiB 的字节数；下载进度与容量展示共用。 */
+private const val BYTES_PER_MEBIBYTE = 1024L * 1024
+
+/** tar 包允许的最大条目数，避免异常包耗尽资源。 */
+private const val MAX_TAR_ENTRIES = 50_000
+
+/** 解压后允许的最大字节数。 */
+internal const val MAX_RUNTIME_EXTRACT_BYTES = 1024L * 1024 * 1024
+
+/** tar 条目权限位里代表「可执行」的掩码。 */
+private const val EXECUTABLE_PERMISSION_MASK = 0b001001001
+
+/** 单次失败后的等待；首次失败后共重试 3 次。 */
+private val RUNTIME_WRITE_RETRY_DELAYS_MS = longArrayOf(200, 500, 1000)
 
 /**
  * 安装流程：解析厂商包 → 下载到 MoliFox 下载目录（带 .part 断点）→ 校验 sha256 与大小 →
@@ -53,262 +91,272 @@ internal class JavaRuntimeInstaller(
             require(major in SUPPORTED_JAVA_MAJORS) {
                 "暂不支持自动安装 Java $major，请手动选择已有的 Java"
             }
-            val os =
-                when (store.platform.osName) {
-                    "windows" -> "windows"
-                    "linux" -> "linux"
-                    else -> "osx"
-                }
-            val arch =
-                when (normalizedJavaArchitecture(store.platform.architecture)) {
-                    "arm64" -> "aarch64"
-                    "x86" -> "x86"
-                    else -> "x64"
-                }
-            context.progress(
-                .02f,
-                "查询 Java $major 安装包（${javaDownloadSourceLabel(
-                    store.data.settings.effectiveJavaDownloadSource,
-                )}）…",
-            )
-            val packageInfo =
-                JavaRuntimePackages(network)
-                    .find(
-                        major,
-                        os,
-                        arch,
-                        imageType,
-                        store.data.settings.effectiveJavaDownloadSource,
-                    )
-            store.log(
-                "准备安装 ${packageInfo.vendor} Java $major（${packageInfo.imageType.uppercase()}）" +
-                    "，来源：${packageInfo.sourceLabel}" +
-                    "：${packageInfo.primaryUrl}",
-            )
-            val runtimes = service.runtimesDirectory.apply { createDirectories() }
-            val downloadDirectory =
-                store.downloadDirectory
-                    .resolve(
-                        "java",
-                    ).apply { createDirectories() }
-            val archive =
-                downloadDirectory.resolve(
-                    packageInfo.fileName.takeIf { it.isNotBlank() }
-                        ?: "java-$major-$arch.${if (os == "windows") "zip" else "tar.gz"}",
-                )
-            val unpacking =
-                runtimes
-                    .resolve(
-                        ".part-${UUID.randomUUID()}",
-                    ).apply { createDirectories() }
-            require(
-                downloadDirectory.toFile().usableSpace > packageInfo.size * 3 + 64L * 1024 * 1024,
-            ) {
-                "磁盘空间不足，无法安装 Java $major（需要约 ${formatMegabytes(packageInfo.size * 3)}）"
-            }
+            val plan = prepareRuntimePlan(major, context, imageType)
             // 解压遇到文件系统错误时保留 .part 目录与压缩包，方便排查/重试；其它失败照常清理。
             var keepDiagnostics = false
             try {
-                context.progress(
-                    .05f,
-                    "来源：${packageInfo.sourceLabel} · 准备下载 " +
-                        "${packageInfo.vendor} Java ${packageInfo.version}",
-                )
-                download(packageInfo, archive, context)
-                val actual = archive.fileSize()
-                // Zulu 元数据的 size 与 CDN 实际字节数可能相差几十字节（zip 注释），SHA-256 才是权威校验；
-                // 这里只拒绝空文件，完整性与大小由下载器的 SHA-256 校验保证。
-                require(actual > 0) { "下载文件为空，请重试" }
-                context.progress(.82f, "解压 Java 运行环境…")
-                if (os == "windows") {
-                    extractZipRuntime(archive, unpacking) { store.log(it) }
-                } else {
-                    extractTarRuntime(archive, unpacking) { store.log(it) }
-                }
-                // Zulu/Temurin 的压缩包通常带一层同名目录；剥掉它，保证 runtimes/<目录> 下直接是 bin/。
-                val topLevel = Files.list(unpacking).use { it.toList() }
-                val installRoot =
-                    topLevel.singleOrNull()?.takeIf {
-                        it.isDirectory() && findExecutable(
-                            it,
-                        ) != null
-                    }
-                        ?: unpacking
-                val executable =
-                    findExecutable(installRoot)
-                        ?: error("安装包中没有找到 Java 可执行文件（${store.platform.javaExecutable}）")
-                // 原子改名之前确认可执行文件真的落地且可执行，避免把坏目录登记成已安装。
-                require(Files.isRegularFile(executable) && Files.isExecutable(executable)) {
-                    "解压后的 Java 可执行文件不可运行：$executable（可能被杀毒软件拦截或解压不完整）"
-                }
-                val found =
-                    service.inspect(executable.toString(), verifyRunnable = true)
-                        ?: error("下载的 Java 无法运行")
-                require(found.majorVersion == major) {
-                    "Java 版本校验失败：期望 $major，实际 ${found.majorVersion}"
-                }
-                require(
-                    normalizedJavaArchitecture(found.architecture) ==
-                        normalizedJavaArchitecture(store.platform.architecture),
-                ) {
-                    "Java 架构校验失败：${found.architecture}"
-                }
-                val directoryName = "${packageInfo.directoryPrefix}-$major-$os-$arch"
-                val destination = runtimes.resolve(directoryName).toAbsolutePath().normalize()
-                require(destination.parent == runtimes.toAbsolutePath().normalize()) {
-                    "Java 安装目录异常"
-                }
-                if (destination.exists()) {
-                    require(!Files.isSymbolicLink(destination)) { "Java 安装目录是符号链接，已拒绝替换" }
-                    deleteTree(destination)
-                }
-                val relativeJava = installRoot.relativize(Path.of(found.path))
-                try {
-                    Files.move(installRoot, destination, StandardCopyOption.ATOMIC_MOVE)
-                } catch (_: AtomicMoveNotSupportedException) {
-                    Files.move(installRoot, destination)
-                }
-                val installedPath = destination.resolve(relativeJava).toString()
-                val runtime =
-                    found.copy(
-                        path = installedPath,
-                        source = JavaRuntimeSource.Bundled,
-                        vendor = packageInfo.vendor,
-                        imageType = packageInfo.imageType,
-                        version = found.version.ifBlank { packageInfo.version },
-                        installedAt = Instant.now().toString(),
-                        sizeBytes = directorySize(destination),
+                runCatching { installArchive(plan, context) }.getOrElse { failure ->
+                    // 安装是回滚边界：任何异常都要记录、分类原因并清理本次临时产物，故此处必须兜底。
+                    keepDiagnostics = keepsExtractionDiagnostics(failure)
+                    store.log(
+                        "安装 Java $major 失败：${failure.message ?: failure.javaClass.simpleName}",
+                        true,
                     )
-                JavaRuntimeIndex(runtimes, store.platform.javaExecutable)
-                    .upsert(
-                        JavaRuntimeEntry(
-                            path = destination.fileName.toString(),
-                            major = major,
-                            bits = found.bits,
-                            vendor = packageInfo.vendor,
-                            imageType = packageInfo.imageType,
-                            version = runtime.version,
-                            sourceUrl = packageInfo.sourceUrl,
-                            sha256 = packageInfo.sha256,
-                            installedAt = runtime.installedAt,
-                            os = os,
-                            arch = arch,
-                            sizeBytes = runtime.sizeBytes,
-                        ),
+                    val diagnosticRoot = plan.unpacking.takeIf { keepDiagnostics }
+                    throw IllegalStateException(
+                        javaInstallFailureReason(failure, major, diagnosticRoot),
+                        failure,
                     )
-                service.invalidate()
-                context.progress(1f, "Java $major 安装完成")
-                store.log(
-                    "已安装 ${runtime.displayName}（${formatMegabytes(
-                        runtime.sizeBytes,
-                    )}）：${runtime.path}",
-                )
-                runtime
-            } catch (failure: Exception) {
-                keepDiagnostics = keepsExtractionDiagnostics(failure)
-                store.log(
-                    "安装 Java $major 失败：${failure.message ?: failure.javaClass.simpleName}",
-                    true,
-                )
-                throw IllegalStateException(
-                    javaInstallFailureReason(failure, major, unpacking.takeIf { keepDiagnostics }),
-                    failure,
-                )
+                }
             } finally {
                 if (keepDiagnostics) {
-                    store.log("已保留解压诊断目录与安装包，便于排查：$unpacking / $archive", true)
+                    store.log(
+                        "已保留解压诊断目录与安装包，便于排查：${plan.unpacking} / ${plan.archive}",
+                        true,
+                    )
                 } else {
-                    if (unpacking.exists()) deleteTree(unpacking)
-                    archive.deleteIfExists()
+                    if (plan.unpacking.exists()) deleteTree(plan.unpacking)
+                    plan.archive.deleteIfExists()
                 }
             }
         }
 
+    /** 选好安装包，并把下载目录、安装目录、临时解压目录与磁盘余量检查一次做完。 */
+    private suspend fun prepareRuntimePlan(
+        major: Int,
+        context: JobContext,
+        imageType: String?,
+    ): RuntimeInstallPlan {
+        val os =
+            when (store.platform.osName) {
+                "windows" -> "windows"
+                "linux" -> "linux"
+                else -> "osx"
+            }
+        val arch =
+            when (normalizedJavaArchitecture(store.platform.architecture)) {
+                "arm64" -> "aarch64"
+                "x86" -> "x86"
+                else -> "x64"
+            }
+        val packageInfo = resolveRuntimePackage(major, context, os, arch, imageType)
+        val runtimes = service.runtimesDirectory.apply { createDirectories() }
+        val downloadDirectory =
+            store.downloadDirectory.resolve("java").apply { createDirectories() }
+        val fallbackName = "java-$major-$arch.${if (os == "windows") "zip" else "tar.gz"}"
+        val archive =
+            downloadDirectory.resolve(
+                packageInfo.fileName.takeIf { it.isNotBlank() } ?: fallbackName,
+            )
+        val unpacking =
+            runtimes.resolve(".part-${UUID.randomUUID()}").apply { createDirectories() }
+        require(
+            downloadDirectory.toFile().usableSpace >
+                packageInfo.size * DISK_SPACE_FACTOR + DISK_SPACE_HEADROOM_BYTES,
+        ) {
+            "磁盘空间不足，无法安装 Java $major（需要约 " +
+                "${formatMegabytes(packageInfo.size * DISK_SPACE_FACTOR)}）"
+        }
+        return RuntimeInstallPlan(major, os, arch, packageInfo, runtimes, archive, unpacking)
+    }
+
+    /** 查询厂商元数据并留下安装来源日志。 */
+    private suspend fun resolveRuntimePackage(
+        major: Int,
+        context: JobContext,
+        os: String,
+        arch: String,
+        imageType: String?,
+    ): JavaRuntimePackage {
+        context.progress(
+            PROGRESS_QUERYING_PACKAGE,
+            "查询 Java $major 安装包（${javaDownloadSourceLabel(
+                store.data.settings.effectiveJavaDownloadSource,
+            )}）…",
+        )
+        val packageInfo =
+            JavaRuntimePackages(network)
+                .find(major, os, arch, imageType, store.data.settings.effectiveJavaDownloadSource)
+        store.log(
+            "准备安装 ${packageInfo.vendor} Java $major（${packageInfo.imageType.uppercase()}）" +
+                "，来源：${packageInfo.sourceLabel}" +
+                "：${packageInfo.primaryUrl}",
+        )
+        return packageInfo
+    }
+
+    /** 下载并解压到临时目录，然后交给登记步骤。 */
+    private suspend fun installArchive(
+        plan: RuntimeInstallPlan,
+        context: JobContext,
+    ): JavaRuntime {
+        context.progress(
+            PROGRESS_PREPARING_DOWNLOAD,
+            "来源：${plan.packageInfo.sourceLabel} · 准备下载 " +
+                "${plan.packageInfo.vendor} Java ${plan.packageInfo.version}",
+        )
+        download(plan.packageInfo, plan.archive, context)
+        val actual = plan.archive.fileSize()
+        // Zulu 元数据的 size 与 CDN 实际字节数可能相差几十字节（zip 注释），SHA-256 才是权威校验；
+        // 这里只拒绝空文件，完整性与大小由下载器的 SHA-256 校验保证。
+        require(actual > 0) { "下载文件为空，请重试" }
+        context.progress(PROGRESS_EXTRACTING, "解压 Java 运行环境…")
+        if (plan.os == "windows") {
+            extractZipRuntime(plan.archive, plan.unpacking) { store.log(it) }
+        } else {
+            extractTarRuntime(plan.archive, plan.unpacking) { store.log(it) }
+        }
+        return registerRuntime(plan, stageRuntime(plan), context)
+    }
+
+    /** 探测可执行文件、校验版本与架构，并把临时目录原子改名到最终位置。 */
+    private suspend fun stageRuntime(plan: RuntimeInstallPlan): StagedRuntime {
+        // Zulu/Temurin 的压缩包通常带一层同名目录；剥掉它，保证 runtimes/<目录> 下直接是 bin/。
+        val installRoot = resolveInstallRoot(plan.unpacking, store.platform.javaExecutable)
+        val executable =
+            findExecutable(installRoot, store.platform.javaExecutable)
+                ?: error("安装包中没有找到 Java 可执行文件（${store.platform.javaExecutable}）")
+        // 原子改名之前确认可执行文件真的落地且可执行，避免把坏目录登记成已安装。
+        require(Files.isRegularFile(executable) && Files.isExecutable(executable)) {
+            "解压后的 Java 可执行文件不可运行：$executable（可能被杀毒软件拦截或解压不完整）"
+        }
+        val found =
+            service.inspect(executable.toString(), verifyRunnable = true)
+                ?: error("下载的 Java 无法运行")
+        verifyStagedRuntime(plan, found, store.platform)
+        val destination = prepareDestination(plan) { deleteTree(it) }
+        val relativeJava = installRoot.relativize(Path.of(found.path))
+        try {
+            Files.move(installRoot, destination, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(installRoot, destination)
+        }
+        return StagedRuntime(destination, destination.resolve(relativeJava), found)
+    }
+
+    /** 把已就位的运行时写入 index.json，并上报完成进度与日志。 */
+    private suspend fun registerRuntime(
+        plan: RuntimeInstallPlan,
+        staged: StagedRuntime,
+        context: JobContext,
+    ): JavaRuntime {
+        val runtime =
+            staged.info.copy(
+                path = staged.executable.toString(),
+                source = JavaRuntimeSource.Bundled,
+                vendor = plan.packageInfo.vendor,
+                imageType = plan.packageInfo.imageType,
+                version = staged.info.version.ifBlank { plan.packageInfo.version },
+                installedAt = Instant.now().toString(),
+                sizeBytes = directorySize(staged.directory),
+            )
+        JavaRuntimeIndex(plan.runtimes, store.platform.javaExecutable).upsert(
+            JavaRuntimeEntry(
+                path = staged.directory.fileName.toString(),
+                major = plan.major,
+                bits = runtime.bits,
+                vendor = plan.packageInfo.vendor,
+                imageType = plan.packageInfo.imageType,
+                version = runtime.version,
+                sourceUrl = plan.packageInfo.sourceUrl,
+                sha256 = plan.packageInfo.sha256,
+                installedAt = runtime.installedAt,
+                os = plan.os,
+                arch = plan.arch,
+                sizeBytes = runtime.sizeBytes,
+            ),
+        )
+        service.invalidate()
+        context.progress(1f, "Java ${plan.major} 安装完成")
+        val sizeLabel = formatMegabytes(runtime.sizeBytes)
+        store.log("已安装 ${runtime.displayName}（$sizeLabel）：${runtime.path}")
+        return runtime
+    }
+
+    /** 依次尝试每个下载地址；失败时记录日志并清掉本次的压缩包。 */
     private suspend fun download(
         packageInfo: JavaRuntimePackage,
         archive: Path,
         context: JobContext,
     ) {
-        var lastError: Exception? = null
+        var lastError: IOException? = null
         for (url in packageInfo.urls) {
             context.checkCancelled()
             network.discardPartial(archive)
             archive.deleteIfExists()
             context.beginTransfers(1)
-            try {
-                network.download(
-                    DownloadArtifact(
-                        url,
-                        archive,
-                        packageInfo.sha256,
-                        // 不传元数据大小：Zulu 的 size 与 CDN 响应可能相差几十字节，避免误杀正确文件。
-                        size = 0,
-                        hashAlgorithm = "SHA-256",
-                    ),
-                ) { bytes, total ->
-                    context.transfer(archive.toString(), bytes, total)
-                    context.progress(
-                        if (total > 0) .05f + bytes.toFloat() / total * .72f else .3f,
-                        "来源：${javaDownloadUrlLabel(url)} · 下载 " +
-                            "${packageInfo.vendor} Java ${packageInfo.version} · " +
-                            "${bytes / 1024 / 1024} MB",
-                    )
-                }
-                val size = archive.fileSize()
-                context.transfer(archive.toString(), size, size, completed = true)
-                return
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                lastError = error
-                store.log(
-                    "Java 下载源失败（${runCatching { java.net.URI(url).host }.getOrDefault(url)}）：" +
-                        (error.message ?: error.javaClass.simpleName),
-                    true,
-                )
-                archive.deleteIfExists()
-            }
+            lastError = downloadFromSource(url, packageInfo, archive, context) ?: return
         }
         throw lastError ?: IllegalStateException("没有可用的 Java 下载源")
     }
 
-    private fun findExecutable(root: Path): Path? =
-        runCatching {
-            Files.walk(root, 4).use { stream ->
-                stream
-                    .filter {
-                        it.isRegularFile() &&
-                            it.fileName.toString() == store.platform.javaExecutable &&
-                            it.parent?.fileName?.toString() == "bin"
-                    }.findFirst()
-                    .orElse(null)
+    /** 从单个地址下载到 [archive]，成功返回 null，失败返回异常供 [download] 换源重试。 */
+    private suspend fun downloadFromSource(
+        url: String,
+        packageInfo: JavaRuntimePackage,
+        archive: Path,
+        context: JobContext,
+    ): IOException? =
+        try {
+            network.download(
+                DownloadArtifact(
+                    url,
+                    archive,
+                    packageInfo.sha256,
+                    // 不传元数据大小：Zulu 的 size 与 CDN 响应可能相差几十字节，避免误杀正确文件。
+                    size = 0,
+                    hashAlgorithm = "SHA-256",
+                ),
+            ) { bytes, total ->
+                context.transfer(archive.toString(), bytes, total)
+                context.progress(
+                    if (total > 0) {
+                        PROGRESS_DOWNLOAD_BASE + bytes.toFloat() / total * PROGRESS_DOWNLOAD_SPAN
+                    } else {
+                        PROGRESS_DOWNLOAD_FALLBACK
+                    },
+                    "来源：${javaDownloadUrlLabel(url)} · 下载 ${packageInfo.vendor} " +
+                        "Java ${packageInfo.version} · ${bytes / BYTES_PER_MEBIBYTE} MB",
+                )
             }
-        }.getOrNull()
-
-    private fun deleteTree(root: Path) {
-        if (!root.exists()) return
-        Files.walk(root).use { stream ->
-            stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+            val size = archive.fileSize()
+            context.transfer(archive.toString(), size, size, completed = true)
+            null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: IOException) {
+            val host = runCatching { java.net.URI(url).host }.getOrDefault(url)
+            store.log("Java 下载源失败（$host）：${error.message ?: error.javaClass.simpleName}", true)
+            archive.deleteIfExists()
+            error
         }
-    }
-
-    private fun directorySize(directory: Path): Long =
-        runCatching {
-            Files.walk(directory).use { stream ->
-                stream
-                    .filter { Files.isRegularFile(it) }
-                    .mapToLong { runCatching { it.fileSize() }.getOrDefault(0) }
-                    .sum()
-            }
-        }.getOrDefault(0)
-
-    private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1048576f)
 
     companion object {
         /** 游戏侧需要的主版本；26.x 版本线使用 25。 */
         val SUPPORTED_JAVA_MAJORS = listOf(8, 11, 16, 17, 21, 25)
     }
 }
+
+/** 一次安装所需的路径与元数据快照。 */
+internal data class RuntimeInstallPlan(
+    val major: Int,
+    val os: String,
+    val arch: String,
+    val packageInfo: JavaRuntimePackage,
+    val runtimes: Path,
+    val archive: Path,
+    val unpacking: Path,
+) {
+    /** 安装目录名：`<供应商>-<主版本>-<os>-<arch>`。 */
+    val directoryName: String = "${packageInfo.directoryPrefix}-$major-$os-$arch"
+}
+
+/** 已解压、已校验并原子改名到最终位置的运行时。 */
+private class StagedRuntime(
+    val directory: Path,
+    val executable: Path,
+    val info: JavaRuntime,
+)
 
 /** 解压时写不进去：明确是文件系统问题（占用/权限/只读），不能报成网络错误。 */
 internal class RuntimeFileWriteException(
@@ -320,11 +368,6 @@ internal class RuntimeFileWriteException(
 /** 解压写入失败时保留 .part 目录与压缩包用于排查；其它失败照常清理临时目录。 */
 internal fun keepsExtractionDiagnostics(failure: Throwable): Boolean =
     failure is RuntimeFileWriteException
-
-/** 单次失败后的等待；首次失败后共重试 3 次。 */
-private val RUNTIME_WRITE_RETRY_DELAYS_MS = longArrayOf(200, 500, 1000)
-
-internal const val MAX_RUNTIME_EXTRACT_BYTES = 1024L * 1024 * 1024
 
 /**
  * 解压 zip 到 [root]。逐个条目：清只读属性 → 删除同名旧文件 → 建父目录 → 写入；
@@ -349,7 +392,7 @@ private fun writeZipEntry(
     target: Path,
     log: (String) -> Unit,
 ) {
-    var lastFailure: Exception? = null
+    var lastFailure: IOException? = null
     for (attempt in 0..RUNTIME_WRITE_RETRY_DELAYS_MS.size) {
         if (attempt > 0) {
             val delay = RUNTIME_WRITE_RETRY_DELAYS_MS[attempt - 1]
@@ -357,24 +400,12 @@ private fun writeZipEntry(
             Thread.sleep(delay)
         }
         try {
-            target.parent?.createDirectories()
-            // 安全软件常常把刚解压出的同名文件锁成只读或直接占用：先清属性再删掉旧文件。
-            clearReadOnly(target)
-            Files.deleteIfExists(target)
-            zip.getInputStream(entry).use { input ->
-                Files
-                    .newOutputStream(
-                        target,
-                        StandardOpenOption.CREATE,
-                        StandardOpenOption.TRUNCATE_EXISTING,
-                        StandardOpenOption.WRITE,
-                    ).use { output -> input.copyTo(output) }
-            }
+            writeEntryBytes(zip, entry, target)
             return
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             throw interrupted
-        } catch (error: Exception) {
+        } catch (error: IOException) {
             lastFailure = error
         }
     }
@@ -382,6 +413,27 @@ private fun writeZipEntry(
         target.toAbsolutePath().normalize(),
         lastFailure ?: IOException("写入失败"),
     )
+}
+
+/** 写入单个 zip 条目：先建父目录，再清只读属性并覆盖旧文件。 */
+private fun writeEntryBytes(
+    zip: ZipFile,
+    entry: ZipEntry,
+    target: Path,
+) {
+    target.parent?.createDirectories()
+    // 安全软件常常把刚解压出的同名文件锁成只读或直接占用：先清属性再删掉旧文件。
+    clearReadOnly(target)
+    Files.deleteIfExists(target)
+    zip.getInputStream(entry).use { input ->
+        Files
+            .newOutputStream(
+                target,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE,
+            ).use { output -> input.copyTo(output) }
+    }
 }
 
 /** 清除 Windows 只读属性并尽量恢复可写；其它平台/文件系统不支持时忽略。 */
@@ -403,42 +455,76 @@ internal fun extractTarRuntime(
     Files.newInputStream(archive).use { raw ->
         GzipCompressorInputStream(raw).use { gzip ->
             TarArchiveInputStream(gzip).use { tar ->
-                var count = 0
-                var totalBytes = 0L
-                while (true) {
-                    val entry = tar.nextEntry ?: break
-                    require(++count <= 50_000 && entry.size >= 0) { "Java 安装包结构无效" }
-                    totalBytes = Math.addExact(totalBytes, entry.size)
-                    require(totalBytes <= MAX_RUNTIME_EXTRACT_BYTES) { "Java 安装包解压后过大" }
-                    if (!entry.isFile || entry.isSymbolicLink || entry.isLink) continue
-                    val target = safePath(root, entry.name.removePrefix("./"))
-                    try {
-                        target.parent?.createDirectories()
-                        clearReadOnly(target)
-                        Files.deleteIfExists(target)
-                        Files.copy(tar, target, StandardCopyOption.REPLACE_EXISTING)
-                        runCatching {
-                            Files.setPosixFilePermissions(
-                                target,
-                                PosixFilePermissions.fromString(
-                                    if (entry.mode and 0b001001001 != 0) {
-                                        "rwxr-xr-x"
-                                    } else {
-                                        "rw-r--r--"
-                                    },
-                                ),
-                            )
-                        }
-                    } catch (error: Exception) {
-                        log("写入 ${target.fileName} 失败：${error.message}")
-                        throw RuntimeFileWriteException(
-                            target.toAbsolutePath().normalize(),
-                            error,
-                        )
-                    }
-                }
+                copyTarEntries(tar, root, log)
             }
         }
+    }
+}
+
+/** 遍历 tar 条目：先累加计数器与解压后大小，再写入普通文件条目。 */
+private fun copyTarEntries(
+    tar: TarArchiveInputStream,
+    root: Path,
+    log: (String) -> Unit,
+) {
+    var count = 0
+    var totalBytes = 0L
+    while (true) {
+        val entry = tar.nextEntry ?: break
+        count += 1
+        require(count <= MAX_TAR_ENTRIES && entry.size >= 0) { "Java 安装包结构无效" }
+        totalBytes = Math.addExact(totalBytes, entry.size)
+        require(totalBytes <= MAX_RUNTIME_EXTRACT_BYTES) { "Java 安装包解压后过大" }
+        if (entry.isFile && !entry.isSymbolicLink && !entry.isLink) {
+            writeTarEntry(tar, entry, root, log)
+        }
+    }
+}
+
+/** 写入单个 tar 条目；失败时带上目标路径并归类为文件系统错误。 */
+private fun writeTarEntry(
+    tar: TarArchiveInputStream,
+    entry: TarArchiveEntry,
+    root: Path,
+    log: (String) -> Unit,
+) {
+    val target = safePath(root, entry.name.removePrefix("./"))
+    try {
+        target.parent?.createDirectories()
+        clearReadOnly(target)
+        Files.deleteIfExists(target)
+        Files.copy(tar, target, StandardCopyOption.REPLACE_EXISTING)
+        runCatching {
+            Files.setPosixFilePermissions(
+                target,
+                PosixFilePermissions.fromString(
+                    if (entry.mode and EXECUTABLE_PERMISSION_MASK != 0) {
+                        "rwxr-xr-x"
+                    } else {
+                        "rw-r--r--"
+                    },
+                ),
+            )
+        }
+    } catch (error: IOException) {
+        log("写入 ${target.fileName} 失败：${error.message}")
+        throw RuntimeFileWriteException(
+            target.toAbsolutePath().normalize(),
+            error,
+        )
+    }
+}
+
+/** 把安装失败翻译成用户可读的原因分类；文件系统错误绝不能报成网络错误。 */
+private fun classifyInstallFailure(failure: Throwable): String {
+    val message = failure.message.orEmpty()
+    return when {
+        failure is RuntimeFileWriteException -> "文件写入失败"
+        failure is DownloadVerificationException || message.contains("校验") -> "校验失败"
+        message.contains("空间不足") || message.contains("No space", true) -> "磁盘空间不足"
+        failure is java.nio.file.FileSystemException -> "文件写入失败"
+        failure is IOException || message.contains("下载") || message.contains("连接") -> "网络错误"
+        else -> "安装失败"
     }
 }
 
@@ -451,19 +537,14 @@ internal fun javaInstallFailureReason(
     major: Int,
     diagnosticRoot: Path? = null,
 ): String {
-    val message = failure.message.orEmpty()
-    val reason =
-        when {
-            failure is RuntimeFileWriteException -> "文件写入失败"
-            failure is DownloadVerificationException || message.contains("校验") -> "校验失败"
-            message.contains("空间不足") || message.contains("No space", true) -> "磁盘空间不足"
-            failure is java.nio.file.FileSystemException -> "文件写入失败"
-            failure is IOException || message.contains("下载") || message.contains("连接") -> "网络错误"
-            else -> "安装失败"
-        }
+    val reason = classifyInstallFailure(failure)
     val base = "Java $major 安装失败（$reason）：" + (failure.message ?: failure.javaClass.simpleName)
     if (reason != "文件写入失败") return base
     return base +
         "。请把 MoliFox\\runtimes 加入杀毒软件白名单后重试" +
         (diagnosticRoot?.let { "；诊断目录已保留：$it" } ?: "")
 }
+
+/** 把字节数格式化成一位小数的 MB 文本。 */
+private fun formatMegabytes(bytes: Long): String =
+    "%.1f MB".format(bytes / BYTES_PER_MEBIBYTE.toFloat())

@@ -88,7 +88,7 @@ data class NbtDocument(
 )
 
 internal fun readNbtDocument(path: Path): NbtDocument {
-    require(path.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" }
+    require(path.fileSize() <= MAX_NBT_FILE_BYTES) { "服务器列表过大" }
     val compressed = Files.newInputStream(path).use { it.read() == 0x1f && it.read() == 0x8b }
     val bytes = requireNotNull(readNbtBytes(path)) { "NBT 数据过大" }
     val name =
@@ -115,6 +115,9 @@ private const val TAG_LONG_ARRAY = 12
 
 /** 解压后超过 8 MB 的 NBT 直接放弃：启动器只需要小文件，避免恶意数据撑爆内存。 */
 private const val MAX_NBT_BYTES = 8 * 1024 * 1024
+
+/** 读取前的文件大小上限，与解压后上限分开：压缩文件本身也不该比这更大。 */
+private const val MAX_NBT_FILE_BYTES = 8L * 1024 * 1024
 
 /** 嵌套深度上限：正常 NBT 只有个位数层，挡住刻意构造的深递归。 */
 private const val MAX_NBT_DEPTH = 64
@@ -193,27 +196,51 @@ private fun readTag(
         TAG_LONG -> NbtLong(cursor.i64())
         TAG_FLOAT -> NbtFloat(Float.fromBits(cursor.i32()))
         TAG_DOUBLE -> NbtDouble(Double.fromBits(cursor.i64()))
-        TAG_BYTE_ARRAY -> NbtByteArray(cursor.bytes(cursor.i32()))
         TAG_STRING -> NbtString(cursor.utf())
-        TAG_LIST -> {
-            val elementType = cursor.u8()
-            val length = cursor.i32()
-            if (length < 0 || length > MAX_NBT_LIST) cursor.fail()
-            // 空列表允许元素类型为 TAG_End；非空列表必须是 1–12 号标签。
-            if (length > 0 && elementType !in TAG_BYTE..TAG_LONG_ARRAY) cursor.fail()
-            val elements = ArrayList<NbtTag>(minOf(length, 256))
-            repeat(length) { elements += readTag(cursor, elementType, depth + 1) }
-            NbtList(elements, elementType)
-        }
+        else -> readContainerTag(cursor, type, depth)
+    }
+}
+
+/** 数组、列表和复合标签带长度前缀或嵌套，单独读取；未知类型同样在这里判错。 */
+private fun readContainerTag(
+    cursor: Cursor,
+    type: Int,
+    depth: Int,
+): NbtTag =
+    when (type) {
+        TAG_BYTE_ARRAY -> NbtByteArray(cursor.bytes(cursor.i32()))
+        TAG_LIST -> readListTag(cursor, depth)
         TAG_COMPOUND -> readCompoundBody(cursor, depth + 1)
         TAG_INT_ARRAY -> NbtIntArray(cursor.ints(cursor.i32()))
         TAG_LONG_ARRAY -> NbtLongArray(cursor.longs(cursor.i32()))
         else -> cursor.fail()
     }
+
+private fun readListTag(
+    cursor: Cursor,
+    depth: Int,
+): NbtList {
+    val elementType = cursor.u8()
+    val length = cursor.i32()
+    if (length < 0 || length > MAX_NBT_LIST) cursor.fail()
+    // 空列表允许元素类型为 TAG_End；非空列表必须是 1–12 号标签。
+    if (length > 0 && elementType !in TAG_BYTE..TAG_LONG_ARRAY) cursor.fail()
+    val elements = ArrayList<NbtTag>(minOf(length, 256))
+    repeat(length) { elements += readTag(cursor, elementType, depth + 1) }
+    return NbtList(elements, elementType)
 }
 
 /** 内部格式错误；只在外层 `runCatching` 里被吞掉，不会出现在公开 API 上。 */
 private class NbtFormatException : Exception()
+
+/** 按大端逐字节拼数值：下面这些位宽、掩码和元素字节数是 NBT 的固定格式。 */
+private const val UNSIGNED_BYTE_MASK = 0xff
+private const val UNSIGNED_INT_MASK = 0xffffffffL
+private const val SHORT_SHIFT_BITS = 8
+private const val INT_SHIFT_BITS = 16
+private const val LONG_SHIFT_BITS = 32
+private const val INT_SIZE_BYTES = 4
+private const val LONG_SIZE_BYTES = 8
 
 /** 大端字节游标；任何越界、负长度或非法标签都改抛 [NbtFormatException]。 */
 private class Cursor(
@@ -227,16 +254,20 @@ private class Cursor(
 
     fun u8(): Int {
         if (remaining() < 1) fail()
-        return bytes[position++].toInt() and 0xff
+        return bytes[position++].toInt() and UNSIGNED_BYTE_MASK
     }
 
     fun i8(): Byte = u8().toByte()
 
-    fun u16(): Int = (u8() shl 8) or u8()
+    fun u16(): Int = (u8() shl SHORT_SHIFT_BITS) or u8()
 
-    fun i32(): Int = (u16() shl 16) or u16()
+    fun i32(): Int = (u16() shl INT_SHIFT_BITS) or u16()
 
-    fun i64(): Long = (i32().toLong() shl 32) or (i32().toLong() and 0xffffffffL)
+    fun i64(): Long {
+        val high = i32().toLong() shl LONG_SHIFT_BITS
+        val low = i32().toLong() and UNSIGNED_INT_MASK
+        return high or low
+    }
 
     fun bytes(length: Int): ByteArray {
         if (length < 0 || length > remaining()) fail()
@@ -246,12 +277,12 @@ private class Cursor(
     }
 
     fun ints(length: Int): IntArray {
-        if (length < 0 || length > remaining() / 4) fail()
+        if (length < 0 || length > remaining() / INT_SIZE_BYTES) fail()
         return IntArray(length) { i32() }
     }
 
     fun longs(length: Int): LongArray {
-        if (length < 0 || length > remaining() / 8) fail()
+        if (length < 0 || length > remaining() / LONG_SIZE_BYTES) fail()
         return LongArray(length) { i64() }
     }
 

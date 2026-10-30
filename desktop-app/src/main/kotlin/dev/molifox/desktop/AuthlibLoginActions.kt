@@ -1,0 +1,207 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 负责外置认证登录的动作与文案：服务器校验、账户登录、服务器移除与键盘提交。
+
+package dev.molifox.desktop
+
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import com.google.gson.JsonParseException
+import dev.molifox.core.AuthlibError
+import dev.molifox.core.AuthlibException
+import dev.molifox.core.AuthlibServer
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
+import java.io.IOException
+
+/** 把 [AuthlibException] 的类别折算成一步就能照做的中文提示；未知异常保留原始文案。 密码错误与网络错误必须能区分开，避免用户反复重试密码。 */
+private fun authlibErrorMessage(failure: Throwable): String {
+    if (failure !is AuthlibException) return failure.message ?: "操作失败，请稍后重试"
+    return when (failure.error) {
+        AuthlibError.InvalidServer -> "不是有效的认证服务器地址"
+        AuthlibError.NotYggdrasil -> "该地址不是 Yggdrasil 认证服务器"
+        AuthlibError.Network -> "无法连接认证服务器，请检查网络后重试"
+        AuthlibError.InvalidCredentials -> "用户名或密码错误"
+        AuthlibError.SessionExpired -> "登录已过期，请重新输入密码"
+        AuthlibError.NoProfile -> "该账户在认证服务器上没有可用的游戏角色"
+        AuthlibError.DownloadFailed -> failure.message ?: "认证组件下载失败"
+        AuthlibError.InvalidResponse -> "认证服务器返回的数据无效"
+        AuthlibError.ServerError -> failure.message ?: "认证服务器返回错误"
+    }
+}
+
+/** 第 1 步：校验并保存服务器地址；成功后带着地址进入第 2 步。 */
+internal fun validateAuthlibServer(
+    actions: UiActions,
+    address: String,
+    isBusy: () -> Boolean,
+    onBusy: (Boolean) -> Unit,
+    onError: (String?) -> Unit,
+    onResolved: (AuthlibServer) -> Unit,
+) {
+    if (isBusy()) return
+    val candidate = address.trim()
+    if (candidate.isEmpty()) {
+        onError("请输入认证服务器地址")
+        return
+    }
+    onBusy(true)
+    onError(null)
+    actions.run {
+        val result = actions.controller.accounts.addAuthlibServer(candidate)
+        val failure = result.exceptionOrNull()
+        withContext(Dispatchers.Swing) {
+            onBusy(false)
+            if (failure != null) {
+                onError(authlibErrorMessage(failure))
+            } else {
+                onResolved(result.getOrThrow())
+            }
+        }
+    }
+}
+
+/** 登录失败统一回到 UI 线程：先解除 busy，再按异常类别给出提示。 */
+private suspend fun reportAuthlibFailure(
+    failure: Throwable,
+    onBusy: (Boolean) -> Unit,
+    onError: (String?) -> Unit,
+) {
+    withContext(Dispatchers.Swing) {
+        onBusy(false)
+        onError(authlibErrorMessage(failure))
+    }
+}
+
+// 登录的唯一提交路径：登录按钮、Enter、密码框的 IME「完成」都调这里；
+// busy 期间直接返回，避免回车与点击叠成两次请求。
+internal fun submitAuthlibLogin(
+    actions: UiActions,
+    server: AuthlibServer?,
+    username: String,
+    password: String,
+    isBusy: () -> Boolean,
+    onBusy: (Boolean) -> Unit,
+    onError: (String?) -> Unit,
+    onSuccess: () -> Unit,
+) {
+    if (isBusy()) return
+    if (server == null) return
+    val name = username.trim()
+    val secret = password
+    if (name.isEmpty() || secret.isEmpty()) {
+        onError("请输入用户名和密码")
+        return
+    }
+    onBusy(true)
+    onError(null)
+    actions.run {
+        try {
+            val result = actions.controller.accounts.addAuthlibAccount(server.url, name, secret)
+            val failure = result.exceptionOrNull()
+            withContext(Dispatchers.Swing) {
+                onBusy(false)
+                if (failure == null) {
+                    onSuccess()
+                } else {
+                    onError(authlibErrorMessage(failure))
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: IOException) {
+            reportAuthlibFailure(failure, onBusy, onError)
+        } catch (failure: JsonParseException) {
+            reportAuthlibFailure(failure, onBusy, onError)
+        } catch (failure: IllegalStateException) {
+            reportAuthlibFailure(failure, onBusy, onError)
+        }
+    }
+}
+
+/** 移除已保存的服务器：内置服务器由核心拒绝，这里按结果给提示，不谎报已移除。 */
+internal fun removeAuthlibServer(
+    actions: UiActions,
+    server: AuthlibServer,
+    label: String,
+    isSelected: Boolean,
+    isResolved: Boolean,
+    onClearSelected: () -> Unit,
+    onClearResolved: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    if (!actions.controller.accounts.removeAuthlibServer(server.url)) {
+        onError("内置服务器不可删除")
+        return
+    }
+    if (isSelected) onClearSelected()
+    if (isResolved) onClearResolved()
+    actions.controller.store.notify("已移除认证服务器「" + label + "」")
+}
+
+/** 弹窗键盘：Esc 关闭，Enter 执行当前一步（第 2 步密码已填时直接提交）。 */
+internal fun authlibKeyEvent(
+    event: KeyEvent,
+    step: AuthlibLoginStep,
+    canValidate: Boolean,
+    password: String,
+    onDismiss: () -> Unit,
+    onValidate: () -> Unit,
+    onSubmit: () -> Unit,
+): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    return when (event.key) {
+        Key.Escape -> {
+            onDismiss()
+            true
+        }
+        Key.Enter,
+        Key.NumPadEnter,
+        ->
+            when (step) {
+                AuthlibLoginStep.Server ->
+                    if (canValidate) {
+                        onValidate()
+                        true
+                    } else {
+                        false
+                    }
+                AuthlibLoginStep.Credentials ->
+                    // 密码已填时，用户在用户名或密码任一框里按 Enter 都直接提交登录；
+                    // 密码还空着则让给输入框自己处理，不提前弹「请输入用户名和密码」。
+                    if (password.isNotEmpty()) {
+                        onSubmit()
+                        true
+                    } else {
+                        false
+                    }
+            }
+        else -> false
+    }
+}
+
+internal fun authlibDialogTitle(presetLabel: String?): String =
+    if (presetLabel != null) "登录 " + presetLabel else "添加认证服务器"
+
+internal fun authlibDialogHint(presetLabel: String?): String =
+    if (presetLabel != null) {
+        "输入该服务器上的用户名与密码，登录后账户会出现在列表里。"
+    } else {
+        "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
+    }
+
+internal fun authlibStepTitle(
+    step: AuthlibLoginStep,
+    preset: Boolean,
+): String =
+    when {
+        preset -> "用户名与密码"
+        step == AuthlibLoginStep.Server -> "第 1 步 / 共 2 步 · 认证服务器"
+        else -> "第 2 步 / 共 2 步 · 用户名与密码"
+    }

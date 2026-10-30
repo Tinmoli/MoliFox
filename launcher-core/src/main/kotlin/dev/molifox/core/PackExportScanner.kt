@@ -69,15 +69,24 @@ internal class PackExportScanner(
         Files.newDirectoryStream(root).use { children ->
             for (child in children) {
                 coroutineContext.ensureActive()
-                if (Files.isSymbolicLink(child)) continue
-                val name = child.fileName.toString()
-                if (instanceOwnExportFile(name, versionId) || launcherPrivateExportEntry(name)) {
-                    omitted += name
-                    continue
-                }
-                tracks += topLevelState(child, name)
+                collectTopLevelEntry(child, tracks, omitted)
             }
         }
+    }
+
+    /** 符号链接与实例自有、启动器私有条目不计入导出，其余登记为顶层条目。 */
+    private fun collectTopLevelEntry(
+        child: Path,
+        tracks: MutableList<ExportEntryState>,
+        omitted: MutableList<String>,
+    ) {
+        if (Files.isSymbolicLink(child)) return
+        val name = child.fileName.toString()
+        if (instanceOwnExportFile(name, versionId) || launcherPrivateExportEntry(name)) {
+            omitted += name
+            return
+        }
+        tracks += topLevelState(child, name)
     }
 
     private fun topLevelState(
@@ -150,12 +159,11 @@ internal class PackExportScanner(
         if (excludedExportPath(relative, allowLogs = track.backupOnly)) return
         if (Files.isDirectory(file, NOFOLLOW_LINKS)) {
             pending.add(file)
-            return
+        } else if (Files.isRegularFile(file, NOFOLLOW_LINKS)) {
+            track.fileCount++
+            track.totalBytes += runCatching { Files.size(file) }.getOrDefault(0L)
+            snapshots.onFile()
         }
-        if (!Files.isRegularFile(file, NOFOLLOW_LINKS)) return
-        track.fileCount++
-        track.totalBytes += runCatching { Files.size(file) }.getOrDefault(0L)
-        snapshots.onFile()
     }
 }
 

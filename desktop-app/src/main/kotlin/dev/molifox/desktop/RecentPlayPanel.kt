@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,13 +42,16 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.EntryKind
 import dev.molifox.core.GameInstance
 import dev.molifox.core.GameLaunchTarget
+import dev.molifox.core.LauncherController
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import kotlin.io.path.isDirectory
 
 @Composable
@@ -82,11 +86,7 @@ fun RecentPlayPanel(
         ) {
             loading = true
             try {
-                value = withContext(Dispatchers.IO) { loadRecentPlays(controller, instance) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                controller.store.notify("读取最近游玩失败：${failure.message}")
+                readRecentPlays(controller, instance)?.let { value = it }
             } finally {
                 loading = false
             }
@@ -98,53 +98,188 @@ fun RecentPlayPanel(
         }
     }
 
-    fun perform(action: () -> Unit) {
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) { action() }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                controller.store.notify(failure.message ?: "操作失败，请查看日志")
-            } finally {
-                refresh++
-            }
-        }
-    }
+    val perform = ioAction(scope, controller) { refresh++ }
     val callbacks =
         RecentPlayActions(
             play = { item ->
                 showAll = false
                 onLaunch(instance, GameLaunchTarget(item.kind, item.key))
             },
-            primary = { item ->
-                if (item.kind == EntryKind.Server) {
-                    clipboard.setText(AnnotatedString(item.key))
-                    controller.store.notify("已复制服务器地址")
-                } else {
-                    item.save?.let { save ->
-                        perform {
-                            controller.platform.openFolder(
-                                if (save.path.isDirectory()) save.path else save.path.parent,
-                            )
-                        }
-                    }
-                }
-            },
-            hide = { item ->
-                perform {
-                    controller.store.recentUsage.setHidden(
-                        item.kind,
-                        instance.id,
-                        item.key,
-                        !item.hidden,
-                    )
-                }
-            },
+            primary = { item -> openRecentPlayPrimary(controller, clipboard, item, perform) },
+            hide = { item -> hideRecentPlay(controller, instance.id, item, perform) },
             delete = { deleting = it },
             statusQuery = actions.serverStatusQuery,
         )
     val visible = items.filter { it.kind == kind && !it.hidden }.take(8)
+    RecentPlayCard(
+        kind = kind,
+        onKindChange = onKindChange,
+        expanded = expanded,
+        onExpandedChange = onExpandedChange,
+        onRefresh = { refresh++ },
+        onShowAll = { showAll = true },
+        loading = loading,
+        visible = visible,
+        busy = busy,
+        refreshTick = refresh,
+        callbacks = callbacks,
+        modifier = modifier,
+    )
+    if (showAll) {
+        RecentPlayDialog(
+            items,
+            kind,
+            busy,
+            refresh,
+            loading,
+            callbacks,
+            onRefresh = {
+                refresh++
+            },
+            onDismiss = { showAll = false },
+        )
+    }
+    deleting?.let { item ->
+        DeleteRecentPlayDialog(
+            item = item,
+            onDismiss = { deleting = null },
+            onConfirm = {
+                deleting = null
+                perform { deleteRecentPlay(controller, instance, item) }
+            },
+        )
+    }
+}
+
+/** 读取最近游玩；可预期的读取失败只提示，保留上一次的列表内容。 */
+private suspend fun readRecentPlays(
+    controller: LauncherController,
+    instance: GameInstance,
+): List<RecentPlayItem>? =
+    try {
+        withContext(Dispatchers.IO) { loadRecentPlays(controller, instance) }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: IOException) {
+        notifyRecentPlayFailure(controller, failure)
+        null
+    } catch (failure: IllegalStateException) {
+        notifyRecentPlayFailure(controller, failure)
+        null
+    } catch (failure: IllegalArgumentException) {
+        notifyRecentPlayFailure(controller, failure)
+        null
+    }
+
+private fun notifyRecentPlayFailure(
+    controller: LauncherController,
+    failure: Exception,
+) {
+    controller.store.notify("读取最近游玩失败：${failure.message}")
+}
+
+/** 在 IO 线程执行一次条目动作；可预期的失败转为提示，结束后无论成败都刷新列表。 */
+private fun ioAction(
+    scope: CoroutineScope,
+    controller: LauncherController,
+    onDone: () -> Unit,
+): (() -> Unit) -> Unit =
+    { action ->
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { action() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: IOException) {
+                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+            } catch (failure: IllegalStateException) {
+                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+            } catch (failure: IllegalArgumentException) {
+                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+/** 列表行的主要动作：服务器复制地址，存档打开所在文件夹。 */
+private fun openRecentPlayPrimary(
+    controller: LauncherController,
+    clipboard: ClipboardManager,
+    item: RecentPlayItem,
+    perform: (() -> Unit) -> Unit,
+) {
+    if (item.kind == EntryKind.Server) {
+        clipboard.setText(AnnotatedString(item.key))
+        controller.store.notify("已复制服务器地址")
+    } else {
+        item.save?.let { save ->
+            perform {
+                controller.platform.openFolder(
+                    if (save.path.isDirectory()) save.path else save.path.parent,
+                )
+            }
+        }
+    }
+}
+
+/** 隐藏或恢复一条最近游玩记录；与删除分开，不改动磁盘内容。 */
+private fun hideRecentPlay(
+    controller: LauncherController,
+    instanceId: String,
+    item: RecentPlayItem,
+    perform: (() -> Unit) -> Unit,
+) {
+    perform {
+        controller.store.recentUsage.setHidden(item.kind, instanceId, item.key, !item.hidden)
+    }
+}
+
+/** 删除一条记录：服务器写回原列表，存档移入回收站并清掉历史。 */
+private fun deleteRecentPlay(
+    controller: LauncherController,
+    instance: GameInstance,
+    item: RecentPlayItem,
+) {
+    if (item.kind == EntryKind.Server) {
+        val result = controller.deleteServer(instance.id, item.key)
+        controller.store.notify(
+            if (result.removed > 0) "服务器已删除，原列表已备份" else "已移除这条历史记录",
+        )
+    } else {
+        require(controller.deleteSave(instance.id, item.key)) {
+            "存档未能移入回收站，请查看日志"
+        }
+        controller.store.recentUsage.forget(EntryKind.World, instance.id, item.key)
+    }
+}
+
+/** 空列表文案：加载中与没有内容分开描述，内容按存档/服务器区分。 */
+private fun recentPlayEmptyText(
+    loading: Boolean,
+    kind: EntryKind,
+): String =
+    if (loading) {
+        "正在读取…"
+    } else {
+        "暂无${if (kind == EntryKind.World) "存档" else "服务器"}，可在查看全部中恢复隐藏项"
+    }
+
+@Composable
+private fun RecentPlayCard(
+    kind: EntryKind,
+    onKindChange: (EntryKind) -> Unit,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onShowAll: () -> Unit,
+    loading: Boolean,
+    visible: List<RecentPlayItem>,
+    busy: Boolean,
+    refreshTick: Int,
+    callbacks: RecentPlayActions,
+    modifier: Modifier,
+) {
     Panel(
         modifier.animateContentSize(tween(if (LocalReducedMotion.current) 0 else 180)),
         padding = 0,
@@ -164,11 +299,9 @@ fun RecentPlayPanel(
             SmallIconButton(
                 Icons.Outlined.Refresh,
                 "刷新最近游玩的存档与服务器",
-                onClick = {
-                    refresh++
-                },
+                onClick = onRefresh,
             )
-            TextButton({ showAll = true }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+            TextButton(onShowAll, contentPadding = PaddingValues(horizontal = 6.dp)) {
                 Text("查看全部", fontSize = 12.sp)
             }
             SmallIconButton(
@@ -181,11 +314,7 @@ fun RecentPlayPanel(
             if (visible.isEmpty()) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        if (loading) {
-                            "正在读取…"
-                        } else {
-                            "暂无${if (kind == EntryKind.World) "存档" else "服务器"}，可在查看全部中恢复隐藏项"
-                        },
+                        recentPlayEmptyText(loading, kind),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -194,65 +323,39 @@ fun RecentPlayPanel(
                 RecentPlayList(
                     visible,
                     busy,
-                    refresh,
+                    refreshTick,
                     callbacks,
                     Modifier.fillMaxWidth().weight(1f).padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
         }
     }
-    if (showAll) {
-        RecentPlayDialog(
-            items,
-            kind,
-            busy,
-            refresh,
-            loading,
-            callbacks,
-            onRefresh = {
-                refresh++
-            },
-            onDismiss = { showAll = false },
-        )
-    }
-    deleting?.let { item ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(if (item.kind == EntryKind.Server) "删除服务器？" else "删除存档？") },
-            text = {
-                Text(
-                    if (item.kind == EntryKind.Server) {
-                        "「${item.title}」将从当前游戏目录的服务器列表移除，游戏内也不再显示。共用此目录的实例同步生效；修改前会备份原列表。请先退出使用此目录的游戏。"
-                    } else {
-                        "「${item.title}」将移入回收站，可从回收站恢复。"
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton({
-                    deleting = null
-                    perform {
-                        if (item.kind == EntryKind.Server) {
-                            val result = controller.deleteServer(instance.id, item.key)
-                            controller.store.notify(
-                                if (result.removed > 0) "服务器已删除，原列表已备份" else "已移除这条历史记录",
-                            )
-                        } else {
-                            require(controller.deleteSave(instance.id, item.key)) {
-                                "存档未能移入回收站，请查看日志"
-                            }
-                            controller.store.recentUsage.forget(
-                                EntryKind.World,
-                                instance.id,
-                                item.key,
-                            )
-                        }
-                    }
-                }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton({ deleting = null }) { Text("取消") } },
-        )
-    }
+}
+
+@Composable
+private fun DeleteRecentPlayDialog(
+    item: RecentPlayItem,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (item.kind == EntryKind.Server) "删除服务器？" else "删除存档？") },
+        text = {
+            Text(
+                if (item.kind == EntryKind.Server) {
+                    "「${item.title}」将从当前游戏目录的服务器列表移除，游戏内也不再显示。" +
+                        "共用此目录的实例同步生效；修改前会备份原列表。请先退出使用此目录的游戏。"
+                } else {
+                    "「${item.title}」将移入回收站，可从回收站恢复。"
+                },
+            )
+        },
+        confirmButton = {
+            TextButton(onConfirm) {
+                Text("删除", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+    )
 }

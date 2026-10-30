@@ -48,3 +48,12 @@ request and are not included in the launcher distribution.
 Historical prototype source is kept only in docs/recovery/legacy-prototypes.zip
 for recovery. Generated dependencies, caches and obsolete packaging trees were
 removed. The backup is excluded from the Gradle build and distributions.
+
+## Optional multiplayer runtime
+
+- Terracotta 0.4.2 (upstream AGPL-3.0): downloaded on explicit user confirmation
+  from the official release page or its CN mirrors, verified against the SHA-512
+  recorded by the upstream metadata, and run as a separate process through its
+  local HTTP control interface. MoliFox does not bundle its binaries, source or
+  assets, and does not link against it. Upstream project and license:
+  https://github.com/burningtnt/Terracotta

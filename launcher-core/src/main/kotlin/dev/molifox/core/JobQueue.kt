@@ -20,30 +20,30 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
+/** 传输速度采样窗口：约每 250ms 汇总一次，避免每个回调都刷新状态。 */
+private const val TRANSFER_SAMPLE_INTERVAL_NANOS = 250_000_000L
+
+/** 纳秒到秒的换算系数，用于把字节/纳秒换算成字节/秒。 */
+private const val NANOS_PER_SECOND = 1_000_000_000.0
+
+/** 进度节流间隔（毫秒）：约 10 次/秒。 */
+private const val PROGRESS_THROTTLE_MS = 100
+
 class JobContext
     internal constructor(
-        private val store: LauncherStore,
+        internal val store: LauncherStore,
         val id: String,
-        private val bindResources: ((Set<String>) -> Unit)? = null,
+        internal val bindResources: ((Set<String>) -> Unit)? = null,
     ) {
         private val cancellationActions = ConcurrentHashMap<Any, suspend () -> Unit>()
         private val completionActions = ConcurrentHashMap<Any, () -> Unit>()
-        private val outputs = TaskOutputCleanup(this)
-        private var references: Pair<List<GameInstance>, TaskFileReferences>? = null
-
-        internal fun beforeDirectoryCreation(path: java.nio.file.Path) =
-            outputs.beforeDirectoryCreation(path)
-
-        internal fun writeOutput(
-            path: java.nio.file.Path,
-            action: () -> Unit,
-        ) = outputs.write(path, action)
-
-        internal fun trackOutput(path: java.nio.file.Path) = outputs.track(path)
+        internal val outputs = TaskOutputCleanup(this)
+        internal var references: Pair<List<GameInstance>, TaskFileReferences>? = null
 
         internal fun onFinished(
             key: Any,
@@ -57,56 +57,11 @@ class JobContext
         internal suspend fun finish(cancelled: Boolean): Boolean {
             var cleaned = true
             try {
-                if (cancelled) {
-                    for (cleanup in cancellationActions.values) {
-                        try {
-                            cleanup()
-                        } catch (error: Exception) {
-                            cleaned = false
-                            store.log("取消任务时清理文件失败：${error.message}", true)
-                        }
-                    }
-                    try {
-                        outputs.cleanFiles()
-                        outputs.cleanEmptyDirectories()
-                    } catch (error: Exception) {
-                        cleaned = false
-                        store.log("取消任务时清理产物失败：${error.message}", true)
-                    }
-                }
+                if (cancelled) cleaned = cleanupCancelledTask(store, cancellationActions, outputs)
             } finally {
                 completionActions.values.forEach { it() }
             }
             return cleaned
-        }
-
-        internal fun canRemoveDownload(path: java.nio.file.Path): Boolean {
-            val resources =
-                store.state.value.jobs
-                    .find { it.id == id }
-                    ?.resources
-                    .orEmpty()
-            val ownedIds =
-                resources
-                    .filter { it.startsWith("instance:") }
-                    .map { it.removePrefix("instance:") }
-                    .toSet()
-            val normalized = path.toAbsolutePath().normalize()
-            val instances = store.data.instances
-            if (references?.first != instances) {
-                references = instances to TaskFileReferences(store, ownedIds)
-            }
-            return !requireNotNull(references).second.protects(normalized) &&
-                !normalized.startsWith(
-                    store.dataDirectory
-                        .resolve("runtimes")
-                        .toAbsolutePath()
-                        .normalize(),
-                )
-        }
-
-        internal fun bindInstance(instanceId: String) {
-            bindResources?.invoke(taskResourcesForInstances(store, instanceId))
         }
 
         private var lastUpdate = 0L
@@ -146,8 +101,8 @@ class JobContext
             if (previous != null) sampleBytes += (bytes - previous.first).coerceAtLeast(0)
             transfers[key] = Triple(bytes.coerceAtLeast(0), total.coerceAtLeast(0), completed)
             val elapsed = System.nanoTime() - sampleTime
-            if (elapsed >= 250_000_000L || completed) {
-                if (elapsed > 0) transferSpeed = (sampleBytes * 1_000_000_000.0 / elapsed).toLong()
+            if (elapsed >= TRANSFER_SAMPLE_INTERVAL_NANOS || completed) {
+                if (elapsed > 0) transferSpeed = (sampleBytes * NANOS_PER_SECOND / elapsed).toLong()
                 sampleBytes = 0
                 sampleTime = System.nanoTime()
                 publishTransfers()
@@ -192,7 +147,7 @@ class JobContext
             progressObserver?.invoke(clamped, detail)
             val now = System.currentTimeMillis()
             // 约 10 次/秒的节流；完成（1.0）永远立即上报。
-            if (now - lastUpdate < 100 && value < 1f) return
+            if (now - lastUpdate < PROGRESS_THROTTLE_MS && value < 1f) return
             lastUpdate = now
             publish(clamped, detail)
         }
@@ -221,6 +176,50 @@ class JobContext
                 )
             }
         }
+    }
+
+/** 逐个执行取消清理：单个清理失败也继续，返回是否全部成功。 */
+private suspend fun cleanupCancelledTask(
+    store: LauncherStore,
+    cancellationActions: Map<Any, suspend () -> Unit>,
+    outputs: TaskOutputCleanup,
+): Boolean {
+    var cleaned = true
+    for (cleanup in cancellationActions.values) {
+        if (!runCancellationAction(store, cleanup)) cleaned = false
+    }
+    if (!cleanOutputs(store, outputs)) cleaned = false
+    return cleaned
+}
+
+private suspend fun runCancellationAction(
+    store: LauncherStore,
+    cleanup: suspend () -> Unit,
+): Boolean =
+    runCatching {
+        cleanup()
+        true
+    }.getOrElse { error ->
+        // cleanup 由各任务自行注册，失败类型无法枚举；这里必须兜底并继续清理其余产物。
+        store.log("取消任务时清理文件失败：${error.message}", true)
+        false
+    }
+
+private suspend fun cleanOutputs(
+    store: LauncherStore,
+    outputs: TaskOutputCleanup,
+): Boolean =
+    try {
+        outputs.cleanFiles()
+        outputs.cleanEmptyDirectories()
+        true
+    } catch (error: IOException) {
+        store.log("取消任务时清理产物失败：${error.message}", true)
+        false
+    } catch (error: IllegalStateException) {
+        // 引用关系在清理时可能发现实例/游戏目录已被移除（error(...)），同样只记录并继续。
+        store.log("取消任务时清理产物失败：${error.message}", true)
+        false
     }
 
 class JobQueue(
@@ -267,40 +266,68 @@ class JobQueue(
             it.copy(jobs = listOf(DownloadJob(id, title, resources = reserved)) + it.jobs)
         }
         val context =
-            JobContext(store, id) { resources ->
-                gate.rebind(id, resources)
+            JobContext(store, id) { updated ->
+                gate.rebind(id, updated)
                 store.updateState {
                     it.copy(
                         jobs =
                             it.jobs.map { job ->
-                                if (job.id == id) job.copy(resources = resources) else job
+                                if (job.id == id) job.copy(resources = updated) else job
                             },
                     )
                 }
             }
-        try {
+        prepareJob(id, context, prepare)
+        val worker =
+            // Enter cancellation cleanup even when cancelled before the dispatcher starts the body.
+            scope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
+                runWorker(id, title, context, action)
+            }
+        workers[id] = worker
+        worker.invokeOnCompletion { whenWorkerFinished(id, worker) }
+        worker.start()
+        return id
+    }
+
+    /** prepare 由调用方提供；失败时按原顺序回滚已登记的任务与资源，再原样抛出。 */
+    private fun prepareJob(
+        id: String,
+        context: JobContext,
+        prepare: (JobContext) -> Unit,
+    ) {
+        runCatching {
             prepare(context)
-        } catch (error: Exception) {
+        }.onFailure { error ->
+            // 初始化逻辑来自调用方，异常类型不可枚举；这里只负责回滚与继续抛出。
             gate.release(id)
             store.updateState { it.copy(jobs = it.jobs.filterNot { job -> job.id == id }) }
             throw error
         }
-        val worker =
-            // Enter cancellation cleanup even when cancelled before the dispatcher starts the body.
-            scope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
-                var cancelled = false
-                try {
-                    gate.acquire(id)
-                    coroutineContext.ensureActive()
-                    update(id, JobStatus.Running, "准备中…")
-                    store.log("任务开始：$title", level = LogLevel.Debug)
-                    withContext(TaskDownloadContext(context) + TaskSourceSelection()) {
-                        context.action()
-                    }
-                    coroutineContext.ensureActive()
-                    update(id, JobStatus.Completed, "已完成")
-                    store.log("任务完成：$title", level = LogLevel.Debug)
-                } catch (_: CancellationException) {
+    }
+
+    private suspend fun runWorker(
+        id: String,
+        title: String,
+        context: JobContext,
+        action: suspend JobContext.() -> Unit,
+    ) {
+        var cancelled = false
+        try {
+            runCatching {
+                gate.acquire(id)
+                coroutineContext.ensureActive()
+                update(id, JobStatus.Running, "准备中…")
+                store.log("任务开始：$title", level = LogLevel.Debug)
+                withContext(TaskDownloadContext(context) + TaskSourceSelection()) {
+                    context.action()
+                }
+                coroutineContext.ensureActive()
+                update(id, JobStatus.Completed, "已完成")
+                store.log("任务完成：$title", level = LogLevel.Debug)
+            }.onFailure { error ->
+                // 任务体来自调用方，失败类型不可枚举；取消先清理产物，其它失败必须兜底为 Failed，
+                // 不能让任务停在 Running。
+                if (error is CancellationException) {
                     cancelled = true
                     val cleaned =
                         withContext(NonCancellable + Dispatchers.IO) { context.finish(true) }
@@ -311,31 +338,33 @@ class JobQueue(
                     )
                     store.log("任务已取消：$title")
                     if (!cleaned) store.notify("任务已取消，部分文件未能清理，请查看日志")
-                } catch (error: Exception) {
+                } else {
                     val message = error.message ?: error.javaClass.simpleName
                     update(id, JobStatus.Failed, message, message)
                     store.log("$title：$message", true)
                     store.log(error.stackTraceToString(), true)
                     store.notify(message)
-                } finally {
-                    if (!cancelled) context.finish(false)
                 }
             }
-        workers[id] = worker
-        worker.invokeOnCompletion {
-            gate.release(id)
-            workers.remove(id, worker)
-            if (
-                worker.isCancelled &&
-                store.state.value.jobs.any {
-                    it.id == id && it.status in setOf(JobStatus.Queued, JobStatus.Running)
-                }
-            ) {
-                update(id, JobStatus.Cancelled, "已取消")
-            }
+        } finally {
+            if (!cancelled) context.finish(false)
         }
-        worker.start()
-        return id
+    }
+
+    private fun whenWorkerFinished(
+        id: String,
+        worker: Job,
+    ) {
+        gate.release(id)
+        workers.remove(id, worker)
+        if (
+            worker.isCancelled &&
+            store.state.value.jobs.any {
+                it.id == id && it.status in setOf(JobStatus.Queued, JobStatus.Running)
+            }
+        ) {
+            update(id, JobStatus.Cancelled, "已取消")
+        }
     }
 
     private fun update(

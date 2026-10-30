@@ -48,7 +48,8 @@ import androidx.compose.ui.unit.sp
 
 /**
  * 左侧设置条目：与下载页分类条目 ([DownloadKindItem] 同规格) 完全同一套选中态—— 项高 32、圆角 6、图标 17、内边距 10、选中
- * `selectedRowBackground()` 实底 + `onPrimaryContainer` 文字 + SemiBold，悬停用 `rowHoverHighlight`、按下 `pressScale`。
+ * `selectedRowBackground()` 实底 + `onPrimaryContainer` 文字 + SemiBold，悬停用 `rowHoverHighlight`、
+ * 按下 `pressScale`。
  * 没有矩形描边，也没有向外扩张的焦点环：键盘焦点画在条目内侧 2dp 的 1dp 细描边里，因此不会越过磨砂面板的圆角。
  */
 @Composable

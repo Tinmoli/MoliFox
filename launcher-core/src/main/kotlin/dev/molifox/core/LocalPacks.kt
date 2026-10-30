@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.currentCoroutineContext
@@ -45,10 +46,30 @@ private const val PACK_STAGING_PREFIX = ".molifox-import-"
 
 private const val MAX_PACK_BYTES = 512L * 1024 * 1024
 
+/** 重名后缀上限：`Pack (999).zip` 之后改用其他名称。 */
+private const val MAX_NAME_SUFFIX = 999
+
+/** 生成的文件名长度上限，避免超出常见文件系统的单段名称限制。 */
+private const val MAX_NAME_LENGTH = 120
+
+/** 已校验的导入来源：原始路径、安全化后的目标名与是否为文件夹。 */
+private class PreparedPackSource(
+    val source: Path,
+    val name: String,
+    val isDirectory: Boolean,
+)
+
+/** 一次导入的进度：已写入磁盘的目标（失败时删除）与已生成的条目。 */
+private class PackImportBatch(
+    val created: MutableList<Path> = mutableListOf(),
+    val imported: MutableList<LocalPackEntry> = mutableListOf(),
+)
+
 /**
  * 资源包与光影目录的文件管理。
  *
- * 只接受 `.zip` 文件或文件夹；重名时在扩展名前加序号（`Pack.zip` → `Pack (2).zip`），从不覆盖已有内容。 复制先落同目录的隐藏临时项，成功后再改名；任何一步失败都删除临时项与本次已导入的内容。
+ * 只接受 `.zip` 文件或文件夹；重名时在扩展名前加序号（`Pack.zip` → `Pack (2).zip`），从不覆盖已有内容。
+ * 复制先落同目录的隐藏临时项，成功后再改名；任何一步失败都删除临时项与本次已导入的内容。
  */
 class LocalPackStore internal constructor(
     private val store: LauncherStore,
@@ -110,92 +131,124 @@ class LocalPackStore internal constructor(
             require(!Files.isSymbolicLink(directory)) { "${folder.title}目录是符号链接，未导入" }
             directory.createDirectories()
 
-            data class Prepared(
-                val source: Path,
-                val name: String,
-                val isDirectory: Boolean,
-            )
-
-            val prepared =
-                sources.map { raw ->
-                    currentCoroutineContext().ensureActive()
-                    val source = raw.toAbsolutePath().normalize()
-                    require(source.exists(LinkOption.NOFOLLOW_LINKS)) { "找不到文件：${raw.fileName}" }
-                    require(!Files.isSymbolicLink(source)) { "不支持符号链接：${raw.fileName}" }
-                    val isDirectory = source.isDirectory(LinkOption.NOFOLLOW_LINKS)
-                    if (!isDirectory) {
-                        require(
-                            source.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
-                                source.name.endsWith(".zip", true),
-                        ) {
-                            "只能导入 .zip 或文件夹：${raw.fileName}"
-                        }
-                        require(
-                            runCatching { Files.size(source) }.getOrDefault(0L) <= MAX_PACK_BYTES,
-                        ) {
-                            "文件过大（上限 512 MB）：${raw.fileName}"
-                        }
-                        require(
-                            runCatching {
-                                ZipFile(
-                                    source.toFile(),
-                                ).use { true }
-                            }.getOrDefault(false),
-                        ) {
-                            "不是有效的 ZIP：${raw.fileName}"
-                        }
-                    }
-                    Prepared(source, safePackFilename(source.name), isDirectory)
-                }
-            val created = mutableListOf<Path>()
-            val imported = mutableListOf<LocalPackEntry>()
+            val prepared = prepareSources(sources)
+            val batch = PackImportBatch()
             try {
-                prepared.forEachIndexed { index, item ->
-                    currentCoroutineContext().ensureActive()
-                    val name = uniqueChildName(directory, item.name)
-                    val target = directory.resolve(name)
-                    require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标已存在：$name" }
-                    val staging = directory.resolve("$PACK_STAGING_PREFIX${UUID.randomUUID()}")
-                    try {
-                        if (item.isDirectory) {
-                            copyTree(item.source, staging)
-                        } else {
-                            Files.copy(item.source, staging)
-                        }
-                        context?.checkCancelled()
-                        Files.move(staging, target)
-                    } finally {
-                        runCatching { deleteTreeOrFile(staging) }
-                    }
-                    created.add(target)
-                    imported.add(
-                        LocalPackEntry(
-                            filename = name,
-                            path = target,
-                            isDirectory = item.isDirectory,
-                            size =
-                                if (item.isDirectory) {
-                                    0L
-                                } else {
-                                    runCatching { Files.size(target) }.getOrDefault(0L)
-                                },
-                            modified =
-                                runCatching { Files.getLastModifiedTime(target).toMillis() }
-                                    .getOrDefault(0L),
-                        ),
-                    )
-                    context?.progress(
-                        (index + 1).toFloat() / prepared.size,
-                        "导入 ${folder.title} · $name",
-                    )
-                }
-            } catch (error: Throwable) {
-                created.forEach { runCatching { deleteTreeOrFile(it) } }
-                throw error
+                copyPrepared(directory, prepared, folder, context, batch)
+            } catch (cancelled: CancellationException) {
+                rollbackImported(batch.created)
+                throw cancelled
+            } catch (failure: IllegalArgumentException) {
+                rollbackImported(batch.created)
+                throw failure
+            } catch (failure: IllegalStateException) {
+                // 名称耗尽等校验失败发生在复制途中，同样要清掉本次已导入的内容。
+                rollbackImported(batch.created)
+                throw failure
+            } catch (failure: IOException) {
+                rollbackImported(batch.created)
+                throw failure
             }
-            store.log("已导入 ${folder.title}：${imported.joinToString("、") { it.filename }}")
-            imported
+            store.log("已导入 ${folder.title}：${batch.imported.joinToString("、") { it.filename }}")
+            batch.imported
         }
+
+    /** 复制前逐个校验来源；任何一项不合格都在写入磁盘前失败。 */
+    private suspend fun prepareSources(sources: List<Path>): List<PreparedPackSource> =
+        sources.map { raw ->
+            currentCoroutineContext().ensureActive()
+            val source = raw.toAbsolutePath().normalize()
+            require(source.exists(LinkOption.NOFOLLOW_LINKS)) { "找不到文件：${raw.fileName}" }
+            require(!Files.isSymbolicLink(source)) { "不支持符号链接：${raw.fileName}" }
+            val isDirectory = source.isDirectory(LinkOption.NOFOLLOW_LINKS)
+            if (!isDirectory) {
+                require(
+                    source.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
+                        source.name.endsWith(".zip", true),
+                ) {
+                    "只能导入 .zip 或文件夹：${raw.fileName}"
+                }
+                require(
+                    runCatching { Files.size(source) }.getOrDefault(0L) <= MAX_PACK_BYTES,
+                ) {
+                    "文件过大（上限 512 MB）：${raw.fileName}"
+                }
+                require(
+                    runCatching {
+                        ZipFile(
+                            source.toFile(),
+                        ).use { true }
+                    }.getOrDefault(false),
+                ) {
+                    "不是有效的 ZIP：${raw.fileName}"
+                }
+            }
+            PreparedPackSource(source, safePackFilename(source.name), isDirectory)
+        }
+
+    /** 逐个复制已校验来源并登记结果；失败时由调用方删除本次已写入的目标。 */
+    private suspend fun copyPrepared(
+        directory: Path,
+        prepared: List<PreparedPackSource>,
+        folder: PackFolder,
+        context: JobContext?,
+        batch: PackImportBatch,
+    ) {
+        prepared.forEachIndexed { index, item ->
+            currentCoroutineContext().ensureActive()
+            val name = uniqueChildName(directory, item.name)
+            val target = directory.resolve(name)
+            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标已存在：$name" }
+            copyOne(directory, item, target, context)
+            batch.created.add(target)
+            batch.imported.add(
+                LocalPackEntry(
+                    filename = name,
+                    path = target,
+                    isDirectory = item.isDirectory,
+                    size =
+                        if (item.isDirectory) {
+                            0L
+                        } else {
+                            runCatching { Files.size(target) }.getOrDefault(0L)
+                        },
+                    modified =
+                        runCatching { Files.getLastModifiedTime(target).toMillis() }
+                            .getOrDefault(0L),
+                ),
+            )
+            context?.progress(
+                (index + 1).toFloat() / prepared.size,
+                "导入 ${folder.title} · $name",
+            )
+        }
+    }
+
+    /** 单项复制：先写同目录的隐藏临时项，成功后改名；任何结果都清理临时项。 */
+    private suspend fun copyOne(
+        directory: Path,
+        item: PreparedPackSource,
+        target: Path,
+        context: JobContext?,
+    ) {
+        val staging = directory.resolve("$PACK_STAGING_PREFIX${UUID.randomUUID()}")
+        try {
+            if (item.isDirectory) {
+                copyTree(item.source, staging)
+            } else {
+                Files.copy(item.source, staging)
+            }
+            context?.checkCancelled()
+            Files.move(staging, target)
+        } finally {
+            runCatching { deleteTreeOrFile(staging) }
+        }
+    }
+
+    /** 失败或取消时删除本次已导入的目标；单个删除失败不掩盖原始失败。 */
+    private fun rollbackImported(created: List<Path>) {
+        created.forEach { runCatching { deleteTreeOrFile(it) } }
+    }
 
     /** 删除一个包：移入回收站，不硬删；找不到或回收站失败返回 false。 */
     fun delete(
@@ -286,9 +339,9 @@ internal fun uniqueChildName(
 
     fun taken(candidate: String) = directory.resolve(candidate).exists(LinkOption.NOFOLLOW_LINKS)
     if (!taken(trimmed)) return trimmed
-    for (index in 2..999) {
+    for (index in 2..MAX_NAME_SUFFIX) {
         val candidate = "$base ($index)$extension"
-        if (candidate.length <= 120 && !taken(candidate)) return candidate
+        if (candidate.length <= MAX_NAME_LENGTH && !taken(candidate)) return candidate
     }
     error("同名文件过多，请改用其他名称")
 }

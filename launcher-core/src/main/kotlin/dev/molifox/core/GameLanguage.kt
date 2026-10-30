@@ -8,6 +8,7 @@ package dev.molifox.core
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import kotlin.io.path.createDirectories
@@ -20,6 +21,8 @@ import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
+private const val MAX_LANGUAGE_OPTIONS_BYTES = 2L * 1024 * 1024
+
 internal fun applyGameLanguage(
     store: LauncherStore,
     instance: GameInstance,
@@ -31,7 +34,10 @@ internal fun applyGameLanguage(
         !file.isSymbolicLink() &&
             (
                 !file.exists(NOFOLLOW_LINKS) ||
-                    (file.isRegularFile(NOFOLLOW_LINKS) && file.fileSize() <= 2L * 1024 * 1024)
+                    (
+                        file.isRegularFile(NOFOLLOW_LINKS) &&
+                            file.fileSize() <= MAX_LANGUAGE_OPTIONS_BYTES
+                    )
             ),
     ) {
         "游戏语言设置文件不可写或过大：$file"
@@ -53,6 +59,13 @@ internal fun applyGameLanguage(
     while (lines.lastOrNull() == "") lines.removeAt(lines.lastIndex)
     val updated = (lines + "lang:$code").joinToString(newline, postfix = newline)
     if (updated == old) return
+    writeLanguageOptions(file, updated)
+}
+
+private fun writeLanguageOptions(
+    file: Path,
+    updated: String,
+) {
     file.parent.createDirectories()
     val temporary = Files.createTempFile(file.parent, ".molifox-language-", ".tmp")
     try {

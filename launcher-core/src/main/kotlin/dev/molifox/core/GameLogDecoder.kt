@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+private const val MAX_BUFFERED_LOG_CHARS = 128 * 1024
+
 internal data class DecodedGameLog(
     val message: String,
     val error: Boolean,
@@ -32,34 +34,38 @@ internal class GameLogDecoder(
         if (end.containsMatchIn(line)) {
             val text = buffer.toString()
             event = null
-            val attributes =
-                Regex("(level|thread)=[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
-                    .findAll(text.substringBefore('>'))
-                    .associate { it.groupValues[1].lowercase() to xmlText(it.groupValues[2]) }
-            val message = body(text, "Message")
-            if (message == null) {
-                raw(text)
-                return
-            }
-            val level = attributes["level"].orEmpty().uppercase()
-            val thread = attributes["thread"].orEmpty()
-            val throwable = body(text, "Throwable")?.takeIf { it.isNotBlank() }
-            val prefix =
-                if (level.isBlank()) "" else "[${if (thread.isBlank()) "" else "$thread/"}$level] "
-            val rendered = prefix + message + (throwable?.let { "\n$it" } ?: "")
-            output(
-                DecodedGameLog(
-                    rendered,
-                    if (level.isBlank()) {
-                        isGameError(rendered)
-                    } else {
-                        level in setOf("ERROR", "FATAL")
-                    },
-                ),
-            )
-        } else if (buffer.length > 128 * 1024) {
+            emitEvent(text)
+        } else if (buffer.length > MAX_BUFFERED_LOG_CHARS) {
             flush()
         }
+    }
+
+    private fun emitEvent(text: String) {
+        val attributes =
+            Regex("(level|thread)=[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE)
+                .findAll(text.substringBefore('>'))
+                .associate { it.groupValues[1].lowercase() to xmlText(it.groupValues[2]) }
+        val message = body(text, "Message")
+        if (message == null) {
+            raw(text)
+            return
+        }
+        val level = attributes["level"].orEmpty().uppercase()
+        val thread = attributes["thread"].orEmpty()
+        val throwable = body(text, "Throwable")?.takeIf { it.isNotBlank() }
+        val prefix =
+            if (level.isBlank()) "" else "[${if (thread.isBlank()) "" else "$thread/"}$level] "
+        val rendered = prefix + message + (throwable?.let { "\n$it" } ?: "")
+        output(
+            DecodedGameLog(
+                rendered,
+                if (level.isBlank()) {
+                    isGameError(rendered)
+                } else {
+                    level in setOf("ERROR", "FATAL")
+                },
+            ),
+        )
     }
 
     fun flush() {

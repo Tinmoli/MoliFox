@@ -57,24 +57,34 @@ internal class InstalledContentIcons(
             } else {
                 localContentIcon(path, false)
             }
-        if (embedded != null) return embedded
-        if (!path.isRegularFile()) return null
-        val source = registeredSource(root, path, folder)
-        val url =
-            if (source != null) {
-                source.second.string("iconUrl").ifBlank {
-                    backend.project(source.first).string("icon_url")
+        return if (embedded != null) {
+            embedded
+        } else if (!path.isRegularFile()) {
+            null
+        } else {
+            val source = registeredSource(root, path, folder)
+            val url =
+                if (source != null) {
+                    source.second.string("iconUrl").ifBlank {
+                        backend.project(source.first).string("icon_url")
+                    }
+                } else if (identifyUnregistered && folder == PackFolder.ShaderPacks) {
+                    identifiedIcon(path, folder)
+                } else {
+                    ""
                 }
-            } else if (identifyUnregistered && folder == PackFolder.ShaderPacks) {
-                identifiedIcon(path, folder)
-            } else {
-                ""
-            }
+            thumbnailWithinLimit(url)
+        }
+    }
+
+    /** 下载并校验缩略图尺寸；没有地址、读不出图片或尺寸超限时返回 null。 */
+    private suspend fun thumbnailWithinLimit(url: String): ByteArray? {
         if (url.isBlank()) return null
         val bytes = network.thumbnail(url)
-        val image = ImageIO.read(ByteArrayInputStream(bytes)) ?: return null
+        val image = ImageIO.read(ByteArrayInputStream(bytes))
         return bytes.takeIf {
-            image.width in 1..MAX_CONTENT_ICON_DIMENSION &&
+            image != null &&
+                image.width in 1..MAX_CONTENT_ICON_DIMENSION &&
                 image.height in 1..MAX_CONTENT_ICON_DIMENSION
         }
     }
@@ -91,20 +101,25 @@ internal class InstalledContentIcons(
                     "$api/version_file/$hash?algorithm=sha512",
                     "official",
                 ).asJsonObject
-        if (version.array("files").none {
+        val hashMatches =
+            version.array("files").any {
                 it.asJsonObject
                     .obj("hashes")
                     .string("sha512")
                     .equals(hash, true)
             }
-        ) {
-            return ""
+        val project =
+            if (hashMatches) {
+                val id = version.string("project_id")
+                if (id.isBlank()) null else backend.project(id)
+            } else {
+                null
+            }
+        return if (project == null || project.string("project_type") != folder.kind) {
+            ""
+        } else {
+            project.string("icon_url")
         }
-        val id = version.string("project_id")
-        if (id.isBlank()) return ""
-        val project = backend.project(id)
-        if (project.string("project_type") != folder.kind) return ""
-        return project.string("icon_url")
     }
 
     private fun registeredSource(
@@ -113,25 +128,32 @@ internal class InstalledContentIcons(
         folder: PackFolder,
     ): Pair<String, JsonObject>? {
         val registry = root.resolve(".molifox-content.json")
-        if (!registry.isRegularFile() || registry.isSymbolicLink()) return null
-        val bytes =
-            Files
-                .newInputStream(
-                    registry,
-                ).use { it.readNBytes(MAX_CONTENT_RECORD_BYTES + 1) }
-        require(bytes.size <= MAX_CONTENT_RECORD_BYTES) { "资源安装登记超过大小限制" }
-        val entries = JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject.entrySet()
-        val matches =
-            entries.filter { (_, value) ->
-                value.isJsonObject && value.asJsonObject.string("folder") == folder.directory &&
-                    value.asJsonObject.string("file") == path.name
+        val match =
+            if (registry.isRegularFile() && !registry.isSymbolicLink()) {
+                val bytes =
+                    Files
+                        .newInputStream(
+                            registry,
+                        ).use { it.readNBytes(MAX_CONTENT_RECORD_BYTES + 1) }
+                require(bytes.size <= MAX_CONTENT_RECORD_BYTES) { "资源安装登记超过大小限制" }
+                val entries =
+                    JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject.entrySet()
+                entries.singleOrNull { (_, value) ->
+                    value.isJsonObject && value.asJsonObject.string("folder") == folder.directory &&
+                        value.asJsonObject.string("file") == path.name
+                }
+            } else {
+                null
             }
-        if (matches.size != 1) return null
-        val (id, value) = matches.single()
+        val (id, value) = match ?: return null
         val source = value.asJsonObject
         val algorithm = source.string("hashAlgorithm")
-        if (algorithm !in setOf("SHA-1", "SHA-512")) return null
-        if (!digest(path, algorithm).equals(source.string("hash"), true)) return null
-        return id to source
+        return if (algorithm in setOf("SHA-1", "SHA-512") &&
+            digest(path, algorithm).equals(source.string("hash"), true)
+        ) {
+            id to source
+        } else {
+            null
+        }
     }
 }

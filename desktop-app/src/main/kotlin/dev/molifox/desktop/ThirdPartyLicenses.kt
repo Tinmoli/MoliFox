@@ -23,6 +23,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/** 许可表每行固定为 组件 / 许可 / 用途 / 链接 四列，链接列固定在最后。 */
+private const val LICENSE_TABLE_COLUMN_COUNT = 4
+private const val URL_COLUMN_INDEX = 3
+
 /** 一条第三方组件：名称、许可标识、用途与项目/许可链接。 */
 internal data class ThirdPartyLicense(
     val name: String,
@@ -56,12 +60,13 @@ internal object ThirdPartyLicenseCatalog {
             .filter { it.startsWith("|") && it.endsWith("|") && it.length > 2 }
             .map { line -> line.substring(1, line.length - 1).split('|').map { it.trim() } }
             .filter { cells ->
-                cells.size == 4 &&
+                cells.size == LICENSE_TABLE_COLUMN_COUNT &&
                     cells[0] != "组件" &&
-                    cells.take(3).none { it.matches(separator) } &&
-                    cells[3].startsWith("https://")
-            }.map { cells -> ThirdPartyLicense(cells[0], cells[1], cells[2], cells[3]) }
-            .toList()
+                    cells.take(URL_COLUMN_INDEX).none { it.matches(separator) } &&
+                    cells[URL_COLUMN_INDEX].startsWith("https://")
+            }.map { cells ->
+                ThirdPartyLicense(cells[0], cells[1], cells[2], cells[URL_COLUMN_INDEX])
+            }.toList()
 }
 
 /** 关于页「第三方许可」：只读清单，每项一行许可与一条可打开的项目链接。 */
@@ -73,7 +78,7 @@ internal fun ThirdPartyLicensesDialog(
     val entries = ThirdPartyLicenseCatalog.entries
     Modal(
         "第三方许可",
-        "随程序分发或首次启动下载的第三方组件；许可以上游原文为准。",
+        "第三方组件与协议参考来源；用途已分别标明，许可以上游原文为准。",
         720.dp,
         onDismiss,
     ) {

@@ -39,9 +39,9 @@ jobs:
         with:
           name: MoliFox-${{ runner.os }}-x64
           path: |
-            MoliFox.exe
+            MoliFox-*-windows-x86_64.exe
             build/validation/windows-package.sha256
-            MoliFox-linux-x64.run
+            MoliFox-*-linux-x86_64.run
             build/validation/linux-package.sha256
             LICENSE
             assets/legal/THIRD_PARTY.md

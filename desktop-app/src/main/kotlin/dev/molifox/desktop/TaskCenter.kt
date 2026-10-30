@@ -66,6 +66,11 @@ import dev.molifox.core.LauncherState
 import kotlinx.coroutines.delay
 import java.util.Locale
 
+private const val TASK_MIB_BYTES = 1024 * 1024
+private const val TASK_MIB_DIVISOR = 1048576.0
+private const val TASK_KIB_BYTES = 1024
+private const val TASK_KIB_DIVISOR = 1024.0
+
 private const val COMPLETED_TASK_HIDE_DELAY_MILLIS = 5_000L
 
 private fun DownloadJob.active() = status == JobStatus.Running || status == JobStatus.Queued
@@ -351,6 +356,7 @@ private fun TaskDetailCard(
             )
             LinearProgressIndicator(
                 progress = { job.progress.coerceIn(0f, 1f) },
+                drawStopIndicator = {},
                 modifier = Modifier.fillMaxWidth().height(4.dp),
             )
             Row(
@@ -388,7 +394,7 @@ private fun TaskDetailCard(
 
 private fun transferSize(bytes: Long): String =
     when {
-        bytes >= 1024 * 1024 -> String.format(Locale.ROOT, "%.1f MiB", bytes / 1048576.0)
-        bytes >= 1024 -> String.format(Locale.ROOT, "%.1f KiB", bytes / 1024.0)
+        bytes >= TASK_MIB_BYTES -> String.format(Locale.ROOT, "%.1f MiB", bytes / TASK_MIB_DIVISOR)
+        bytes >= TASK_KIB_BYTES -> String.format(Locale.ROOT, "%.1f KiB", bytes / TASK_KIB_DIVISOR)
         else -> "$bytes B"
     }

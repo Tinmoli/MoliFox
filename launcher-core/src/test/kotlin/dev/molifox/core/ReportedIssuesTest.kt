@@ -193,21 +193,28 @@ class ReportedIssuesTest {
                 first.writeText("bad partial download")
                 assertNotNull(cache.load(account, false))
                 assertTrue(validSkinTexture(first))
-                val other =
-                    requireNotNull(
-                        cache.load(
-                            account.copy(
-                                skinUrl = "https://textures.minecraft.net/texture/${"b".repeat(
-                                    64,
-                                )}",
-                            ),
-                            false,
-                        ),
-                    )
-                assertNotEquals(first, other)
+                assertOtherSkinGetsItsOwnKey(cache, account, first)
                 assertEquals(4, requests)
             }
         }
+
+    /** 换用另一个纹理地址后缓存键不同，且不影响已缓存的图。 */
+    private suspend fun assertOtherSkinGetsItsOwnKey(
+        cache: AccountSkinCache,
+        account: Account,
+        first: Path,
+    ) {
+        val other =
+            requireNotNull(
+                cache.load(
+                    account.copy(
+                        skinUrl = "https://textures.minecraft.net/texture/${"b".repeat(64)}",
+                    ),
+                    false,
+                ),
+            )
+        assertNotEquals(first, other)
+    }
 
     @Test
     fun `skin errors keep a verified cache and cancellation propagates`() =
@@ -315,87 +322,108 @@ class ReportedIssuesTest {
                     override val availableMemoryMb = 1024
                 }
             val store = LauncherStore(platform, temporary.resolve("launcher"))
-            val instance =
-                GameInstance(
-                    name = "memory",
-                    gameVersion = "fixture",
-                    versionId = "fixture",
-                    installed = true,
-                    autoMemory = true,
-                    initialMemoryMb = 128,
-                )
+            val instance = memoryProbeInstance()
             store.mutate { it.copy(instances = listOf(instance)) }
-            val source =
-                temporary.resolve("MemoryProbe.java").apply {
-                    writeText(
-                        "public class MemoryProbe { public static void main(String[] args) { System.out.println(Runtime.getRuntime().maxMemory()/1048576); System.out.println(System.getProperty(\"user.dir\")); } }",
-                    )
-                }
-            assertEquals(
-                0,
-                ToolProvider
-                    .getSystemJavaCompiler()
-                    .run(
-                        null,
-                        null,
-                        null,
-                        "--release",
-                        "17",
-                        "-d",
-                        temporary.toString(),
-                        source.toString(),
-                    ),
-            )
-            val folder =
-                store.minecraftRoot.resolve("versions/fixture").apply { createDirectories() }
-            JarOutputStream(folder.resolve("fixture.jar").outputStream()).use { jar ->
-                jar.putNextEntry(JarEntry("MemoryProbe.class"))
-                jar.write(temporary.resolve("MemoryProbe.class").readBytes())
-                jar.closeEntry()
-            }
-            val profile =
-                ResolvedProfile(
-                    "fixture",
-                    "fixture",
-                    gson
-                        .toJsonTree(
-                            mapOf("mainClass" to "MemoryProbe", "libraries" to emptyList<String>()),
-                        ).asJsonObject,
-                )
-            val runtime =
-                JavaRuntime(
-                    Path
-                        .of(System.getProperty("java.home"), "bin", platform.javaExecutable)
-                        .toString(),
-                    Runtime.version().feature(),
-                    "fixture",
-                    "x64",
-                )
+            compileMemoryProbe()
+            installMemoryProbeJar(store)
             val plan =
                 LaunchPlanner(store)
                     .plan(
                         instance,
-                        profile,
-                        runtime,
+                        memoryProbeProfile(),
+                        memoryProbeRuntime(platform.javaExecutable),
                         GameCredentials("Fixture", offlineUuid("Fixture")),
                         false,
                     )
-            assertContains(plan.arguments, "-Xmx512M")
-            assertContains(plan.arguments, "-Xms128M")
-            plan.gameDirectory.createDirectories()
-            val process =
-                ProcessBuilder(listOf(plan.executable) + plan.arguments)
-                    .directory(plan.gameDirectory.toFile())
-                    .redirectErrorStream(true)
-                    .start()
-            try {
-                assertTrue(process.waitFor(20, TimeUnit.SECONDS))
-                val output = process.inputStream.bufferedReader().readText()
-                assertEquals(0, process.exitValue(), output)
-                assertContains(output, "512")
-                assertContains(output, plan.gameDirectory.toString())
-            } finally {
-                if (process.isAlive) process.destroyForcibly()
-            }
+            assertMemoryProbeOutput(plan)
         }
+
+    private fun memoryProbeInstance(): GameInstance =
+        GameInstance(
+            name = "memory",
+            gameVersion = "fixture",
+            versionId = "fixture",
+            installed = true,
+            autoMemory = true,
+            initialMemoryMb = 128,
+        )
+
+    /** 编译探针类：启动后打印实际最大堆与工作目录，供下面的断言核对。 */
+    private fun compileMemoryProbe() {
+        val source =
+            temporary.resolve("MemoryProbe.java").apply {
+                writeText(
+                    """public class MemoryProbe {
+                        public static void main(String[] args) {
+                            System.out.println(Runtime.getRuntime().maxMemory()/1048576);
+                            System.out.println(System.getProperty("user.dir"));
+                        } }""",
+                )
+            }
+        assertEquals(
+            0,
+            ToolProvider
+                .getSystemJavaCompiler()
+                .run(
+                    null,
+                    null,
+                    null,
+                    "--release",
+                    "17",
+                    "-d",
+                    temporary.toString(),
+                    source.toString(),
+                ),
+        )
+    }
+
+    /** 把编译好的探针类打进实例的 `versions/fixture/fixture.jar`。 */
+    private fun installMemoryProbeJar(store: LauncherStore) {
+        val folder =
+            store.minecraftRoot.resolve("versions/fixture").apply { createDirectories() }
+        JarOutputStream(folder.resolve("fixture.jar").outputStream()).use { jar ->
+            jar.putNextEntry(JarEntry("MemoryProbe.class"))
+            jar.write(temporary.resolve("MemoryProbe.class").readBytes())
+            jar.closeEntry()
+        }
+    }
+
+    private fun memoryProbeProfile(): ResolvedProfile =
+        ResolvedProfile(
+            "fixture",
+            "fixture",
+            gson
+                .toJsonTree(
+                    mapOf("mainClass" to "MemoryProbe", "libraries" to emptyList<String>()),
+                ).asJsonObject,
+        )
+
+    private fun memoryProbeRuntime(executable: String): JavaRuntime =
+        JavaRuntime(
+            Path.of(System.getProperty("java.home"), "bin", executable).toString(),
+            Runtime.version().feature(),
+            "fixture",
+            "x64",
+        )
+
+    /** 真正启动子进程：参数里的堆大小与隔离工作目录必须与计划一致。 */
+    private fun assertMemoryProbeOutput(plan: LaunchPlan) {
+        assertContains(plan.arguments, "-Xmx512M")
+        assertContains(plan.arguments, "-Xms128M")
+        plan.gameDirectory.createDirectories()
+        val process =
+            ProcessBuilder(listOf(plan.executable) + plan.arguments)
+                .directory(plan.gameDirectory.toFile())
+                .redirectErrorStream(true)
+                .start()
+        try {
+            assertTrue(process.waitFor(20, TimeUnit.SECONDS))
+            val output = process.inputStream.bufferedReader().readText()
+            assertEquals(0, process.exitValue(), output)
+            assertContains(output, "512")
+            assertContains(output, plan.gameDirectory.toString())
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
+    }
 }

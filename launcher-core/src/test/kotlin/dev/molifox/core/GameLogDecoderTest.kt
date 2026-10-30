@@ -33,10 +33,12 @@ class GameLogDecoderTest {
         val logs = mutableListOf<DecodedGameLog>()
         val decoder = GameLogDecoder(logs::add)
         decoder.accept(
-            "<log4j:Event level=\"INFO\" thread=\"main\"><log4j:Message>A &amp; B &#x4E2D;</log4j:Message></log4j:Event>",
+            "<log4j:Event level=\"INFO\" thread=\"main\">" +
+                "<log4j:Message>A &amp; B &#x4E2D;</log4j:Message></log4j:Event>",
         )
         decoder.accept(
-            "<log4j:Event level=\"WARN\"><log4j:Message><![CDATA[A & B]]></log4j:Message></log4j:Event>",
+            "<log4j:Event level=\"WARN\">" +
+                "<log4j:Message><![CDATA[A & B]]></log4j:Message></log4j:Event>",
         )
         decoder.accept("MOLIFOX_GAME_STARTED")
         decoder.accept("<log4j:Event level=\"ERROR\">")

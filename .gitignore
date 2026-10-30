@@ -4,7 +4,10 @@
 /MoliFox/
 /.minecraft/
 MoliFox.exe
+MoliFox-*.exe
 MoliFox-linux-*.run
+MoliFox-*-linux-x86_64.run
+MoliFox-*-windows-x86_64.exe
 .gradle-home/
 .kotlin/
 **/build/

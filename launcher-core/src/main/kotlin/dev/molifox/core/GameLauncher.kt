@@ -5,17 +5,21 @@
 
 package dev.molifox.core
 
+import com.google.gson.JsonObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -34,6 +38,43 @@ import kotlin.io.path.name
 import kotlin.io.path.reader
 import kotlin.io.path.useLines
 
+/** 每个命令行参数额外占用的引号与空格。 */
+private const val ARGUMENT_QUOTE_OVERHEAD = 3
+
+/** 启动参数在 Windows 上的长度上限：超过后改用 @argfile，主类与游戏参数另算。 */
+private const val WINDOWS_ARGUMENT_LENGTH_LIMIT = 24_000
+
+/** 完整启动命令（含 Java 可执行文件路径）在 Windows 上的上限。 */
+private const val WINDOWS_COMMAND_LENGTH_LIMIT = 30_000
+
+/** natives 依赖包解压后的体积上限（512 MiB）。 */
+private const val MAX_NATIVES_BYTES = 512L * 1024 * 1024
+
+/** 模块化加载器模板里的忽略列表参数前缀。 */
+private const val IGNORE_LIST_PREFIX = "-DignoreList="
+
+/** Java 从哪个主版本开始支持 @argfile：更老的版本只能把长命令留在命令行上。 */
+private const val MIN_ARGUMENT_FILE_JAVA_VERSION = 9
+
+/** 毫秒换算成秒（游戏时长以秒记录）。 */
+private const val MILLIS_PER_SECOND = 1000
+
+/** 启动准备阶段的进度节点：检查文件、选 Java、验证账户、组装参数、启动前命令。 */
+private const val FILE_CHECK_START_PROGRESS = 0.01f
+private const val FILE_CHECK_END_PROGRESS = 0.35f
+private const val JAVA_SELECT_PROGRESS = 0.36f
+private const val ACCOUNT_PROGRESS = 0.4f
+private const val ARGUMENT_PROGRESS = 0.7f
+private const val PRELAUNCH_PROGRESS = 0.85f
+
+/** 游戏运行期间轮询 quick play 记录的间隔（毫秒）。 */
+private const val ACTIVITY_POLL_INTERVAL_MS = 750L
+
+/** 设置进程优先级的外部命令超时、输出读取等待与失败输出预览长度。 */
+private const val PRIORITY_COMMAND_TIMEOUT_SECONDS = 15L
+private const val PRIORITY_READER_JOIN_MILLIS = 500L
+private const val PRIORITY_OUTPUT_PREVIEW_CHARS = 300
+
 data class LaunchPlan(
     val executable: String,
     val arguments: List<String>,
@@ -45,11 +86,416 @@ data class LaunchPlan(
     val warnings: List<String> = emptyList(),
 )
 
+/** 一次启动计划解析出的路径：游戏目录、natives、主文件与依赖 classpath。 */
+private class PreparedGameFiles(
+    val root: Path,
+    val game: Path,
+    val natives: Path,
+    val jar: Path,
+    val classpathValue: String,
+    val assets: Path,
+    val gameAssets: Path,
+    val indexId: String,
+)
+
+/** 一次启动真正生效的设置与窗口/内存参数。 */
+private class LaunchParameters(
+    val settings: LauncherSettings,
+    val advanced: AdvancedLaunchSettings,
+    val options: ResolvedLaunchOptions,
+)
+
+/** 版本模板需要的占位符、feature 开关与已展开的游戏参数。 */
+private class LaunchArguments(
+    val values: Map<String, String>,
+    val features: Map<String, Boolean>,
+    val gameArguments: List<String>,
+    val targetArguments: List<String>,
+)
+
+/** 实例设置与占位符：把实例配置和版本模板解析成能拼进启动命令的值。 */
+private class LaunchParameterResolver(
+    private val store: LauncherStore,
+) {
+    /** 有效启动设置与真正进入命令的窗口/内存参数：实例值优先，无效值回退并记警告。 */
+    fun resolveLaunchParameters(
+        instance: GameInstance,
+        runtime: JavaRuntime,
+    ): LaunchParameters {
+        val settings = store.data.settings
+        val advanced = effectiveLaunchSettings(settings, instance)
+        validateAdvancedLaunchSettings(advanced, store.platform.osName)
+        val options =
+            resolveInstanceLaunchOptions(
+                settings,
+                instance,
+                store.launcherWindowSize,
+                store.platform.totalMemoryMb,
+                store.platform.availableMemoryMb,
+                runtime.architecture,
+                advanced,
+            )
+        return LaunchParameters(settings, advanced, options)
+    }
+
+    /** 版本占位符、feature 开关与游戏参数：quick play 目标在这里进入模板。 */
+    fun resolveArguments(
+        instance: GameInstance,
+        files: PreparedGameFiles,
+        parameters: LaunchParameters,
+        profile: ResolvedProfile,
+        credentials: GameCredentials,
+        runtimeDirectory: Path?,
+        target: GameLaunchTarget?,
+    ): LaunchArguments {
+        val quickPlay = supportsQuickPlay(profile, instance.gameVersion)
+        val recording = runtimeDirectory?.resolve("quick-play.json")
+        val targetArguments = quickPlayArguments(target, quickPlay, recording, instance.gameVersion)
+        requireLaunchWorld(target, files.game)
+        val features = launchFeatures(quickPlay, recording, target)
+        val values =
+            accountArgumentValues(credentials, parameters.settings, profile) +
+                directoryArgumentValues(files) +
+                windowArgumentValues(parameters.options, recording, target)
+        return LaunchArguments(
+            values,
+            features,
+            resolveGameArguments(profile, values, store.platform, features),
+            targetArguments,
+        )
+    }
+
+    /** 指定存档启动时目标世界必须已解压就位。 */
+    private fun requireLaunchWorld(
+        target: GameLaunchTarget?,
+        game: Path,
+    ) {
+        if (target?.kind != EntryKind.World) return
+        val world = safePath(game.resolve("saves"), target.key)
+        require(world.resolve("level.dat").isRegularFile()) {
+            "此存档不存在或仍为压缩包，请先解压到 saves"
+        }
+    }
+
+    /** 账户与版本占位符：登录令牌、客户端 ID 与启动器版本。 */
+    private fun accountArgumentValues(
+        credentials: GameCredentials,
+        settings: LauncherSettings,
+        profile: ResolvedProfile,
+    ): Map<String, String> =
+        mapOf(
+            "auth_player_name" to credentials.name,
+            "auth_uuid" to credentials.uuid,
+            "auth_access_token" to credentials.accessToken,
+            "auth_session" to "token:${credentials.accessToken}:${credentials.uuid}",
+            "user_type" to credentials.userType,
+            "user_properties" to "{}",
+            "auth_xuid" to "",
+            "clientid" to settings.microsoftClientId,
+            "version_name" to profile.id,
+            "version_type" to profile.json.string("type", "release"),
+            "launcher_name" to "MoliFox",
+            "launcher_version" to LAUNCHER_VERSION,
+        )
+
+    /** 目录与 classpath 占位符。 */
+    private fun directoryArgumentValues(files: PreparedGameFiles): Map<String, String> =
+        mapOf(
+            "game_directory" to files.game.toString(),
+            "assets_root" to files.assets.toString(),
+            "assets_index_name" to files.indexId,
+            "game_assets" to files.gameAssets.toString(),
+            "natives_directory" to files.natives.toString(),
+            "library_directory" to files.root.resolve("libraries").toString(),
+            "classpath" to files.classpathValue,
+            "classpath_separator" to store.platform.classpathSeparator,
+        )
+
+    /** 窗口与 quick play 占位符：目标写进对应参数，其余留空。 */
+    private fun windowArgumentValues(
+        options: ResolvedLaunchOptions,
+        recording: Path?,
+        target: GameLaunchTarget?,
+    ): Map<String, String> =
+        mapOf(
+            "resolution_width" to options.width.toString(),
+            "resolution_height" to options.height.toString(),
+            "quickPlayPath" to recording?.toAbsolutePath()?.toString().orEmpty(),
+            "quickPlaySingleplayer" to
+                target?.takeIf { it.kind == EntryKind.World }?.key.orEmpty(),
+            "quickPlayMultiplayer" to
+                target?.takeIf { it.kind == EntryKind.Server }?.key.orEmpty(),
+            "quickPlayRealms" to "",
+        )
+
+    /** 版本 JSON 的 feature 开关：窗口尺寸与 quick play 能力声明。 */
+    private fun launchFeatures(
+        quickPlay: Boolean,
+        recording: Path?,
+        target: GameLaunchTarget?,
+    ): Map<String, Boolean> =
+        mapOf(
+            "has_custom_resolution" to true,
+            "is_demo_user" to false,
+            "has_quick_plays_support" to (quickPlay && recording != null),
+            "is_quick_play_singleplayer" to (target?.kind == EntryKind.World),
+            "is_quick_play_multiplayer" to (target?.kind == EntryKind.Server),
+            "is_quick_play_realms" to false,
+        )
+
+    /** 现代版本用 arguments.game，旧版本用 minecraftArguments 并逐个替换占位符。 */
+    private fun resolveGameArguments(
+        profile: ResolvedProfile,
+        values: Map<String, String>,
+        platform: PlatformServices,
+        features: Map<String, Boolean>,
+    ): List<String> =
+        if (profile.json.string("minecraftArguments").isNotBlank()) {
+            splitArguments(profile.json.string("minecraftArguments")).map { substitute(it, values) }
+        } else {
+            expandArguments(profile.json.obj("arguments").array("game"), values, platform, features)
+        }
+}
+
+/** 命令行组装：JVM 前缀、模板参数、@argfile 改写与整条命令的长度校验。 */
+private class LaunchCommandAssembler(
+    private val store: LauncherStore,
+    /** 外置认证账户需要的 authlib-injector；离线与微软账户不会使用。 */
+    private val authlibInjector: AuthlibInjector? = null,
+) {
+    /** 固定 JVM 前缀与模板 JVM 参数：模板里的 -Xmx/-Xms 会被去掉，避免与实例设置重复。 */
+    private suspend fun baseCommand(
+        files: PreparedGameFiles,
+        parameters: LaunchParameters,
+        profile: ResolvedProfile,
+        values: Map<String, String>,
+        platform: PlatformServices,
+        features: Map<String, Boolean>,
+        credentials: GameCredentials,
+    ): MutableList<String> {
+        val command = jvmRuntimeFlags(parameters.options.memory)
+        val logging = profile.json.obj("logging").obj("client")
+        if (
+            logging.string("argument").isNotBlank() &&
+            logging.obj("file").string("id").isNotBlank()
+        ) {
+            val config =
+                safePath(
+                    files.root.resolve("assets/log_configs"),
+                    logging.obj("file").string("id"),
+                )
+            command += logging.string("argument").replace("\${path}", config.toString())
+        }
+        command += jvmArguments(profile, values, platform, features, files)
+        command += splitArguments(parameters.options.extraJvmArgs)
+        // 外置认证：在生成 @argfile 与长度校验之前加入，确保长参数也被正确转义。
+        if (credentials.authlibServer.isNotBlank()) command += authlibArguments(credentials)
+        return command
+    }
+
+    /** 固定 JVM 前缀：内存、UTF-8 编码与关闭远程 codebase 的安全参数。 */
+    private fun jvmRuntimeFlags(memory: GameMemoryAllocation): MutableList<String> =
+        mutableListOf(
+            "-Xms${memory.initialMb}M",
+            "-Xmx${memory.maximumMb}M",
+            "-Dfile.encoding=UTF-8",
+            "-Dstdout.encoding=UTF-8",
+            "-Dstderr.encoding=UTF-8",
+            "-Dlog4j2.formatMsgNoLookups=true",
+            "-Djava.rmi.server.useCodebaseOnly=true",
+            "-Dcom.sun.jndi.rmi.object.trustURLCodebase=false",
+        )
+
+    /** 外置认证的 javaagent 参数：注入器缺失时按下载失败提示重启。 */
+    private suspend fun authlibArguments(credentials: GameCredentials): List<String> {
+        val injector =
+            authlibInjector
+                ?: throw AuthlibException(
+                    AuthlibError.DownloadFailed,
+                    "外置认证组件不可用，请重启启动器后重试",
+                )
+        return injector.jvmArguments(
+            store.dataDirectory.resolve("cache"),
+            credentials.authlibServer,
+        )
+    }
+
+    /** 模板 JVM 参数：旧版本回落到 library.path 与 classpath，模块化加载器修正忽略列表。 */
+    private fun jvmArguments(
+        profile: ResolvedProfile,
+        values: Map<String, String>,
+        platform: PlatformServices,
+        features: Map<String, Boolean>,
+        files: PreparedGameFiles,
+    ): List<String> {
+        val modern = profile.json.obj("arguments")
+        val expanded =
+            if (modern.array("jvm").size() > 0) {
+                expandArguments(modern.array("jvm"), values, platform, features)
+            } else {
+                listOf("-Djava.library.path=${files.natives}", "-cp", files.classpathValue)
+            }
+        return expanded
+            .map { argument ->
+                ignoreListArgument(argument, profile.id, files.jar.fileName.toString())
+            }.filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
+    }
+
+    /** 模块化加载器必须忽略实际继承的 JAR：模板里的 `<版本 ID>.jar` 换成真实主文件名。 */
+    private fun ignoreListArgument(
+        argument: String,
+        profileId: String,
+        jarName: String,
+    ): String {
+        if (!argument.startsWith(IGNORE_LIST_PREFIX)) return argument
+        val entries = argument.removePrefix(IGNORE_LIST_PREFIX).split(',')
+        val mapped = entries.joinToString(",") { if (it == "$profileId.jar") jarName else it }
+        return IGNORE_LIST_PREFIX + mapped
+    }
+
+    /** Windows 命令行超长时改写 @argfile：Java 9+ 才支持，且必须能用当前编码写完。 */
+    private fun argumentFileInvocation(
+        command: MutableList<String>,
+        directory: Path,
+        prepareFiles: Boolean,
+        platform: PlatformServices,
+        runtime: JavaRuntime,
+    ): MutableList<String> {
+        val length = command.sumOf { it.length + ARGUMENT_QUOTE_OVERHEAD }
+        val tooLong =
+            prepareFiles &&
+                platform.osName == "windows" &&
+                length > WINDOWS_ARGUMENT_LENGTH_LIMIT
+        if (!tooLong) return command
+        require(runtime.majorVersion >= MIN_ARGUMENT_FILE_JAVA_VERSION) {
+            "启动参数超过 Java 8 的 Windows 长度限制，请将游戏目录改为更短的路径"
+        }
+        val argumentFile = directory.resolve(".molifox-jvm.args")
+        // The native Java launcher parses @files before file.encoding takes effect.
+        val charset =
+            java.nio.charset.Charset
+                .forName(System.getProperty("native.encoding", "UTF-8"))
+        val text = command.joinToString("\n") { quoteJavaArgument(it) }
+        require(charset.newEncoder().canEncode(text)) {
+            "当前 Java 无法编码此游戏目录，请缩短目录或使用对应版本的 UTF-8 Java 环境"
+        }
+        Files.writeString(argumentFile, text, charset)
+        return mutableListOf("@${argumentFile.toAbsolutePath()}")
+    }
+
+    /** 主类、quick play、窗口与额外游戏参数；Windows 上再校验整条命令长度。 */
+    suspend fun buildPlan(
+        files: PreparedGameFiles,
+        parameters: LaunchParameters,
+        profile: ResolvedProfile,
+        arguments: LaunchArguments,
+        credentials: GameCredentials,
+        prepareFiles: Boolean,
+        runtime: JavaRuntime,
+        runtimeDirectory: Path?,
+    ): LaunchPlan {
+        val platform = store.platform
+        val command =
+            baseCommand(
+                files,
+                parameters,
+                profile,
+                arguments.values,
+                platform,
+                arguments.features,
+                credentials,
+            )
+        val invocation =
+            argumentFileInvocation(
+                command,
+                runtimeDirectory ?: files.game,
+                prepareFiles,
+                platform,
+                runtime,
+            )
+        invocation += profile.mainClass
+        invocation += appendMissingQuickPlay(arguments.gameArguments, arguments.targetArguments)
+        invocation += windowArguments(parameters.options, arguments.gameArguments)
+        // 额外游戏参数最后追加，位于标准参数（宽度/高度/全屏）之后。
+        invocation += parameters.options.extraGameArgs
+        requireWindowsCommandLength(invocation, prepareFiles, platform, runtime.path)
+        return LaunchPlan(
+            selectExecutable(platform, runtime, parameters.advanced),
+            invocation,
+            files.game,
+            parameters.advanced.environmentVariables.toMap(),
+            summary = parameters.options.summary,
+            warnings = parameters.options.warnings,
+        )
+    }
+
+    /** 窗口参数：模板已给出 --width 时不再追加，避免重复；全屏同理。 */
+    private fun windowArguments(
+        options: ResolvedLaunchOptions,
+        gameArguments: List<String>,
+    ): List<String> {
+        val arguments = mutableListOf<String>()
+        if (!gameArguments.contains("--width")) {
+            arguments +=
+                listOf("--width", options.width.toString(), "--height", options.height.toString())
+        }
+        if (options.fullscreen && "--fullscreen" !in gameArguments) arguments += "--fullscreen"
+        return arguments
+    }
+
+    /** Windows 命令总长度有限：超长时提示缩短游戏目录或附加游戏参数。 */
+    private fun requireWindowsCommandLength(
+        invocation: List<String>,
+        prepareFiles: Boolean,
+        platform: PlatformServices,
+        runtimePath: String,
+    ) {
+        if (!prepareFiles || platform.osName != "windows") return
+        val length = invocation.sumOf { it.length + ARGUMENT_QUOTE_OVERHEAD } + runtimePath.length
+        require(length < WINDOWS_COMMAND_LENGTH_LIMIT) {
+            "启动命令过长，请缩短附加游戏参数或游戏目录"
+        }
+    }
+
+    /** Windows 上勾选「显示 Java 控制台」且当前是 javaw.exe 时改用 java.exe。 */
+    private fun selectExecutable(
+        platform: PlatformServices,
+        runtime: JavaRuntime,
+        advanced: AdvancedLaunchSettings,
+    ): String =
+        if (
+            platform.osName == "windows" &&
+            advanced.useJavaConsoleExecutable &&
+            Path
+                .of(runtime.path)
+                .fileName
+                .toString()
+                .equals("javaw.exe", true)
+        ) {
+            Path
+                .of(runtime.path)
+                .resolveSibling("java.exe")
+                .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
+                .toString()
+        } else {
+            runtime.path
+        }
+}
+
 class LaunchPlanner(
     private val store: LauncherStore,
     /** 外置认证账户需要的 authlib-injector；离线与微软账户不会使用。 */
     private val authlibInjector: AuthlibInjector? = null,
 ) {
+    private val parameterResolver = LaunchParameterResolver(store)
+    private val commandAssembler = LaunchCommandAssembler(store, authlibInjector)
+
+    /**
+     * 组装一次启动的全部参数：补齐 natives 与资源、解析实例设置与账户，再展开版本模板。
+     *
+     * 各步骤拆在 `prepareGameFiles`、`resolveLaunchParameters`、`resolveArguments`、`buildPlan`
+     * 里，调用顺序、进度回调与异常点与原实现一致。
+     */
     suspend fun plan(
         instance: GameInstance,
         profile: ResolvedProfile,
@@ -60,304 +506,161 @@ class LaunchPlanner(
         target: GameLaunchTarget? = null,
     ): LaunchPlan =
         withContext(Dispatchers.IO) {
-            val platform = store.platform
-            val root = store.minecraftRoot(instance)
-            val game =
-                store.instancePath(instance.id).apply { if (prepareFiles) createDirectories() }
-            val resolver = VersionResolver(root, platform)
-            val libraries = resolver.libraries(profile)
-            val natives =
-                (runtimeDirectory ?: game).resolve("natives").apply {
-                    if (prepareFiles) createDirectories()
-                }
-            for (library in if (prepareFiles) libraries else emptyList()) {
-                val excluded =
-                    library.obj("extract").array("exclude").map { it.asString } + "META-INF/"
-                for ((artifact, native) in resolver.libraryArtifacts(library)) {
-                    if (!native) continue
-                    require(artifact.target.isRegularFile()) { "缺少本地依赖，请先修复游戏文件" }
-                    ZipFile(artifact.target.toFile()).use { zip ->
-                        for (
-                        (entry, target) in
-                        validateArchive(zip, "", natives, 512L * 1024 * 1024)
-                        ) {
-                            ensureActive()
-                            if (excluded.any { entry.name.startsWith(it) }) continue
-                            target.parent.createDirectories()
-                            zip.getInputStream(entry).use {
-                                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
-                            }
-                        }
-                    }
-                }
-            }
-            val jar = root.resolve("versions/${profile.jarId}/${profile.jarId}.jar")
-            if (prepareFiles) require(jar.isRegularFile()) { "缺少游戏主文件，请先修复游戏" }
-            val libraryPaths =
-                libraries
-                    .filter { resolver.hasClasspathArtifact(it) }
-                    .map { resolver.libraryPath(it) }
-            if (prepareFiles) {
-                require(libraryPaths.all { it.isRegularFile() }) { "游戏依赖不完整，请先修复游戏文件" }
-            }
-            val classpath = libraryPaths.distinct() + listOf(jar)
-            // Loaders inspect java.class.path themselves. A manifest-only wrapper
-            // lets Java load Knot but hides Minecraft from Fabric's game provider.
-            val classpathValue =
-                classpath.joinToString(platform.classpathSeparator) {
-                    it.toAbsolutePath().toString()
-                }
-            val assets = root.resolve("assets")
-            val indexId =
-                profile.json
-                    .obj("assetIndex")
-                    .string("id", profile.json.string("assets", instance.gameVersion))
-            var gameAssets = assets
-            val indexPath = safePath(assets.resolve("indexes"), "$indexId.json")
-            if (indexPath.exists()) {
-                val index = readObject(indexPath)
-                val virtual = index.boolean("virtual")
-                val resources = index.boolean("map_to_resources")
-                if (virtual || resources) {
-                    gameAssets =
-                        if (virtual) {
-                            safePath(assets.resolve("virtual"), indexId)
-                        } else {
-                            game.resolve("resources")
-                        }
-                    for (
-                    (name, value) in
-                    if (prepareFiles) index.obj("objects").entrySet() else emptySet()
-                    ) {
-                        ensureActive()
-                        val hash = value.asJsonObject.string("hash")
-                        val from = assets.resolve("objects/${hash.take(2)}/$hash")
-                        val to = safePath(gameAssets, name)
-                        if (!to.exists()) {
-                            to.parent.createDirectories()
-                            runCatching { Files.createLink(to, from) }
-                                .getOrElse {
-                                    Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING)
-                                }
-                        }
-                    }
-                }
-            }
-            val settings = store.data.settings
-            val advanced = effectiveLaunchSettings(settings, instance)
-            validateAdvancedLaunchSettings(advanced, platform.osName)
-            // 实例自己的启动设置优先；0 / 空值跟随全局，无效值回退并记警告，不阻止启动。
-            val launchOptions =
-                resolveInstanceLaunchOptions(
-                    settings,
+            val files = prepareGameFiles(instance, profile, runtimeDirectory, prepareFiles)
+            val parameters = parameterResolver.resolveLaunchParameters(instance, runtime)
+            val arguments =
+                parameterResolver.resolveArguments(
                     instance,
-                    store.launcherWindowSize,
-                    platform.totalMemoryMb,
-                    platform.availableMemoryMb,
-                    runtime.architecture,
-                    advanced,
+                    files,
+                    parameters,
+                    profile,
+                    credentials,
+                    runtimeDirectory,
+                    target,
                 )
-            val width = launchOptions.width
-            val height = launchOptions.height
-            val memory = launchOptions.memory
-            val maxMemory = memory.maximumMb
-            val initialMemory = memory.initialMb
-            val fullscreen = launchOptions.fullscreen
-            val quickPlay = supportsQuickPlay(profile, instance.gameVersion)
-            val recording = runtimeDirectory?.resolve("quick-play.json")
-            val targetArguments =
-                quickPlayArguments(target, quickPlay, recording, instance.gameVersion)
-            if (target?.kind == EntryKind.World) {
-                val world = safePath(game.resolve("saves"), target.key)
-                require(world.resolve("level.dat").isRegularFile()) { "此存档不存在或仍为压缩包，请先解压到 saves" }
-            }
-            val values =
-                mapOf(
-                    "auth_player_name" to credentials.name,
-                    "auth_uuid" to credentials.uuid,
-                    "auth_access_token" to credentials.accessToken,
-                    "auth_session" to "token:${credentials.accessToken}:${credentials.uuid}",
-                    "user_type" to credentials.userType,
-                    "user_properties" to "{}",
-                    "auth_xuid" to "",
-                    "clientid" to settings.microsoftClientId,
-                    "version_name" to profile.id,
-                    "version_type" to profile.json.string("type", "release"),
-                    "game_directory" to game.toString(),
-                    "assets_root" to assets.toString(),
-                    "assets_index_name" to indexId,
-                    "game_assets" to gameAssets.toString(),
-                    "natives_directory" to natives.toString(),
-                    "library_directory" to root.resolve("libraries").toString(),
-                    "classpath" to classpathValue,
-                    "classpath_separator" to platform.classpathSeparator,
-                    "launcher_name" to "MoliFox",
-                    "launcher_version" to LAUNCHER_VERSION,
-                    "resolution_width" to width.toString(),
-                    "resolution_height" to height.toString(),
-                    "quickPlayPath" to recording?.toAbsolutePath()?.toString().orEmpty(),
-                    "quickPlaySingleplayer" to
-                        target?.takeIf { it.kind == EntryKind.World }?.key.orEmpty(),
-                    "quickPlayMultiplayer" to
-                        target?.takeIf { it.kind == EntryKind.Server }?.key.orEmpty(),
-                    "quickPlayRealms" to "",
-                )
-            val features =
-                mapOf(
-                    "has_custom_resolution" to true,
-                    "is_demo_user" to false,
-                    "has_quick_plays_support" to (quickPlay && recording != null),
-                    "is_quick_play_singleplayer" to (target?.kind == EntryKind.World),
-                    "is_quick_play_multiplayer" to (target?.kind == EntryKind.Server),
-                    "is_quick_play_realms" to false,
-                )
-            val modern = profile.json.obj("arguments")
-            // 实例/全局解析出的内存始终是唯一的 -Xmx/-Xms 来源；模板里的同名参数会被去掉，避免重复。
-            val jvm =
-                (
-                    if (modern.array("jvm").size() > 0) {
-                        expandArguments(modern.array("jvm"), values, platform, features)
-                            .map { argument ->
-                                // Modular loaders must ignore the actual inherited JAR, even for
-                                // renamed profiles.
-                                if (argument.startsWith("-DignoreList=")) {
-                                    "-DignoreList=" +
-                                        argument
-                                            .removePrefix(
-                                                "-DignoreList=",
-                                            ).split(',')
-                                            .joinToString(
-                                                ",",
-                                            ) { entry ->
-                                                if (entry == "${profile.id}.jar") {
-                                                    jar.fileName.toString()
-                                                } else {
-                                                    entry
-                                                }
-                                            }
-                                } else {
-                                    argument
-                                }
-                            }
-                    } else {
-                        listOf("-Djava.library.path=$natives", "-cp", classpathValue)
-                    }
-                ).filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
-            val gameArguments =
-                if (profile.json.string("minecraftArguments").isNotBlank()) {
-                    splitArguments(profile.json.string("minecraftArguments")).map {
-                        substitute(it, values)
-                    }
-                } else {
-                    expandArguments(modern.array("game"), values, platform, features)
-                }
-            val extras = splitArguments(launchOptions.extraJvmArgs)
-            val command =
-                mutableListOf(
-                    "-Xms${initialMemory}M",
-                    "-Xmx${maxMemory}M",
-                    "-Dfile.encoding=UTF-8",
-                    "-Dstdout.encoding=UTF-8",
-                    "-Dstderr.encoding=UTF-8",
-                    "-Dlog4j2.formatMsgNoLookups=true",
-                    "-Djava.rmi.server.useCodebaseOnly=true",
-                    "-Dcom.sun.jndi.rmi.object.trustURLCodebase=false",
-                )
-            val logging = profile.json.obj("logging").obj("client")
-            if (
-                logging.string("argument").isNotBlank() &&
-                logging.obj("file").string("id").isNotBlank()
-            ) {
-                val config =
-                    safePath(root.resolve("assets/log_configs"), logging.obj("file").string("id"))
-                command += logging.string("argument").replace("\${path}", config.toString())
-            }
-            command += jvm
-            command += extras
-            // 外置认证：在生成 @argfile 与长度校验之前加入，确保长参数也被正确转义。
-            if (credentials.authlibServer.isNotBlank()) {
-                val injector =
-                    authlibInjector
-                        ?: throw AuthlibException(
-                            AuthlibError.DownloadFailed,
-                            "外置认证组件不可用，请重启启动器后重试",
-                        )
-                command +=
-                    injector.jvmArguments(
-                        store.dataDirectory.resolve("cache"),
-                        credentials.authlibServer,
-                    )
-            }
-            val invocation =
-                if (
-                    prepareFiles &&
-                    platform.osName == "windows" &&
-                    command.sumOf { it.length + 3 } > 24_000
-                ) {
-                    require(runtime.majorVersion >= 9) {
-                        "启动参数超过 Java 8 的 Windows 长度限制，请将游戏目录改为更短的路径"
-                    }
-                    val argumentFile = (runtimeDirectory ?: game).resolve(".molifox-jvm.args")
-                    // The native Java launcher parses @files before file.encoding takes effect.
-                    val charset =
-                        java.nio.charset.Charset.forName(
-                            System.getProperty("native.encoding", "UTF-8"),
-                        )
-                    val text = command.joinToString("\n") { quoteJavaArgument(it) }
-                    require(charset.newEncoder().canEncode(text)) {
-                        "当前 Java 无法编码此游戏目录，请缩短目录或使用对应版本的 UTF-8 Java 环境"
-                    }
-                    Files.writeString(argumentFile, text, charset)
-                    mutableListOf("@${argumentFile.toAbsolutePath()}")
-                } else {
-                    command
-                }
-            invocation += profile.mainClass
-            invocation += appendMissingQuickPlay(gameArguments, targetArguments)
-            if (!gameArguments.contains("--width")) {
-                invocation +=
-                    listOf(
-                        "--width",
-                        width.toString(),
-                        "--height",
-                        height.toString(),
-                    )
-            }
-            if (fullscreen && "--fullscreen" !in gameArguments) invocation += "--fullscreen"
-            // 额外游戏参数最后追加，位于标准参数（宽度/高度/全屏）之后。
-            invocation += launchOptions.extraGameArgs
-            if (prepareFiles && platform.osName == "windows") {
-                require(invocation.sumOf { it.length + 3 } + runtime.path.length < 30_000) {
-                    "启动命令过长，请缩短附加游戏参数或游戏目录"
-                }
-            }
-            val executable =
-                if (
-                    platform.osName == "windows" &&
-                    advanced.useJavaConsoleExecutable &&
-                    Path
-                        .of(runtime.path)
-                        .fileName
-                        .toString()
-                        .equals("javaw.exe", true)
-                ) {
-                    Path
-                        .of(runtime.path)
-                        .resolveSibling("java.exe")
-                        .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
-                        .toString()
-                } else {
-                    runtime.path
-                }
-            LaunchPlan(
-                executable,
-                invocation,
-                game,
-                advanced.environmentVariables.toMap(),
-                summary = launchOptions.summary,
-                warnings = launchOptions.warnings,
+            commandAssembler.buildPlan(
+                files,
+                parameters,
+                profile,
+                arguments,
+                credentials,
+                prepareFiles,
+                runtime,
+                runtimeDirectory,
             )
         }
+
+    /** 游戏目录、natives、主文件与依赖 classpath：缺文件时提示「先修复游戏」。 */
+    private suspend fun prepareGameFiles(
+        instance: GameInstance,
+        profile: ResolvedProfile,
+        runtimeDirectory: Path?,
+        prepareFiles: Boolean,
+    ): PreparedGameFiles {
+        val platform = store.platform
+        val root = store.minecraftRoot(instance)
+        val game =
+            store.instancePath(instance.id).apply { if (prepareFiles) createDirectories() }
+        val resolver = VersionResolver(root, platform)
+        val libraries = resolver.libraries(profile)
+        val natives =
+            (runtimeDirectory ?: game).resolve("natives").apply {
+                if (prepareFiles) createDirectories()
+            }
+        extractNatives(libraries, resolver, natives, prepareFiles)
+        val jar = root.resolve("versions/${profile.jarId}/${profile.jarId}.jar")
+        if (prepareFiles) require(jar.isRegularFile()) { "缺少游戏主文件，请先修复游戏" }
+        val libraryPaths = classpathLibraries(libraries, resolver, prepareFiles)
+        val classpath = libraryPaths.distinct() + listOf(jar)
+        // Loaders inspect java.class.path themselves. A manifest-only wrapper
+        // lets Java load Knot but hides Minecraft from Fabric's game provider.
+        val classpathValue =
+            classpath.joinToString(platform.classpathSeparator) {
+                it.toAbsolutePath().toString()
+            }
+        val assets = root.resolve("assets")
+        val indexId =
+            profile.json
+                .obj("assetIndex")
+                .string("id", profile.json.string("assets", instance.gameVersion))
+        return PreparedGameFiles(
+            root = root,
+            game = game,
+            natives = natives,
+            jar = jar,
+            classpathValue = classpathValue,
+            assets = assets,
+            gameAssets = prepareGameAssets(assets, game, indexId, prepareFiles),
+            indexId = indexId,
+        )
+    }
+
+    /** 解压原版 natives 依赖：只处理平台清单里标为 native 的产物。 */
+    private suspend fun extractNatives(
+        libraries: List<JsonObject>,
+        resolver: VersionResolver,
+        natives: Path,
+        prepareFiles: Boolean,
+    ) {
+        for (library in if (prepareFiles) libraries else emptyList()) {
+            extractLibraryNatives(library, resolver, natives)
+        }
+    }
+
+    /** 单个依赖的 natives 包：排除项与安装流程一致，体积上限拦住异常压缩包。 */
+    private suspend fun extractLibraryNatives(
+        library: JsonObject,
+        resolver: VersionResolver,
+        natives: Path,
+    ) {
+        val excluded = library.obj("extract").array("exclude").map { it.asString } + "META-INF/"
+        for ((artifact, native) in resolver.libraryArtifacts(library)) {
+            if (!native) continue
+            require(artifact.target.isRegularFile()) { "缺少本地依赖，请先修复游戏文件" }
+            ZipFile(artifact.target.toFile()).use { zip -> copyNatives(zip, excluded, natives) }
+        }
+    }
+
+    /** 解压一个 natives 包：[excluded] 里的模板文件跳过，其余按清单路径落盘。 */
+    private suspend fun copyNatives(
+        zip: ZipFile,
+        excluded: List<String>,
+        natives: Path,
+    ) {
+        for ((entry, target) in validateArchive(zip, "", natives, MAX_NATIVES_BYTES)) {
+            currentCoroutineContext().ensureActive()
+            if (excluded.any { entry.name.startsWith(it) }) continue
+            target.parent.createDirectories()
+            zip.getInputStream(entry).use {
+                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+
+    /** classpath 里真正需要加载的依赖；[prepareFiles] 时要求磁盘上都在。 */
+    private fun classpathLibraries(
+        libraries: List<JsonObject>,
+        resolver: VersionResolver,
+        prepareFiles: Boolean,
+    ): List<Path> {
+        val paths =
+            libraries
+                .filter { resolver.hasClasspathArtifact(it) }
+                .map { resolver.libraryPath(it) }
+        if (prepareFiles) {
+            require(paths.all { it.isRegularFile() }) { "游戏依赖不完整，请先修复游戏文件" }
+        }
+        return paths
+    }
+
+    /** 声明了 virtual / map_to_resources 的版本从独立目录读资源：先建硬链接，失败退回复制。 */
+    private suspend fun prepareGameAssets(
+        assets: Path,
+        game: Path,
+        indexId: String,
+        prepareFiles: Boolean,
+    ): Path {
+        val indexPath = safePath(assets.resolve("indexes"), "$indexId.json")
+        if (!indexPath.exists()) return assets
+        val index = readObject(indexPath)
+        val virtual = index.boolean("virtual")
+        val resources = index.boolean("map_to_resources")
+        if (!virtual && !resources) return assets
+        val gameAssets =
+            if (virtual) safePath(assets.resolve("virtual"), indexId) else game.resolve("resources")
+        for ((name, value) in if (prepareFiles) index.obj("objects").entrySet() else emptySet()) {
+            currentCoroutineContext().ensureActive()
+            val hash = value.asJsonObject.string("hash")
+            val from = assets.resolve("objects/${hash.take(2)}/$hash")
+            val to = safePath(gameAssets, name)
+            if (!to.exists()) {
+                to.parent.createDirectories()
+                runCatching { Files.createLink(to, from) }
+                    .getOrElse { Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING) }
+            }
+        }
+        return gameAssets
+    }
 }
 
 internal fun quoteJavaArgument(value: String): String =
@@ -402,12 +705,23 @@ internal fun applyGameProcessPriority(
         try {
             execute(command)
             return ProcessPriorityOutcome("游戏进程优先级：${priority.title}（pid $processId）")
-        } catch (failure: Exception) {
-            reason = failure.message?.takeIf { it.isNotBlank() } ?: failure.javaClass.simpleName
+        } catch (failure: IOException) {
+            reason = failureReason(failure)
+        } catch (failure: IllegalStateException) {
+            reason = failureReason(failure)
+        } catch (failure: InterruptedException) {
+            reason = failureReason(failure)
         }
     }
     return ProcessPriorityOutcome("设置优先级失败：$reason", true)
 }
+
+/** 失败原因只取一行可读文本：异常消息优先，没有时退回类型名。 */
+private fun failureReason(failure: Exception): String =
+    failure.message?.takeIf { it.isNotBlank() } ?: failure.javaClass.simpleName
+
+/** 取消必须原样抛出，不能按普通启动失败记录（单独成函数以免被当作无意义的重抛）。 */
+private fun rethrowCancellation(cancelled: CancellationException): Nothing = throw cancelled
 
 /** wmic 输出简单、进程启动快；Windows 11 已移除 wmic 时退回 PowerShell 的 PriorityClass 赋值。 */
 private fun priorityCommands(
@@ -439,14 +753,290 @@ private fun runPriorityCommand(command: List<String>) {
             isDaemon = true
             start()
         }
-    if (!process.waitFor(15, TimeUnit.SECONDS)) {
+    if (!process.waitFor(PRIORITY_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         error("命令超时")
     }
-    reader.join(500)
+    reader.join(PRIORITY_READER_JOIN_MILLIS)
     check(process.exitValue() == 0) {
-        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(300)
+        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(PRIORITY_OUTPUT_PREVIEW_CHARS)
             ?: "退出码 ${process.exitValue()}"
+    }
+}
+
+/** 一次启动的运行期上下文：命令执行器与日志会话随启动创建一次。 */
+private class LaunchRun(
+    store: LauncherStore,
+    val runId: String,
+    val instanceId: String,
+    val instance: GameInstance,
+    val settings: AdvancedLaunchSettings,
+    val runtimeDirectory: Path,
+) {
+    val commands = LaunchCommandRunner(store)
+    val session = LaunchSession(store, instance)
+}
+
+/** 启动前解析好的版本、Java 与账户凭据。 */
+private class LaunchInputs(
+    val profile: ResolvedProfile,
+    val runtime: JavaRuntime,
+    val credentials: GameCredentials,
+)
+
+/** 已组装的启动计划与它使用的 Java 运行时。 */
+private class PreparedLaunch(
+    val plan: LaunchPlan,
+    val runtime: JavaRuntime,
+)
+
+/** 启动成功后写回状态的事件与计时起点，收尾时用来回填退出码与游玩时长。 */
+private class RunMark(
+    val startedAt: Long,
+    val event: GameRunEvent,
+)
+
+/** 一局游戏的进程与输出：登记进程、监视输出、启动后命令与收尾写回。 */
+private class GameRunSupervisor(
+    private val store: LauncherStore,
+    private val scope: CoroutineScope,
+    private val processes: ConcurrentHashMap<String, Pair<String, Process>>,
+    private val runners: ConcurrentHashMap<String, LaunchCommandRunner>,
+    private val runtimes: GameRuntimeDirectories,
+) {
+    /** 启动 Java 子进程：继承本次运行的环境变量，并登记进程、优先级与运行缓存。 */
+    fun startGameProcess(
+        run: LaunchRun,
+        prepared: PreparedLaunch,
+    ): Process {
+        val plan = prepared.plan
+        val process =
+            ProcessBuilder(listOf(plan.executable) + plan.arguments)
+                .directory(plan.gameDirectory.toFile())
+                .redirectErrorStream(true)
+                .apply {
+                    // The game may outlive the launcher. Never inherit its per-run UI temp
+                    // directory, which the native launcher cleans after the UI process exits.
+                    val temporary = store.temporaryDirectory.toString()
+                    environment()
+                        .putAll(
+                            mapOf(
+                                "TEMP" to temporary,
+                                "TMP" to temporary,
+                                "TMPDIR" to temporary,
+                            ),
+                        )
+                    environment().putAll(plan.environment)
+                }.start()
+        processes[run.runId] = run.instanceId to process
+        runners[run.runId] = run.commands
+        // 进程已经跑起来，优先级只是尽力而为：失败也只记一条警告。
+        val priority =
+            applyGameProcessPriority(store.data.settings.processPriority, process.pid())
+        priority.message?.let { message ->
+            store.log(
+                message,
+                level = if (priority.warning) LogLevel.Warn else LogLevel.Info,
+            )
+        }
+        runCatching { runtimes.attach(run.runtimeDirectory, process) }
+            .onFailure {
+                store.log(
+                    "游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}",
+                    level = LogLevel.Warn,
+                )
+            }
+        return process
+    }
+
+    /** 游戏输出与活动：读线程随进程退出结束，收尾交给 [monitorGame]。 */
+    fun watchGameProcess(
+        run: LaunchRun,
+        prepared: PreparedLaunch,
+        process: Process,
+        mark: RunMark,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            val activity =
+                GameActivityTracker(
+                    store,
+                    run.instance,
+                    run.runtimeDirectory.resolve("quick-play.json"),
+                )
+            val activityPoller =
+                launch {
+                    while (isActive && process.isAlive) {
+                        activity.pollQuickPlay()
+                        delay(ACTIVITY_POLL_INTERVAL_MS)
+                    }
+                }
+            val decoder =
+                GameLogDecoder { entry ->
+                    store.log(entry.message, error = entry.error, game = true)
+                }
+            monitorGame(run, prepared, mark, process, activity, activityPoller, decoder)
+        }
+    }
+
+    /** 转发游戏输出直到进程退出；退出后命令失败只通知一次，不影响这局游戏的收尾。 */
+    private suspend fun monitorGame(
+        run: LaunchRun,
+        prepared: PreparedLaunch,
+        mark: RunMark,
+        process: Process,
+        activity: GameActivityTracker,
+        activityPoller: Job,
+        decoder: GameLogDecoder,
+    ) {
+        var exitCode: Int? = null
+        var postFailed = false
+        try {
+            val exit = forwardGameOutput(process, run.session, activity, decoder)
+            exitCode = exit
+            store.log("游戏已退出，退出码 $exit", exit != 0)
+            postFailed = runPostExitCommand(run, prepared.plan, exit)
+            run.session.finish(exit)
+        } catch (error: IOException) {
+            run.session.finish(failure = error)
+        } catch (error: IllegalStateException) {
+            run.session.finish(failure = error)
+        } catch (error: InterruptedException) {
+            run.session.finish(failure = error)
+        } finally {
+            finishRun(
+                run,
+                mark,
+                exitCode,
+                postFailed,
+                process,
+                activity,
+                activityPoller,
+                decoder,
+            )
+        }
+    }
+
+    /** 读游戏输出：清理密钥后写入日志、活动记录与日志解码器，返回退出码。 */
+    private fun forwardGameOutput(
+        process: Process,
+        session: LaunchSession,
+        activity: GameActivityTracker,
+        decoder: GameLogDecoder,
+    ): Int {
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                val cleaned = session.clean(line)
+                session.append(cleaned)
+                activity.accept(cleaned)
+                decoder.accept(cleaned)
+            }
+        }
+        decoder.flush()
+        return process.waitFor()
+    }
+
+    /** 退出后命令：取消原样抛出；其余失败只通知一次，不影响已结束的这局游戏。 */
+    private suspend fun runPostExitCommand(
+        run: LaunchRun,
+        plan: LaunchPlan,
+        exitCode: Int,
+    ): Boolean =
+        try {
+            run.commands.run(
+                run.settings.postExitCommand,
+                run.settings.commandTimeoutSeconds,
+                LaunchCommandPhase.After,
+                run.instance,
+                plan,
+                run.session,
+                exitCode,
+            )
+            false
+        } catch (cancelled: CancellationException) {
+            rethrowCancellation(cancelled)
+        } catch (error: IllegalArgumentException) {
+            reportPostExitFailure(error)
+        } catch (error: IllegalStateException) {
+            reportPostExitFailure(error)
+        } catch (error: IOException) {
+            reportPostExitFailure(error)
+        }
+
+    /** 退出后命令失败：只提示这一次，游戏本身的退出结果不变。 */
+    private fun reportPostExitFailure(error: Exception): Boolean {
+        val message = "游戏已退出，但${error.message ?: "退出后命令执行失败"}"
+        store.log(message, true)
+        store.notify(message)
+        return true
+    }
+
+    /** 收尾：停掉活动轮询、回收运行缓存、回填退出码与游玩时长；取消也要执行。 */
+    private suspend fun finishRun(
+        run: LaunchRun,
+        mark: RunMark,
+        exitCode: Int?,
+        postFailed: Boolean,
+        process: Process,
+        activity: GameActivityTracker,
+        activityPoller: Job,
+        decoder: GameLogDecoder,
+    ) {
+        withContext(NonCancellable) {
+            activityPoller.cancelAndJoin()
+            activity.pollQuickPlay()
+            activity.finish()
+        }
+        decoder.flush()
+        processes.remove(run.runId)
+        runners.remove(run.runId)
+        if (!process.isAlive) runCatching { runtimes.release(run.runtimeDirectory) }
+        store.updateState {
+            val remaining = it.runningGames.filterNot { gameRun -> gameRun.id == run.runId }
+            it.copy(
+                runningInstanceId = remaining.lastOrNull()?.instanceId,
+                runningGames = remaining,
+                gameRun =
+                    mark.event.copy(
+                        finished = true,
+                        exitCode = exitCode,
+                        postCommandFailed = postFailed,
+                    ),
+            )
+        }
+        store.updateInstance(run.instanceId) {
+            it.copy(
+                playTimeSeconds =
+                    it.playTimeSeconds +
+                        (System.currentTimeMillis() - mark.startedAt) / MILLIS_PER_SECOND,
+            )
+        }
+    }
+
+    /** 取消也要收拢本次的运行缓存；取消本身原样抛出，不按启动失败记录。 */
+    fun cancelLaunch(run: LaunchRun) {
+        run.session.append("启动已取消")
+        releaseRuntime(run)
+    }
+
+    /** 启动失败的统一出口：写诊断、回收运行缓存后原样抛出，界面负责提示。 */
+    fun failLaunch(
+        run: LaunchRun,
+        error: Throwable,
+    ): Nothing {
+        run.session.finish(failure = error)
+        releaseRuntime(run)
+        // 启动中止：本次启动不会再有后续输出，档位记为 FATAL，与可继续的操作失败区分。
+        store.log(
+            "启动中止：${error.message ?: error.javaClass.simpleName}",
+            level = LogLevel.Fatal,
+        )
+        throw error
+    }
+
+    /** 进程还没登记时回收本次的运行缓存；已登记的由进程收尾负责。 */
+    private fun releaseRuntime(run: LaunchRun) {
+        if (processes.containsKey(run.runId)) return
+        runCatching { runtimes.release(run.runtimeDirectory) }
     }
 }
 
@@ -460,6 +1050,7 @@ class GameLauncher(
     private val processes = ConcurrentHashMap<String, Pair<String, Process>>()
     private val runners = ConcurrentHashMap<String, LaunchCommandRunner>()
     private val runtimes = GameRuntimeDirectories(store).also { it.prune() }
+    private val runs = GameRunSupervisor(store, scope, processes, runners, runtimes)
     val isRunning: Boolean
         get() =
             store.state.value.runningGames
@@ -469,6 +1060,38 @@ class GameLauncher(
         store.state.value.runningGames
             .any { it.instanceId == instanceId }
 
+    /** 未安装完成的实例不能启动；提示语保持原样。 */
+    private fun requireInstalled(instance: GameInstance) {
+        check(instance.installed) { "实例尚未安装完成，请先修复" }
+    }
+
+    /** 写回运行态与开始时间：进程已起来，界面据此显示「游戏中」。 */
+    private fun markRunStarted(
+        run: LaunchRun,
+        prepared: PreparedLaunch,
+        process: Process,
+    ): RunMark {
+        val started = System.currentTimeMillis()
+        val event =
+            GameRunEvent(
+                run.runId,
+                run.instanceId,
+                run.settings.launcherVisibility,
+                run.settings.closeLauncherAfterGameExit,
+                processId = process.pid(),
+            )
+        store.updateState {
+            it.copy(
+                runningInstanceId = run.instanceId,
+                gameRun = event,
+                runningGames = it.runningGames + event,
+            )
+        }
+        store.updateInstance(run.instanceId) { it.copy(lastPlayed = Instant.now().toString()) }
+        store.log("游戏已启动：${run.instance.name} · Java ${prepared.runtime.majorVersion}")
+        return RunMark(started, event)
+    }
+
     suspend fun launch(
         instanceId: String,
         context: JobContext,
@@ -476,230 +1099,106 @@ class GameLauncher(
     ) {
         val runId = UUID.randomUUID().toString()
         val runtimeDirectory = store.temporaryDirectory.resolve("games").resolve(runId)
-        val commands = LaunchCommandRunner(store)
         val instance = store.instance(instanceId)
         val launchSettings =
             effectiveLaunchSettings(store.data.settings, instance).let {
-                it.copy(environmentVariables = it.environmentVariables.toMap())
+                it.copy(
+                    environmentVariables = it.environmentVariables.toMap(),
+                )
             }
-        check(instance.installed) { "实例尚未安装完成，请先修复" }
+        requireInstalled(instance)
         validateAdvancedLaunchSettings(
             effectiveLaunchSettings(store.data.settings, instance),
             store.platform.osName,
         )
         store.updateState { it.copy(launchIssue = null) }
-        val session = LaunchSession(store, instance)
-        try {
-            session.stage("解析游戏版本")
-            val profile = installer.resolveForLaunch(instance, context)
-            session.stage("检查和补全游戏文件")
-            context.progress(.01f, "检查并补全游戏文件…")
-            installer.installDependencies(
-                profile,
-                context,
-                store.minecraftRoot(instance),
-                .01f,
-                .35f,
-                verifyHashes = launchSettings.verifyFileHashes,
-            )
-            context.progress(.36f, "选择 Java ${profile.requiredJava}…")
-            session.stage("选择 Java")
-            val runtime =
-                java.resolve(
-                    profile,
-                    instance.javaPath.ifBlank { store.data.settings.javaPath },
-                    context,
-                )
-            context.progress(.4f, "验证账户…")
-            session.stage("验证和刷新账户")
-            val credentials = accounts.credentials()
-            context.checkCancelled()
-            context.progress(.7f, "准备本地依赖和启动参数…")
-            session.stage("组装启动参数")
-            runtimes.create(runId)
-            val plan =
-                LaunchPlanner(store, accounts.authlibInjector)
-                    .plan(
-                        instance.copy(advancedLaunch = launchSettings),
-                        profile,
-                        runtime,
-                        credentials,
-                        runtimeDirectory = runtimeDirectory,
-                        target = target,
-                    )
-            session.prepared(plan, credentials)
-            // 一行有效参数摘要，便于对照日志确认实例设置真的进入了命令；坏值回退单独记警告。
-            plan.warnings.forEach { store.log(it, level = LogLevel.Warn) }
-            if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
-            // 工作目录就是解析后的有效隔离结果；来源写进日志，推断值不冒充用户选择。
-            store.log(
-                "工作目录：${plan.gameDirectory}（来源：${store.isolationSource(instance).logTitle}）",
-            )
-            context.progress(.85f, "执行启动前命令…")
-            commands.run(
-                launchSettings.preLaunchCommand,
-                launchSettings.commandTimeoutSeconds,
-                LaunchCommandPhase.Before,
-                instance,
-                plan,
-                session,
-            )
-            context.checkCancelled()
-            applyGameLanguage(store, instance)
-            val process =
-                ProcessBuilder(listOf(plan.executable) + plan.arguments)
-                    .directory(plan.gameDirectory.toFile())
-                    .redirectErrorStream(true)
-                    .apply {
-                        // The game may outlive the launcher. Never inherit its per-run UI temp
-                        // directory, which the native launcher cleans after the UI process exits.
-                        val temporary = store.temporaryDirectory.toString()
-                        environment()
-                            .putAll(
-                                mapOf(
-                                    "TEMP" to temporary,
-                                    "TMP" to temporary,
-                                    "TMPDIR" to temporary,
-                                ),
-                            )
-                        environment().putAll(plan.environment)
-                    }.start()
-            processes[runId] = instanceId to process
-            runners[runId] = commands
-            // 进程已经跑起来，优先级只是尽力而为：失败也只记一条警告。
-            val priority =
-                applyGameProcessPriority(store.data.settings.processPriority, process.pid())
-            priority.message?.let { message ->
-                store.log(
-                    message,
-                    level = if (priority.warning) LogLevel.Warn else LogLevel.Info,
-                )
+        val run = LaunchRun(store, runId, instanceId, instance, launchSettings, runtimeDirectory)
+        runCatching {
+            val prepared = prepareLaunch(run, context, target)
+            val process = runs.startGameProcess(run, prepared)
+            val mark = markRunStarted(run, prepared, process)
+            runs.watchGameProcess(run, prepared, process, mark)
+        }.onFailure { error ->
+            // 启动链路上会抛出参数校验、文件 IO、JSON 解析与外置认证等多类异常，
+            // 这里是唯一的记录出口：取消先回收本次运行缓存并原样抛出，其它失败写诊断、记 FATAL 后原样抛出，
+            // 收窄类型会漏掉未知失败。
+            if (error is CancellationException) {
+                runs.cancelLaunch(run)
+                throw error
             }
-            runCatching { runtimes.attach(runtimeDirectory, process) }
-                .onFailure {
-                    store.log(
-                        "游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}",
-                        level = LogLevel.Warn,
-                    )
-                }
-            val started = System.currentTimeMillis()
-            val visibility = launchSettings.launcherVisibility
-            val runEvent =
-                GameRunEvent(
-                    runId,
-                    instanceId,
-                    visibility,
-                    launchSettings.closeLauncherAfterGameExit,
-                    processId = process.pid(),
-                )
-            store.updateState {
-                it.copy(
-                    runningInstanceId = instanceId,
-                    gameRun = runEvent,
-                    runningGames = it.runningGames + runEvent,
-                )
-            }
-            store.updateInstance(instanceId) { it.copy(lastPlayed = Instant.now().toString()) }
-            store.log("游戏已启动：${instance.name} · Java ${runtime.majorVersion}")
-            scope.launch(Dispatchers.IO) {
-                val activity =
-                    GameActivityTracker(
-                        store,
-                        instance,
-                        runtimeDirectory.resolve("quick-play.json"),
-                    )
-                val activityPoller =
-                    launch {
-                        while (isActive && process.isAlive) {
-                            activity.pollQuickPlay()
-                            delay(750)
-                        }
-                    }
-                val decoder =
-                    GameLogDecoder { entry ->
-                        store.log(entry.message, error = entry.error, game = true)
-                    }
-                var exitCode: Int? = null
-                var postFailed = false
-                try {
-                    process.inputStream.bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            val cleaned = session.clean(line)
-                            session.append(cleaned)
-                            activity.accept(cleaned)
-                            decoder.accept(cleaned)
-                        }
-                    }
-                    decoder.flush()
-                    val exit = process.waitFor()
-                    exitCode = exit
-                    store.log("游戏已退出，退出码 $exit", exit != 0)
-                    try {
-                        commands.run(
-                            launchSettings.postExitCommand,
-                            launchSettings.commandTimeoutSeconds,
-                            LaunchCommandPhase.After,
-                            instance,
-                            plan,
-                            session,
-                            exit,
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        postFailed = true
-                        val message = "游戏已退出，但${error.message ?: "退出后命令执行失败"}"
-                        store.log(message, true)
-                        store.notify(message)
-                    }
-                    session.finish(exit)
-                } catch (error: Exception) {
-                    session.finish(failure = error)
-                } finally {
-                    withContext(NonCancellable) {
-                        activityPoller.cancelAndJoin()
-                        activity.pollQuickPlay()
-                        activity.finish()
-                    }
-                    decoder.flush()
-                    processes.remove(runId)
-                    runners.remove(runId)
-                    if (!process.isAlive) runCatching { runtimes.release(runtimeDirectory) }
-                    store.updateState {
-                        val remaining = it.runningGames.filterNot { run -> run.id == runId }
-                        it.copy(
-                            runningInstanceId = remaining.lastOrNull()?.instanceId,
-                            runningGames = remaining,
-                            gameRun =
-                                runEvent.copy(
-                                    finished = true,
-                                    exitCode = exitCode,
-                                    postCommandFailed = postFailed,
-                                ),
-                        )
-                    }
-                    store.updateInstance(instanceId) {
-                        it.copy(
-                            playTimeSeconds =
-                                it.playTimeSeconds + (System.currentTimeMillis() - started) / 1000,
-                        )
-                    }
-                }
-            }
-        } catch (cancelled: CancellationException) {
-            session.append("启动已取消")
-            if (!processes.containsKey(runId)) runCatching { runtimes.release(runtimeDirectory) }
-            throw cancelled
-        } catch (error: Exception) {
-            session.finish(failure = error)
-            if (!processes.containsKey(runId)) runCatching { runtimes.release(runtimeDirectory) }
-            // 启动中止：本次启动不会再有后续输出，档位记为 FATAL，与可继续的操作失败区分。
-            store.log(
-                "启动中止：${error.message ?: error.javaClass.simpleName}",
-                level = LogLevel.Fatal,
-            )
-            throw error
+            runs.failLaunch(run, error)
         }
+    }
+
+    /** 启动前解析版本、Java 与账户凭据；任何一步失败都让本次启动中止。 */
+    private suspend fun resolveLaunchInputs(
+        run: LaunchRun,
+        context: JobContext,
+    ): LaunchInputs {
+        run.session.stage("解析游戏版本")
+        val profile = installer.resolveForLaunch(run.instance, context)
+        run.session.stage("检查和补全游戏文件")
+        context.progress(FILE_CHECK_START_PROGRESS, "检查并补全游戏文件…")
+        installer.installDependencies(
+            profile,
+            context,
+            store.minecraftRoot(run.instance),
+            FILE_CHECK_START_PROGRESS,
+            FILE_CHECK_END_PROGRESS,
+            verifyHashes = run.settings.verifyFileHashes,
+        )
+        context.progress(JAVA_SELECT_PROGRESS, "选择 Java ${profile.requiredJava}…")
+        run.session.stage("选择 Java")
+        val runtime =
+            java.resolve(
+                profile,
+                run.instance.javaPath.ifBlank { store.data.settings.javaPath },
+                context,
+            )
+        context.progress(ACCOUNT_PROGRESS, "验证账户…")
+        run.session.stage("验证和刷新账户")
+        return LaunchInputs(profile, runtime, accounts.credentials())
+    }
+
+    /** 组装启动计划并执行启动前命令；进度与日志顺序与原启动流程一致。 */
+    private suspend fun prepareLaunch(
+        run: LaunchRun,
+        context: JobContext,
+        target: GameLaunchTarget?,
+    ): PreparedLaunch {
+        val inputs = resolveLaunchInputs(run, context)
+        context.checkCancelled()
+        context.progress(ARGUMENT_PROGRESS, "准备本地依赖和启动参数…")
+        run.session.stage("组装启动参数")
+        runtimes.create(run.runId)
+        val plan =
+            LaunchPlanner(store, accounts.authlibInjector)
+                .plan(
+                    run.instance.copy(advancedLaunch = run.settings),
+                    inputs.profile,
+                    inputs.runtime,
+                    inputs.credentials,
+                    runtimeDirectory = run.runtimeDirectory,
+                    target = target,
+                )
+        run.session.prepared(plan, inputs.credentials)
+        // 一行有效参数摘要，便于对照日志确认实例设置真的进入了命令；坏值回退单独记警告。
+        plan.warnings.forEach { store.log(it, level = LogLevel.Warn) }
+        if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
+        // 工作目录就是解析后的有效隔离结果；来源写进日志，推断值不冒充用户选择。
+        store.log("工作目录：${plan.gameDirectory}（来源：${store.isolationSource(run.instance).logTitle}）")
+        context.progress(PRELAUNCH_PROGRESS, "执行启动前命令…")
+        run.commands.run(
+            run.settings.preLaunchCommand,
+            run.settings.commandTimeoutSeconds,
+            LaunchCommandPhase.Before,
+            run.instance,
+            plan,
+            run.session,
+        )
+        context.checkCancelled()
+        applyGameLanguage(store, run.instance)
+        return PreparedLaunch(plan, inputs.runtime)
     }
 
     fun stop(instanceId: String? = null) {

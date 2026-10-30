@@ -7,55 +7,37 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.onClick
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.SearchOff
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import dev.molifox.core.DownloadJob
 import dev.molifox.core.GameInstance
 import dev.molifox.core.JobStatus
 import dev.molifox.core.ModFile
 import dev.molifox.core.ModUpdateItem
+import dev.molifox.core.ModUpdateReport
 import dev.molifox.core.ModUpdateStatus
 import dev.molifox.core.domain.mods.completeModUpdateReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.job
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /** 模组列表：工具行（刷新/导入/下载/打开文件夹）+ 筛选芯片 + 52dp 行（版本与来源/更新/开关/删除）+ 骨架 + 空态。 */
 @Composable
@@ -91,74 +73,51 @@ internal fun InstanceMods(
             .onSuccess { job -> applyingJob = job to item }
             .onFailure { failure -> updates.modsError = failure.message }
     }
-    if (updatesOpen) {
-        ContentUpdatesDialog(instance.id, actions) {
+    ModsDialogs(
+        updatesOpen = updatesOpen,
+        instanceId = instance.id,
+        actions = actions,
+        detailMod = detailMod,
+        confirmingUpdate = confirmingUpdate,
+        deletingMod = deletingMod,
+        onCloseUpdates = {
             updatesOpen = false
             refresh++
-        }
-    }
-    detailMod?.let { mod -> ModDetailsDialog(mod) { detailMod = null } }
-    // 名称搜索得到的匹配先确认来源项目，避免把同名模组替换掉。
-    confirmingUpdate?.let { item ->
-        ModUpdateConfirmation(
-            item,
-            onConfirm = {
-                confirmingUpdate = null
-                startUpdate(item)
-            },
-            onDismiss = { confirmingUpdate = null },
-        )
-    }
-    // 删除模组会从 mods 目录移入回收站，先确认再执行。
-    deletingMod?.let { mod ->
-        DeleteModConfirmation(
-            mod,
-            onConfirm = {
-                val filename = mod.filename
-                deletingMod = null
-                actions.run {
-                    actions.controller.requireIdle(instance.id)
-                    actions.controller.content.deleteMod(instance.id, filename)
-                    withContext(Dispatchers.Swing) { refresh++ }
-                }
-            },
-            onDismiss = { deletingMod = null },
-        )
-    }
+        },
+        onCloseDetail = { detailMod = null },
+        onConfirmUpdate = { item ->
+            confirmingUpdate = null
+            startUpdate(item)
+        },
+        onDismissConfirm = { confirmingUpdate = null },
+        onDeleteMod = { mod ->
+            val filename = mod.filename
+            deletingMod = null
+            actions.run {
+                actions.controller.requireIdle(instance.id)
+                actions.controller.content.deleteMod(instance.id, filename)
+                withContext(Dispatchers.Swing) { refresh++ }
+            }
+        },
+        onDismissDelete = { deletingMod = null },
+    )
     LaunchedEffect(instance.id, refresh, liveState.jobs.map { it.status }) {
         loading = true
         error = null
-        try {
-            mods = withContext(Dispatchers.IO) { actions.controller.content.listMods(instance.id) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            error = failure.message
-        } finally {
-            loading = false
-        }
+        loadMods(actions, instance.id)
+            .onSuccess { mods = it }
+            .onFailure { failure -> error = failure.message }
+        loading = false
     }
     // 应用更新是任务中心里的后台任务；结束后刷新列表，并把旧文件对应的报告项改为已是最新。
     LaunchedEffect(applyingJob, liveState.jobs.map { it.id + ":" + it.status }) {
         val pending = applyingJob ?: return@LaunchedEffect
         val job = liveState.jobs.firstOrNull { it.id == pending.first } ?: return@LaunchedEffect
-        when (job.status) {
-            JobStatus.Completed -> {
-                if (pending.second.candidate != null) {
-                    updates.mods = completeModUpdateReport(updateReport, pending.second)
-                }
-                applyingJob = null
-                refresh++
-            }
-            JobStatus.Failed, JobStatus.Cancelled -> {
-                updates.modsError =
-                    job.error
-                        ?: if (job.status == JobStatus.Cancelled) "更新已取消" else "更新失败"
-                applyingJob = null
-                refresh++
-            }
-            else -> Unit
-        }
+        val outcome = modUpdateJobOutcome(job, pending, updateReport) ?: return@LaunchedEffect
+        outcome.report?.let { updates.mods = it }
+        outcome.error?.let { updates.modsError = it }
+        applyingJob = null
+        refresh++
     }
     val busy = actions.controller.isInstanceBusy(instance.id)
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -191,116 +150,31 @@ internal fun InstanceMods(
         )
         val reportByFile = updateReport?.items?.associateBy { it.filename }.orEmpty()
         val activeNames = mods.map { it.filename }.toSet()
-        val updateCount =
-            updateReport?.items.orEmpty().count {
-                it.status == ModUpdateStatus.Updatable && it.filename in activeNames
-            }
-        val unknownCount =
-            updateReport?.items.orEmpty().count {
-                it.status == ModUpdateStatus.Unknown && it.filename in activeNames
-            }
+        val counts = countModUpdates(updateReport, activeNames)
         // 芯片按更新状态筛选：「未找到更新」只收「无法确认」，「已是最新」只出现在「全部」。
         // 数量与芯片一致：可更新数量、无法确认数量都不含已是最新的条目。
-        val statusText =
-            when {
-                checking -> "正在检查更新…"
-                updateReport == null -> ""
-                updateCount > 0 ->
-                    "$updateCount 项可更新" +
-                        if (unknownCount > 0) " · $unknownCount 项无法确认" else ""
-                unknownCount > 0 -> "$unknownCount 项无法确认"
-                else -> "全部为最新"
-            }
-        // 芯片行常驻：即使检查失败或被取消，也能继续筛选并回到「版本管理」。
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ContentChipRow(
-                selected = chip,
-                visible =
-                    listOf(
-                        ContentChip.All,
-                        ContentChip.Disabled,
-                        ContentChip.Updatable,
-                        ContentChip.NoUpdate,
-                    ),
-            ) { chip = it }
-            if (statusText.isNotBlank()) {
-                Text(
-                    statusText,
-                    Modifier.weight(1f),
-                    fontSize = 11.sp,
-                    color =
-                        if (updateCount > 0) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            TextButton(
-                { updates.checkAll(checkScope, refresh = true) },
-                enabled = !actions.controller.isInstanceBusy(instance.id) && !checking,
-            ) {
-                Text(if (checking) "正在检查…" else "检查更新", fontSize = 12.sp)
-            }
-            TextButton(
-                { updatesOpen = true },
-                enabled = !actions.controller.isInstanceBusy(instance.id),
-            ) {
-                Text("版本管理", fontSize = 12.sp)
-            }
-        }
-        if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
-        updateError?.let { failure ->
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    failure,
-                    Modifier.weight(1f),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                TextButton(
-                    {
-                        updates.modsError = null
-                        startCheck()
-                    },
-                    enabled = !actions.controller.isInstanceBusy(instance.id) && !checking,
-                ) {
-                    Text("重新检查", fontSize = 12.sp)
-                }
-            }
-        }
-        val filtered =
-            mods
-                .filter {
-                    query.isBlank() ||
-                        it.filename.contains(query, true) ||
-                        it.metadata.title.contains(query, true) ||
-                        it.metadata.entries.any { entry -> entry.id.contains(query, true) }
-                }.filter { mod ->
-                    when (chip) {
-                        ContentChip.All -> true
-                        ContentChip.Disabled -> !mod.enabled
-                        ContentChip.Updatable ->
-                            reportByFile[mod.filename]?.status == ModUpdateStatus.Updatable
-                        // 「未找到更新」只收「无法确认」的条目；已是最新的只在「全部」里出现。
-                        ContentChip.NoUpdate ->
-                            reportByFile[mod.filename]?.status == ModUpdateStatus.Unknown
-                    }
-                }
+        val statusText = modsStatusText(checking, updateReport, counts)
+        ModsStatusBar(
+            chip = chip,
+            onChipSelect = { chip = it },
+            statusText = statusText,
+            updateCount = counts.updatable,
+            checking = checking,
+            instanceBusy = busy,
+            onCheckUpdates = { updates.checkAll(checkScope, refresh = true) },
+            onOpenUpdates = { updatesOpen = true },
+        )
+        ModsThinProgress(checking)
+        ModsErrorRow(
+            message = updateError,
+            checking = checking,
+            instanceBusy = busy,
+            onRetry = {
+                updates.modsError = null
+                startCheck()
+            },
+        )
+        val filtered = filterMods(mods, query, chip, reportByFile)
         // 模组图标只从 JAR 自带资源读取字节并在内存解码，不写缓存文件；行内按 JAR 路径 + 修改时间复用。
         val modsDirectory =
             runCatching {
@@ -309,93 +183,135 @@ internal fun InstanceMods(
                     .resolve("mods")
             }.getOrNull()
         // 首次读取还没有数据时给骨架；刷新时保留旧列表，只在顶部显示一条细进度。
-        if (loading && mods.isNotEmpty()) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
-        }
-        when {
-            loading && mods.isEmpty() -> ListSkeleton()
-            error != null ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState("无法读取模组列表", error.orEmpty(), Icons.Outlined.CloudOff) {
-                        TextButton({ refresh++ }) { Text("重试") }
-                    }
+        ModsThinProgress(loading && mods.isNotEmpty())
+        ModsListBody(
+            mods = mods,
+            filtered = filtered,
+            loading = loading,
+            error = error,
+            chip = chip,
+            query = query,
+            busy = busy,
+            applying = applyingJob != null,
+            reportByFile = reportByFile,
+            modsDirectory = modsDirectory,
+            readIcon = actions.controller::modIconBytes,
+            onIconFailure = {
+                actions.controller.store.log("模组图标解码失败：${it.message}", true)
+            },
+            onRetry = { refresh++ },
+            onDiscover = onDiscover,
+            onClearFilter = {
+                query = ""
+                chip = ContentChip.All
+            },
+            onDetail = { mod -> detailMod = mod },
+            onUpdate = { _, item ->
+                if (item.possibleMatch) {
+                    confirmingUpdate = item
+                } else {
+                    startUpdate(item)
                 }
-            mods.isEmpty() ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        "还没有安装模组",
-                        "从资源库下载，或导入本地 JAR 文件。",
-                        Icons.Outlined.Extension,
-                    ) {
-                        PrimaryButton("下载模组", Icons.Outlined.Add, onClick = onDiscover)
-                    }
+            },
+            onToggle = { mod ->
+                actions.run {
+                    actions.controller.requireIdle(instance.id)
+                    actions.controller.content.toggleMod(instance.id, mod.filename)
+                    withContext(Dispatchers.Swing) { refresh++ }
                 }
-            filtered.isEmpty() ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        if (chip != ContentChip.All && query.isBlank()) {
-                            "没有「${chip.title}」的模组"
-                        } else {
-                            "没有匹配的模组"
-                        },
-                        if (chip != ContentChip.All && query.isBlank()) {
-                            "切换到「全部」查看所有模组。"
-                        } else {
-                            "换个关键词试试"
-                        },
-                        Icons.Outlined.SearchOff,
-                    ) {
-                        TextButton({
-                            query = ""
-                            chip = ContentChip.All
-                        }) {
-                            Text("清除筛选")
-                        }
-                    }
-                }
-            else ->
-                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(filtered, key = { it.filename }) { mod ->
-                        ModRow(
-                            mod,
-                            jar = modsDirectory?.resolve(mod.filename),
-                            readIcon = actions.controller::modIconBytes,
-                            onIconFailure = {
-                                actions.controller.store.log("模组图标解码失败：${it.message}", true)
-                            },
-                            modifier = Modifier.animateItem(),
-                            update = reportByFile[mod.filename],
-                            busy =
-                                actions.controller.isInstanceBusy(instance.id) ||
-                                    applyingJob != null,
-                            onDetail = { detailMod = mod },
-                            onUpdate = {
-                                reportByFile[mod.filename]?.let { item ->
-                                    if (item.possibleMatch) {
-                                        confirmingUpdate = item
-                                    } else {
-                                        startUpdate(item)
-                                    }
-                                }
-                            },
-                            onToggle = {
-                                actions.run {
-                                    actions.controller.requireIdle(instance.id)
-                                    actions.controller.content.toggleMod(instance.id, mod.filename)
-                                    withContext(Dispatchers.Swing) { refresh++ }
-                                }
-                            },
-                            onDelete = { deletingMod = mod },
-                        )
-                    }
-                }
-        }
-        if (!loading && mods.isNotEmpty()) {
-            Text(
-                "共 " + mods.size + " 个文件 · 已启用 " + mods.count { it.enabled },
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+            },
+            onDelete = { mod -> deletingMod = mod },
+            modifier = Modifier.weight(1f),
+        )
+        ModsCountFooter(loading, mods)
     }
 }
+
+/** 读取已安装模组：目录读取与 JAR 声明解析的错误交给列表提示。 */
+private suspend fun loadMods(
+    actions: UiActions,
+    instanceId: String,
+): Result<List<ModFile>> =
+    withContext(Dispatchers.IO) {
+        try {
+            Result.success(actions.controller.content.listMods(instanceId))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: IOException) {
+            Result.failure(failure)
+        } catch (failure: IllegalStateException) {
+            Result.failure(failure)
+        } catch (failure: IllegalArgumentException) {
+            Result.failure(failure)
+        }
+    }
+
+/** 后台更新任务的结果：报告项可选（无需改动时为空），错误信息可选。 */
+private class ModUpdateJobOutcome(
+    val report: ModUpdateReport?,
+    val error: String?,
+)
+
+/** 只有结束状态才产生结果；完成时把旧文件对应的报告项改为已是最新。 */
+private fun modUpdateJobOutcome(
+    job: DownloadJob,
+    pending: Pair<String, ModUpdateItem>,
+    report: ModUpdateReport?,
+): ModUpdateJobOutcome? =
+    when (job.status) {
+        JobStatus.Completed ->
+            ModUpdateJobOutcome(
+                if (pending.second.candidate != null) {
+                    completeModUpdateReport(report, pending.second)
+                } else {
+                    null
+                },
+                null,
+            )
+        JobStatus.Failed, JobStatus.Cancelled ->
+            ModUpdateJobOutcome(
+                null,
+                job.error
+                    ?: if (job.status == JobStatus.Cancelled) "更新已取消" else "更新失败",
+            )
+        else -> null
+    }
+
+/** 可更新与无法确认的条目数：只统计仍在列表里的文件。 */
+private class ModUpdateCounts(
+    val updatable: Int,
+    val unknown: Int,
+)
+
+private fun countModUpdates(
+    report: ModUpdateReport?,
+    activeNames: Set<String>,
+): ModUpdateCounts {
+    val items = report?.items.orEmpty()
+    return ModUpdateCounts(
+        updatable =
+            items.count {
+                it.status == ModUpdateStatus.Updatable && it.filename in activeNames
+            },
+        unknown =
+            items.count {
+                it.status == ModUpdateStatus.Unknown && it.filename in activeNames
+            },
+    )
+}
+
+/** 更新状态文案：检查中、未检查、有可更新、只有无法确认、全部最新。 */
+private fun modsStatusText(
+    checking: Boolean,
+    report: ModUpdateReport?,
+    counts: ModUpdateCounts,
+): String =
+    when {
+        checking -> "正在检查更新…"
+        report == null -> ""
+        counts.updatable > 0 ->
+            "${counts.updatable} 项可更新" +
+                if (counts.unknown > 0) " · ${counts.unknown} 项无法确认" else ""
+        counts.unknown > 0 -> "${counts.unknown} 项无法确认"
+        else -> "全部为最新"
+    }

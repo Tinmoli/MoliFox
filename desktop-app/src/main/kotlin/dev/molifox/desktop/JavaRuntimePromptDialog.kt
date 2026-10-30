@@ -150,7 +150,8 @@ internal fun JavaRuntimePromptDialog(
             SecondaryButton({ dismiss() }) { Text("取消") }
         }
         MutedText(
-            "按设置里的「Java 下载源」选择 Zulu/Temurin 官方源（不含第三方镜像）；安装写入 MoliFox\\runtimes\\，不注册 PATH、不改 JAVA_HOME、不写注册表。",
+            "按设置里的「Java 下载源」选择 Zulu/Temurin 官方源（不含第三方镜像）；" +
+                "安装写入 MoliFox\\runtimes\\，不注册 PATH、不改 JAVA_HOME、不写注册表。",
         )
     }
 }

@@ -136,34 +136,6 @@ class DatapackManagerTest {
         )
     }
 
-    private fun enabledOf(world: Path): List<String> {
-        val packs =
-            checkNotNull(
-                checkNotNull(
-                    checkNotNull(
-                        readCompound(
-                            world.resolve("level.dat"),
-                        ),
-                    ).compound("Data"),
-                ).compound("Packs"),
-            )
-        return checkNotNull(packs.list("Enabled")).elements.map { (it as NbtString).value }
-    }
-
-    private fun disabledOf(world: Path): List<String> {
-        val packs =
-            checkNotNull(
-                checkNotNull(
-                    checkNotNull(
-                        readCompound(
-                            world.resolve("level.dat"),
-                        ),
-                    ).compound("Data"),
-                ).compound("Packs"),
-            )
-        return checkNotNull(packs.list("Disabled")).elements.map { (it as NbtString).value }
-    }
-
     private fun <T> withSessionLock(
         world: Path,
         block: () -> T,
@@ -347,39 +319,12 @@ class DatapackManagerTest {
 
         manager.setEnabled(fixture.id, "World", "demo.zip", false)
 
-        assertEquals(listOf("file/demo.zip"), disabledOf(world))
-        assertEquals(listOf("vanilla"), enabledOf(world), "启用列表里的其他条目必须保留")
-        assertEquals(
-            false,
-            manager
-                .list(fixture.id, "World")
-                .entries
-                .single()
-                .enabled,
-        )
+        assertDisabledAfterToggle(manager, fixture.id, world)
 
         manager.setEnabled(fixture.id, "World", "demo.zip", true)
 
-        assertTrue(disabledOf(world).isEmpty())
-        assertTrue(enabledOf(world).contains("file/demo.zip"))
-        assertEquals(
-            true,
-            manager
-                .list(fixture.id, "World")
-                .entries
-                .single()
-                .enabled,
-        )
-        // 其他标签原样保留。
-        val after = checkNotNull(readCompound(world.resolve("level.dat")))
-        assertEquals("我的世界", after.compound("Data")?.string("LevelName"))
-        assertEquals(42L, (checkNotNull(after.compound("Data"))["RandomSeed"] as NbtLong).value)
-        assertEquals("1.20.1", after.compound("Data")?.compound("Version")?.string("Id"))
-        assertEquals(before.entries.keys, after.entries.keys)
-        assertEquals(
-            checkNotNull(before.compound("Data")).entries.keys,
-            checkNotNull(after.compound("Data")).entries.keys,
-        )
+        assertEnabledAfterToggle(manager, fixture.id, world)
+        assertLevelDatTagsPreserved(before, world)
     }
 
     @Test
@@ -476,4 +421,84 @@ class DatapackManagerTest {
         }
         assertTrue(manager.list(fixture.id, "World").entries.isEmpty())
     }
+}
+
+private fun enabledOf(world: Path): List<String> {
+    val packs =
+        checkNotNull(
+            checkNotNull(
+                checkNotNull(
+                    readCompound(
+                        world.resolve("level.dat"),
+                    ),
+                ).compound("Data"),
+            ).compound("Packs"),
+        )
+    return checkNotNull(packs.list("Enabled")).elements.map { (it as NbtString).value }
+}
+
+private fun disabledOf(world: Path): List<String> {
+    val packs =
+        checkNotNull(
+            checkNotNull(
+                checkNotNull(
+                    readCompound(
+                        world.resolve("level.dat"),
+                    ),
+                ).compound("Data"),
+            ).compound("Packs"),
+        )
+    return checkNotNull(packs.list("Disabled")).elements.map { (it as NbtString).value }
+}
+
+/** 关掉后：启用列表保留其它条目，禁用列表出现该包，列表接口同步为未启用。 */
+private fun assertDisabledAfterToggle(
+    manager: DatapackManager,
+    instanceId: String,
+    world: Path,
+) {
+    assertEquals(listOf("file/demo.zip"), disabledOf(world))
+    assertEquals(listOf("vanilla"), enabledOf(world), "启用列表里的其他条目必须保留")
+    assertEquals(
+        false,
+        manager
+            .list(instanceId, "World")
+            .entries
+            .single()
+            .enabled,
+    )
+}
+
+/** 重新启用后：禁用列表清空，启用列表包含该包，列表接口同步为已启用。 */
+private fun assertEnabledAfterToggle(
+    manager: DatapackManager,
+    instanceId: String,
+    world: Path,
+) {
+    assertTrue(disabledOf(world).isEmpty())
+    assertTrue(enabledOf(world).contains("file/demo.zip"))
+    assertEquals(
+        true,
+        manager
+            .list(instanceId, "World")
+            .entries
+            .single()
+            .enabled,
+    )
+}
+
+/** 往返只改 Packs 标签，其他标签与层级必须原样保留。 */
+private fun assertLevelDatTagsPreserved(
+    before: NbtCompound,
+    world: Path,
+) {
+    val after = checkNotNull(readCompound(world.resolve("level.dat")))
+    assertEquals("我的世界", after.compound("Data")?.string("LevelName"))
+    assertEquals(42L, (checkNotNull(after.compound("Data"))["RandomSeed"] as NbtLong).value)
+    assertEquals("1.20.1", after.compound("Data")?.compound("Version")?.string("Id"))
+    assertEquals(before.entries.keys, after.entries.keys)
+    assertEquals(
+        checkNotNull(before.compound("Data")).entries.keys,
+        checkNotNull(after.compound("Data")).entries.keys,
+    )
 }

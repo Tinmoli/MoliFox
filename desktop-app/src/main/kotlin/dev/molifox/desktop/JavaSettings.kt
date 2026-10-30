@@ -78,8 +78,9 @@ internal fun javaSettingCards(
                     SimpleDropdown(
                         settings.effectiveJavaDownloadSource,
                         listOf(
-                            "auto" to "自动（测速选最快官方源）",
-                            "official" to "官方源",
+                            "auto" to "自动",
+                            "azul" to "Azul",
+                            "adoptium" to "Adoptium",
                         ),
                         { value -> writer.commit { it.copy(javaDownloadSource = value) } },
                     )
@@ -93,7 +94,7 @@ internal fun javaSettingCards(
                         SimpleDropdown(
                             installVersion,
                             listOf(
-                                "auto" to "自动（按游戏版本）",
+                                "auto" to "自动",
                                 "8" to "Java 8",
                                 "17" to "Java 17",
                                 "21" to "Java 21",
@@ -124,6 +125,7 @@ internal fun javaSettingCards(
                     if (job != null) {
                         LinearProgressIndicator(
                             progress = { job.progress.coerceIn(0f, 1f) },
+                            drawStopIndicator = {},
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Row(

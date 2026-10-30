@@ -234,32 +234,48 @@ class SkinManagementTest {
                     server.enqueue(MockResponse().setBody("{}"))
                     server.enqueue(MockResponse().setBody(response(target)))
                     val profile = service.upload(target.id, entry.id)
-                    assertEquals(target.id, credentialId)
-                    assertEquals(SkinVariant.Slim, profile.variant)
-                    assertTrue(profile.textureUrl.startsWith("https://textures.minecraft.net/"))
-                    assertEquals(other.id, store.data.activeAccountId)
-                    assertEquals(
-                        "UpdatedName",
-                        store.data.accounts
-                            .first { it.id == target.id }
-                            .name,
-                    )
-                    assertEquals(other, store.data.accounts.first { it.id == other.id })
-                    val upload = server.takeRequest()
-                    assertEquals("POST", upload.method)
-                    assertEquals("/minecraft/profile/skins", upload.path)
-                    assertEquals("Bearer fixture-token", upload.getHeader("Authorization"))
-                    val body = upload.body.readByteArray()
-                    val text = body.toString(Charsets.ISO_8859_1)
-                    assertContains(text, "name=\"variant\"")
-                    assertContains(text, "slim")
-                    assertContains(text, "filename=\"skin.png\"")
-                    assertContains(text, "Content-Type: image/png")
-                    assertTrue(body.size > png().fileSize())
-                    assertEquals("GET", server.takeRequest().method)
+                    assertUploadedProfile(store, target, other, profile, credentialId)
+                    assertMultipartUpload(server)
                 }
             }
         }
+
+    /** 上传后本地档案只更新目标账户：其它账户与当前选中账户保持不变。 */
+    private fun assertUploadedProfile(
+        store: LauncherStore,
+        target: Account,
+        other: Account,
+        profile: MinecraftSkinProfile,
+        credentialId: String,
+    ) {
+        assertEquals(target.id, credentialId)
+        assertEquals(SkinVariant.Slim, profile.variant)
+        assertTrue(profile.textureUrl.startsWith("https://textures.minecraft.net/"))
+        assertEquals(other.id, store.data.activeAccountId)
+        assertEquals(
+            "UpdatedName",
+            store.data.accounts
+                .first { it.id == target.id }
+                .name,
+        )
+        assertEquals(other, store.data.accounts.first { it.id == other.id })
+    }
+
+    /** 请求体是 multipart：先上传皮肤，再读取一次档案。 */
+    private fun assertMultipartUpload(server: MockWebServer) {
+        val upload = server.takeRequest()
+        assertEquals("POST", upload.method)
+        assertEquals("/minecraft/profile/skins", upload.path)
+        assertEquals("Bearer fixture-token", upload.getHeader("Authorization"))
+        val body = upload.body.readByteArray()
+        val text = body.toString(Charsets.ISO_8859_1)
+        assertContains(text, "name=\"variant\"")
+        assertContains(text, "slim")
+        assertContains(text, "filename=\"skin.png\"")
+        assertContains(text, "Content-Type: image/png")
+        assertTrue(body.size > png().fileSize())
+        assertEquals("GET", server.takeRequest().method)
+    }
 
     @Test
     fun `unsupported upload input and mismatched credentials fail before any remote write`() =

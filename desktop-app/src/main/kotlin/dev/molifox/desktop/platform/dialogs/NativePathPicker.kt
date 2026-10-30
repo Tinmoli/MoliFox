@@ -84,46 +84,68 @@ internal object LinuxFilePicker {
     internal fun arguments(
         tool: String,
         request: PickRequest,
+    ): List<String> {
+        val start = startPath(request)
+        val patterns = filePatterns(request)
+        return buildList {
+            add(tool)
+            if (tool == "zenity") {
+                addAll(zenityArguments(request, start, patterns))
+            } else {
+                addAll(kdialogArguments(request, start, patterns))
+            }
+        }
+    }
+
+    private fun startPath(request: PickRequest): String {
+        val initial = request.initialDirectory
+        if (initial != null) return initial.toString().trimEnd('/') + "/" + request.defaultName
+        return request.defaultName.ifBlank { System.getProperty("user.home") + "/" }
+    }
+
+    private fun filePatterns(request: PickRequest): String =
+        request.extensions
+            .filter { Regex("[A-Za-z0-9]+").matches(it) }
+            .joinToString(" ") { "*.$it" }
+
+    private fun zenityArguments(
+        request: PickRequest,
+        start: String,
+        patterns: String,
     ): List<String> =
         buildList {
-            add(tool)
-            val start =
-                request.initialDirectory?.let {
-                    it.toString().trimEnd('/') + "/" +
-                        request.defaultName
-                }
-                    ?: request.defaultName.ifBlank { System.getProperty("user.home") + "/" }
-            val patterns =
-                request.extensions
-                    .filter { Regex("[A-Za-z0-9]+").matches(it) }
-                    .joinToString(" ") { "*.$it" }
-            if (tool == "zenity") {
-                addAll(listOf("--file-selection", "--title=${request.title}", "--filename=$start"))
-                if (request.mode == PickMode.Directory) add("--directory")
-                if (request.mode == PickMode.Save) addAll(listOf("--save", "--confirm-overwrite"))
-                if (request.multiple && request.mode != PickMode.Save) {
-                    addAll(listOf("--multiple", "--separator=\u001f"))
-                }
-                if (patterns.isNotEmpty() && request.mode != PickMode.Directory) {
-                    add("--file-filter=文件 | $patterns")
-                }
-                add("--file-filter=所有文件 | *")
-            } else {
-                addAll(listOf("--title", request.title))
-                add(
-                    when (request.mode) {
-                        PickMode.Directory -> "--getexistingdirectory"
-                        PickMode.Save -> "--getsavefilename"
-                        else -> "--getopenfilename"
-                    },
-                )
-                add(start)
-                if (request.mode != PickMode.Directory) {
-                    add(if (patterns.isEmpty()) "*" else "$patterns|文件\n*|所有文件")
-                }
-                if (request.multiple && request.mode != PickMode.Save) {
-                    addAll(listOf("--multiple", "--separate-output"))
-                }
+            addAll(listOf("--file-selection", "--title=${request.title}", "--filename=$start"))
+            if (request.mode == PickMode.Directory) add("--directory")
+            if (request.mode == PickMode.Save) addAll(listOf("--save", "--confirm-overwrite"))
+            if (request.multiple && request.mode != PickMode.Save) {
+                addAll(listOf("--multiple", "--separator=\u001f"))
+            }
+            if (patterns.isNotEmpty() && request.mode != PickMode.Directory) {
+                add("--file-filter=文件 | $patterns")
+            }
+            add("--file-filter=所有文件 | *")
+        }
+
+    private fun kdialogArguments(
+        request: PickRequest,
+        start: String,
+        patterns: String,
+    ): List<String> =
+        buildList {
+            addAll(listOf("--title", request.title))
+            add(
+                when (request.mode) {
+                    PickMode.Directory -> "--getexistingdirectory"
+                    PickMode.Save -> "--getsavefilename"
+                    else -> "--getopenfilename"
+                },
+            )
+            add(start)
+            if (request.mode != PickMode.Directory) {
+                add(if (patterns.isEmpty()) "*" else "$patterns|文件\n*|所有文件")
+            }
+            if (request.multiple && request.mode != PickMode.Save) {
+                addAll(listOf("--multiple", "--separate-output"))
             }
         }
 }

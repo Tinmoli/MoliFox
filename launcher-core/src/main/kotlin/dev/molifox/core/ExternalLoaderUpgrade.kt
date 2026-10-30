@@ -9,6 +9,9 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 
+private const val MIN_MAVEN_COORDINATE_PARTS = 3
+private const val MAVEN_CLASSIFIER_PART_INDEX = 3
+
 /** 加载器自有依赖库的坐标前缀：升级时替换这些库，其它库与自定义字段原样保留。 */
 private val loaderLibraryPrefixes =
     listOf("net.fabricmc:", "org.quiltmc:", "net.minecraftforge:", "net.neoforged:", "cpw.mods:")
@@ -62,7 +65,9 @@ private fun mergedExternalLibraries(
 /** 坐标身份只取 group:artifact:classifier，版本变化时替换而不是重复堆叠。 */
 private fun libraryCoordinate(name: String): String {
     val parts = name.split(':')
-    return if (parts.size >= 3) "${parts[0]}:${parts[1]}:${parts.getOrElse(3) { "" }}" else name
+    if (parts.size < MIN_MAVEN_COORDINATE_PARTS) return name
+    val classifier = parts.getOrElse(MAVEN_CLASSIFIER_PART_INDEX) { "" }
+    return "${parts[0]}:${parts[1]}:$classifier"
 }
 
 /**
@@ -84,15 +89,14 @@ private fun mergedExternalArguments(
         val kept = mutableListOf<String>()
         var skipValue = false
         for (token in old) {
-            if (skipValue) {
-                skipValue = false
-                if (!token.startsWith("-")) continue
+            when {
+                skipValue && !token.startsWith("-") -> skipValue = false
+                token in replacedFlags -> skipValue = true
+                else -> {
+                    skipValue = false
+                    kept += token
+                }
             }
-            if (token in replacedFlags) {
-                skipValue = true
-                continue
-            }
-            kept += token
         }
         for (token in incoming) if (token !in kept) kept += token
         result.add(kind, JsonArray().apply { kept.forEach(::add) })

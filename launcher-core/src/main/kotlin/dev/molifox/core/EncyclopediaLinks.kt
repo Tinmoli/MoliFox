@@ -11,6 +11,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.URI
 
+private const val MAX_ENCYCLOPEDIA_ENTRIES = 512
+private const val ENCYCLOPEDIA_MISS_TTL_MS = 600_000L
+private const val ENCYCLOPEDIA_HIT_TTL_MS = 86_400_000L
+
 internal class EncyclopediaLinks(
     network: NetworkClient,
     private val fetch: suspend (String) -> String = network::encyclopediaText,
@@ -27,32 +31,39 @@ internal class EncyclopediaLinks(
         hit: ContentHit,
         declared: String = "",
     ): String? {
-        directEncyclopediaUrl(declared)?.let {
-            return it
-        }
-        if (hit.type !in setOf("mod", "modpack")) return null
-        return lock.withLock {
-            val key = "${hit.id}:${hit.slug}"
-            entries[key]
-                ?.takeIf { it.expires > System.currentTimeMillis() }
-                ?.let {
-                    return@withLock it.url
+        val direct = directEncyclopediaUrl(declared)
+        val supported = hit.type in setOf("mod", "modpack")
+        return when {
+            direct != null -> direct
+            !supported -> null
+            else ->
+                lock.withLock {
+                    val key = "${hit.id}:${hit.slug}"
+                    val cached = entries[key]?.takeIf { it.expires > System.currentTimeMillis() }
+                    if (cached != null) {
+                        cached.url
+                    } else {
+                        val result =
+                            try {
+                                withTimeoutOrNull(6000) { find(hit) }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            }
+                        if (entries.size >= MAX_ENCYCLOPEDIA_ENTRIES) {
+                            entries.remove(entries.keys.first())
+                        }
+                        val ttl =
+                            if (result == null) {
+                                ENCYCLOPEDIA_MISS_TTL_MS
+                            } else {
+                                ENCYCLOPEDIA_HIT_TTL_MS
+                            }
+                        entries[key] = Entry(System.currentTimeMillis() + ttl, result)
+                        result
+                    }
                 }
-            val result =
-                try {
-                    withTimeoutOrNull(6000) { find(hit) }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                }
-            if (entries.size >= 512) entries.remove(entries.keys.first())
-            entries[key] =
-                Entry(
-                    System.currentTimeMillis() + if (result == null) 600_000L else 86_400_000L,
-                    result,
-                )
-            result
         }
     }
 
@@ -68,34 +79,9 @@ internal class EncyclopediaLinks(
         val project = URI(contentWebsite(hit))
         for (url in candidates) {
             val page = fetch(url)
-            val links =
-                Regex("https?://[^\\s\"'<>]+").findAll(page).map { it.value.replace("&amp;", "&") }
-            val redirected =
-                Regex("(?:(?:https?:)?//)link\\.mcmod\\.cn/target/([^\\s\"'<>]+)")
-                    .findAll(page)
-                    .mapNotNull { match ->
-                        runCatching {
-                            val encoded =
-                                URI("https://link.mcmod.cn/target/${match.groupValues[1]}")
-                                    .path
-                                    .substringAfter("/target/")
-                            require(encoded.length <= 4096)
-                            val bytes =
-                                runCatching {
-                                    java.util.Base64
-                                        .getDecoder()
-                                        .decode(encoded)
-                                }.getOrElse {
-                                    java.util.Base64
-                                        .getUrlDecoder()
-                                        .decode(encoded)
-                                }
-                            require(bytes.size <= 2048)
-                            bytes.toString(Charsets.UTF_8)
-                        }.getOrNull()
-                    }
+            val links = encyclopediaPageLinks(page)
             if (
-                (links + redirected).any { raw ->
+                links.any { raw ->
                     val actual = runCatching { URI(raw) }.getOrNull()
                     actual != null &&
                         actual.host
@@ -109,6 +95,36 @@ internal class EncyclopediaLinks(
         }
         return null
     }
+
+    private fun encyclopediaPageLinks(page: String): Sequence<String> {
+        val links =
+            Regex("https?://[^\\s\"'<>]+").findAll(page).map { it.value.replace("&amp;", "&") }
+        val redirected =
+            Regex("(?:(?:https?:)?//)link\\.mcmod\\.cn/target/([^\\s\"'<>]+)")
+                .findAll(page)
+                .mapNotNull { match ->
+                    runCatching {
+                        val encoded =
+                            URI("https://link.mcmod.cn/target/${match.groupValues[1]}")
+                                .path
+                                .substringAfter("/target/")
+                        require(encoded.length <= 4096)
+                        val bytes =
+                            runCatching {
+                                java.util.Base64
+                                    .getDecoder()
+                                    .decode(encoded)
+                            }.getOrElse {
+                                java.util.Base64
+                                    .getUrlDecoder()
+                                    .decode(encoded)
+                            }
+                        require(bytes.size <= 2048)
+                        bytes.toString(Charsets.UTF_8)
+                    }.getOrNull()
+                }
+        return links + redirected
+    }
 }
 
 internal fun directEncyclopediaUrl(value: String): String? {
@@ -117,7 +133,8 @@ internal fun directEncyclopediaUrl(value: String): String? {
     val plainUrl = uri.rawUserInfo == null && uri.port == -1
     val withoutQuery = uri.rawQuery == null && uri.rawFragment == null
     val entryPage = uri.path.matches(Regex("/(class|modpack)/[1-9][0-9]*\\.html"))
-    return if (trustedOrigin && plainUrl && withoutQuery && entryPage) {
+    val plainAddress = plainUrl && withoutQuery
+    return if (trustedOrigin && plainAddress && entryPage) {
         uri.toASCIIString()
     } else {
         null

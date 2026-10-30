@@ -97,18 +97,7 @@ class RecentPlayBehaviorTest {
         tracker.pollQuickPlay()
         assertTrue(store.recentUsage.recent(EntryKind.Server, instance.id, 10).isEmpty())
         val entered = Instant.now().minusSeconds(3)
-        writeJson(
-            file,
-            listOf(
-                mapOf(
-                    "type" to "multiplayer",
-                    "identifier" to "PLAY.example.test:25566",
-                    "lastPlayedTime" to entered.toString(),
-                    "name" to "Example",
-                    "gamemode" to "survival",
-                ),
-            ),
-        )
+        writeJson(file, quickPlayServerEntries(entered))
         tracker.pollQuickPlay()
         assertEquals(
             entered,
@@ -123,77 +112,98 @@ class RecentPlayBehaviorTest {
                 .summary(EntryKind.Server, instance.id, "PLAY.example.test:25566")
                 .active,
         )
-        writeJson(
-            file,
-            listOf(
-                mapOf(
-                    "type" to "singleplayer",
-                    "identifier" to "中文 世界",
-                    "lastPlayedTime" to Instant.now().toString(),
-                ),
-            ),
-        )
+        writeJson(file, quickPlayWorldEntries())
         tracker.pollQuickPlay()
         assertNotNull(store.recentUsage.lastUsed(EntryKind.World, instance.id, "中文 世界"))
         tracker.finish()
     }
+
+    private fun quickPlayServerEntries(entered: Instant): List<Map<String, String>> =
+        listOf(
+            mapOf(
+                "type" to "multiplayer",
+                "identifier" to "PLAY.example.test:25566",
+                "lastPlayedTime" to entered.toString(),
+                "name" to "Example",
+                "gamemode" to "survival",
+            ),
+        )
+
+    private fun quickPlayWorldEntries(): List<Map<String, String>> =
+        listOf(
+            mapOf(
+                "type" to "singleplayer",
+                "identifier" to "中文 世界",
+                "lastPlayedTime" to Instant.now().toString(),
+            ),
+        )
 
     @Test
     fun `NBT deletion preserves unrelated fields compression and a recoverable backup`() {
         for (compressed in listOf(false, true)) {
             val (store, instance) = store()
             val game = store.gamePath(instance)
-            val tags =
-                NbtCompound(
-                    linkedMapOf(
-                        "custom" to NbtLong(42),
-                        "servers" to
-                            NbtList(
-                                listOf(
-                                    NbtCompound(
-                                        mapOf(
-                                            "name" to NbtString("Remove"),
-                                            "ip" to NbtString("EXAMPLE.test:25565"),
-                                            "extra" to NbtByte(3),
-                                        ),
-                                    ),
-                                    NbtCompound(
-                                        mapOf(
-                                            "name" to NbtString("保留"),
-                                            "ip" to NbtString("keep.test"),
-                                            "unknown" to NbtIntArray(intArrayOf(1, 2)),
-                                        ),
-                                    ),
-                                ),
-                                10,
-                            ),
-                    ),
-                )
-            val original = encodeNbt(NbtDocument("named-root", tags, compressed))
+            val original = encodeNbt(NbtDocument("named-root", serverListTags(), compressed))
             game.resolve("servers.dat").writeBytes(original)
             store.recentUsage.record(EntryKind.Server, instance.id, "example.test")
             store.recentUsage.setHidden(EntryKind.Server, instance.id, "example.test", true)
             val result = ServerListEditor(store).delete(instance.id, "example.test")
             assertEquals(1, result.removed)
             assertContentEquals(original, requireNotNull(result.backup).readBytes())
-            val after = readNbtDocument(game.resolve("servers.dat"))
-            assertEquals("named-root", after.rootName)
-            assertEquals(compressed, after.compressed)
-            assertEquals(NbtLong(42), after.root["custom"])
-            assertContentEquals(
-                intArrayOf(1, 2),
-                (
-                    checkNotNull(
-                        after.root
-                            .list("servers"),
-                    ).compounds()
-                        .single()["unknown"] as NbtIntArray
-                ).value,
-            )
-            assertEquals(listOf("keep.test"), listServers(game).map { it.ip })
-            assertNull(store.recentUsage.lastUsed(EntryKind.Server, instance.id, "example.test"))
-            assertFalse(store.recentUsage.isHidden(EntryKind.Server, instance.id, "example.test"))
+            assertServerListRewritten(store, instance, game, compressed)
         }
+    }
+
+    private fun serverListTags(): NbtCompound =
+        NbtCompound(
+            linkedMapOf(
+                "custom" to NbtLong(42),
+                "servers" to
+                    NbtList(
+                        listOf(
+                            NbtCompound(
+                                mapOf(
+                                    "name" to NbtString("Remove"),
+                                    "ip" to NbtString("EXAMPLE.test:25565"),
+                                    "extra" to NbtByte(3),
+                                ),
+                            ),
+                            NbtCompound(
+                                mapOf(
+                                    "name" to NbtString("保留"),
+                                    "ip" to NbtString("keep.test"),
+                                    "unknown" to NbtIntArray(intArrayOf(1, 2)),
+                                ),
+                            ),
+                        ),
+                        10,
+                    ),
+            ),
+        )
+
+    private fun assertServerListRewritten(
+        store: LauncherStore,
+        instance: GameInstance,
+        game: Path,
+        compressed: Boolean,
+    ) {
+        val after = readNbtDocument(game.resolve("servers.dat"))
+        assertEquals("named-root", after.rootName)
+        assertEquals(compressed, after.compressed)
+        assertEquals(NbtLong(42), after.root["custom"])
+        assertContentEquals(
+            intArrayOf(1, 2),
+            (
+                checkNotNull(
+                    after.root
+                        .list("servers"),
+                ).compounds()
+                    .single()["unknown"] as NbtIntArray
+            ).value,
+        )
+        assertEquals(listOf("keep.test"), listServers(game).map { it.ip })
+        assertNull(store.recentUsage.lastUsed(EntryKind.Server, instance.id, "example.test"))
+        assertFalse(store.recentUsage.isHidden(EntryKind.Server, instance.id, "example.test"))
     }
 
     @Test
@@ -237,91 +247,121 @@ class RecentPlayBehaviorTest {
     fun `real Java receives the quick play target and correct working directory`() =
         runBlocking {
             val (store, instance) = store()
-            val source = directory.resolve("QuickTargetFixture.java")
-            source.writeText(
-                """public class QuickTargetFixture { public static void main(String[] args) { System.out.println(String.join("|",args)); System.out.println(java.nio.file.Path.of("").toAbsolutePath()); } }""",
-            )
-            assertEquals(
-                0,
-                ToolProvider
-                    .getSystemJavaCompiler()
-                    .run(null, null, null, "-d", directory.toString(), source.toString()),
-            )
-            val jar =
-                store.minecraftRoot.resolve("versions/recent/recent.jar").apply {
-                    parent.createDirectories()
-                }
-            JarOutputStream(Files.newOutputStream(jar)).use {
-                it.putNextEntry(JarEntry("QuickTargetFixture.class"))
-                it.write(directory.resolve("QuickTargetFixture.class").readBytes())
-                it.closeEntry()
-            }
-            val profile =
-                ResolvedProfile(
-                    "recent",
-                    "recent",
-                    JsonParser
-                        .parseString(
-                            """{"mainClass":"QuickTargetFixture","libraries":[],"arguments":{"jvm":["-cp","${'$'}{classpath}"],"game":[]}}""",
-                        ).asJsonObject,
-                )
-            val runtime =
-                JavaRuntime(
-                    Path
-                        .of(
-                            System.getProperty("java.home"),
-                            "bin",
-                            if (store.platform.osName == "windows") "java.exe" else "java",
-                        ).toString(),
-                    Runtime.version().feature(),
-                    "fixture",
-                )
+            stageQuickTargetFixture(store)
+            val profile = quickTargetProfile()
+            val runtime = quickTargetRuntime(store)
             val recording = directory.resolve("run").apply { createDirectories() }
             val before = store.instance(instance.id).extraJvmArgs
-            for (
-            target in
-            listOf(
-                GameLaunchTarget(EntryKind.Server, "127.0.0.1:25566"),
-                GameLaunchTarget(EntryKind.World, "中文 世界"),
-            )
-            ) {
-                if (target.kind == EntryKind.World) {
-                    store
-                        .gamePath(instance)
-                        .resolve("saves/${target.key}")
-                        .createDirectories()
-                        .resolve("level.dat")
-                        .writeText("fixture")
-                }
-                val plan =
-                    LaunchPlanner(store)
-                        .plan(
-                            instance,
-                            profile,
-                            runtime,
-                            GameCredentials("Tester", "0"),
-                            runtimeDirectory = recording,
-                            target = target,
-                        )
-                val process =
-                    ProcessBuilder(listOf(plan.executable) + plan.arguments)
-                        .directory(plan.gameDirectory.toFile())
-                        .redirectErrorStream(true)
-                        .start()
-                val output = process.inputStream.bufferedReader().readText()
-                assertEquals(0, process.waitFor(), output)
-                assertContains(
-                    output,
-                    if (target.kind == EntryKind.Server) {
-                        "--quickPlayMultiplayer|${target.key}"
-                    } else {
-                        "--quickPlaySingleplayer|${target.key}"
-                    },
-                )
-                assertContains(output, "--quickPlayPath|${recording.resolve("quick-play.json")}")
-                assertContains(output, store.gamePath(instance).toString())
-                assertFalse(plan.arguments.any { it.contains("${'$'}{quickPlay") })
+            for (target in quickPlayTargets()) {
+                assertQuickPlayRun(store, instance, profile, runtime, recording, target)
             }
             assertEquals(before, store.instance(instance.id).extraJvmArgs)
         }
+
+    /** 编译一个只回显参数与工作目录的 Java 夹具，并打进实例的版本 jar。 */
+    private fun stageQuickTargetFixture(store: LauncherStore) {
+        val source = directory.resolve("QuickTargetFixture.java")
+        source.writeText(
+            """public class QuickTargetFixture {
+                public static void main(String[] args) {
+                    System.out.println(String.join("|",args));
+                    System.out.println(java.nio.file.Path.of("").toAbsolutePath());
+                } }""",
+        )
+        assertEquals(
+            0,
+            ToolProvider
+                .getSystemJavaCompiler()
+                .run(null, null, null, "-d", directory.toString(), source.toString()),
+        )
+        val jar =
+            store.minecraftRoot.resolve("versions/recent/recent.jar").apply {
+                parent.createDirectories()
+            }
+        JarOutputStream(Files.newOutputStream(jar)).use {
+            it.putNextEntry(JarEntry("QuickTargetFixture.class"))
+            it.write(directory.resolve("QuickTargetFixture.class").readBytes())
+            it.closeEntry()
+        }
+    }
+
+    private fun quickTargetProfile(): ResolvedProfile =
+        ResolvedProfile(
+            "recent",
+            "recent",
+            JsonParser
+                .parseString(
+                    """
+                    {
+                      "mainClass": "QuickTargetFixture",
+                      "libraries": [],
+                      "arguments": {"jvm": ["-cp", "${'$'}{classpath}"], "game": []}
+                    }
+                    """,
+                ).asJsonObject,
+        )
+
+    private fun quickTargetRuntime(store: LauncherStore): JavaRuntime =
+        JavaRuntime(
+            Path
+                .of(
+                    System.getProperty("java.home"),
+                    "bin",
+                    if (store.platform.osName == "windows") "java.exe" else "java",
+                ).toString(),
+            Runtime.version().feature(),
+            "fixture",
+        )
+
+    private fun quickPlayTargets(): List<GameLaunchTarget> =
+        listOf(
+            GameLaunchTarget(EntryKind.Server, "127.0.0.1:25566"),
+            GameLaunchTarget(EntryKind.World, "中文 世界"),
+        )
+
+    private suspend fun assertQuickPlayRun(
+        store: LauncherStore,
+        instance: GameInstance,
+        profile: ResolvedProfile,
+        runtime: JavaRuntime,
+        recording: Path,
+        target: GameLaunchTarget,
+    ) {
+        if (target.kind == EntryKind.World) {
+            store
+                .gamePath(instance)
+                .resolve("saves/${target.key}")
+                .createDirectories()
+                .resolve("level.dat")
+                .writeText("fixture")
+        }
+        val plan =
+            LaunchPlanner(store)
+                .plan(
+                    instance,
+                    profile,
+                    runtime,
+                    GameCredentials("Tester", "0"),
+                    runtimeDirectory = recording,
+                    target = target,
+                )
+        val process =
+            ProcessBuilder(listOf(plan.executable) + plan.arguments)
+                .directory(plan.gameDirectory.toFile())
+                .redirectErrorStream(true)
+                .start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+        assertContains(
+            output,
+            if (target.kind == EntryKind.Server) {
+                "--quickPlayMultiplayer|${target.key}"
+            } else {
+                "--quickPlaySingleplayer|${target.key}"
+            },
+        )
+        assertContains(output, "--quickPlayPath|${recording.resolve("quick-play.json")}")
+        assertContains(output, store.gamePath(instance).toString())
+        assertFalse(plan.arguments.any { it.contains("${'$'}{quickPlay") })
+    }
 }

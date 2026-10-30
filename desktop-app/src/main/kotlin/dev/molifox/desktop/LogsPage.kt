@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -58,10 +59,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.LaunchIssue
 import dev.molifox.core.LauncherState
 import dev.molifox.core.LogLevel
 import dev.molifox.core.LogLine
 import kotlinx.coroutines.launch
+
+/** ISO 时间戳里 `HH:mm:ss` 的长度；界面与剪贴板都只展示到秒。 */
+private const val LOG_TIME_TEXT_LENGTH = 8
 
 /** 控制台固定深色底（贴近终端观感），主题色只用于状态标记。 */
 private val logConsoleBackground = Color(0xFF171A21)
@@ -103,8 +108,6 @@ internal fun ColumnScope.LogsPage(
     var onlyGame by remember { mutableStateOf(false) }
     var autoScroll by remember(preferences.autoScroll) { mutableStateOf(preferences.autoScroll) }
     var confirmClear by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
 
     val logs =
         state.logs.filter {
@@ -113,204 +116,24 @@ internal fun ColumnScope.LogsPage(
                 it.message.contains(query, true)
         }
 
-    FlowRow(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        LogAction(Icons.Outlined.FolderOpen, "打开日志文件夹") {
-            actions.run { actions.controller.openLogsFolder() }
-        }
-        LogAction(Icons.Outlined.ContentCopy, "复制") {
-            clipboard.setText(AnnotatedString(logs.joinToString("\n") { it.toClipboardText() }))
-        }
-        LogAction(Icons.Outlined.Save, "导出日志") { actions.exportLogs() }
-        LogAction(Icons.Outlined.Description, "导出诊断包") { actions.exportDiagnostics() }
-        LogAction(Icons.Outlined.DeleteOutline, "清空") { confirmClear = true }
-        if (state.runningInstanceId != null) {
-            LogAction(Icons.Outlined.Stop, "停止游戏") {
-                actions.run { actions.controller.game.stop() }
-            }
-        }
-    }
+    LogToolbar(state, actions, logs) { confirmClear = true }
 
-    state.launchIssue?.let { issue ->
-        Panel(Modifier.fillMaxWidth(), padding = 14) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    issue.title,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.weight(1f))
-                val issueInstance = state.data.selectedInstanceId
-                if (issueInstance != null) {
-                    SecondaryButton({ actions.previewLaunch(issueInstance) }) {
-                        Text("查看启动参数", fontSize = 12.sp)
-                    }
-                }
-            }
-            Text(issue.suggestion, fontSize = 12.sp)
-            if (issue.evidence.isNotBlank()) {
-                Text(
-                    issue.evidence,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    LaunchIssuePanel(state.launchIssue, state.data.selectedInstanceId, actions)
 
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CompactSearchField(
-            query,
-            { query = it },
-            Modifier.weight(1f),
-            placeholder = "筛选日志内容",
-        )
-        FilterChip(
-            onlyGame,
-            { onlyGame = !onlyGame },
-            { Text("仅游戏", fontSize = 11.sp) },
-            modifier = Modifier.height(28.dp),
-        )
-    }
-
-    // 标准级别档位；「全部」= 不限制。只列 LauncherStore.log 真实会写出的档位。
-    FlowRow(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        LevelChip("全部", levels.isEmpty()) { levels = emptySet() }
-        LogLevel.entries.forEach { level ->
-            LevelChip(level.title, level in levels) {
-                levels =
-                    if (level in levels) {
-                        levels - level
-                    } else {
-                        levels + level
-                    }
-            }
-        }
-    }
+    LogFilterSection(
+        query,
+        { query = it },
+        onlyGame,
+        { onlyGame = it },
+        levels,
+        { levels = it },
+    )
 
     val listState = rememberLazyListState()
     LaunchedEffect(logs.lastOrNull()?.time, autoScroll, query, levels, onlyGame) {
         if (autoScroll && logs.isNotEmpty()) listState.scrollToItem(logs.lastIndex)
     }
-    Surface(
-        Modifier.fillMaxWidth().weight(1f),
-        color = logConsoleBackground,
-        shape = RoundedCornerShape(Metrics.cardRadius),
-    ) {
-        Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (state.runningInstanceId != null) {
-                    Tag("游戏运行中")
-                } else {
-                    Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text(
-                    logs.size.toString() + " 条",
-                    fontSize = 11.sp,
-                    color = logConsoleTimestamp,
-                )
-                Spacer(Modifier.weight(1f))
-                Text("自动滚动", fontSize = 11.sp, color = logConsoleTimestamp)
-                CompactSwitch(
-                    autoScroll,
-                    { enabled ->
-                        autoScroll = enabled
-                        // 与设置页写回同一偏好字段，保持自动滚动状态一致。
-                        val settings = state.data.settings
-                        actions.run {
-                            actions.controller.saveSettings(
-                                settings.copy(
-                                    pages =
-                                        settings.pages.copy(
-                                            logs = settings.pages.logs.copy(autoScroll = enabled),
-                                        ),
-                                ),
-                            )
-                        }
-                    },
-                )
-                SmallIconButton(
-                    Icons.Outlined.KeyboardArrowDown,
-                    "跳到最新一行",
-                    {
-                        scope.launch {
-                            if (logs.isNotEmpty()) listState.animateScrollToItem(logs.lastIndex)
-                        }
-                    },
-                    tint = logConsoleTimestamp,
-                )
-            }
-            SelectionContainer {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp),
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    if (logs.isEmpty()) {
-                        item(key = "log-empty") {
-                            Box(Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
-                                Column(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Outlined.Subject,
-                                        null,
-                                        Modifier.size(24.dp),
-                                        logConsoleTimestamp,
-                                    )
-                                    Text(
-                                        if (state.logs.isEmpty()) {
-                                            "等待日志输出…"
-                                        } else {
-                                            "没有符合当前筛选条件的日志"
-                                        },
-                                        color = logConsoleTimestamp,
-                                        fontFamily = LocalLauncherFont.current,
-                                        fontSize = 12.sp,
-                                    )
-                                    Text(
-                                        if (state.logs.isEmpty()) {
-                                            "启动游戏后这里会显示运行输出"
-                                        } else {
-                                            "调整级别、关键词或「仅游戏」后再试"
-                                        },
-                                        color = logConsoleTimestamp.copy(alpha = .8f),
-                                        fontSize = 11.sp,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    items(
-                        count = logs.size,
-                        // 日志行没有全局 id：用「时间戳 + 下标」做稳定 key。
-                        // 追加新行时下标不变，同一毫秒写入相同正文也不会撞 key。
-                        key = { index -> logs[index].time + "#" + index },
-                    ) { index ->
-                        LogRow(logs[index], preferences.fontSize)
-                    }
-                }
-            }
-        }
-    }
+    LogConsolePanel(state, actions, logs, listState, autoScroll) { autoScroll = it }
     Text(
         logs.size.toString() + " / " + state.logs.size + " 条记录 · 已知登录令牌会自动隐藏",
         fontSize = 11.sp,
@@ -329,6 +152,265 @@ internal fun ColumnScope.LogsPage(
                 }) { Text("清空") }
             },
             dismissButton = { TextButton({ confirmClear = false }) { Text("取消") } },
+        )
+    }
+}
+
+/** 顶部操作行：打开文件夹、复制、导出日志/诊断包、清空，运行中额外提供「停止游戏」。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LogToolbar(
+    state: LauncherState,
+    actions: UiActions,
+    logs: List<LogLine>,
+    onClear: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        LogAction(Icons.Outlined.FolderOpen, "打开日志文件夹") {
+            actions.run { actions.controller.openLogsFolder() }
+        }
+        LogAction(Icons.Outlined.ContentCopy, "复制") {
+            clipboard.setText(
+                AnnotatedString(
+                    logs.joinToString("\n") {
+                        it.time.substringAfter('T').take(LOG_TIME_TEXT_LENGTH) +
+                            " [" + it.level.label + "] " + it.message
+                    },
+                ),
+            )
+        }
+        LogAction(Icons.Outlined.Save, "导出日志") { actions.exportLogs() }
+        LogAction(Icons.Outlined.Description, "导出诊断包") { actions.exportDiagnostics() }
+        LogAction(Icons.Outlined.DeleteOutline, "清空") { onClear() }
+        if (state.runningInstanceId != null) {
+            LogAction(Icons.Outlined.Stop, "停止游戏") {
+                actions.run { actions.controller.game.stop() }
+            }
+        }
+    }
+}
+
+/** 最近一次启动失败的原因与建议；有选中的实例时可直接查看启动参数。 */
+@Composable
+private fun LaunchIssuePanel(
+    issue: LaunchIssue?,
+    selectedInstanceId: String?,
+    actions: UiActions,
+) {
+    if (issue == null) return
+    Panel(Modifier.fillMaxWidth(), padding = 14) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                issue.title,
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            if (selectedInstanceId != null) {
+                SecondaryButton({ actions.previewLaunch(selectedInstanceId) }) {
+                    Text("查看启动参数", fontSize = 12.sp)
+                }
+            }
+        }
+        Text(issue.suggestion, fontSize = 12.sp)
+        if (issue.evidence.isNotBlank()) {
+            Text(
+                issue.evidence,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 关键词搜索、「仅游戏」开关与级别筛选片；窄窗口由 FlowRow 换行。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LogFilterSection(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onlyGame: Boolean,
+    onOnlyGameChange: (Boolean) -> Unit,
+    levels: Set<LogLevel>,
+    onLevelsChange: (Set<LogLevel>) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompactSearchField(
+            query,
+            onQueryChange,
+            Modifier.weight(1f),
+            placeholder = "筛选日志内容",
+        )
+        FilterChip(
+            onlyGame,
+            { onOnlyGameChange(!onlyGame) },
+            { Text("仅游戏", fontSize = 11.sp) },
+            modifier = Modifier.height(28.dp),
+        )
+    }
+    // 标准级别档位；「全部」= 不限制。只列 LauncherStore.log 真实会写出的档位。
+    FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        LevelChip("全部", levels.isEmpty()) { onLevelsChange(emptySet()) }
+        LogLevel.entries.forEach { level ->
+            LevelChip(level.title, level in levels) {
+                onLevelsChange(
+                    if (level in levels) {
+                        levels - level
+                    } else {
+                        levels + level
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** 日志面板：状态行（运行标记、条数、自动滚动、跳到最新）+ 可选中复制的日志列表。 */
+@Composable
+private fun ColumnScope.LogConsolePanel(
+    state: LauncherState,
+    actions: UiActions,
+    logs: List<LogLine>,
+    listState: LazyListState,
+    autoScroll: Boolean,
+    onAutoScrollChange: (Boolean) -> Unit,
+) {
+    val fontSize = state.data.settings.pages.logs.fontSize
+    Surface(
+        Modifier.fillMaxWidth().weight(1f),
+        color = logConsoleBackground,
+        shape = RoundedCornerShape(Metrics.cardRadius),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            LogConsoleHeader(state, actions, logs, listState, autoScroll, onAutoScrollChange)
+            SelectionContainer {
+                LazyColumn(
+                    Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (logs.isEmpty()) {
+                        item(key = "log-empty") {
+                            // 区分「还没输出」与「筛选后为空」两种原因，文案与原来一致。
+                            val logsEmpty = state.logs.isEmpty()
+                            Box(Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
+                                Column(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Subject,
+                                        null,
+                                        Modifier.size(24.dp),
+                                        logConsoleTimestamp,
+                                    )
+                                    Text(
+                                        if (logsEmpty) {
+                                            "等待日志输出…"
+                                        } else {
+                                            "没有符合当前筛选条件的日志"
+                                        },
+                                        color = logConsoleTimestamp,
+                                        fontFamily = LocalLauncherFont.current,
+                                        fontSize = 12.sp,
+                                    )
+                                    Text(
+                                        if (logsEmpty) {
+                                            "启动游戏后这里会显示运行输出"
+                                        } else {
+                                            "调整级别、关键词或「仅游戏」后再试"
+                                        },
+                                        color = logConsoleTimestamp.copy(alpha = .8f),
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    items(
+                        count = logs.size,
+                        // 日志行没有全局 id：用「时间戳 + 下标」做稳定 key。
+                        // 追加新行时下标不变，同一毫秒写入相同正文也不会撞 key。
+                        key = { index -> logs[index].time + "#" + index },
+                    ) { index ->
+                        LogRow(logs[index], fontSize)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 日志面板的状态行：运行标记、条数、自动滚动开关与「跳到最新一行」。 */
+@Composable
+private fun LogConsoleHeader(
+    state: LauncherState,
+    actions: UiActions,
+    logs: List<LogLine>,
+    listState: LazyListState,
+    autoScroll: Boolean,
+    onAutoScrollChange: (Boolean) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    Row(
+        Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (state.runningInstanceId != null) {
+            Tag("游戏运行中")
+        } else {
+            Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            logs.size.toString() + " 条",
+            fontSize = 11.sp,
+            color = logConsoleTimestamp,
+        )
+        Spacer(Modifier.weight(1f))
+        Text("自动滚动", fontSize = 11.sp, color = logConsoleTimestamp)
+        CompactSwitch(
+            autoScroll,
+            { enabled ->
+                onAutoScrollChange(enabled)
+                // 与设置页写回同一偏好字段，保持自动滚动状态一致。
+                val settings = state.data.settings
+                actions.run {
+                    actions.controller.saveSettings(
+                        settings.copy(
+                            pages =
+                                settings.pages.copy(
+                                    logs = settings.pages.logs.copy(autoScroll = enabled),
+                                ),
+                        ),
+                    )
+                }
+            },
+        )
+        SmallIconButton(
+            Icons.Outlined.KeyboardArrowDown,
+            "跳到最新一行",
+            {
+                scope.launch {
+                    if (logs.isNotEmpty()) listState.animateScrollToItem(logs.lastIndex)
+                }
+            },
+            tint = logConsoleTimestamp,
         )
     }
 }
@@ -410,6 +492,3 @@ private fun LevelChip(
         modifier = Modifier.height(28.dp),
     )
 }
-
-private fun LogLine.toClipboardText(): String =
-    time.substringAfter('T').take(8) + " [" + level.label + "] " + message

@@ -9,6 +9,9 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlin.io.path.name
 
+private const val FINGERPRINT_QUERY_BATCH_SIZE = 100
+private const val HASH_QUERY_BATCH_SIZE = 100
+
 /** 内容源默认顺序：Modrinth 优先，CurseForge 公共镜像兜底；两者都不需要 API Key。 */
 internal fun defaultModUpdateSources(
     network: NetworkClient,
@@ -52,7 +55,7 @@ internal class ModrinthModUpdateSource(
             .map { it.sha512 }
             .filter { it.isNotBlank() }
             .distinct()
-            .chunked(100)) {
+            .chunked(FINGERPRINT_QUERY_BATCH_SIZE)) {
             val body =
                 JsonObject().apply {
                     add("hashes", gson.toJsonTree(batch))
@@ -89,7 +92,7 @@ internal class ModrinthModUpdateSource(
         val result = mutableMapOf<String, RemoteModVersion>()
         val hashes = files.map { it.sha512 }.filter { it.isNotBlank() }.distinct()
         if (hashes.isEmpty()) return result
-        for (batch in hashes.chunked(100)) {
+        for (batch in hashes.chunked(HASH_QUERY_BATCH_SIZE)) {
             val body =
                 JsonObject().apply {
                     add("hashes", gson.toJsonTree(batch))

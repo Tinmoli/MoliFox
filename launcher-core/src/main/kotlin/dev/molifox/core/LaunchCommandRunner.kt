@@ -12,6 +12,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
@@ -19,6 +20,9 @@ import kotlin.io.path.inputStream
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 import kotlin.io.path.writeText
+
+private const val COMMAND_POLL_INTERVAL_MS = 100L
+private const val MAX_COMMAND_OUTPUT_LINES = 500
 
 internal enum class LaunchCommandPhase(
     val title: String,
@@ -51,40 +55,18 @@ internal class LaunchCommandRunner(
         store.log("开始执行${phase.title}命令")
         val process =
             try {
-                ProcessBuilder(arguments)
-                    .directory(plan.gameDirectory.toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(output.toFile())
-                    .apply {
-                        environment().putAll(plan.environment)
-                        environment()["MOLIFOX_GAME_DIR"] =
-                            plan.gameDirectory.toAbsolutePath().toString()
-                        environment()["MOLIFOX_INSTANCE_ID"] = instance.id
-                        environment()["MOLIFOX_INSTANCE_NAME"] = instance.name
-                        environment()["MOLIFOX_GAME_VERSION"] = instance.gameVersion
-                        environment()["MOLIFOX_JAVA_PATH"] = plan.executable
-                        exitCode?.let { environment()["MOLIFOX_EXIT_CODE"] = it.toString() }
-                    }.start()
-            } catch (error: Exception) {
-                session.commandResult(phase.name, "failed to start")
-                throw IOException("${phase.title}命令无法启动，请检查可执行文件路径", error)
+                startProcess(arguments, output, plan, instance, exitCode)
+            } catch (error: IOException) {
+                processStartFailure(session, phase, error)
+            } catch (error: SecurityException) {
+                processStartFailure(session, phase, error)
+            } catch (error: IllegalArgumentException) {
+                processStartFailure(session, phase, error)
             }
         active = process
         var result = "failed"
         try {
-            val deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L
-            while (!process.waitFor(100, TimeUnit.MILLISECONDS)) {
-                currentCoroutineContext().ensureActive()
-                if (System.nanoTime() > deadline) {
-                    throw IOException("${phase.title}命令超过 $timeoutSeconds 秒，已终止")
-                }
-                if (output.exists() && output.fileSize() > logLimit) {
-                    throw IOException("${phase.title}命令日志超过 8 MB，已终止")
-                }
-            }
-            currentCoroutineContext().ensureActive()
-            val code = process.exitValue()
-            check(code == 0) { "${phase.title}命令退出码为 $code，请查看命令日志" }
+            waitForCommand(process, timeoutSeconds, phase, output)
             result = "completed"
         } catch (cancelled: CancellationException) {
             result = "cancelled"
@@ -92,24 +74,84 @@ internal class LaunchCommandRunner(
         } finally {
             if (process.isAlive) terminate(process)
             active = null
-            runCatching {
-                if (output.isRegularFile()) {
-                    val text =
-                        output
-                            .inputStream()
-                            .use { it.readNBytes(logLimit.toInt()) }
-                            .toString(Charsets.UTF_8)
-                    val cleaned = session.clean(text)
-                    output.writeText(cleaned)
-                    cleaned
-                        .lineSequence()
-                        .filter { it.isNotBlank() }
-                        .take(500)
-                        .forEach { store.log("[${phase.title}] $it", level = LogLevel.Trace) }
-                }
-            }.onFailure { store.log("${phase.title}命令日志暂时无法整理：${it.message}", true) }
+            cleanCommandLog(output, phase, session)
             session.commandResult(phase.name, result)
         }
+    }
+
+    private suspend fun waitForCommand(
+        process: Process,
+        timeoutSeconds: Int,
+        phase: LaunchCommandPhase,
+        output: Path,
+    ) {
+        val deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L
+        while (!process.waitFor(COMMAND_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS)) {
+            currentCoroutineContext().ensureActive()
+            if (System.nanoTime() > deadline) {
+                throw IOException("${phase.title}命令超过 $timeoutSeconds 秒，已终止")
+            }
+            if (output.exists() && output.fileSize() > logLimit) {
+                throw IOException("${phase.title}命令日志超过 8 MB，已终止")
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        val code = process.exitValue()
+        check(code == 0) { "${phase.title}命令退出码为 $code，请查看命令日志" }
+    }
+
+    private fun startProcess(
+        arguments: List<String>,
+        output: Path,
+        plan: LaunchPlan,
+        instance: GameInstance,
+        exitCode: Int?,
+    ): Process =
+        ProcessBuilder(arguments)
+            .directory(plan.gameDirectory.toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(output.toFile())
+            .apply {
+                environment().putAll(plan.environment)
+                environment()["MOLIFOX_GAME_DIR"] =
+                    plan.gameDirectory.toAbsolutePath().toString()
+                environment()["MOLIFOX_INSTANCE_ID"] = instance.id
+                environment()["MOLIFOX_INSTANCE_NAME"] = instance.name
+                environment()["MOLIFOX_GAME_VERSION"] = instance.gameVersion
+                environment()["MOLIFOX_JAVA_PATH"] = plan.executable
+                exitCode?.let { environment()["MOLIFOX_EXIT_CODE"] = it.toString() }
+            }.start()
+
+    private fun processStartFailure(
+        session: LaunchSession,
+        phase: LaunchCommandPhase,
+        error: Exception,
+    ): Nothing {
+        session.commandResult(phase.name, "failed to start")
+        throw IOException("${phase.title}命令无法启动，请检查可执行文件路径", error)
+    }
+
+    private fun cleanCommandLog(
+        output: Path,
+        phase: LaunchCommandPhase,
+        session: LaunchSession,
+    ) {
+        runCatching {
+            if (output.isRegularFile()) {
+                val text =
+                    output
+                        .inputStream()
+                        .use { it.readNBytes(logLimit.toInt()) }
+                        .toString(Charsets.UTF_8)
+                val cleaned = session.clean(text)
+                output.writeText(cleaned)
+                cleaned
+                    .lineSequence()
+                    .filter { it.isNotBlank() }
+                    .take(MAX_COMMAND_OUTPUT_LINES)
+                    .forEach { store.log("[${phase.title}] $it", level = LogLevel.Trace) }
+            }
+        }.onFailure { store.log("${phase.title}命令日志暂时无法整理：${it.message}", true) }
     }
 
     fun stop() {

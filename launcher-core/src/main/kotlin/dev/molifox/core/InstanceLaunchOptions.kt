@@ -5,6 +5,9 @@
 
 package dev.molifox.core
 
+private const val INSTANCE_SYSTEM_RESERVE_MB = 512
+private const val INSTANCE_MEMORY_STEP_MB = 256
+
 const val MIN_INSTANCE_MEMORY_MB = 512
 const val MAX_INSTANCE_MEMORY_MB = 32768
 const val MIN_GAME_WINDOW_SIZE = 320
@@ -43,7 +46,10 @@ fun validateInstanceLaunchOptions(
 /** 实例可设置的固定内存上限；本机内存较小时再按总内存留出 512 MB 给系统。 */
 fun instanceMemoryLimitMb(totalMemoryMb: Int? = null): Int =
     totalMemoryMb?.let { total ->
-        minOf(MAX_INSTANCE_MEMORY_MB, maxOf(MIN_INSTANCE_MEMORY_MB, total - 512))
+        minOf(
+            MAX_INSTANCE_MEMORY_MB,
+            maxOf(MIN_INSTANCE_MEMORY_MB, total - INSTANCE_SYSTEM_RESERVE_MB),
+        )
     } ?: MAX_INSTANCE_MEMORY_MB
 
 /** 实例最大内存策略：继承全局、自动分配、手动指定；只有手动分配会保存显式数值。 */
@@ -91,7 +97,7 @@ fun instanceMemorySliderValue(
     value: Float,
     totalMemoryMb: Int? = null,
 ): Int =
-    (value.toInt() / 256 * 256).coerceIn(
+    (value.toInt() / INSTANCE_MEMORY_STEP_MB * INSTANCE_MEMORY_STEP_MB).coerceIn(
         MIN_INSTANCE_MEMORY_MB,
         instanceMemoryLimitMb(totalMemoryMb),
     )
@@ -140,103 +146,17 @@ fun resolveInstanceLaunchOptions(
     advanced: AdvancedLaunchSettings = effectiveLaunchSettings(settings, instance),
 ): ResolvedLaunchOptions {
     val warnings = mutableListOf<String>()
-    val memoryLimit = instanceMemoryLimitMb(totalMemoryMb)
-    val memoryMb =
-        when {
-            instance.autoMemory == true -> instance.memoryMb
-            instance.memoryMb == 0 -> 0
-            instance.memoryMb in MIN_INSTANCE_MEMORY_MB..memoryLimit -> instance.memoryMb
-            else -> {
-                warnings +=
-                    "实例最大内存 ${instance.memoryMb} MB 超出 " +
-                    "$MIN_INSTANCE_MEMORY_MB–$memoryLimit MB，已跟随全局设置"
-                0
-            }
-        }
-    val initialMb =
-        when {
-            instance.initialMemoryMb == 0 -> 0
-            instance.initialMemoryMb in 128..minOf(MAX_INSTANCE_MEMORY_MB, memoryLimit) ->
-                instance.initialMemoryMb
-            else -> {
-                warnings += "实例初始内存 ${instance.initialMemoryMb} MB 无效，已跟随全局设置"
-                0
-            }
-        }
-    val resolved = instance.copy(memoryMb = memoryMb, initialMemoryMb = initialMb)
     val memory =
-        effectiveGameMemory(
+        InstanceLaunchOptionResolver.memory(
             settings,
-            resolved,
-            totalMemoryMb,
-            availableMemoryMb,
-            architecture,
+            instance,
+            MemoryEnvironment(totalMemoryMb, availableMemoryMb, architecture),
+            warnings,
         )
-
-    val instanceWidth = windowValue(instance.width, "宽度", warnings)
-    val instanceHeight = windowValue(instance.height, "高度", warnings)
-    val globalWidth = globalWindowValue(settings.width, 1280, "宽度", warnings)
-    val globalHeight = globalWindowValue(settings.height, 720, "高度", warnings)
-    val fullscreenMode =
-        if (instance.windowMode in gameWindowModes) {
-            instance.windowMode
-        } else {
-            warnings += "实例窗口模式无效，已跟随全局设置"
-            "inherit"
-        }
-    val width =
-        instanceWidth.takeIf { it > 0 }
-            ?: (if (settings.gameWindowMode == "launcher") launcherWindowSize?.first else null)
-            ?: globalWidth
-    val height =
-        instanceHeight.takeIf { it > 0 }
-            ?: (if (settings.gameWindowMode == "launcher") launcherWindowSize?.second else null)
-            ?: globalHeight
-    val fullscreen =
-        when (fullscreenMode) {
-            "fullscreen" -> true
-            "windowed" -> false
-            else ->
-                when (settings.gameWindowMode) {
-                    "fullscreen" -> true
-                    "launcher" -> false
-                    else -> settings.fullscreen
-                }
-        }
-
-    val requestedJvmArgs = instance.extraJvmArgs.ifBlank { settings.extraJvmArgs }
-    val extraJvmArgs =
-        try {
-            extraJvmArguments(requestedJvmArgs)
-            requestedJvmArgs
-        } catch (failure: IllegalArgumentException) {
-            val fallback =
-                settings.extraJvmArgs.takeIf {
-                    runCatching { extraJvmArguments(it) }.isSuccess
-                } ?: ""
-            warnings +=
-                "额外 JVM 参数无效（${failure.message}），已改用" +
-                (if (fallback.isBlank()) "默认值" else "全局设置")
-            fallback
-        }
-    val advancedGameArgs =
-        try {
-            extraGameArguments(advanced)
-        } catch (failure: IllegalArgumentException) {
-            warnings += "高级启动设置里的附加游戏参数无效（${failure.message}），已忽略"
-            emptyList()
-        }
-    val instanceGameArgs =
-        if (instance.extraGameArgs.isBlank()) {
-            emptyList()
-        } else {
-            try {
-                extraGameArguments(AdvancedLaunchSettings(extraGameArgs = instance.extraGameArgs))
-            } catch (failure: IllegalArgumentException) {
-                warnings += "实例额外游戏参数无效（${failure.message}），已忽略"
-                emptyList()
-            }
-        }
+    val (width, height, fullscreen) =
+        InstanceLaunchOptionResolver.window(settings, instance, launcherWindowSize, warnings)
+    val extraJvmArgs = InstanceLaunchOptionResolver.jvmArguments(settings, instance, warnings)
+    val gameArgs = InstanceLaunchOptionResolver.gameArguments(instance, advanced, warnings)
 
     return ResolvedLaunchOptions(
         memory = memory,
@@ -244,7 +164,7 @@ fun resolveInstanceLaunchOptions(
         height = height,
         fullscreen = fullscreen,
         extraJvmArgs = extraJvmArgs,
-        extraGameArgs = advancedGameArgs + instanceGameArgs,
+        extraGameArgs = gameArgs,
         warnings = warnings,
     )
 }
@@ -277,3 +197,152 @@ private fun globalWindowValue(
         warnings += "全局游戏窗口$label $value 无效，已改用 $default"
         default
     }
+
+private data class MemoryEnvironment(
+    val totalMemoryMb: Int,
+    val availableMemoryMb: Int,
+    val architecture: String,
+)
+
+private data class GameWindowOptions(
+    val width: Int,
+    val height: Int,
+    val fullscreen: Boolean,
+)
+
+private object InstanceLaunchOptionResolver {
+    fun memory(
+        settings: LauncherSettings,
+        instance: GameInstance,
+        environment: MemoryEnvironment,
+        warnings: MutableList<String>,
+    ): GameMemoryAllocation {
+        val (totalMemoryMb, availableMemoryMb, architecture) = environment
+        val memoryLimit = instanceMemoryLimitMb(totalMemoryMb)
+        val memoryMb =
+            when {
+                instance.autoMemory == true -> instance.memoryMb
+                instance.memoryMb == 0 -> 0
+                instance.memoryMb in MIN_INSTANCE_MEMORY_MB..memoryLimit -> instance.memoryMb
+                else -> {
+                    warnings +=
+                        "实例最大内存 ${instance.memoryMb} MB 超出 " +
+                        "$MIN_INSTANCE_MEMORY_MB–$memoryLimit MB，已跟随全局设置"
+                    0
+                }
+            }
+        val initialMb =
+            when {
+                instance.initialMemoryMb == 0 -> 0
+                instance.initialMemoryMb in 128..minOf(MAX_INSTANCE_MEMORY_MB, memoryLimit) ->
+                    instance.initialMemoryMb
+                else -> {
+                    warnings += "实例初始内存 ${instance.initialMemoryMb} MB 无效，已跟随全局设置"
+                    0
+                }
+            }
+        val resolved = instance.copy(memoryMb = memoryMb, initialMemoryMb = initialMb)
+        return effectiveGameMemory(
+            settings,
+            resolved,
+            totalMemoryMb,
+            availableMemoryMb,
+            architecture,
+        )
+    }
+
+    fun window(
+        settings: LauncherSettings,
+        instance: GameInstance,
+        launcherWindowSize: Pair<Int, Int>?,
+        warnings: MutableList<String>,
+    ): GameWindowOptions {
+        val instanceWidth = windowValue(instance.width, "宽度", warnings)
+        val instanceHeight = windowValue(instance.height, "高度", warnings)
+        val globalWidth = globalWindowValue(settings.width, 1280, "宽度", warnings)
+        val globalHeight = globalWindowValue(settings.height, 720, "高度", warnings)
+        val fullscreenMode =
+            if (instance.windowMode in gameWindowModes) {
+                instance.windowMode
+            } else {
+                warnings += "实例窗口模式无效，已跟随全局设置"
+                "inherit"
+            }
+        val width =
+            instanceWidth.takeIf { it > 0 }
+                ?: (if (settings.gameWindowMode == "launcher") launcherWindowSize?.first else null)
+                ?: globalWidth
+        val height =
+            instanceHeight.takeIf { it > 0 }
+                ?: (if (settings.gameWindowMode == "launcher") launcherWindowSize?.second else null)
+                ?: globalHeight
+        val fullscreen = resolveFullscreen(settings, fullscreenMode)
+
+        return GameWindowOptions(width, height, fullscreen)
+    }
+
+    private fun resolveFullscreen(
+        settings: LauncherSettings,
+        fullscreenMode: String,
+    ): Boolean =
+        when (fullscreenMode) {
+            "fullscreen" -> true
+            "windowed" -> false
+            else ->
+                when (settings.gameWindowMode) {
+                    "fullscreen" -> true
+                    "launcher" -> false
+                    else -> settings.fullscreen
+                }
+        }
+
+    fun jvmArguments(
+        settings: LauncherSettings,
+        instance: GameInstance,
+        warnings: MutableList<String>,
+    ): String {
+        val requestedJvmArgs = instance.extraJvmArgs.ifBlank { settings.extraJvmArgs }
+        return try {
+            extraJvmArguments(requestedJvmArgs)
+            requestedJvmArgs
+        } catch (failure: IllegalArgumentException) {
+            val fallback =
+                settings.extraJvmArgs.takeIf {
+                    runCatching { extraJvmArguments(it) }.isSuccess
+                } ?: ""
+            warnings +=
+                "额外 JVM 参数无效（${failure.message}），已改用" +
+                (if (fallback.isBlank()) "默认值" else "全局设置")
+            fallback
+        }
+    }
+
+    fun gameArguments(
+        instance: GameInstance,
+        advanced: AdvancedLaunchSettings,
+        warnings: MutableList<String>,
+    ): List<String> {
+        val advancedGameArgs =
+            try {
+                extraGameArguments(advanced)
+            } catch (failure: IllegalArgumentException) {
+                warnings += "高级启动设置里的附加游戏参数无效（${failure.message}），已忽略"
+                emptyList()
+            }
+        val instanceGameArgs =
+            if (instance.extraGameArgs.isBlank()) {
+                emptyList()
+            } else {
+                try {
+                    extraGameArguments(
+                        AdvancedLaunchSettings(extraGameArgs = instance.extraGameArgs),
+                    )
+                } catch (failure: IllegalArgumentException) {
+                    warnings += "实例额外游戏参数无效（${failure.message}），已忽略"
+                    emptyList()
+                }
+            }
+
+        return advancedGameArgs + instanceGameArgs
+    }
+}

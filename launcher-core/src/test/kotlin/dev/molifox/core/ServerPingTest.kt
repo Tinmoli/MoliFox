@@ -35,7 +35,13 @@ class ServerPingTest {
         val motd =
             parseMotd(
                 JsonParser.parseString(
-                    """{"text":"First line\r\n","color":"red","extra":[{"text":"Second line","color":"green"}]}""",
+                    """
+                    {
+                      "text": "First line\r\n",
+                      "color": "red",
+                      "extra": [{"text": "Second line", "color": "green"}]
+                    }
+                    """,
                 ),
             )
         assertEquals("First line\nSecond line", motd.joinToString("") { it.text })

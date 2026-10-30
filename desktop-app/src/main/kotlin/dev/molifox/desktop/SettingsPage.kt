@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,6 +55,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 // 设置页七个分区：全局游戏设置 / Java 管理 / 通用 / 外观 / 下载 / 日志 / 关于。
 private val settingsIndex =
@@ -93,7 +95,6 @@ fun ColumnScope.SettingsPage(
     // 写盘失败（多半是后台任务进行中不允许改动目录 / 隔离）时在标题下如实提示，不静默丢失。
     var saveError by remember { mutableStateOf<String?>(null) }
     val maximum = maxOf(512, actions.controller.platform.totalMemoryMb - 512)
-    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
     LaunchedEffect(section, refresh, query.isNotBlank()) {
         // 搜索会把 Java 卡片一起展示，所以搜索时也需要检测结果。
         if (section != 1 && query.isBlank()) return@LaunchedEffect
@@ -103,7 +104,9 @@ fun ColumnScope.SettingsPage(
             runtimes = withContext(Dispatchers.IO) { actions.controller.java.detect() }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
+        } catch (error: IOException) {
+            detectionError = error.message ?: "检测失败"
+        } catch (error: IllegalStateException) {
             detectionError = error.message ?: "检测失败"
         } finally {
             detecting = false
@@ -142,30 +145,16 @@ fun ColumnScope.SettingsPage(
     val generalCards = generalSettingCards(actions, writer, settings)
     val downloadCards = downloadSettingCards(actions, writer, settings)
     val aboutCards = aboutSettingCards(actions)
-    val searchCards = gameCards + javaCards + generalCards + downloadCards + aboutCards
-    // 搜索框位于右上角；右侧留出与滚动列一致的 12dp，
-    // 否则会比下面白卡的右边缘多探出一截。
-    Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
-        Row(
-            Modifier.width(250.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            CompactTextField(
-                query,
-                { query = it },
-                Modifier.weight(1f),
-                placeholder = "搜索设置项",
-            )
-            AnimatedVisibility(
-                query.isNotBlank(),
-                enter = fadeIn(tween(duration)),
-                exit = fadeOut(tween(duration)),
-            ) {
-                SmallIconButton(Icons.Outlined.Close, "清空搜索", { query = "" })
-            }
-        }
-    }
+    val cards =
+        SettingsCardSet(
+            game = gameCards,
+            java = javaCards,
+            general = generalCards,
+            download = downloadCards,
+            about = aboutCards,
+            search = gameCards + javaCards + generalCards + downloadCards + aboutCards,
+        )
+    SettingsSearchHeader(query) { query = it }
     saveError?.let { message ->
         Text(
             "有设置未保存：" + message,
@@ -175,100 +164,192 @@ fun ColumnScope.SettingsPage(
         )
     }
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-        // 左侧二级列表与下载页分类栏用同一套条目规格：项高 32、圆角 6、图标 17、内边距 10、
-        // 选中 selectedRowBackground 实底 + onPrimaryContainer 文字，悬停 rowHoverHighlight、按下 pressScale。
-        // 整栏套磨砂面板，上下留 8dp 内边距，条目因此整体缩在面板圆角以内；高度撑满，与右侧内容列同高。
-        FrostedPanel(
-            Modifier.width(168.dp).fillMaxHeight(),
-            contentPadding = PaddingValues(vertical = 8.dp),
+        SettingsNavigationPanel(
+            section = section,
+            appearanceSub = appearanceSub,
+            query = query,
+            onSelectSection = { section = it },
+            onSelectSub = { appearanceSub = it },
+        )
+        SettingsContent(
+            SettingsContentModel(
+                state = state,
+                actions = actions,
+                cards = cards,
+                target = if (query.isNotBlank()) SEARCH_RESULTS else section,
+                query = query,
+                appearanceSub = appearanceSub,
+                resetDefaults = resetDefaults,
+                onClearSearch = { query = "" },
+            ),
+        )
+    }
+}
+
+/** 右上角搜索框；右侧留出与滚动列一致的 12dp，否则会比下面白卡的右边缘多探出一截。 */
+@Composable
+private fun SettingsSearchHeader(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
+    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
+    Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
+        Row(
+            Modifier.width(250.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Column(
-                // 内容超出面板高度时滚动，而不是画到面板圆角外面。
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            CompactTextField(
+                query,
+                onQueryChange,
+                Modifier.weight(1f),
+                placeholder = "搜索设置项",
+            )
+            AnimatedVisibility(
+                query.isNotBlank(),
+                enter = fadeIn(tween(duration)),
+                exit = fadeOut(tween(duration)),
             ) {
-                SettingsGroupTitle("设置", topPadding = 2.dp)
-                settingsIndex.forEachIndexed { index, (title, icon) ->
-                    SettingsNavItem(
-                        title,
-                        icon,
-                        section == index && query.isBlank(),
-                        onClick = { section = index },
-                    )
-                    // 外观的子页在「外观」下面向下展开；切到别的分区时收起（子页选择保留）。
-                    if (index == APPEARANCE_SECTION) {
-                        AnimatedVisibility(
-                            section == APPEARANCE_SECTION,
-                            enter = fadeIn(tween(duration)) + expandVertically(tween(duration)),
-                            exit = fadeOut(tween(duration)) + shrinkVertically(tween(duration)),
+                SmallIconButton(Icons.Outlined.Close, "清空搜索", { onQueryChange("") })
+            }
+        }
+    }
+}
+
+/**
+ * 左侧二级列表与下载页分类栏用同一套条目规格：项高 32、圆角 6、图标 17、内边距 10、
+ * 选中 selectedRowBackground 实底 + onPrimaryContainer 文字，悬停 rowHoverHighlight、按下 pressScale。
+ * 整栏套磨砂面板，上下留 8dp 内边距，条目因此整体缩在面板圆角以内；高度撑满，与右侧内容列同高。
+ */
+@Composable
+private fun SettingsNavigationPanel(
+    section: Int,
+    appearanceSub: Int,
+    query: String,
+    onSelectSection: (Int) -> Unit,
+    onSelectSub: (Int) -> Unit,
+) {
+    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
+    FrostedPanel(
+        Modifier.width(168.dp).fillMaxHeight(),
+        contentPadding = PaddingValues(vertical = 8.dp),
+    ) {
+        Column(
+            // 内容超出面板高度时滚动，而不是画到面板圆角外面。
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            SettingsGroupTitle("设置", topPadding = 2.dp)
+            settingsIndex.forEachIndexed { index, (title, icon) ->
+                SettingsNavItem(
+                    title,
+                    icon,
+                    section == index && query.isBlank(),
+                    onClick = { onSelectSection(index) },
+                )
+                // 外观的子页在「外观」下面向下展开；切到别的分区时收起（子页选择保留）。
+                if (index == APPEARANCE_SECTION) {
+                    AnimatedVisibility(
+                        section == APPEARANCE_SECTION,
+                        enter = fadeIn(tween(duration)) + expandVertically(tween(duration)),
+                        exit = fadeOut(tween(duration)) + shrinkVertically(tween(duration)),
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 2.dp),
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
-                            Column(
-                                Modifier.fillMaxWidth().padding(top = 2.dp),
-                                verticalArrangement = Arrangement.spacedBy(1.dp),
-                            ) {
-                                appearanceSubSections.forEachIndexed { subIndex, subTitle ->
-                                    SettingSubEntry(
-                                        subTitle,
-                                        appearanceSub == subIndex,
-                                        onClick = { appearanceSub = subIndex },
-                                    )
-                                }
+                            appearanceSubSections.forEachIndexed { subIndex, subTitle ->
+                                SettingSubEntry(
+                                    subTitle,
+                                    appearanceSub == subIndex,
+                                    onClick = { onSelectSub(subIndex) },
+                                )
                             }
                         }
                     }
                 }
             }
         }
-        val target = if (query.isNotBlank()) SEARCH_RESULTS else section
-        Crossfade(
-            target,
-            Modifier.weight(1f).fillMaxHeight(),
-            animationSpec = tween(if (LocalReducedMotion.current) 0 else 150),
-            label = "settingsSection",
-        ) { index ->
-            when (index) {
-                0 ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(gameCards, "")
-                        SettingsResetFooter(resetDefaults)
-                    }
-                1 ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(javaCards, "")
-                        SettingsResetFooter(resetDefaults)
-                    }
-                2 ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(generalCards, "")
-                        SettingsResetFooter(resetDefaults)
-                    }
-                // 外观与日志由子页面提供，内部使用 weight / LazyColumn，必须放在无滚动容器中。
-                3 ->
-                    Column(Modifier.fillMaxSize()) {
-                        AppearanceSection(
-                            state,
-                            actions,
-                            resetDefaults,
-                            subSection = appearanceSub,
-                            onOpenFont = { appearanceSub = 1 },
-                        )
-                    }
-                4 ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(downloadCards, "")
-                        SettingsResetFooter(resetDefaults)
-                    }
-                5 -> Column(Modifier.fillMaxSize()) { DownloadsPage(state, actions) }
-                SEARCH_RESULTS ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(searchCards, query, onClearSearch = { query = "" })
-                    }
-                else ->
-                    ScrollColumn(Modifier.fillMaxSize()) {
-                        SettingCardFlow(aboutCards, "")
-                        SettingsResetFooter(resetDefaults)
-                    }
+    }
+}
+
+/** 右侧内容区所需的分组卡片：搜索页把它们拼成一列，各分区只取自己那份。 */
+private data class SettingsCardSet(
+    val game: List<SettingCard>,
+    val java: List<SettingCard>,
+    val general: List<SettingCard>,
+    val download: List<SettingCard>,
+    val about: List<SettingCard>,
+    val search: List<SettingCard>,
+)
+
+private data class SettingsContentModel(
+    val state: LauncherState,
+    val actions: UiActions,
+    val cards: SettingsCardSet,
+    val target: Int,
+    val query: String,
+    val appearanceSub: Int,
+    val resetDefaults: () -> Unit,
+    val onClearSearch: () -> Unit,
+)
+
+@Composable
+private fun RowScope.SettingsContent(model: SettingsContentModel) {
+    Crossfade(
+        model.target,
+        Modifier.weight(1f).fillMaxHeight(),
+        animationSpec = tween(if (LocalReducedMotion.current) 0 else 150),
+        label = "settingsSection",
+    ) { index ->
+        SettingsIndexedContent(index, model)
+    }
+}
+
+@Composable
+private fun SettingsIndexedContent(
+    index: Int,
+    model: SettingsContentModel,
+) {
+    when (index) {
+        0 -> SettingsCardsPage(model.cards.game, model.resetDefaults)
+        1 -> SettingsCardsPage(model.cards.java, model.resetDefaults)
+        2 -> SettingsCardsPage(model.cards.general, model.resetDefaults)
+        // 外观与日志由子页面提供，内部使用 weight / LazyColumn，必须放在无滚动容器中。
+        3 ->
+            Column(Modifier.fillMaxSize()) {
+                AppearanceSection(
+                    model.state,
+                    model.actions,
+                    model.resetDefaults,
+                    subSection = model.appearanceSub,
+                )
             }
-        }
+        4 -> SettingsCardsPage(model.cards.download, model.resetDefaults)
+        5 -> Column(Modifier.fillMaxSize()) { DownloadsPage(model.state, model.actions) }
+        SEARCH_RESULTS -> SettingsSearchPage(model.cards.search, model.query, model.onClearSearch)
+        else -> SettingsCardsPage(model.cards.about, model.resetDefaults)
+    }
+}
+
+@Composable
+private fun SettingsCardsPage(
+    cards: List<SettingCard>,
+    resetDefaults: () -> Unit,
+) {
+    ScrollColumn(Modifier.fillMaxSize()) {
+        SettingCardFlow(cards, "")
+        SettingsResetFooter(resetDefaults)
+    }
+}
+
+@Composable
+private fun SettingsSearchPage(
+    cards: List<SettingCard>,
+    query: String,
+    onClearSearch: () -> Unit,
+) {
+    ScrollColumn(Modifier.fillMaxSize()) {
+        SettingCardFlow(cards, query, onClearSearch = onClearSearch)
     }
 }

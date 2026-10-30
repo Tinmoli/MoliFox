@@ -60,7 +60,15 @@ class InstanceRenameTest {
     }
 
     private val ownProfile =
-        """{"id":"旧名","inheritsFrom":"1.20.1","jar":"旧名","mainClass":"fixture.Main","libraries":[]}"""
+        """
+        {
+          "id": "旧名",
+          "inheritsFrom": "1.20.1",
+          "jar": "旧名",
+          "mainClass": "fixture.Main",
+          "libraries": []
+        }
+        """
 
     @Test
     fun `rename moves the version directory and rewrites id self jar and references`() {

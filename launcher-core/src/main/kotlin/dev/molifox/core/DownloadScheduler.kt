@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
@@ -14,14 +15,24 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.net.URI
+import java.net.URISyntaxException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.fileSize
 
-/** 默认同时下载的文件数；官方源用满，镜像源另受 [DownloadThrottle] 限制。 */
-internal const val DEFAULT_FILE_CONCURRENCY = 8
+/** 默认同时下载的文件数：与设置项「下载线程数」的默认值一致（HMCL 同为 64）。 */
+internal const val DEFAULT_DOWNLOAD_THREADS = 64
+
+/** 默认同时下载的文件数；调度器不传参时使用设置默认值。 */
+internal const val DEFAULT_FILE_CONCURRENCY = DEFAULT_DOWNLOAD_THREADS
+
+/** 设置项允许的下载线程数上限。 */
+internal const val MAX_DOWNLOAD_THREADS = 128
+
+/** 失败汇总里最多逐个列出的文件数，其余折叠成一行数量提示，避免消息无限膨胀。 */
+private const val MAX_REPORTED_FAILURES = 12
 
 /** 单个文件的最终失败：文件、实际来源主机与 HTTP 状态码（没有状态码时给原因）。 */
 internal data class FileFailure(
@@ -45,10 +56,23 @@ internal class DownloadBatchException(
 ) : IOException(
         buildString {
             append("以下 ${failures.size} 个文件下载失败：")
-            failures.take(12).forEach { append('\n').append(it.describe()) }
-            if (failures.size > 12) append("\n…另有 ${failures.size - 12} 个文件失败")
+            failures.take(MAX_REPORTED_FAILURES).forEach { append('\n').append(it.describe()) }
+            if (failures.size > MAX_REPORTED_FAILURES) {
+                append("\n…另有 ${failures.size - MAX_REPORTED_FAILURES} 个文件失败")
+            }
         },
     )
+
+/**
+ * 一批下载的共享状态：去重后的文件列表、下一个要取的下标、失败收集队列。
+ * 工作协程都指向同一份状态，因此不会重复下载同一个目标。
+ */
+private class BatchState(
+    val unique: List<DownloadArtifact>,
+) {
+    val next = AtomicInteger()
+    val failures = ConcurrentLinkedQueue<FileFailure>()
+}
 
 /**
  * 有界并发的文件下载：固定数量的工作协程从队列里取文件，每个文件内部仍然走
@@ -71,45 +95,81 @@ internal class DownloadScheduler(
             val unique = artifacts.distinctBy { it.target }
             if (unique.isEmpty()) return@coroutineScope emptyList()
             sink.planned(unique.size, unique.sumOf { if (it.size > 0) it.size else 0L })
-            val limit = concurrency.coerceIn(1, MAX_FILE_CONCURRENCY)
-            val next = AtomicInteger()
-            val failures = ConcurrentLinkedQueue<FileFailure>()
-            val workers =
-                (0 until minOf(limit, unique.size)).map {
-                    launch(Dispatchers.IO) {
-                        while (coroutineContext.isActive) {
-                            context.checkCancelled()
-                            val index = next.getAndIncrement()
-                            if (index >= unique.size) break
-                            val artifact = unique[index]
-                            val key = artifact.target.toString()
-                            sink.started(key, artifact)
-                            try {
-                                network.download(artifact) { done, total ->
-                                    sink.bytes(key, done, total)
-                                }
-                                sink.finished(key, artifact)
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
-                                failures += failureOf(artifact, error)
-                                sink.failed(key, artifact)
-                            }
-                        }
-                    }
-                }
+            val batch = BatchState(unique)
+            val workers = startWorkers(this, batch, concurrency, context, sink)
             try {
                 workers.joinAll()
             } finally {
                 if (!coroutineContext.isActive) {
                     // 取消后不再派发；本批可能还有半截缓存，逐个清掉，别把 .part 留给用户。
-                    unique.forEach { artifact ->
-                        runCatching { network.discardPartial(artifact.target) }
-                    }
+                    discardPartials(unique)
                 }
             }
-            failures.toList()
+            batch.failures.toList()
         }
+
+    /** 启动固定数量的工作协程，从共享队列里取文件；单个文件失败只登记，不结束整批。 */
+    private fun startWorkers(
+        scope: CoroutineScope,
+        batch: BatchState,
+        concurrency: Int,
+        context: JobContext,
+        sink: DownloadProgressSink,
+    ) = (0 until minOf(concurrency.coerceIn(1, MAX_FILE_CONCURRENCY), batch.unique.size)).map {
+        scope.launch(Dispatchers.IO) {
+            while (coroutineContext.isActive) {
+                context.checkCancelled()
+                val index = batch.next.getAndIncrement()
+                if (index >= batch.unique.size) break
+                downloadOne(batch.unique[index], sink, batch.failures)
+            }
+        }
+    }
+
+    /** 下载单个文件：失败折成 [FileFailure] 记进批次，让其余文件继续。 */
+    private suspend fun downloadOne(
+        artifact: DownloadArtifact,
+        sink: DownloadProgressSink,
+        failures: ConcurrentLinkedQueue<FileFailure>,
+    ) {
+        val key = artifact.target.toString()
+        sink.started(key, artifact)
+        try {
+            network.download(artifact) { done, total ->
+                sink.bytes(key, done, total)
+            }
+            sink.finished(key, artifact)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: IOException) {
+            recordFailure(artifact, key, error, sink, failures)
+        } catch (error: IllegalArgumentException) {
+            recordFailure(artifact, key, error, sink, failures)
+        } catch (error: IllegalStateException) {
+            recordFailure(artifact, key, error, sink, failures)
+        } catch (error: URISyntaxException) {
+            recordFailure(artifact, key, error, sink, failures)
+        }
+    }
+
+    /** 记录一次文件级失败；[error] 是这次尝试实际抛出的异常，消息原样保留。 */
+    private fun recordFailure(
+        artifact: DownloadArtifact,
+        key: String,
+        error: Throwable,
+        sink: DownloadProgressSink,
+        failures: ConcurrentLinkedQueue<FileFailure>,
+    ) {
+        failures += failureOf(artifact, error)
+        sink.failed(key, artifact)
+    }
+
+    /** 取消后清掉本批可能残留的 `.part` 与分段缓存，不把半截文件留给用户。 */
+    private fun discardPartials(unique: List<DownloadArtifact>) {
+        unique.forEach { artifact ->
+            runCatching { network.discardPartial(artifact.target) }
+        }
+    }
 
     private fun failureOf(
         artifact: DownloadArtifact,
@@ -132,8 +192,8 @@ internal class DownloadScheduler(
     }
 
     companion object {
-        /** 单批允许的最大文件并发；再高对镜像和磁盘都没有好处。 */
-        const val MAX_FILE_CONCURRENCY = 16
+        /** 单批允许的最大文件并发，与 HMCL 的上限一致。 */
+        const val MAX_FILE_CONCURRENCY = MAX_DOWNLOAD_THREADS
     }
 }
 

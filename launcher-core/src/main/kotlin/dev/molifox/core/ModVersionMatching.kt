@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+private const val MIN_LOADER_PREFIX_CHARS = 4
+
 private val remoteVersionToken =
     Regex("""(?i)(?<![\w.])(v?\d+(?:\.\d+)+(?:[-+][0-9a-z][0-9a-z.+_-]*)?)(?![\w.])""")
 
@@ -33,11 +35,6 @@ internal fun compareModVersions(
     return comparePre(a.pre, b.pre)
 }
 
-internal fun isPrereleaseVersion(value: String): Boolean {
-    val core = value.trim().substringBefore('+')
-    return core.contains('-') && core.substringAfter('-').isNotBlank()
-}
-
 /** 常见 Minecraft 版本约束：精确版本、`1.20.x`、`>=1.20 <1.21`、Maven 区间 `[1.20,1.21)`。 */
 internal fun minecraftConstraintMatches(
     constraint: String,
@@ -45,41 +42,47 @@ internal fun minecraftConstraintMatches(
 ): Boolean {
     val text = constraint.trim()
     if (text.isEmpty() || text == "*") return true
-    if (text.contains("||")) return text.split("||").any { minecraftConstraintMatches(it, version) }
-    if ((text.startsWith("[") || text.startsWith("(")) && text.length > 2) {
-        val close = text.indexOfAny(charArrayOf(']', ')'))
-        if (close > 0) {
-            val parts = text.substring(1, close).split(',')
-            if (parts.size == 1) {
-                return parts.first().trim().let { it.isEmpty() || sameVersion(version, it) }
-            }
-            val lower = parts.first().trim()
-            val upper = parts.getOrNull(1).orEmpty().trim()
-            if (lower.isNotEmpty()) {
-                val comparison = compareModVersions(version, lower)
-                if (comparison < 0 || (comparison == 0 && text.startsWith("("))) return false
-            }
-            if (upper.isNotEmpty()) {
-                val comparison = compareModVersions(version, upper)
-                if (comparison > 0 || (comparison == 0 && text[close] == ')')) return false
-            }
-            return true
-        }
+    if (text.contains("||")) {
+        return text.split("||").any { minecraftConstraintMatches(it, version) }
     }
+    closedRangeMatches(text, version)?.let { return it }
     val clauses = text.split(Regex("[\\s,]+")).filter { it.isNotBlank() }
-    if (clauses.isEmpty()) return true
-    return clauses.all { clause ->
-        when {
-            clause.startsWith(">=") -> compareModVersions(version, clause.drop(2)) >= 0
-            clause.startsWith("<=") -> compareModVersions(version, clause.drop(2)) <= 0
-            clause.startsWith(">") -> compareModVersions(version, clause.drop(1)) > 0
-            clause.startsWith("<") -> compareModVersions(version, clause.drop(1)) < 0
-            clause.startsWith("=") -> matchesVersionPrefix(version, clause.drop(1))
-            clause.startsWith("~") || clause.startsWith("^") ->
-                matchesVersionPrefix(version, clause.drop(1))
-            else -> matchesVersionPrefix(version, clause)
-        }
+    return clauses.isEmpty() || clauses.all { clauseMatches(it, version) }
+}
+
+/** 单条版本条件：比较符在前时只比较版本号，其余按前缀匹配（`1.20.x`、`1.20.*`）。 */
+private fun clauseMatches(
+    clause: String,
+    version: String,
+): Boolean =
+    when {
+        clause.startsWith(">=") -> compareModVersions(version, clause.drop(2)) >= 0
+        clause.startsWith("<=") -> compareModVersions(version, clause.drop(2)) <= 0
+        clause.startsWith(">") -> compareModVersions(version, clause.drop(1)) > 0
+        clause.startsWith("<") -> compareModVersions(version, clause.drop(1)) < 0
+        clause.startsWith("=") -> matchesVersionPrefix(version, clause.drop(1))
+        clause.startsWith("~") || clause.startsWith("^") ->
+            matchesVersionPrefix(version, clause.drop(1))
+        else -> matchesVersionPrefix(version, clause)
     }
+
+/** Maven 区间 `[1.20,1.21)` / `[1.20]`；不是区间写法时返回 null，交给空格分隔的条件判断。 */
+private fun closedRangeMatches(
+    text: String,
+    version: String,
+): Boolean? {
+    if (!(text.startsWith("[") || text.startsWith("(")) || text.length <= 2) return null
+    val close = text.indexOfAny(charArrayOf(']', ')'))
+    if (close <= 0) return null
+    val parts = text.substring(1, close).split(',')
+    val lower = parts.first().trim()
+    val upper = parts.getOrNull(1).orEmpty().trim()
+    if (parts.size == 1) return lower.isEmpty() || sameVersion(version, lower)
+    val lowerComparison = if (lower.isEmpty()) 1 else compareModVersions(version, lower)
+    val upperComparison = if (upper.isEmpty()) -1 else compareModVersions(version, upper)
+    val lowerOk = lowerComparison > 0 || (lowerComparison == 0 && !text.startsWith("("))
+    val upperOk = upperComparison < 0 || (upperComparison == 0 && text[close] != ')')
+    return lowerOk && upperOk
 }
 
 private fun matchesVersionPrefix(
@@ -166,43 +169,44 @@ private fun comparePre(
     left: List<String>,
     right: List<String>,
 ): Int {
-    for (index in 0 until maxOf(left.size, right.size)) {
-        if (index >= left.size) return -1
-        if (index >= right.size) return 1
-        val a = left[index]
-        val b = right[index]
-        val numericA = a.toLongOrNull()
-        val numericB = b.toLongOrNull()
-        val comparison =
-            when {
-                numericA != null && numericB != null -> numericA.compareTo(numericB)
-                // 语义化规则：数字标识低于字母标识（1.0.0-alpha < 1.0.0-1）。
-                numericA != null -> -1
-                numericB != null -> 1
-                else -> {
+    val comparison =
+        (0 until maxOf(left.size, right.size)).firstNotNullOfOrNull { index ->
+            val a = left.getOrNull(index)
+            val b = right.getOrNull(index)
+            // 数字标识低于字母标识（1.0.0-alpha < 1.0.0-1），关键字按语义化顺序。
+            val compared =
+                if (a == null) {
+                    -1
+                } else if (b == null) {
+                    1
+                } else {
+                    val numericA = a.toLongOrNull()
+                    val numericB = b.toLongOrNull()
                     val rankA = prereleaseRank[a.lowercase()]
                     val rankB = prereleaseRank[b.lowercase()]
                     when {
+                        numericA != null && numericB != null -> numericA.compareTo(numericB)
+                        numericA != null -> -1
+                        numericB != null -> 1
                         rankA != null && rankB != null -> rankA.compareTo(rankB)
                         rankA != null -> -1
                         rankB != null -> 1
                         else -> a.compareTo(b, ignoreCase = true)
                     }
                 }
-            }
-        if (comparison != 0) return comparison
-    }
-    return 0
+            compared.takeIf { it != 0 }
+        }
+    return comparison ?: 0
 }
-
-private fun normalizeName(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
 
 internal fun nameMatches(
     query: String,
     candidate: String,
 ): Boolean {
-    val left = normalizeName(query)
-    val right = normalizeName(candidate)
+    val left = query.lowercase().filter { it.isLetterOrDigit() }
+    val right = candidate.lowercase().filter { it.isLetterOrDigit() }
     if (left.isEmpty() || right.isEmpty()) return false
-    return left == right || (left.length >= 4 && (right.startsWith(left) || left.startsWith(right)))
+    if (left == right) return true
+    val prefix = left.length >= MIN_LOADER_PREFIX_CHARS
+    return prefix && (right.startsWith(left) || left.startsWith(right))
 }

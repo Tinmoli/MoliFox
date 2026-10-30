@@ -111,109 +111,29 @@ internal fun InstanceSettingsTab(
         }.exceptionOrNull()
             ?.message
     ScrollColumn(modifier) {
-        // 名称与图标放在设置页最上方：图标在左、名称在右，与其余设置卡同款排版。
-        CompactSettingsSection(
-            "名称与图标",
-            "名称离开输入框时生效并重命名实例目录；图标默认跟随原版或加载器，整合包自带图标优先。",
-        ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                InstanceArtwork(instance, actions, Modifier.size(40.dp))
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    CompactTextField(
-                        draft.name,
-                        onNameChange,
-                        Modifier.fillMaxWidth(),
-                        label = "实例名称（离开输入框时同时重命名目录）",
-                        onFocusChange = { focused ->
-                            if (!focused) onCommitName()
-                        },
-                    )
-                    val nameHint = nameError ?: nameNotice
-                    if (nameHint != null) {
-                        Text(
-                            nameHint,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    SecondaryButton(
-                        { onEditIcon() },
-                        enabled = !instanceBusy,
-                    ) {
-                        Text("更换实例图标…", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-        CompactSettingsSection(
-            "Java 与内存",
-            "实例可单独指定 Java；内存数值与窗口在下方「启动设置」。",
-        ) {
-            // 紧凑行：继承时右侧显示全局实际解析到的运行时，点击打开抽屉。
-            JavaPickerRow(
-                value = draft.javaPath,
-                runtimes = javaRuntimes,
-                inheritedPath = settings.javaPath,
-                ignoreCase =
-                    actions.controller.platform.osName == "windows",
-                detecting = javaDetecting,
-                onClick = { onOpenJavaPicker() },
-            )
-            javaSaveError?.let {
-                Text(
-                    it,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            SimpleDropdown(
-                when (memoryPolicy) {
-                    InstanceMemoryPolicy.Inherit -> "inherit"
-                    InstanceMemoryPolicy.Automatic -> "automatic"
-                    InstanceMemoryPolicy.Manual -> "manual"
-                },
-                listOf(
-                    "inherit" to "继承全局内存策略",
-                    "automatic" to "自动分配",
-                    "manual" to "手动分配",
-                ),
-                { mode ->
-                    val next =
-                        applyInstanceMemoryPolicy(
-                            draft.copy(
-                                memoryMb =
-                                    if (
-                                        memoryPolicy ==
-                                        InstanceMemoryPolicy.Manual
-                                    ) {
-                                        memoryMb
-                                    } else {
-                                        0
-                                    },
-                            ),
-                            when (mode) {
-                                "automatic" ->
-                                    InstanceMemoryPolicy.Automatic
-                                "manual" -> InstanceMemoryPolicy.Manual
-                                else -> InstanceMemoryPolicy.Inherit
-                            },
-                            settings.memoryMb,
-                        )
-                    onDraftChange(next)
-                    onMemoryMbChange(next.memoryMb)
-                },
-            )
-            if (memoryPolicy == InstanceMemoryPolicy.Automatic) {
-                MutedText("启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。")
-            }
-        }
+        InstanceNameSection(
+            instance = instance,
+            actions = actions,
+            draft = draft,
+            onNameChange = onNameChange,
+            onCommitName = onCommitName,
+            nameHint = nameError ?: nameNotice,
+            instanceBusy = instanceBusy,
+            onEditIcon = onEditIcon,
+        )
+        InstanceJavaMemorySection(
+            actions = actions,
+            settings = settings,
+            draft = draft,
+            memoryPolicy = memoryPolicy,
+            memoryMb = memoryMb,
+            javaRuntimes = javaRuntimes,
+            javaDetecting = javaDetecting,
+            javaSaveError = javaSaveError,
+            onDraftChange = onDraftChange,
+            onMemoryMbChange = onMemoryMbChange,
+            onOpenJavaPicker = onOpenJavaPicker,
+        )
         InstanceLaunchSettingsSection(
             instance = instance,
             actions = actions,
@@ -240,104 +160,8 @@ internal fun InstanceSettingsTab(
                 maxLines = 4,
             )
         }
-        CompactSettingsSection("目录与隔离", "目录名就是实例名；名称离开输入框后自动生效。") {
-            val isolationSource =
-                actions.controller.store.isolationSource(draft)
-            val isolationEvidence =
-                actions.controller.store.isolationEvidence(draft)
-            SettingRow(
-                "版本隔离",
-                when (isolationSource) {
-                    IsolationSource.Inferred ->
-                        actions.controller.store.isolationTitle(draft) +
-                            "：目录内有 " +
-                            (isolationEvidence ?: "游戏数据") +
-                            "，按独立目录处理；选择下拉项可覆盖"
-                    IsolationSource.Explicit ->
-                        when (draft.isolation) {
-                            VersionIsolation.Enabled ->
-                                "使用实例自己的目录，存档、Mod 与其他实例互不影响"
-                            VersionIsolation.Disabled ->
-                                "与其他关闭隔离的实例共用游戏根目录"
-                            VersionIsolation.Inherit -> ""
-                        }
-                    IsolationSource.GlobalDefault ->
-                        "跟随全局设置（当前为" +
-                            (
-                                if (settings.isolateVersions) {
-                                    "版本隔离"
-                                } else {
-                                    "共用游戏目录"
-                                }
-                            ) +
-                            "）"
-                },
-            ) {
-                Box(Modifier.width(190.dp)) {
-                    SimpleDropdown(
-                        draft.isolation.name,
-                        VersionIsolation.entries.map {
-                            it.name to
-                                if (
-                                    it == VersionIsolation.Inherit &&
-                                    isolationSource ==
-                                    IsolationSource.Inferred
-                                ) {
-                                    "继承全局设置（自动推断为版本隔离）"
-                                } else {
-                                    it.title
-                                }
-                        },
-                        { key ->
-                            onDraftChange(
-                                draft.copy(
-                                    isolation =
-                                        VersionIsolation.valueOf(
-                                            key,
-                                        ),
-                                ),
-                            )
-                        },
-                    )
-                }
-            }
-            SettingRow(
-                "实际游戏目录",
-                runCatching {
-                    actions.controller.store
-                        .gamePath(draft)
-                        .toString()
-                }.getOrDefault("目录暂不可用"),
-            ) {}
-        }
-        CompactSettingsSection("版本信息") {
-            SettingRow("Minecraft", instance.gameVersion) {
-                Tag(instance.loader.title)
-            }
-            SettingRow("包来源", packSourceOf(instance)) {
-                Text(instance.versionId, fontSize = 12.sp)
-            }
-            Text(
-                "创建于 " +
-                    instance.createdAt.take(10) +
-                    " · 游玩 " +
-                    instance.playTimeSeconds / 60 +
-                    " 分钟",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            SecondaryButton({
-                actions.run { actions.controller.openFolder(instance.id) }
-            }) {
-                Icon(
-                    Icons.Outlined.FolderOpen,
-                    null,
-                    Modifier.size(15.dp),
-                )
-                Spacer(Modifier.width(5.dp))
-                Text("打开游戏目录", fontSize = 12.sp)
-            }
-        }
+        InstanceIsolationSection(actions, settings, draft, onDraftChange)
+        InstanceVersionSection(instance, actions)
         InstanceAdvancedLaunchSection(
             instance = instance,
             actions = actions,
@@ -352,21 +176,279 @@ internal fun InstanceSettingsTab(
         }) {
             Text("恢复全局启动设置", fontSize = 12.sp)
         }
-        val problem =
-            launchError
-                ?: saveError
-                ?: if (!advancedValid) {
-                    "高级启动参数未通过校验。"
-                } else {
-                    null
+        InstanceSettingsProblem(launchError, saveError, advancedValid)
+        Spacer(Modifier.height(6.dp))
+    }
+}
+
+/** 名称与图标：图标在左、名称在右，与其余设置卡同款排版。 */
+@Composable
+private fun InstanceNameSection(
+    instance: GameInstance,
+    actions: UiActions,
+    draft: GameInstance,
+    onNameChange: (String) -> Unit,
+    onCommitName: () -> Unit,
+    nameHint: String?,
+    instanceBusy: Boolean,
+    onEditIcon: () -> Unit,
+) {
+    CompactSettingsSection(
+        "名称与图标",
+        "名称离开输入框时生效并重命名实例目录；图标默认跟随原版或加载器，整合包自带图标优先。",
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            InstanceArtwork(instance, actions, Modifier.size(40.dp))
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CompactTextField(
+                    draft.name,
+                    onNameChange,
+                    Modifier.fillMaxWidth(),
+                    label = "实例名称（离开输入框时同时重命名目录）",
+                    onFocusChange = { focused ->
+                        if (!focused) onCommitName()
+                    },
+                )
+                if (nameHint != null) {
+                    Text(
+                        nameHint,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
-        if (problem != null) {
+                SecondaryButton(
+                    { onEditIcon() },
+                    enabled = !instanceBusy,
+                ) {
+                    Text("更换实例图标…", fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+/** Java 与内存：继承时右侧显示全局实际解析到的运行时。 */
+@Composable
+private fun InstanceJavaMemorySection(
+    actions: UiActions,
+    settings: LauncherSettings,
+    draft: GameInstance,
+    memoryPolicy: InstanceMemoryPolicy,
+    memoryMb: Int,
+    javaRuntimes: List<JavaRuntime>,
+    javaDetecting: Boolean,
+    javaSaveError: String?,
+    onDraftChange: (GameInstance) -> Unit,
+    onMemoryMbChange: (Int) -> Unit,
+    onOpenJavaPicker: () -> Unit,
+) {
+    CompactSettingsSection(
+        "Java 与内存",
+        "实例可单独指定 Java；内存数值与窗口在下方「启动设置」。",
+    ) {
+        // 紧凑行：继承时右侧显示全局实际解析到的运行时，点击打开抽屉。
+        JavaPickerRow(
+            value = draft.javaPath,
+            runtimes = javaRuntimes,
+            inheritedPath = settings.javaPath,
+            ignoreCase =
+                actions.controller.platform.osName == "windows",
+            detecting = javaDetecting,
+            onClick = { onOpenJavaPicker() },
+        )
+        javaSaveError?.let {
             Text(
-                problem,
-                fontSize = 12.sp,
+                it,
+                fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        Spacer(Modifier.height(6.dp))
+        SimpleDropdown(
+            when (memoryPolicy) {
+                InstanceMemoryPolicy.Inherit -> "inherit"
+                InstanceMemoryPolicy.Automatic -> "automatic"
+                InstanceMemoryPolicy.Manual -> "manual"
+            },
+            listOf(
+                "inherit" to "继承全局内存策略",
+                "automatic" to "自动分配",
+                "manual" to "手动分配",
+            ),
+            { mode ->
+                val next =
+                    applyInstanceMemoryPolicy(
+                        draft.copy(
+                            memoryMb =
+                                if (
+                                    memoryPolicy ==
+                                    InstanceMemoryPolicy.Manual
+                                ) {
+                                    memoryMb
+                                } else {
+                                    0
+                                },
+                        ),
+                        when (mode) {
+                            "automatic" ->
+                                InstanceMemoryPolicy.Automatic
+                            "manual" -> InstanceMemoryPolicy.Manual
+                            else -> InstanceMemoryPolicy.Inherit
+                        },
+                        settings.memoryMb,
+                    )
+                onDraftChange(next)
+                onMemoryMbChange(next.memoryMb)
+            },
+        )
+        if (memoryPolicy == InstanceMemoryPolicy.Automatic) {
+            MutedText("启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。")
+        }
+    }
+}
+
+/** 目录与隔离：目录名就是实例名；隔离来源与覆盖方式都在这里说明。 */
+@Composable
+private fun InstanceIsolationSection(
+    actions: UiActions,
+    settings: LauncherSettings,
+    draft: GameInstance,
+    onDraftChange: (GameInstance) -> Unit,
+) {
+    CompactSettingsSection("目录与隔离", "目录名就是实例名；名称离开输入框后自动生效。") {
+        val isolationSource =
+            actions.controller.store.isolationSource(draft)
+        val isolationEvidence =
+            actions.controller.store.isolationEvidence(draft)
+        SettingRow(
+            "版本隔离",
+            when (isolationSource) {
+                IsolationSource.Inferred ->
+                    actions.controller.store.isolationTitle(draft) +
+                        "：目录内有 " +
+                        (isolationEvidence ?: "游戏数据") +
+                        "，按独立目录处理；选择下拉项可覆盖"
+                IsolationSource.Explicit ->
+                    when (draft.isolation) {
+                        VersionIsolation.Enabled ->
+                            "使用实例自己的目录，存档、Mod 与其他实例互不影响"
+                        VersionIsolation.Disabled ->
+                            "与其他关闭隔离的实例共用游戏根目录"
+                        VersionIsolation.Inherit -> ""
+                    }
+                IsolationSource.GlobalDefault ->
+                    "跟随全局设置（当前为" +
+                        (
+                            if (settings.isolateVersions) {
+                                "版本隔离"
+                            } else {
+                                "共用游戏目录"
+                            }
+                        ) +
+                        "）"
+            },
+        ) {
+            Box(Modifier.width(190.dp)) {
+                SimpleDropdown(
+                    draft.isolation.name,
+                    VersionIsolation.entries.map {
+                        it.name to
+                            if (
+                                it == VersionIsolation.Inherit &&
+                                isolationSource ==
+                                IsolationSource.Inferred
+                            ) {
+                                "继承全局设置（自动推断为版本隔离）"
+                            } else {
+                                it.title
+                            }
+                    },
+                    { key ->
+                        onDraftChange(
+                            draft.copy(
+                                isolation =
+                                    VersionIsolation.valueOf(
+                                        key,
+                                    ),
+                            ),
+                        )
+                    },
+                )
+            }
+        }
+        SettingRow(
+            "实际游戏目录",
+            runCatching {
+                actions.controller.store
+                    .gamePath(draft)
+                    .toString()
+            }.getOrDefault("目录暂不可用"),
+        ) {}
+    }
+}
+
+/** 版本信息：Minecraft 版本、包来源、创建时间与打开目录。 */
+@Composable
+private fun InstanceVersionSection(
+    instance: GameInstance,
+    actions: UiActions,
+) {
+    CompactSettingsSection("版本信息") {
+        SettingRow("Minecraft", instance.gameVersion) {
+            Tag(instance.loader.title)
+        }
+        SettingRow("包来源", packSourceOf(instance)) {
+            Text(instance.versionId, fontSize = 12.sp)
+        }
+        Text(
+            "创建于 " +
+                instance.createdAt.take(10) +
+                " · 游玩 " +
+                instance.playTimeSeconds / 60 +
+                " 分钟",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SecondaryButton({
+            actions.run { actions.controller.openFolder(instance.id) }
+        }) {
+            Icon(
+                Icons.Outlined.FolderOpen,
+                null,
+                Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(5.dp))
+            Text("打开游戏目录", fontSize = 12.sp)
+        }
+    }
+}
+
+/** 启动设置的问题：内联校验错误优先，其次保存错误，最后高级参数校验。 */
+@Composable
+private fun InstanceSettingsProblem(
+    launchError: String?,
+    saveError: String?,
+    advancedValid: Boolean,
+) {
+    val problem =
+        launchError
+            ?: saveError
+            ?: if (!advancedValid) {
+                "高级启动参数未通过校验。"
+            } else {
+                null
+            }
+    if (problem != null) {
+        Text(
+            problem,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.error,
+        )
     }
 }

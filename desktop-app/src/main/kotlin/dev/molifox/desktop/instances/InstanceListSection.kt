@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -231,41 +232,14 @@ private fun InstanceListRow(
                 .fillMaxWidth()
                 .height(InstanceRowHeight)
                 // 右键：在指针位置打开同一份上下文菜单；已打开的菜单不重复弹。
-                .pointerInput(instance.id) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (
-                                event.type == PointerEventType.Press &&
-                                event.buttons.isSecondaryPressed
-                            ) {
-                                event.changes.firstOrNull()?.let { change ->
-                                    menuOffset =
-                                        with(density) {
-                                            DpOffset(
-                                                change.position.x.toDp(),
-                                                change.position.y.toDp(),
-                                            )
-                                        }
-                                }
-                                menuAnchor = InstanceMenuAnchor.Pointer
-                                menuOpen = true
-                                event.changes.forEach { it.consume() }
-                            }
-                        }
-                    }
+                .instanceContextClick(instance.id, density) { position ->
+                    position?.let { menuOffset = it }
+                    menuAnchor = InstanceMenuAnchor.Pointer
+                    menuOpen = true
                 }.clickable(onClick = onSelect),
             shape = shape,
             color = MaterialTheme.colorScheme.surface,
-            border =
-                BorderStroke(
-                    1.dp,
-                    if (selected) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = .6f)
-                    } else {
-                        hairline()
-                    },
-                ),
+            border = BorderStroke(1.dp, rowBorderColor(selected)),
         ) {
             Row(
                 Modifier.fillMaxSize().hoverHighlight(shape).padding(horizontal = 12.dp),
@@ -274,33 +248,12 @@ private fun InstanceListRow(
             ) {
                 InstanceArtwork(instance, actions, Modifier.size(28.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            instance.name,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        if (selected) Tag("当前版本")
-                        if (!instance.broken && !instance.installed) {
-                            Tag("待修复", MaterialTheme.colorScheme.error)
-                        }
-                    }
+                    InstanceTitleRow(instance, selected)
                     // 紧凑信息行：版本 · 加载器 · 最后游玩 · 占用大小；无法识别时整行用错误色。
                     Text(
                         instanceMetaLine(instance, directorySize, showNotes),
                         fontSize = 12.sp,
-                        color =
-                            if (instance.broken) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
+                        color = instanceMetaColor(instance),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -311,16 +264,7 @@ private fun InstanceListRow(
                     enabled = !busy && !instance.broken,
                     tint = MaterialTheme.colorScheme.primary,
                 )
-                InstanceTextAction(
-                    if (instance.favorite) "已收藏" else "收藏",
-                    onFavorite,
-                    tint =
-                        if (instance.favorite) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                )
+                FavoriteTextAction(instance, onFavorite)
                 InstanceTextAction("设置", onManage)
                 InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
                 // 触屏/键盘的等价入口：与右键菜单是同一份内容。菜单锚在这个按钮自身的 Box 上，
@@ -376,3 +320,85 @@ private fun InstanceListRow(
         }
     }
 }
+
+/** 右键：把指针位置换算成 DpOffset 后交给上下文菜单；锚点与展开状态始终一起更新。 */
+private fun Modifier.instanceContextClick(
+    instanceId: String,
+    density: Density,
+    onContextMenu: (DpOffset?) -> Unit,
+): Modifier =
+    pointerInput(instanceId) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                    onContextMenu(
+                        event.changes.firstOrNull()?.let { change ->
+                            with(density) {
+                                DpOffset(
+                                    change.position.x.toDp(),
+                                    change.position.y.toDp(),
+                                )
+                            }
+                        },
+                    )
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+    }
+
+/** 名称行：当前版本标记与「待修复」提示跟在名字后面。 */
+@Composable
+private fun InstanceTitleRow(
+    instance: GameInstance,
+    selected: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            instance.name,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (selected) Tag("当前版本")
+        if (!instance.broken && !instance.installed) {
+            Tag("待修复", MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+/** 收藏按钮：已收藏时换文案并用主题色。 */
+@Composable
+private fun FavoriteTextAction(
+    instance: GameInstance,
+    onFavorite: () -> Unit,
+) {
+    InstanceTextAction(
+        if (instance.favorite) "已收藏" else "收藏",
+        onFavorite,
+        tint =
+            if (instance.favorite) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+    )
+}
+
+@Composable
+private fun rowBorderColor(selected: Boolean): Color =
+    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .6f) else hairline()
+
+@Composable
+private fun instanceMetaColor(instance: GameInstance): Color =
+    if (instance.broken) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }

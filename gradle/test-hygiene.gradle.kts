@@ -44,6 +44,8 @@ val smokeNames =
         "networkDiagnosticsSmoke",
         "refinementSmoke",
         "recentPlaySmoke",
+        "multiplayerUiSmoke",
+        "appearanceUiSmoke",
         "gameSmoke",
     )
 

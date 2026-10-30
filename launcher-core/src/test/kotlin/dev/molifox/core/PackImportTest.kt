@@ -5,29 +5,16 @@
 
 package dev.molifox.core
 
-import com.google.gson.JsonObject
 import kotlinx.coroutines.runBlocking
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
-import okio.Buffer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.io.ByteArrayOutputStream
-import java.nio.file.Files
 import java.nio.file.Path
-import java.security.MessageDigest
-import java.util.UUID
-import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import java.util.zip.ZipOutputStream
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 import kotlin.io.path.writeBytes
@@ -42,79 +29,10 @@ class PackImportTest {
     @TempDir lateinit var temporary: Path
     private val bytes = "downloaded pack content".toByteArray()
 
-    private fun hash(
-        data: ByteArray,
-        algorithm: String,
-    ) = MessageDigest.getInstance(algorithm).digest(data).joinToString("") { "%02x".format(it) }
-
-    private fun file(
-        path: String,
-        environment: String = "required",
-    ): JsonObject =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "path" to path,
-                    "hashes" to
-                        mapOf("sha1" to hash(bytes, "SHA-1"), "sha512" to hash(bytes, "SHA-512")),
-                    "fileSize" to bytes.size,
-                    "env" to mapOf("client" to environment, "server" to "required"),
-                    "downloads" to listOf("https://cdn.modrinth.com/$path"),
-                ),
-            ).asJsonObject
-
-    private fun index(files: List<JsonObject> = emptyList()): JsonObject =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "formatVersion" to 1,
-                    "game" to "minecraft",
-                    "versionId" to "1.0",
-                    "name" to "Fixture pack",
-                    "summary" to "Pack preview",
-                    "dependencies" to mapOf("minecraft" to "fixture"),
-                    "files" to files,
-                ),
-            ).asJsonObject
-
-    private fun zipBytes(entries: Map<String, ByteArray>): ByteArray =
-        ByteArrayOutputStream().use { output ->
-            ZipOutputStream(output).use { zip ->
-                entries.forEach { (name, data) ->
-                    zip.putNextEntry(ZipEntry(name))
-                    zip.write(data)
-                    zip.closeEntry()
-                }
-            }
-            output.toByteArray()
-        }
-
-    private fun pack(
-        index: JsonObject,
-        extras: Map<String, ByteArray> = emptyMap(),
-    ): Path =
-        temporary.resolve("${UUID.randomUUID()}.mrpack").apply {
-            writeBytes(
-                zipBytes(mapOf("modrinth.index.json" to gson.toJson(index).toByteArray()) + extras),
-            )
-        }
-
-    private fun store(): LauncherStore =
-        LauncherStore(
-            object : PlatformServices by DesktopPlatform() {
-                override fun moveToTrash(file: Path) {
-                    val destination = temporary.resolve("trash/${UUID.randomUUID()}")
-                    destination.parent.createDirectories()
-                    Files.move(file, destination)
-                }
-            },
-            temporary.resolve("profile"),
-        )
-
     @Test
     fun `preview lists client optional files without creating an instance`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             NetworkClient().use { network ->
                 val service =
                     ContentService(
@@ -123,12 +41,13 @@ class PackImportTest {
                         MinecraftInstaller(store, network, JavaService(store, network)),
                     )
                 val source =
-                    pack(
-                        index(
+                    fixturePack(
+                        temporary,
+                        fixtureIndex(
                             listOf(
-                                file("mods/a.jar"),
-                                file("mods/b.jar", "optional"),
-                                file("mods/c.jar", "unsupported"),
+                                fixturePackFile(bytes, "mods/a.jar"),
+                                fixturePackFile(bytes, "mods/b.jar", "optional"),
+                                fixturePackFile(bytes, "mods/c.jar", "unsupported"),
                             ),
                         ),
                     )
@@ -145,7 +64,7 @@ class PackImportTest {
     @Test
     fun `bad manifests and overrides fail before creating an instance`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             NetworkClient().use { network ->
                 val service =
                     ContentService(
@@ -153,34 +72,84 @@ class PackImportTest {
                         network,
                         MinecraftInstaller(store, network, JavaService(store, network)),
                     )
-                val missingHash = file("a.txt").apply { obj("hashes").remove("sha512") }
-                val badSize = file("a.txt").apply { addProperty("fileSize", -1) }
-                val badEnv = file("a.txt").apply { obj("env").addProperty("client", "invalid") }
-                val samples =
-                    listOf(
-                        pack(index().apply { addProperty("formatVersion", 1.5) }),
-                        pack(index(listOf(missingHash))),
-                        pack(index(listOf(badSize))),
-                        pack(index(listOf(badEnv))),
-                        pack(index(listOf(file("same.txt"), file("same.txt")))),
-                        pack(index(listOf(file("config"), file("config/child.txt")))),
-                        pack(index(), mapOf("overrides/../../escape.txt" to bytes)),
-                        pack(index(), mapOf("client-overrides/.MOLIFOX-content.json" to bytes)),
-                    )
-                for (source in samples) {
-                    assertFails { service.previewPack(source) }
-                    assertFails { service.importPack(source, JobContext(store, "test")) }
-                    assertTrue(store.data.instances.isEmpty())
-                }
+                assertBadManifestsRejected(store, service)
                 assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
                 assertFalse(temporary.resolve("escape.txt").exists())
             }
         }
 
+    /** 每个坏清单样本都必须同时被预览与导入拒绝，且不留下实例。 */
+    private suspend fun assertBadManifestsRejected(
+        store: LauncherStore,
+        service: ContentService,
+    ) {
+        for (source in badManifestSamples()) {
+            assertFails { service.previewPack(source) }
+            assertFails { service.importPack(source, JobContext(store, "test")) }
+            assertTrue(store.data.instances.isEmpty())
+        }
+    }
+
+    /** 格式版本、缺路径字段的样本，再拼上路径安全相关的样本；顺序与逐条拒绝一致。 */
+    private fun badManifestSamples(): List<Path> = malformedFileSamples() + unsafePathSamples()
+
+    /** 格式版本、缺哈希、负体积、非法 env、重复路径与父子冲突。 */
+    private fun malformedFileSamples(): List<Path> {
+        val missingHash =
+            fixturePackFile(bytes, "a.txt").apply { obj("hashes").remove("sha512") }
+        val badSize = fixturePackFile(bytes, "a.txt").apply { addProperty("fileSize", -1) }
+        val badEnv =
+            fixturePackFile(bytes, "a.txt").apply {
+                obj("env").addProperty("client", "invalid")
+            }
+        return listOf(
+            fixturePack(
+                temporary,
+                fixtureIndex().apply { addProperty("formatVersion", 1.5) },
+            ),
+            fixturePack(temporary, fixtureIndex(listOf(missingHash))),
+            fixturePack(temporary, fixtureIndex(listOf(badSize))),
+            fixturePack(temporary, fixtureIndex(listOf(badEnv))),
+            fixturePack(
+                temporary,
+                fixtureIndex(
+                    listOf(
+                        fixturePackFile(bytes, "same.txt"),
+                        fixturePackFile(bytes, "same.txt"),
+                    ),
+                ),
+            ),
+            fixturePack(
+                temporary,
+                fixtureIndex(
+                    listOf(
+                        fixturePackFile(bytes, "config"),
+                        fixturePackFile(bytes, "config/child.txt"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    /** 越界覆盖与覆盖账本都必须被拒绝。 */
+    private fun unsafePathSamples(): List<Path> =
+        listOf(
+            fixturePack(
+                temporary,
+                fixtureIndex(),
+                mapOf("overrides/../../escape.txt" to bytes),
+            ),
+            fixturePack(
+                temporary,
+                fixtureIndex(),
+                mapOf("client-overrides/.MOLIFOX-content.json" to bytes),
+            ),
+        )
+
     @Test
     fun `changed preview and unknown optional choice are rejected before installation`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             NetworkClient().use { network ->
                 val service =
                     ContentService(
@@ -188,15 +157,16 @@ class PackImportTest {
                         network,
                         MinecraftInstaller(store, network, JavaService(store, network)),
                     )
-                val source = pack(index())
+                val source = fixturePack(temporary, fixtureIndex())
                 val preview = service.previewPack(source)
                 source.writeBytes(
-                    zipBytes(
+                    fixtureZipBytes(
                         mapOf(
                             "modrinth.index.json" to
                                 gson
-                                    .toJson(index().apply { addProperty("name", "Changed") })
-                                    .toByteArray(),
+                                    .toJson(
+                                        fixtureIndex().apply { addProperty("name", "Changed") },
+                                    ).toByteArray(),
                         ),
                     ),
                 )
@@ -221,15 +191,16 @@ class PackImportTest {
     @Test
     fun `staging skips unselected and server files and applies client overrides last`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             val root = temporary.resolve("game").apply { createDirectories() }
             val source =
-                pack(
-                    index(
+                fixturePack(
+                    temporary,
+                    fixtureIndex(
                         listOf(
-                            file("mods/a.jar"),
-                            file("mods/b.jar", "optional"),
-                            file("mods/c.jar", "unsupported"),
+                            fixturePackFile(bytes, "mods/a.jar"),
+                            fixturePackFile(bytes, "mods/b.jar", "optional"),
+                            fixturePackFile(bytes, "mods/c.jar", "unsupported"),
                         ),
                     ),
                     mapOf(
@@ -241,22 +212,7 @@ class PackImportTest {
             val transaction = PackFileTransaction(store, root)
             val downloaded = mutableListOf<String>()
             try {
-                ZipFile(source.toFile()).use { zip ->
-                    stagePackFiles(
-                        readPackManifest(zip, root, store.platform.osName),
-                        zip,
-                        transaction,
-                        root,
-                        emptySet(),
-                        false,
-                        JobContext(store, "test"),
-                    ) {
-                        downloaded += it.target.fileName.toString()
-                        it.target.parent.createDirectories()
-                        it.target.writeBytes(bytes)
-                    }
-                }
-                transaction.commit(JobContext(store, "test"))
+                stageFixture(source, store, root, transaction, downloaded)
                 assertEquals(listOf("a.jar"), downloaded)
                 assertEquals("client", root.resolve("config/test.txt").readText())
                 assertFalse(root.resolve("mods/b.jar").exists())
@@ -266,97 +222,117 @@ class PackImportTest {
             }
         }
 
+    /** 以空选择集暂存：只下载必填的客户端文件，client-overrides 最后覆盖。 */
+    private suspend fun stageFixture(
+        source: Path,
+        store: LauncherStore,
+        root: Path,
+        transaction: PackFileTransaction,
+        downloaded: MutableList<String>,
+    ) {
+        ZipFile(source.toFile()).use { zip ->
+            stagePackFiles(
+                readPackManifest(zip, root, store.platform.osName),
+                zip,
+                transaction,
+                root,
+                emptySet(),
+                false,
+                JobContext(store, "test"),
+            ) {
+                downloaded += it.target.fileName.toString()
+                it.target.parent.createDirectories()
+                it.target.writeBytes(bytes)
+            }
+        }
+        transaction.commit(JobContext(store, "test"))
+    }
+
     @Test
     fun `both hashes and size are checked and download mirrors can recover`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             val root = temporary.resolve("game").apply { createDirectories() }
-            for (kind in listOf("sha1", "sha512", "fileSize")) {
-                val entry = file("a.txt")
-                if (kind == "fileSize") {
-                    entry.addProperty(kind, bytes.size + 1)
-                } else {
-                    entry.obj("hashes").addProperty(
-                        kind,
-                        "0".repeat(
-                            if (kind ==
-                                "sha1"
-                            ) {
-                                40
-                            } else {
-                                128
-                            },
-                        ),
-                    )
-                }
-                val source = pack(index(listOf(entry)))
-                val transaction = PackFileTransaction(store, root)
-                try {
-                    ZipFile(source.toFile()).use { zip ->
-                        assertFails {
-                            stagePackFiles(
-                                readPackManifest(zip, root, store.platform.osName),
-                                zip,
-                                transaction,
-                                root,
-                                null,
-                                false,
-                                JobContext(store, "test"),
-                            ) {
-                                it.target.parent.createDirectories()
-                                it.target.writeBytes(bytes)
-                            }
-                        }
-                    }
-                    assertFalse(root.resolve("a.txt").exists())
-                } finally {
-                    transaction.cleanup()
-                }
+            assertRejectsCorruptedEntries(store, root)
+            assertMirrorRecovery(store, root)
+        }
+
+    /** 哈希不符与体积不符都必须拒绝落盘，且不留下半个文件。 */
+    private suspend fun assertRejectsCorruptedEntries(
+        store: LauncherStore,
+        root: Path,
+    ) {
+        for (kind in listOf("sha1", "sha512", "fileSize")) {
+            val entry = fixturePackFile(bytes, "a.txt")
+            if (kind == "fileSize") {
+                entry.addProperty(kind, bytes.size + 1)
+            } else {
+                val length = if (kind == "sha1") 40 else 128
+                entry.obj("hashes").addProperty(kind, "0".repeat(length))
             }
-            val entry =
-                file("a.txt").apply {
-                    add(
-                        "downloads",
-                        gson.toJsonTree(
-                            listOf(
-                                "https://cdn.modrinth.com/missing.txt",
-                                "https://gitlab.com/team/a.txt",
-                            ),
-                        ),
-                    )
-                }
-            val source = pack(index(listOf(entry)))
+            val source = fixturePack(temporary, fixtureIndex(listOf(entry)))
             val transaction = PackFileTransaction(store, root)
-            var attempts = 0
             try {
                 ZipFile(source.toFile()).use { zip ->
-                    stagePackFiles(
-                        readPackManifest(zip, root, store.platform.osName),
-                        zip,
-                        transaction,
-                        root,
-                        null,
-                        false,
-                        JobContext(store, "test"),
-                    ) {
-                        attempts++
-                        if (attempts == 1) throw java.io.IOException("Fixture mirror unavailable")
-                        it.target.parent.createDirectories()
-                        it.target.writeBytes(bytes)
+                    assertFails {
+                        stagePackFiles(
+                            readPackManifest(zip, root, store.platform.osName),
+                            zip,
+                            transaction,
+                            root,
+                            null,
+                            false,
+                            JobContext(store, "test"),
+                        ) {
+                            it.target.parent.createDirectories()
+                            it.target.writeBytes(bytes)
+                        }
                     }
                 }
-                transaction.commit(JobContext(store, "test"))
-                assertEquals(2, attempts)
-                assertContentEquals(bytes, root.resolve("a.txt").readBytes())
+                assertFalse(root.resolve("a.txt").exists())
             } finally {
                 transaction.cleanup()
             }
         }
+    }
+
+    /** 首个镜像失败后换下一个镜像重试，最终落盘内容与字节一致。 */
+    private suspend fun assertMirrorRecovery(
+        store: LauncherStore,
+        root: Path,
+    ) {
+        val source = fixturePack(temporary, fixtureIndex(listOf(fixtureMirrorEntry(bytes))))
+        val transaction = PackFileTransaction(store, root)
+        var attempts = 0
+        try {
+            ZipFile(source.toFile()).use { zip ->
+                stagePackFiles(
+                    readPackManifest(zip, root, store.platform.osName),
+                    zip,
+                    transaction,
+                    root,
+                    null,
+                    false,
+                    JobContext(store, "test"),
+                ) {
+                    attempts++
+                    if (attempts == 1) throw java.io.IOException("Fixture mirror unavailable")
+                    it.target.parent.createDirectories()
+                    it.target.writeBytes(bytes)
+                }
+            }
+            transaction.commit(JobContext(store, "test"))
+            assertEquals(2, attempts)
+            assertContentEquals(bytes, root.resolve("a.txt").readBytes())
+        } finally {
+            transaction.cleanup()
+        }
+    }
 
     @Test
     fun `commit failure restores files already replaced`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             val root = temporary.resolve("game").apply { createDirectories() }
             root.resolve("a.txt").writeText("user file")
             root.resolve("z.txt").createDirectories()
@@ -375,68 +351,12 @@ class PackImportTest {
     @Test
     fun `pack respects the shared directory and repairs without a second instance`() =
         runBlocking {
-            val store = store()
+            val store = fixtureStore(temporary)
             store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
-            val client = zipBytes(mapOf("fixture.txt" to bytes))
+            val client = fixtureZipBytes(mapOf("fixture.txt" to bytes))
             var rejectClient = true
-            MockWebServer().use { server ->
+            fixtureServer(client) { rejectClient }.use { server ->
                 val base = server.loopbackUrl("/").toString().removeSuffix("/")
-                val assets = "{\"objects\":{}}"
-                val profile =
-                    gson.toJson(
-                        mapOf(
-                            "id" to "fixture",
-                            "mainClass" to "FixtureMinecraft",
-                            "type" to "release",
-                            "libraries" to emptyList<Any>(),
-                            "downloads" to
-                                mapOf(
-                                    "client" to
-                                        mapOf(
-                                            "url" to "$base/client.jar",
-                                            "sha1" to hash(client, "SHA-1"),
-                                            "size" to client.size,
-                                        ),
-                                ),
-                            "assetIndex" to mapOf("id" to "fixture", "url" to "$base/assets.json"),
-                        ),
-                    )
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse =
-                            when (request.path) {
-                                "/manifest.json" ->
-                                    MockResponse()
-                                        .setBody(
-                                            gson.toJson(
-                                                mapOf(
-                                                    "versions" to
-                                                        listOf(
-                                                            mapOf(
-                                                                "id" to "fixture",
-                                                                "type" to "release",
-                                                                "url" to "$base/profile.json",
-                                                                "sha1" to
-                                                                    hash(
-                                                                        profile.toByteArray(),
-                                                                        "SHA-1",
-                                                                    ),
-                                                            ),
-                                                        ),
-                                                ),
-                                            ),
-                                        )
-                                "/profile.json" -> MockResponse().setBody(profile)
-                                "/assets.json" -> MockResponse().setBody(assets)
-                                "/client.jar" ->
-                                    if (rejectClient) {
-                                        MockResponse().setResponseCode(404)
-                                    } else {
-                                        MockResponse().setBody(Buffer().write(client))
-                                    }
-                                else -> MockResponse().setResponseCode(404)
-                            }
-                    }
                 NetworkClient().use { network ->
                     val installer =
                         MinecraftInstaller(
@@ -447,8 +367,9 @@ class PackImportTest {
                         )
                     val service = ContentService(store, network, installer)
                     val source =
-                        pack(
-                            index(),
+                        fixturePack(
+                            temporary,
+                            fixtureIndex(),
                             mapOf("overrides/config/fixture.txt" to "pack config".toByteArray()),
                         )
                     assertFails {
@@ -463,21 +384,30 @@ class PackImportTest {
                     assertEquals(VersionIsolation.Inherit, failed.isolation)
                     assertTrue(Path.of(failed.packFile).isRegularFile())
                     rejectClient = false
-                    service.importPack(
-                        Path.of(failed.packFile),
-                        JobContext(store, "test"),
-                        repairId = failed.id,
-                    )
-                    assertEquals(1, store.data.instances.size)
-                    assertTrue(store.instance(failed.id).installed)
-                    assertEquals(emptyList(), store.instance(failed.id).packOptionalFiles)
-                    assertEquals(
-                        "pack config",
-                        store.instancePath(failed.id).resolve("config/fixture.txt").readText(),
-                    )
-                    assertTrue(store.minecraftRoot.resolve("config/fixture.txt").exists())
-                    assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
+                    assertRepairedInPlace(store, service, failed)
                 }
             }
         }
+
+    /** 修好镜像后按同一实例重新导入：不新建实例，并保留整合包里的配置。 */
+    private suspend fun assertRepairedInPlace(
+        store: LauncherStore,
+        service: ContentService,
+        failed: GameInstance,
+    ) {
+        service.importPack(
+            Path.of(failed.packFile),
+            JobContext(store, "test"),
+            repairId = failed.id,
+        )
+        assertEquals(1, store.data.instances.size)
+        assertTrue(store.instance(failed.id).installed)
+        assertEquals(emptyList(), store.instance(failed.id).packOptionalFiles)
+        assertEquals(
+            "pack config",
+            store.instancePath(failed.id).resolve("config/fixture.txt").readText(),
+        )
+        assertTrue(store.minecraftRoot.resolve("config/fixture.txt").exists())
+        assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
+    }
 }

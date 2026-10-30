@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
 
+private const val THROTTLE_NANOS_PER_MILLISECOND = 1_000_000L
+
 /**
  * 单个主机的闸门：最多 [permits] 个并发请求，且相邻两次开始至少间隔 [spacingMillis]。
  * 许可证覆盖整个文件传输（请求 + 响应体），因此镜像上的实际连接数也被限制住。
@@ -34,7 +36,7 @@ internal class HostGate(
                         nextStartNanos = start + spacingMillis * 1_000_000L
                         start - now
                     }
-                if (waitNanos > 0) delay(waitNanos / 1_000_000L + 1)
+                if (waitNanos > 0) delay(waitNanos / THROTTLE_NANOS_PER_MILLISECOND + 1)
             }
             block()
         }

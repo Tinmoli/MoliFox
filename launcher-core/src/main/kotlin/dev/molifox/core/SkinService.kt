@@ -6,8 +6,10 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import com.google.gson.JsonParseException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -17,6 +19,8 @@ import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
+
+private const val MAX_SKIN_DOWNLOAD_BYTES = 1024 * 1024
 
 data class MinecraftSkinProfile(
     val name: String,
@@ -102,8 +106,8 @@ class SkinService
         }
 
         /**
-         * Called only after an explicit upload action; authentication uses this account, never global
-         * selection.
+         * Called only after an explicit upload action; authentication uses this account, never
+         * global selection.
          */
         suspend fun upload(
             id: String,
@@ -116,7 +120,7 @@ class SkinService
                 validateUploadSkin(file, entry.variant)
                 val bytes = Files.newInputStream(file).use { it.readNBytes(1024 * 1024 + 1) }
                 require(
-                    bytes.size <= 1024 * 1024 &&
+                    bytes.size <= MAX_SKIN_DOWNLOAD_BYTES &&
                         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
                             "%02x".format(it)
                         } == entry.sha256,
@@ -133,17 +137,38 @@ class SkinService
                 )
                 // A successful write followed by a failed profile refresh must not claim the upload
                 // itself failed.
-                try {
-                    saveProfile(
-                        account,
-                        network.authorizedJson("$api/minecraft/profile", credential.accessToken),
-                    )
-                } catch (failure: Exception) {
-                    if (failure is kotlinx.coroutines.CancellationException) throw failure
-                    store.log("皮肤已上传，但档案刷新失败，请稍后刷新头像：${failure.message}")
-                    MinecraftSkinProfile(account.name, account.uuid, "", entry.variant)
-                }
+                refreshProfileAfterUpload(account, entry.variant, credential)
             }
+
+        /** 上传已经成功，档案刷新失败只降级为日志与空纹理，绝不把上传判为失败。 */
+        private suspend fun refreshProfileAfterUpload(
+            account: Account,
+            variant: SkinVariant,
+            credential: GameCredentials,
+        ): MinecraftSkinProfile =
+            try {
+                saveProfile(
+                    account,
+                    network.authorizedJson("$api/minecraft/profile", credential.accessToken),
+                )
+            } catch (failure: IOException) {
+                uploadedWithoutProfile(account, variant, failure)
+            } catch (failure: IllegalStateException) {
+                uploadedWithoutProfile(account, variant, failure)
+            } catch (failure: IllegalArgumentException) {
+                uploadedWithoutProfile(account, variant, failure)
+            } catch (failure: JsonParseException) {
+                uploadedWithoutProfile(account, variant, failure)
+            }
+
+        private fun uploadedWithoutProfile(
+            account: Account,
+            variant: SkinVariant,
+            failure: Throwable,
+        ): MinecraftSkinProfile {
+            store.log("皮肤已上传，但档案刷新失败，请稍后刷新头像：${failure.message}")
+            return MinecraftSkinProfile(account.name, account.uuid, "", variant)
+        }
 
         /**
          * 把皮肤库中的一项设为离线角色的皮肤，并在存在 CustomSkinLoader 本地皮肤目录时同步一份。
@@ -241,9 +266,13 @@ class SkinService
                     }
                     store.log("离线皮肤已写入 CustomSkinLoader：$target")
                     target
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
+                } catch (failure: IOException) {
+                    store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                    null
+                } catch (failure: IllegalArgumentException) {
+                    store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                    null
+                } catch (failure: IllegalStateException) {
                     store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
                     null
                 }
@@ -256,9 +285,13 @@ class SkinService
             if (account.type == AccountType.Offline) {
                 try {
                     account.localSkinId.takeIf { it.isNotBlank() }?.let { library.texture(it) }
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
+                } catch (failure: IOException) {
+                    store.log("离线皮肤预览不可用：${failure.message}")
+                    null
+                } catch (failure: IllegalArgumentException) {
+                    store.log("离线皮肤预览不可用：${failure.message}")
+                    null
+                } catch (failure: IllegalStateException) {
                     store.log("离线皮肤预览不可用：${failure.message}")
                     null
                 }

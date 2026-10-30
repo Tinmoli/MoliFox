@@ -35,6 +35,9 @@ import dev.molifox.core.ProcessPriority
 import dev.molifox.core.automaticMemoryMb
 import kotlinx.coroutines.delay
 
+private const val GLOBAL_MEMORY_STEP_MB = 256
+private const val GLOBAL_MINIMUM_MEMORY_MB = 512
+
 /** 全局游戏设置：内存、游戏窗口、高级参数、游戏目录与版本隔离。 */
 @Composable
 internal fun gameSettingCards(
@@ -277,4 +280,6 @@ internal fun gameSettingCards(
 internal fun steppedMemory(
     value: Float,
     maximum: Int,
-): Int = (value.toInt() / 256 * 256).coerceIn(512, maximum)
+): Int =
+    (value.toInt() / GLOBAL_MEMORY_STEP_MB * GLOBAL_MEMORY_STEP_MB)
+        .coerceIn(GLOBAL_MINIMUM_MEMORY_MB, maximum)

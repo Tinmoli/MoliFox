@@ -42,7 +42,15 @@ class JavaCompatibilityTest {
                 "legacy",
                 JsonParser
                     .parseString(
-                        """{"javaVersion":{"majorVersion":8},"libraries":[{"name":"net.minecraft:launchwrapper:1.12"},{"name":"net.minecraftforge:forge:1.12.2"}]}""",
+                        """
+                        {
+                          "javaVersion": {"majorVersion": 8},
+                          "libraries": [
+                            {"name": "net.minecraft:launchwrapper:1.12"},
+                            {"name": "net.minecraftforge:forge:1.12.2"}
+                          ]
+                        }
+                        """,
                     ).asJsonObject,
             )
         val requirement = JavaRequirement.from(profile)

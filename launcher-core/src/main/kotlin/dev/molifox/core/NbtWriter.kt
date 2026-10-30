@@ -9,15 +9,32 @@ import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.util.zip.GZIPOutputStream
 
+private const val NBT_TYPE_END = 0
+private const val NBT_TYPE_BYTE = 1
+private const val NBT_TYPE_SHORT = 2
+private const val NBT_TYPE_INT = 3
+private const val NBT_TYPE_LONG = 4
+private const val NBT_TYPE_FLOAT = 5
+private const val NBT_TYPE_DOUBLE = 6
+private const val NBT_TYPE_BYTE_ARRAY = 7
+private const val NBT_TYPE_STRING = 8
+private const val NBT_TYPE_LIST = 9
+private const val NBT_TYPE_COMPOUND = 10
+private const val NBT_TYPE_INT_ARRAY = 11
+private const val NBT_TYPE_LONG_ARRAY = 12
+private const val MAX_NBT_BYTES = 8 * 1024 * 1024
+private const val MAX_NBT_DEPTH = 64
+private const val MAX_NBT_LIST_ELEMENTS = 1_000_000
+
 internal fun encodeNbt(document: NbtDocument): ByteArray {
     val buffer = ByteArrayOutputStream()
     DataOutputStream(buffer).use { output ->
-        output.writeByte(10)
+        output.writeByte(NBT_TYPE_COMPOUND)
         output.writeUTF(document.rootName)
         writeNbtTag(output, document.root, 0)
     }
     val bytes = buffer.toByteArray()
-    require(bytes.size <= 8 * 1024 * 1024) { "NBT 数据过大" }
+    require(bytes.size <= MAX_NBT_BYTES) { "NBT 数据过大" }
     if (!document.compressed) return bytes
     return ByteArrayOutputStream()
         .also { encoded ->
@@ -27,18 +44,18 @@ internal fun encodeNbt(document: NbtDocument): ByteArray {
 
 private fun nbtType(tag: NbtTag): Int =
     when (tag) {
-        is NbtByte -> 1
-        is NbtShort -> 2
-        is NbtInt -> 3
-        is NbtLong -> 4
-        is NbtFloat -> 5
-        is NbtDouble -> 6
-        is NbtByteArray -> 7
-        is NbtString -> 8
-        is NbtList -> 9
-        is NbtCompound -> 10
-        is NbtIntArray -> 11
-        is NbtLongArray -> 12
+        is NbtByte -> NBT_TYPE_BYTE
+        is NbtShort -> NBT_TYPE_SHORT
+        is NbtInt -> NBT_TYPE_INT
+        is NbtLong -> NBT_TYPE_LONG
+        is NbtFloat -> NBT_TYPE_FLOAT
+        is NbtDouble -> NBT_TYPE_DOUBLE
+        is NbtByteArray -> NBT_TYPE_BYTE_ARRAY
+        is NbtString -> NBT_TYPE_STRING
+        is NbtList -> NBT_TYPE_LIST
+        is NbtCompound -> NBT_TYPE_COMPOUND
+        is NbtIntArray -> NBT_TYPE_INT_ARRAY
+        is NbtLongArray -> NBT_TYPE_LONG_ARRAY
     }
 
 private fun writeNbtTag(
@@ -46,7 +63,7 @@ private fun writeNbtTag(
     tag: NbtTag,
     depth: Int,
 ) {
-    require(depth <= 64) { "NBT 嵌套过深" }
+    require(depth <= MAX_NBT_DEPTH) { "NBT 嵌套过深" }
     when (tag) {
         is NbtByte -> output.writeByte(tag.value.toInt())
         is NbtShort -> output.writeShort(tag.value.toInt())
@@ -55,36 +72,63 @@ private fun writeNbtTag(
         is NbtFloat -> output.writeInt(tag.value.toRawBits())
         is NbtDouble -> output.writeLong(tag.value.toRawBits())
         is NbtString -> output.writeUTF(tag.value)
-        is NbtByteArray -> {
-            output.writeInt(tag.value.size)
-            output.write(tag.value)
-        }
-        is NbtIntArray -> {
-            output.writeInt(tag.value.size)
-            tag.value.forEach(output::writeInt)
-        }
-        is NbtLongArray -> {
-            output.writeInt(tag.value.size)
-            tag.value.forEach(output::writeLong)
-        }
-        is NbtList -> {
-            require(
-                tag.elements.size <= 1_000_000 &&
-                    tag.elements.all { nbtType(it) == tag.elementType },
-            ) {
-                "NBT 列表类型无效"
-            }
-            output.writeByte(tag.elementType)
-            output.writeInt(tag.elements.size)
-            tag.elements.forEach { writeNbtTag(output, it, depth + 1) }
-        }
-        is NbtCompound -> {
-            tag.entries.forEach { (name, value) ->
-                output.writeByte(nbtType(value))
-                output.writeUTF(name)
-                writeNbtTag(output, value, depth + 1)
-            }
-            output.writeByte(0)
-        }
+        is NbtByteArray -> writeNbtByteArray(output, tag)
+        is NbtIntArray -> writeNbtIntArray(output, tag)
+        is NbtLongArray -> writeNbtLongArray(output, tag)
+        is NbtList -> writeNbtList(output, tag, depth)
+        is NbtCompound -> writeNbtCompound(output, tag, depth)
     }
+}
+
+private fun writeNbtByteArray(
+    output: DataOutputStream,
+    tag: NbtByteArray,
+) {
+    output.writeInt(tag.value.size)
+    output.write(tag.value)
+}
+
+private fun writeNbtIntArray(
+    output: DataOutputStream,
+    tag: NbtIntArray,
+) {
+    output.writeInt(tag.value.size)
+    tag.value.forEach(output::writeInt)
+}
+
+private fun writeNbtLongArray(
+    output: DataOutputStream,
+    tag: NbtLongArray,
+) {
+    output.writeInt(tag.value.size)
+    tag.value.forEach(output::writeLong)
+}
+
+private fun writeNbtList(
+    output: DataOutputStream,
+    tag: NbtList,
+    depth: Int,
+) {
+    require(
+        tag.elements.size <= MAX_NBT_LIST_ELEMENTS &&
+            tag.elements.all { nbtType(it) == tag.elementType },
+    ) {
+        "NBT 列表类型无效"
+    }
+    output.writeByte(tag.elementType)
+    output.writeInt(tag.elements.size)
+    tag.elements.forEach { writeNbtTag(output, it, depth + 1) }
+}
+
+private fun writeNbtCompound(
+    output: DataOutputStream,
+    tag: NbtCompound,
+    depth: Int,
+) {
+    tag.entries.forEach { (name, value) ->
+        output.writeByte(nbtType(value))
+        output.writeUTF(name)
+        writeNbtTag(output, value, depth + 1)
+    }
+    output.writeByte(NBT_TYPE_END)
 }

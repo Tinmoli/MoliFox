@@ -191,25 +191,7 @@ class PackIconsTest {
     fun `MCBBS export is an actual standard archive with icon hashes and permission checks`() =
         runBlocking {
             fixture { store, instance, icons ->
-                val root = store.instancePath(instance.id)
-                root
-                    .resolve("config")
-                    .createDirectory()
-                    .resolve("settings.txt")
-                    .writeText("configuration")
-                root
-                    .resolve("mods")
-                    .createDirectory()
-                    .resolve("local.jar")
-                    .writeText("mod bytes")
-                root
-                    .resolve("credentials")
-                    .createDirectory()
-                    .resolve("secret.json")
-                    .writeText("NEVER_EXPORT")
-                val source =
-                    temporary.resolve("icon.png").apply { writeBytes(image(0xffcc9966.toInt())) }
-                icons.setCustom(instance.id, source)
+                val root = prepareExportSources(store, instance, icons)
                 NetworkClient().use { network ->
                     val service =
                         ContentService(
@@ -225,37 +207,81 @@ class PackIconsTest {
                         )
                     val selected = plan.files.map { it.path }.toSet()
                     val target = temporary.resolve("out.zip")
-                    assertFailsWith<IllegalArgumentException> {
-                        service.exportMrpack(
-                            plan,
-                            target,
-                            JobContext(store, "export"),
-                            selected,
-                            format = PackExportFormat.Mcbbs,
-                        )
-                    }
-                    assertFalse(target.exists())
-                    service.exportMrpack(
-                        plan,
-                        target,
-                        JobContext(store, "export"),
-                        selected,
-                        setOf("mods/local.jar"),
-                        PackExportFormat.Mcbbs,
-                    )
-                    ZipFile(target.toFile()).use { zip ->
-                        assertNotNull(zip.getEntry("mcbbs.packmeta"))
-                        assertNull(zip.getEntry("modrinth.index.json"))
-                        assertNotNull(zip.getEntry("overrides/mods/local.jar"))
-                        assertNotNull(zip.getEntry("icon.png"))
-                        assertFalse(zip.entries().asSequence().any { it.name.contains("secret") })
-                        val parsed = readPackManifest(zip, temporary.resolve("preview"), "windows")
-                        assertEquals("26.3", parsed.request.gameVersion)
-                        assertEquals("Pack", parsed.request.name)
-                        assertEquals(2, parsed.checkedFiles.size)
-                    }
+                    exportMcbbsArchive(service, plan, target, store, selected)
+                    assertMcbbsArchive(target)
                     assertEquals("NEVER_EXPORT", root.resolve("credentials/secret.json").readText())
                 }
             }
         }
+
+    /** 准备导出源：普通配置与模组、不可导出的凭据，以及一张自定义图标。 */
+    private suspend fun prepareExportSources(
+        store: LauncherStore,
+        instance: GameInstance,
+        icons: InstanceIcons,
+    ): Path {
+        val root = store.instancePath(instance.id)
+        root
+            .resolve("config")
+            .createDirectory()
+            .resolve("settings.txt")
+            .writeText("configuration")
+        root
+            .resolve("mods")
+            .createDirectory()
+            .resolve("local.jar")
+            .writeText("mod bytes")
+        root
+            .resolve("credentials")
+            .createDirectory()
+            .resolve("secret.json")
+            .writeText("NEVER_EXPORT")
+        val source =
+            temporary.resolve("icon.png").apply { writeBytes(image(0xffcc9966.toInt())) }
+        icons.setCustom(instance.id, source)
+        return root
+    }
+
+    /** 无本地文件授权时必须拒绝；授权后导出同一份计划成功。 */
+    private suspend fun exportMcbbsArchive(
+        service: ContentService,
+        plan: MrpackExportPlan,
+        target: Path,
+        store: LauncherStore,
+        selected: Set<String>,
+    ) {
+        assertFailsWith<IllegalArgumentException> {
+            service.exportMrpack(
+                plan,
+                target,
+                JobContext(store, "export"),
+                selected,
+                format = PackExportFormat.Mcbbs,
+            )
+        }
+        assertFalse(target.exists())
+        service.exportMrpack(
+            plan,
+            target,
+            JobContext(store, "export"),
+            selected,
+            setOf("mods/local.jar"),
+            PackExportFormat.Mcbbs,
+        )
+    }
+
+    /** 导出的应是标准 MCBBS 归档：packmeta、overrides 与图标，且不含凭据文件。 */
+    private fun assertMcbbsArchive(target: Path) {
+        ZipFile(target.toFile()).use { zip ->
+            assertNotNull(zip.getEntry("mcbbs.packmeta"))
+            assertNull(zip.getEntry("modrinth.index.json"))
+            assertNotNull(zip.getEntry("overrides/mods/local.jar"))
+            assertNotNull(zip.getEntry("icon.png"))
+            assertFalse(zip.entries().asSequence().any { it.name.contains("secret") })
+            val parsed = readPackManifest(zip, temporary.resolve("preview"), "windows")
+            assertEquals("26.3", parsed.request.gameVersion)
+            assertEquals("Pack", parsed.request.name)
+            assertEquals(2, parsed.checkedFiles.size)
+        }
+    }
 }

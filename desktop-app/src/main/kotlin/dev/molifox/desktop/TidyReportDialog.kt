@@ -26,12 +26,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.TidyReport
 
+private const val TIDY_GIB_BYTES = 1073741824L
+private const val TIDY_GIB_DIVISOR = 1073741824f
+private const val TIDY_MIB_BYTES = 1048576L
+private const val TIDY_MIB_DIVISOR = 1048576f
+private const val TIDY_KIB_BYTES = 1024L
+private const val TIDY_KIB_DIVISOR = 1024f
+
 /** 报告里可读的字节数；只用于展示，不参与业务计算。 */
 internal fun reportBytes(bytes: Long): String =
     when {
-        bytes >= 1073741824L -> "%.1f GB".format(bytes / 1073741824f)
-        bytes >= 1048576L -> "%.1f MB".format(bytes / 1048576f)
-        bytes >= 1024L -> "%.1f KB".format(bytes / 1024f)
+        bytes >= TIDY_GIB_BYTES -> "%.1f GB".format(bytes / TIDY_GIB_DIVISOR)
+        bytes >= TIDY_MIB_BYTES -> "%.1f MB".format(bytes / TIDY_MIB_DIVISOR)
+        bytes >= TIDY_KIB_BYTES -> "%.1f KB".format(bytes / TIDY_KIB_DIVISOR)
         else -> bytes.toString() + " B"
     }
 

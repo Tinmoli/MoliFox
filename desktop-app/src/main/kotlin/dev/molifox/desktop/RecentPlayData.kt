@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.molifox.core.EntryKind
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherController
+import dev.molifox.core.RecentUsage
 import dev.molifox.core.SaveEntry
 import dev.molifox.core.ServerEntry
 import dev.molifox.core.ServerStatus
@@ -43,21 +44,7 @@ internal fun loadRecentPlays(
     instance: GameInstance,
 ): List<RecentPlayItem> {
     val usage = controller.store.recentUsage
-    val worlds =
-        controller
-            .listSaves(instance.id)
-            .filter { it.hasLevelDat }
-            .map { save ->
-                RecentPlayItem(
-                    EntryKind.World,
-                    save.name,
-                    save.name,
-                    "saves/${save.name}",
-                    usage.summary(EntryKind.World, instance.id, save.name),
-                    usage.isHidden(EntryKind.World, instance.id, save.name),
-                    save = save,
-                )
-            }
+    val worlds = loadRecentWorlds(controller, instance, usage)
     val saved = listServers(controller.store.gamePath(instance))
     val history =
         usage
@@ -88,6 +75,26 @@ internal fun loadRecentPlays(
             }
     return (worlds + servers).sortedByDescending { it.usage.lastEntered ?: Instant.EPOCH }
 }
+
+private fun loadRecentWorlds(
+    controller: LauncherController,
+    instance: GameInstance,
+    usage: RecentUsage,
+): List<RecentPlayItem> =
+    controller
+        .listSaves(instance.id)
+        .filter { it.hasLevelDat }
+        .map { save ->
+            RecentPlayItem(
+                EntryKind.World,
+                save.name,
+                save.name,
+                "saves/${save.name}",
+                usage.summary(EntryKind.World, instance.id, save.name),
+                usage.isHidden(EntryKind.World, instance.id, save.name),
+                save = save,
+            )
+        }
 
 internal data class RecentServerStatus(
     val status: ServerStatus?,
