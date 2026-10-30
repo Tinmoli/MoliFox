@@ -32,8 +32,8 @@ internal data class ThirdPartyLicense(
 )
 
 /**
- * 许可清单的唯一来源是随包分发的 docs/THIRD_PARTY_LICENSES.md；构建时由 processResources 复制到
- * /META-INF/molifox/，关于页与文档因此永远读同一份数据。
+ * 许可清单的唯一来源是仓库的 assets/legal/THIRD_PARTY_LICENSES.md；构建时由 processResources
+ * 复制到 /META-INF/molifox/，关于页与仓库文档因此永远读同一份数据。
  */
 internal object ThirdPartyLicenseCatalog {
     private const val LICENSE_RESOURCE_PATH = "/META-INF/molifox/THIRD_PARTY_LICENSES.md"

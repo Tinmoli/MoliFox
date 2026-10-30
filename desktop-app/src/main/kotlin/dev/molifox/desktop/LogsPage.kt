@@ -88,7 +88,7 @@ private fun levelColor(level: LogLevel): Color =
 /**
  * 操作按钮统一放在筛选区上方一行（窄窗口由 FlowRow 换行，不裁切）；
  * 下面依次是启动诊断提示、搜索 + 级别筛选、日志内容。
- * 入口仍是 ResourcePages.kt 里的 `ColumnScope.DownloadsPage`，调用点不变。
+ * 入口仍是 content/DownloadsPage.kt 里的 `ColumnScope.DownloadsPage`，调用点不变。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -382,7 +382,7 @@ private fun LogRow(
     }
 }
 
-/** 与 [DownloadsPage] 同风格的操作按钮：次按钮 + 15dp 图标 + 12sp 文字。 */
+/** 与 `DownloadsPage` 同风格的操作按钮：次按钮 + 15dp 图标 + 12sp 文字。 */
 @Composable
 private fun LogAction(
     icon: ImageVector,

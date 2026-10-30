@@ -51,6 +51,22 @@ class InstanceWorkspaceTest {
         }
 
     @Test
+    fun `missing content folders are created once and existing ones are left alone`() =
+        runBlocking {
+            val useCase = queries()
+            assertTrue(useCase.ensureFolder("fixture", GameFolder.ShaderPacks).isSuccess)
+            assertTrue(Files.isDirectory(temporary.resolve("shaderpacks")))
+            val marker = Files.writeString(temporary.resolve("shaderpacks/kept.txt"), "keep")
+            assertTrue(useCase.ensureFolder("fixture", GameFolder.ShaderPacks).isSuccess)
+            assertTrue(Files.exists(marker))
+            assertTrue(useCase.ensureFolder("fixture", GameFolder.Root).isSuccess)
+            assertEquals(
+                listOf(GameFolder.Root, GameFolder.ShaderPacks),
+                useCase.existingFolders("fixture").getOrThrow(),
+            )
+        }
+
+    @Test
     fun `browsing sorts directories first and reads fresh metadata every time`() =
         runBlocking {
             val root = Files.createDirectories(temporary.resolve("schematics"))
@@ -100,6 +116,9 @@ class InstanceWorkspaceTest {
                         readThread = Thread.currentThread()
                         return Result.failure(failure)
                     }
+
+                    override fun createDirectory(directory: Path): Result<Path> =
+                        Result.failure(failure)
                 }
             val repository = FileInstanceWorkspaceRepository({ temporary }, files) { _, _ -> }
             val result =
@@ -124,6 +143,11 @@ class InstanceWorkspaceTest {
                     override fun children(directory: Path): Result<List<Path>> {
                         reads.incrementAndGet()
                         return Result.success(emptyList())
+                    }
+
+                    override fun createDirectory(directory: Path): Result<Path> {
+                        reads.incrementAndGet()
+                        return Result.success(directory)
                     }
                 }
             val useCase =

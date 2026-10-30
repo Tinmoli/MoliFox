@@ -93,7 +93,7 @@ chmod +x MoliFox-linux-x64.run
 
 程序所在目录需要可写。外部游戏目录直接使用原位置，不自动复制进 `MoliFox/`；移除外部目录记录不会删除原文件。
 
-当前启动器配置格式为 2，旧格式和旧目录不再自动迁移，也不会替用户删除旧文件；现有游戏可重新选择目录扫描。当前格式的损坏配置仍保留备份恢复。原生启动器退出后清理本次 `cache/tmp/session-*`，依赖与 Java 保留复用。本轮规则见 [最近游玩与安装目录说明](docs/RECENT_PLAY_DELIVERY_2026-10-29.md)。
+当前启动器配置格式为 2，旧格式和旧目录不再自动迁移，也不会替用户删除旧文件；现有游戏可重新选择目录扫描。当前格式的损坏配置仍保留备份恢复。原生启动器退出后清理本次 `cache/tmp/session-*`，依赖与 Java 保留复用。目录与清理规则见 [HANDOFF](docs/HANDOFF.md)。
 
 备份或移动前先退出启动器与游戏，同时保留 `MoliFox/`、默认 `.minecraft/` 及自行选择的外部目录。配置含绝对路径，跨位置或跨系统移动后，可能需要重新选择游戏目录、Java、背景和自定义缓存。便携凭据可读取不代表全部路径自动迁移。
 
@@ -109,7 +109,7 @@ Microsoft Client ID 已内置，普通用户无需填写，也不需要在桌面
 
 ## 验证进度与已知限制
 
-上一完整核心回归为 **239 项（238 通过、1 权限跳过）**。晚间修复只验证实质改动的 **34 项关键检查（33 通过、1 权限跳过）**，没有重复跑全量。用户目录的四个实际 Fabric 版本搜索、兼容版本及官方皮肤 CDN 通过，真实 Java 自动内存参数与工作目录通过；定向 GUI 和新 Windows EXE 离线打开通过。两个单文件均已重建；Linux 本轮运行、CurseForge 真实镜像检索与完整正版进游戏仍未验收。详见 [本轮审查](docs/REVIEW_2026-10-27.md)。
+最近一次完整回归：核心 **567 项 / 0 失败**，桌面单测通过，`uiSmoke` **9 个场景全部通过**，`ktlintCheck` 0。真实 EXE 点击到首帧 **1.91–1.99 s**，空闲内存 **261–264 MB**。Linux 只构建并校验包结构，未在真实 Linux 桌面运行；微软正版登录真实全流程与更多版本/加载器组合仍未验收。详见 [验证记录](docs/VALIDATION.md)。
 
 | 验证项 | 已记录结果 |
 | --- | --- |
@@ -121,11 +121,9 @@ Microsoft Client ID 已内置，普通用户无需填写，也不需要在桌面
 | 微软真实服务 | 旧 DPAPI 存储下，网页授权、角色读取、重建控制器后刷新、本地移除通过；未用该会话启动游戏 |
 | 新便携凭据 | 读写、迁移、损坏拒绝和模拟跨平台复制通过；新存储方式在线刷新及 Linux Secret Service 迁移待验收 |
 | Modrinth 实际内容 | Sodium 历史版本、识别、更新、锁定与禁用状态保留通过，未执行下载的模组 |
-| 完整 GUI 回归 | 新内容版本弹窗流程待收尾，不将独立开窗检查视为完整 GUI 通过 |
+| 完整 GUI 回归 | 新版 `uiSmoke` 9 个场景通过：账户与设置、光影头像三来源、无头像文件、实例目录/页签/导出、移动取消与确认、下载分类、自动保存与改名、管理折叠 |
 
-主要待办包括披风与动作动画、离线游戏内皮肤、程序更新替换与回滚、网络缓存维护、更多组件、第三方认证、CurseForge 真实 API 与新界面的更多真机验证。可拖动三维皮肤已实现。[功能覆盖对照](docs/FUNCTION_COVERAGE.md) 明确记录已有、部分和缺项，不宣称当前已经覆盖完整功能。
-
-用户已确认按顺序实施核心功能；UI 细节由独立任务按参考与确认流程推进。实施顺序见 [功能路线图](docs/FUNCTION_ROADMAP.md)，具体缺口、参考与估算见 [功能差距清单](docs/FEATURE_AUDIT.md)。
+主要待办：`detekt` 仍有历史告警、若干核心类仍偏大、Linux 桌面实机验收、微软正版登录真实全流程。接手顺序与边界见 [NEXT_AI_HANDOFF](docs/NEXT_AI_HANDOFF.md)，不宣称当前已经覆盖完整功能。
 
 ## 从源码开发
 
@@ -138,7 +136,7 @@ Microsoft Client ID 已内置，普通用户无需填写，也不需要在桌面
 
 Wrapper 默认将 Gradle 依赖放在项目 `.gradle-home/`，临时文件放在 `.work/build-tmp/`。自行调用已安装的 Gradle 时，也应显式配置这些位置，避免产生项目外缓存。
 
-**当前维护机**的 Wrapper 发行版缓存不完整，并有下载证书问题，应使用已安装的 Gradle 9.7.0；具体路径与可复用命令见 [维护交接](docs/AI_HANDOFF.md)。这不代表所有机器的 Wrapper 下载均已验证。
+**当前维护机**使用已安装的 Gradle 9.7.0；具体路径与可复用命令见 [HANDOFF](docs/HANDOFF.md)。这不代表所有机器的 Wrapper 下载均已验证。
 
 ### 常用命令
 
@@ -174,7 +172,7 @@ chmod +x gradlew
 ./gradlew :desktop-app:portableLinux --no-daemon --console=plain
 ```
 
-产物位于根目录 `MoliFox.exe` 与 `MoliFox-linux-x64.run`，SHA-256 摘要在 `docs/validation/`。已有产物不代表包含当前未验证的源码改动。
+产物位于根目录 `MoliFox.exe` 与 `MoliFox-linux-x64.run`，SHA-256 摘要在 `build/validation/`。已有产物不代表包含当前未验证的源码改动。
 
 `:launcher-core:gameSmoke` 和 `:launcher-core:accountSmoke` 是需要桌面或用户参与的真实游戏与授权验收，不属于普通单元测试；执行方法及结果记录在交接和验证文档中。
 
@@ -196,34 +194,22 @@ chmod +x gradlew
 
 | 文档 | 内容 |
 | --- | --- |
-| [HANDOFF](docs/HANDOFF.md) | 当前进度、在途改动、下一步；顶部记录优先 |
-| [AI_HANDOFF](docs/AI_HANDOFF.md) | 维护机环境、构建命令、代码入口和已知问题 |
-| [VALIDATION](docs/VALIDATION.md) | 实测平台、证据及未验收内容 |
-| [FUNCTION_ROADMAP](docs/FUNCTION_ROADMAP.md) | 已确认的功能实施顺序 |
-| [FEATURE_AUDIT](docs/FEATURE_AUDIT.md) | 实施前差距；当前状态以交接为准 |
-| [CONTENT_MANAGEMENT](docs/CONTENT_MANAGEMENT.md) | 内容详情、版本、识别、更新与锁定 |
-| [CURSEFORGE](docs/CURSEFORGE.md) | CurseForge 核心接口、手动文件流程及待接线边界 |
+| [NEXT_AI_HANDOFF](docs/NEXT_AI_HANDOFF.md) | 接手入口：先看这个，再看下面几份 |
+| [HANDOFF](docs/HANDOFF.md) | 当前状态、模块与依赖、构建/测试/打包命令、行为边界 |
+| [VALIDATION](docs/VALIDATION.md) | 最近一次实测证据与未验证内容 |
+| [REFERENCE_RESEARCH](docs/REFERENCE_RESEARCH.md) | 官方资料、参考与独立实现边界 |
 | [PACK_FORMATS](docs/PACK_FORMATS.md) | 整合包导入格式、组件兼容和迁移范围 |
-| [MRPACK_EXPORT](docs/MRPACK_EXPORT.md) | 标准整合包导出接口、选择与分发权限、验证边界 |
-| [NEXT_AI_HANDOFF](docs/NEXT_AI_HANDOFF.md) | 当前全量交接、停工位置、接续顺序与晚间审查清单 |
-| [REVIEW_2026-10-27](docs/REVIEW_2026-10-27.md) | 用户反馈修复、代码审查、真实服务与定向验证 |
-| [FUNCTION_COVERAGE](docs/FUNCTION_COVERAGE.md) | 功能入口级对照、独立实现进度和剩余缺项 |
-| [SKIN_MANAGEMENT](docs/SKIN_MANAGEMENT.md) | 皮肤库、预览、正版上传和离线预览边界 |
-| [INSTANCE_ICONS](docs/INSTANCE_ICONS.md) | 实例图片/预设、自动识别和资产归属 |
-| [SCREENSHOT_GALLERY](docs/SCREENSHOT_GALLERY.md) | 图库、导出回收、图片复制与背景 |
+| [STORAGE_LAYOUT](docs/STORAGE_LAYOUT.md) | 数据目录结构与便携说明 |
 | [CREDENTIAL_STORAGE](docs/CREDENTIAL_STORAGE.md) | 凭据格式、迁移与便携边界 |
-| [UI_HANDOFF](docs/UI_HANDOFF.md) | UI 任务分工、参考流程及阶段记录 |
-| [REFERENCE_RESEARCH](docs/REFERENCE_RESEARCH.md) | 官方资料、参考及独立实现边界 |
-| [UI_DESIGN](docs/UI_DESIGN.md) | 早期设计依据，当前布局以最新交接为准 |
-| [CLEANUP](docs/CLEANUP.md) | 临时数据与目录清理规则 |
+| [CHANGELOG](docs/CHANGELOG.md) | 版本变更记录 |
 | [AGENTS](AGENTS.md) | 项目工作约定 |
 
 ## 许可 / License 与参考
 
-MoliFox 以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布，仅适用第 3 版、不适用任何后续版本；完整条款见 [LICENSE](LICENSE)，随包署名与第 7(b)/(c) 节附加条款见 [NOTICE](NOTICE)。
+MoliFox 以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布，仅适用第 3 版、不适用任何后续版本；完整条款见 [LICENSE](LICENSE)，随包署名与第 7(b)/(c) 节附加条款见 [NOTICE](assets/legal/NOTICE)。
 
 Copyright (C) 2026 Tinmoli and MoliFox Contributors。源代码在本仓库中公开：[Tinmoli/MoliFox](https://github.com/Tinmoli/MoliFox)，发布版本与问题反馈也在该仓库。
 
-第三方依赖及其许可见 [THIRD_PARTY](THIRD_PARTY.md)；Minecraft、游戏资源与作者作品保持各自归属。
+第三方依赖及其许可见 [THIRD_PARTY](assets/legal/THIRD_PARTY.md)；Minecraft、游戏资源与作者作品保持各自归属。
 
 界面布局、操作习惯与包格式遵循同类产品的通用做法，独立实现；未复制任何第三方源码、图标、截图或宣传素材作为茉狐的产品资源。

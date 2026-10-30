@@ -87,6 +87,7 @@ import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
 import dev.molifox.core.ReleaseVersion
+import dev.molifox.desktop.content.ContentBrowser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO

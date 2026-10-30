@@ -6,13 +6,18 @@
 package dev.molifox.core
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -80,6 +85,39 @@ class CacheLifetimeTest {
                     }
                 }
             }
+            assertEquals(probeUrls.size * 2, requests.get())
+        }
+
+    @Test
+    fun `each queued task shares probes within itself and the next task probes again`(): Unit =
+        runBlocking {
+            val requests = AtomicInteger()
+            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            try {
+                NetworkClient(
+                    interceptors =
+                        listOf(
+                            transport {
+                                requests.incrementAndGet()
+                                "{}"
+                            },
+                        ),
+                ).use { network ->
+                    val queue = JobQueue(store, scope)
+                    repeat(2) { index ->
+                        queue.enqueue("probe $index", setOf("probe:$index")) {
+                            coroutineScope {
+                                List(3) { async { network.fastestFirst(probeUrls) } }.awaitAll()
+                            }
+                        }
+                        withTimeout(10_000) { queue.awaitIdle() }
+                    }
+                }
+            } finally {
+                scope.cancel()
+            }
+            // 每个任务内 3 个子下载共用一次探测，任务结束后释放；下一个任务重新探测两份地址。
             assertEquals(probeUrls.size * 2, requests.get())
         }
 

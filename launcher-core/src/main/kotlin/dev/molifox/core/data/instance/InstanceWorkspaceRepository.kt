@@ -21,6 +21,12 @@ interface InstanceWorkspaceRepository {
         relativePaths: List<String>,
     ): Result<List<String>>
 
+    /** 目录不存在时创建；已存在时不做改动。 */
+    suspend fun ensureDirectory(
+        instanceId: String,
+        relativePath: String,
+    ): Result<Path>
+
     suspend fun listDirectory(
         instanceId: String,
         folder: String,

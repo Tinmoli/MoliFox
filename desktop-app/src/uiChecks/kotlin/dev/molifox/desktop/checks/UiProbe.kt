@@ -21,8 +21,8 @@ internal class UiProbe(
     private val mainWindow: Window,
     private val screenshots: Path,
 ) {
-    private val robot = Robot().apply { autoDelay = 60 }
-    private val access = UiWindowAccess(mainWindow)
+    internal val robot = Robot().apply { autoDelay = 60 }
+    internal val access = UiWindowAccess(mainWindow)
 
     fun await(
         description: String,
@@ -39,6 +39,19 @@ internal class UiProbe(
 
     fun exists(label: String): Boolean = onTestUiThread { access.matches(label).isNotEmpty() }
 
+    /** 等待一段可以被读到的动态值（例如滑块旁的「4096 MB」），返回第一次读到的结果。 */
+    fun <T : Any> awaitValue(
+        description: String,
+        read: () -> T?,
+    ): T {
+        var value: T? = null
+        await(description) {
+            value = read()
+            value != null
+        }
+        return checkNotNull(value)
+    }
+
     fun enabled(label: String): Boolean =
         onTestUiThread {
             access
@@ -52,6 +65,32 @@ internal class UiProbe(
         label: String,
         navigation: Boolean = false,
     ) = click(label, navigation, AccessibleRole.PAGE_TAB)
+
+    /**
+     * 在控件区域内的相对位置点击（0.5 为正中）。
+     *
+     * 滑块的语义没有「click」动作，直接走鼠标；等待位置稳定后再按下，避免布局动画期间点偏。
+     */
+    fun clickAt(
+        label: String,
+        xFraction: Float = .5f,
+        yFraction: Float = .5f,
+    ) {
+        access.focus()
+        var target: Rectangle? = null
+        var stablePolls = 0
+        await("可点击区域：$label") {
+            val candidate = this.bounds(label)
+            stablePolls = if (candidate != null && candidate == target) stablePolls + 1 else 0
+            target = candidate
+            stablePolls >= STABLE_POLLS
+        }
+        val area = checkNotNull(target)
+        this.clickAtPoint(
+            area.x + (area.width * xFraction).toInt().coerceIn(1, area.width - 1),
+            area.y + (area.height * yFraction).toInt().coerceIn(1, area.height - 1),
+        )
+    }
 
     fun click(
         label: String,

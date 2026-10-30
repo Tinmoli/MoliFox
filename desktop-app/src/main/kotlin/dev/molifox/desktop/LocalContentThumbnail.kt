@@ -96,7 +96,7 @@ private fun decodeLocalContentIcon(
 }
 
 /** 内容图标的进程内缓存：键是内容路径，条目里存「来源的大小 + 修改时间 + 解码结果」。 `null` 结果同样缓存，避免每次进入列表都重新读盘；图标被替换后时间戳变化会自动重新解码。 */
-private object LocalIconCache {
+internal object LocalIconCache {
     private class Entry(
         val stamp: Long,
         val image: ImageBitmap?,
@@ -131,6 +131,9 @@ private object LocalIconCache {
         world: Boolean,
         shader: Boolean,
     ): ImageBitmap? = synchronized(entries) { entries[key(path, world, shader)]?.image }
+
+    /** 当前条目数；只供测试确认缓存有上限，不改变访问顺序。 */
+    internal fun entryCount(): Int = synchronized(entries) { entries.size }
 
     /** 按来源的大小与修改时间决定是否复用缓存；需要重新解码时在 IO 线程完成。 目录世界看 `icon.png` 自身的时间戳，压缩包看压缩包本身。 */
     fun load(

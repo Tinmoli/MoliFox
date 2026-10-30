@@ -34,7 +34,7 @@ tasks.register<JavaExec>("encyclopediaSmoke") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.molifox.core.EncyclopediaOnlineSmoke")
-    args(rootProject.file("docs/validation/encyclopedia-online.json").absolutePath)
+    args(rootProject.file("build/validation/encyclopedia-online.json").absolutePath)
     timeout.set(Duration.ofSeconds(30))
 }
 
@@ -43,7 +43,7 @@ tasks.register<JavaExec>("networkDiagnosticsSmoke") {
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.molifox.core.NetworkDiagnosticsSmokeKt")
     systemProperty("java.net.useSystemProxies", "true")
-    args(rootProject.file("docs/validation/network-diagnostics.json").absolutePath)
+    args(rootProject.file("build/validation/network-diagnostics.json").absolutePath)
     timeout.set(Duration.ofMinutes(2))
 }
 
@@ -99,7 +99,7 @@ tasks.register<JavaExec>("gameSmoke") {
         "molifox.game.report",
         rootProject
             .file(
-                "docs/validation/real-game-${System.getProperty(
+                "build/validation/real-game-${System.getProperty(
                     "os.name",
                 ).lowercase().substringBefore(
                     ' ',
@@ -136,7 +136,7 @@ tasks.register<JavaExec>("contentSmoke") {
     systemProperty("stderr.encoding", "UTF-8")
     systemProperty(
         "molifox.content.report",
-        rootProject.file("docs/validation/content-online.json").absolutePath,
+        rootProject.file("build/validation/content-online.json").absolutePath,
     )
 }
 
@@ -159,7 +159,7 @@ tasks.register<JavaExec>("reportedIssuesSmoke") {
     )
     systemProperty(
         "molifox.issues.report",
-        rootProject.file("docs/validation/reported-issues-online.json").absolutePath,
+        rootProject.file("build/validation/reported-issues-online.json").absolutePath,
     )
 }
 
@@ -176,6 +176,6 @@ tasks.register<JavaExec>("accountSmoke") {
     systemProperty("stderr.encoding", "UTF-8")
     systemProperty(
         "molifox.account.report",
-        rootProject.file("docs/validation/account-online.json").absolutePath,
+        rootProject.file("build/validation/account-online.json").absolutePath,
     )
 }

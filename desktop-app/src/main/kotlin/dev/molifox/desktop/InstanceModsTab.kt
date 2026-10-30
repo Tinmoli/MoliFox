@@ -301,7 +301,7 @@ internal fun InstanceMods(
                             reportByFile[mod.filename]?.status == ModUpdateStatus.Unknown
                     }
                 }
-        // 模组图标从 JAR 自带资源里取，缓存在启动器 cache/mod-icons；行内按 JAR 路径 + 修改时间复用。
+        // 模组图标只从 JAR 自带资源读取字节并在内存解码，不写缓存文件；行内按 JAR 路径 + 修改时间复用。
         val modsDirectory =
             runCatching {
                 actions.controller.store

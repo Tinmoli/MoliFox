@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
@@ -32,7 +33,6 @@ import kotlin.io.path.extension
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.name
 
 data class MrpackExportMetadata(
     val name: String,
@@ -250,17 +250,6 @@ data class PackExportScan(
     val omitted: List<String>,
 )
 
-private class ExportEntryState(
-    val name: String,
-    val directory: Boolean,
-    val backupOnly: Boolean,
-    val unavailable: Boolean,
-) {
-    var fileCount = 0L
-    var totalBytes = 0L
-    var scanning = true
-}
-
 /**
  * 默认勾选：只勾 mods/、config/、resourcepacks/、shaderpacks/、options.txt（存在才勾）。
  * 所有格式共用同一套默认值，因此切换格式不改变用户已勾选的内容。
@@ -385,120 +374,7 @@ internal class MrpackExporter(
             require(root.isDirectory() && !Files.isSymbolicLink(root)) {
                 "实例目录不存在或是符号链接"
             }
-            val isolated = store.isolated(instance)
-            val tracks = mutableListOf<ExportEntryState>()
-            val omitted = mutableListOf<String>()
-            Files.newDirectoryStream(root).use { children ->
-                for (child in children) {
-                    coroutineContext.ensureActive()
-                    if (Files.isSymbolicLink(child)) continue
-                    val name = child.fileName.toString()
-                    if (
-                        instanceOwnExportFile(name, instance.versionId) ||
-                        launcherPrivateExportEntry(name)
-                    ) {
-                        omitted += name
-                        continue
-                    }
-                    val directory = Files.isDirectory(child, NOFOLLOW_LINKS)
-                    val key = name.lowercase(Locale.ROOT)
-                    val backupOnly =
-                        key in backupOnlyExportRoots ||
-                            (!directory && (key.endsWith(".log") || key.endsWith(".log.gz")))
-                    tracks +=
-                        ExportEntryState(
-                            name,
-                            directory,
-                            backupOnly,
-                            unavailable = !isolated && key !in exportContentRoots,
-                        )
-                }
-            }
-            tracks.sortWith(
-                compareByDescending<ExportEntryState> { it.directory }
-                    .thenBy { it.name.lowercase(Locale.ROOT) },
-            )
-            omitted.sort()
-            var lastEmit = 0L
-            var filesSinceEmit = 0
-
-            suspend fun emitSnapshot(force: Boolean) {
-                val now = System.nanoTime()
-                if (!force && now - lastEmit < 60_000_000L) return
-                lastEmit = now
-                filesSinceEmit = 0
-                emit(
-                    PackExportScan(
-                        tracks.map {
-                            PackExportEntry(
-                                it.name,
-                                it.directory,
-                                it.fileCount,
-                                it.totalBytes,
-                                it.scanning,
-                                it.backupOnly,
-                                it.unavailable,
-                            )
-                        },
-                        omitted.toList(),
-                    ),
-                )
-            }
-            emitSnapshot(true)
-            for (track in tracks) {
-                if (track.unavailable) {
-                    track.scanning = false
-                    continue
-                }
-                val child = root.resolve(track.name)
-                if (!track.directory) {
-                    track.fileCount = 1
-                    track.totalBytes = runCatching { Files.size(child) }.getOrDefault(0L)
-                    track.scanning = false
-                    emitSnapshot(true)
-                    continue
-                }
-                val pending = ArrayDeque<Path>().apply { add(child) }
-                while (pending.isNotEmpty()) {
-                    coroutineContext.ensureActive()
-                    val directory = pending.removeFirst()
-                    try {
-                        Files.newDirectoryStream(directory).use { paths ->
-                            for (file in paths) {
-                                coroutineContext.ensureActive()
-                                if (Files.isSymbolicLink(file)) continue
-                                val relative = root.relativize(file).joinToString("/")
-                                // 日志目录按“显式勾选才写入”统计；普通目录不计嵌套日志。
-                                if (excludedExportPath(
-                                        relative,
-                                        allowLogs = track.backupOnly,
-                                    )
-                                ) {
-                                    continue
-                                }
-                                if (Files.isDirectory(file, NOFOLLOW_LINKS)) {
-                                    pending.add(file)
-                                    continue
-                                }
-                                if (!Files.isRegularFile(file, NOFOLLOW_LINKS)) continue
-                                track.fileCount++
-                                track.totalBytes +=
-                                    runCatching { Files.size(file) }.getOrDefault(0L)
-                                filesSinceEmit++
-                                if (filesSinceEmit >= 64) emitSnapshot(false)
-                            }
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        // 单个目录不可读时跳过，其余条目照常统计。
-                    }
-                }
-                track.scanning = false
-                emitSnapshot(true)
-            }
-            // 全部条目扫描结束（包括全部不可用的情形）后一定发一次终态。
-            emitSnapshot(true)
+            emitAll(PackExportScanner(root, instance.versionId, store.isolated(instance)).scan())
         }.flowOn(Dispatchers.IO)
 
     suspend fun preview(
@@ -887,7 +763,7 @@ internal class MrpackExporter(
 internal val backupOnlyExportRoots = setOf("logs", "crash-reports")
 
 private val exportDefaultRoots = setOf("config", "defaultconfigs", "kubejs", "scripts")
-private val exportContentRoots =
+internal val exportContentRoots =
     exportDefaultRoots +
         setOf(
             "mods",

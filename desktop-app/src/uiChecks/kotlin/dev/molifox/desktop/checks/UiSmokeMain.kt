@@ -127,9 +127,13 @@ private fun runScenarios(
         listOf<Pair<String, () -> Unit>>(
             "account-input-and-persistence" to { checkAccount(ui, fixture) },
             "settings-and-theme" to { checkSettings(ui, fixture) },
+            "shader-avatar-sources" to { checkShaderAvatars(ui, fixture) },
+            "no-avatar-file-cache" to { checkNoAvatarFiles(ui, fixture) },
             "instance-folders-tabs-export" to { checkInstance(ui, fixture) },
             "instance-move-cancel-and-confirm" to { checkMove(ui, fixture) },
             "download-categories-and-manifest" to { checkDownloads(ui, fixture) },
+            "instance-settings-autosave" to { checkInstanceSettingsAutoSave(ui, fixture) },
+            "instance-manage-section" to { checkManageRail(ui) },
         )
     for ((name, scenario) in scenarios) {
         println("UI_SCENARIO_BEGIN $name")
@@ -146,7 +150,7 @@ private fun writeReport(
     passed: List<String>,
     failure: Throwable?,
 ) {
-    val report = Path.of("docs/validation/uiSmoke-actions.json")
+    val report = Path.of("build/validation/uiSmoke-actions.json")
     writeFixtureJson(
         report,
         mapOf(

@@ -50,6 +50,8 @@ internal class UiWindowAccess(
     fun captureBounds(): Rectangle =
         onTestUiThread { Rectangle(mainWindow.locationOnScreen, mainWindow.size) }
 
+    fun names(): List<String> = contexts().mapNotNull { it.accessibleName }.distinct()
+
     fun activate(
         label: String,
         area: Rectangle,
@@ -94,7 +96,7 @@ internal class UiWindowAccess(
         }
     }
 
-    private fun contexts(): List<AccessibleContext> =
+    internal fun contexts(): List<AccessibleContext> =
         buildList {
             for (window in Window.getWindows().filter { it.isShowing && owned(it) }) {
                 collect(window.accessibleContext, this)

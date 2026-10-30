@@ -410,7 +410,7 @@ private fun exerciseRecentUi(
             .isEmpty(),
     )
     writeFixture(
-        Path.of("docs/validation/recent-play-ui.json"),
+        Path.of("build/validation/recent-play-ui.json"),
         mapOf(
             "updated" to Instant.now().toString(),
             "passed" to true,

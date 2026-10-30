@@ -101,6 +101,25 @@ class TransientImagesTest {
         }
 
     @Test
+    fun `head composition and mod icon reads leave an empty data directory empty`(): Unit =
+        runBlocking {
+            // 头像与模组图标都不允许再写派生文件：数据目录必须保持完全空（无 icons/heads、cache/mod-icons）。
+            val dataDirectory = temporary.resolve("profile")
+            Files.createDirectories(dataDirectory)
+            val skin = temporary.resolve("source-skin.png")
+            Files.write(skin, texture(0xFF6489CA.toInt()))
+            val archive = mod(texture(0xFF89CA64.toInt()))
+            PlayerHeadReader().front(skin, 32).getOrThrow()
+            readModIcon(archive).getOrThrow()
+            Files.walk(dataDirectory).use { entries ->
+                // 目录本身之外没有任何生成文件（icons/heads、cache/mod-icons 都不出现）。
+                assertEquals(listOf(dataDirectory), entries.toList())
+            }
+            assertFalse(Files.exists(dataDirectory.resolve("icons/heads")))
+            assertFalse(Files.exists(dataDirectory.resolve("cache/mod-icons")))
+        }
+
+    @Test
     fun `bounded image reads propagate failures and reject oversized input`(): Unit =
         runBlocking {
             val file = Files.write(temporary.resolve("large.png"), byteArrayOf(1, 2, 3))

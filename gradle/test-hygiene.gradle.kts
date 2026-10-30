@@ -131,7 +131,9 @@ allprojects {
                                 else -> "passed"
                             }
                         val report =
-                            rootProject.file("docs/validation/${owner.name}-${checkedTask.name}.md")
+                            rootProject.file(
+                                "build/validation/${owner.name}-${checkedTask.name}.md",
+                            )
                         var cleanupSucceeded = false
                         try {
                             replaceTestScreenshots(testDirectory.resolve("screenshots"))

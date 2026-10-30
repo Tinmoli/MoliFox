@@ -376,10 +376,13 @@ class PackUpdateService
             }
             val distinct = candidates.distinctBy { it.second.id }
             if (distinct.isEmpty()) {
+                // 搜索失败只留在技术日志里；界面上这是「无法确认」，不能读成检查失败。
+                if (searchError.isNotBlank()) {
+                    store.log("光影/资源包名称搜索未返回结果：${file.filename} · $searchError")
+                }
                 return base.copy(
                     status = PackUpdateStatus.Unknown,
-                    warning =
-                        if (searchError.isNotBlank()) "名称搜索失败：$searchError" else "未找到匹配项目",
+                    warning = "未收录或名称无法匹配，无法确认更新",
                 )
             }
             if (distinct.size > 1) {

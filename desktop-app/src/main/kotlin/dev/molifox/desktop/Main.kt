@@ -63,9 +63,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.ApplicationScope
+import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import dev.molifox.core.DesktopPlatform
@@ -79,6 +82,8 @@ import dev.molifox.core.StartupStorageResolver
 import dev.molifox.core.TidyReport
 import dev.molifox.core.domain.server.ServerStatusQuery
 import dev.molifox.core.launcherWindowAction
+import dev.molifox.desktop.content.DownloadsPage
+import dev.molifox.desktop.instances.InstancesPage
 import dev.molifox.desktop.platform.dialogs.FilePicker
 import dev.molifox.desktop.platform.dialogs.PickMode
 import dev.molifox.desktop.platform.dialogs.PickRequest
@@ -229,230 +234,271 @@ class UiActions
 fun main() {
     // 启动计时：只用来看清启动各阶段的耗时，不改变任何行为。
     val startupStartedAt = System.nanoTime()
-
-    fun startupMillis() = (System.nanoTime() - startupStartedAt) / 1_000_000
+    // 各阶段的耗时都从同一个起点算，只进日志；需要打点的函数接收这个计时器。
+    val startupMillis: () -> Long = { (System.nanoTime() - startupStartedAt) / 1_000_000 }
     System.setProperty("java.net.useSystemProxies", "true")
-    val controller =
-        try {
-            val platform = DesktopPlatform()
-            val storage = StartupStorageResolver().resolve(platform.defaultDataDirectory)
-            val nativeDirectory = storage.resolve("dependencies/native")
-            java.nio.file.Files
-                .createDirectories(nativeDirectory)
-            System.setProperty(
-                "skiko.data.path",
-                nativeDirectory.toString(),
-            )
-            // 启动即按启动器自身位置发现旁边/内部的现有 .minecraft 或游戏根并发起登记；
-            // 扫描失败只写日志，不阻止启动。
-            val created = LauncherController(platform, storage)
-            created.store.log("启动：store ready，用时 ${startupMillis()} ms")
-            runCatching { created.discoverStartupGameDirectories() }
-                .onFailure { created.store.log("自动识别游戏目录失败：${it.message}", true) }
-            created.store.log("启动：discovery done，用时 ${startupMillis()} ms")
-            created
-        } catch (error: Exception) {
-            error.printStackTrace()
-            System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
-                runCatching {
-                    java.nio.file.Files.writeString(
-                        java.nio.file.Path
-                            .of(diagnosticPath),
-                        error.stackTraceToString(),
-                    )
-                }
-            }
-            JOptionPane.showMessageDialog(
-                null,
-                error.message,
-                "MoliFox 启动失败",
-                JOptionPane.ERROR_MESSAGE,
-            )
-            return
-        }
+    val controller = startLauncherController(startupMillis) ?: return
     try {
-        application {
-            val launcherState by controller.state.collectAsState()
-            // 自定义左上角图标缺失或损坏时只记一行日志并回退内置图标（BrandMark 内部同样回退），启动不受影响。
-            LaunchedEffect(
-                launcherState.data.settings.brandIconPath,
-                launcherState.data.settings.brandIconRevision,
-            ) {
-                val stored = launcherState.data.settings.brandIconPath
-                if (stored.isBlank()) return@LaunchedEffect
-                val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
-                if (problem != null) {
-                    controller.store.log("自定义品牌图标不可用（$problem），已回退内置图标")
-                }
+        application { LauncherApplication(controller, startupMillis) }
+    } finally {
+        controller.close()
+    }
+}
+
+/** 创建控制器：失败时写诊断日志并弹窗，返回 null 表示启动中止。 */
+private fun startLauncherController(startupMillis: () -> Long): LauncherController? =
+    try {
+        val platform = DesktopPlatform()
+        val storage = StartupStorageResolver().resolve(platform.defaultDataDirectory)
+        val nativeDirectory = storage.resolve("dependencies/native")
+        java.nio.file.Files
+            .createDirectories(nativeDirectory)
+        System.setProperty(
+            "skiko.data.path",
+            nativeDirectory.toString(),
+        )
+        // 启动即按启动器自身位置发现旁边/内部的现有 .minecraft 或游戏根并发起登记；
+        // 扫描失败只写日志，不阻止启动。
+        val created = LauncherController(platform, storage)
+        created.store.log("启动：store ready，用时 ${startupMillis()} ms")
+        created
+    } catch (error: Exception) {
+        error.printStackTrace()
+        System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
+            runCatching {
+                java.nio.file.Files.writeString(
+                    java.nio.file.Path
+                        .of(diagnosticPath),
+                    error.stackTraceToString(),
+                )
             }
-            // 默认 1180×720（最小 1000×640），对应 1280×720 游戏画面留出窗口边框。
-            val windowState = rememberWindowState(width = 1180.dp, height = 720.dp)
-            // 标题栏双击与最大化按钮共用同一段切换逻辑。
-            val toggleMaximize: () -> Unit = {
-                windowState.placement =
-                    if (windowState.placement == WindowPlacement.Maximized) {
-                        WindowPlacement.Floating
-                    } else {
-                        WindowPlacement.Maximized
-                    }
+        }
+        JOptionPane.showMessageDialog(
+            null,
+            error.message,
+            "MoliFox 启动失败",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        null
+    }
+
+/** 应用作用域：窗口、托盘、主题与根布局，初始化顺序与入口内联时一致。 */
+@Composable
+private fun ApplicationScope.LauncherApplication(
+    controller: LauncherController,
+    startupMillis: () -> Long,
+) {
+    val launcherState by controller.state.collectAsState()
+    // 首帧后再扫描旁边的游戏目录：启动路径只依赖已加载的配置，目录多或磁盘慢也不会拖慢窗口出现。
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            runCatching { controller.discoverStartupGameDirectories() }
+                .onFailure { controller.store.log("自动识别游戏目录失败：${it.message}", true) }
+        }
+        controller.store.log("启动：discovery done，用时 ${startupMillis()} ms")
+    }
+    // 自定义左上角图标缺失或损坏时只记一行日志并回退内置图标（BrandMark 内部同样回退），启动不受影响。
+    LaunchedEffect(
+        launcherState.data.settings.brandIconPath,
+        launcherState.data.settings.brandIconRevision,
+    ) {
+        val stored = launcherState.data.settings.brandIconPath
+        if (stored.isBlank()) return@LaunchedEffect
+        val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
+        if (problem != null) {
+            controller.store.log("自定义品牌图标不可用（$problem），已回退内置图标")
+        }
+    }
+    // 默认 1180×720（最小 1000×640），对应 1280×720 游戏画面留出窗口边框。
+    val windowState = rememberWindowState(width = 1180.dp, height = 720.dp)
+    // 标题栏双击与最大化按钮共用同一段切换逻辑。
+    val toggleMaximize: () -> Unit = {
+        windowState.placement =
+            if (windowState.placement == WindowPlacement.Maximized) {
+                WindowPlacement.Floating
+            } else {
+                WindowPlacement.Maximized
             }
-            var confirmExit by remember { mutableStateOf(false) }
-            var windowVisible by remember { mutableStateOf(true) }
-            var mainWindow by remember { mutableStateOf<ComposeWindow?>(null) }
-            val traySupported =
-                remember {
-                    runCatching { java.awt.SystemTray.isSupported() }.getOrDefault(false)
-                }
-            val gameRun = launcherState.gameRun
-            LaunchedEffect(gameRun?.id, gameRun?.finished) {
-                val event = gameRun ?: return@LaunchedEffect
-                if (event.finished && launcherState.runningGames.isNotEmpty()) return@LaunchedEffect
-                when (launcherWindowAction(event, traySupported)) {
-                    LauncherWindowAction.Keep -> Unit
-                    LauncherWindowAction.Minimize -> windowState.isMinimized = true
-                    LauncherWindowAction.Hide -> windowVisible = false
-                    LauncherWindowAction.Restore -> {
-                        windowVisible = true
-                        windowState.isMinimized = false
-                        mainWindow?.toFront()
-                    }
-                    LauncherWindowAction.Exit -> exitApplication()
-                }
+    }
+    var confirmExit by remember { mutableStateOf(false) }
+    var windowVisible by remember { mutableStateOf(true) }
+    var mainWindow by remember { mutableStateOf<ComposeWindow?>(null) }
+    val traySupported =
+        remember {
+            runCatching { java.awt.SystemTray.isSupported() }.getOrDefault(false)
+        }
+    val gameRun = launcherState.gameRun
+    LaunchedEffect(gameRun?.id, gameRun?.finished) {
+        val event = gameRun ?: return@LaunchedEffect
+        if (event.finished && launcherState.runningGames.isNotEmpty()) return@LaunchedEffect
+        when (launcherWindowAction(event, traySupported)) {
+            LauncherWindowAction.Keep -> Unit
+            LauncherWindowAction.Minimize -> windowState.isMinimized = true
+            LauncherWindowAction.Hide -> windowVisible = false
+            LauncherWindowAction.Restore -> {
+                windowVisible = true
+                windowState.isMinimized = false
+                mainWindow?.toFront()
             }
-            if (!windowVisible && traySupported) {
-                Tray(
-                    painterResource("icons/app/icon.png"),
-                    tooltip = "MoliFox · 游戏运行中",
-                    onAction = {
-                        windowVisible = true
-                        windowState.isMinimized = false
-                    },
-                ) {
-                    Item(
-                        "显示启动器",
-                        onClick = {
-                            windowVisible = true
-                            windowState.isMinimized = false
-                            mainWindow?.toFront()
-                        },
-                    )
-                    Item("停止当前运行", onClick = { controller.game.stop() })
-                    Separator()
-                    Item(
-                        "退出启动器",
-                        onClick = {
-                            windowVisible = true
-                            windowState.isMinimized = false
-                            if (controller.jobs.busy) confirmExit = true else exitApplication()
-                        },
-                    )
-                }
-            }
-            // 窗口透明必须在创建时决定；运行中切换该设置需重启生效。
-            val windowTransparent = launcherState.data.settings.windowTransparent
-            Window(
-                onCloseRequest = {
+            LauncherWindowAction.Exit -> exitApplication()
+        }
+    }
+    if (!windowVisible && traySupported) {
+        Tray(
+            painterResource("icons/app/icon.png"),
+            tooltip = "MoliFox · 游戏运行中",
+            onAction = {
+                windowVisible = true
+                windowState.isMinimized = false
+            },
+        ) {
+            Item(
+                "显示启动器",
+                onClick = {
+                    windowVisible = true
+                    windowState.isMinimized = false
+                    mainWindow?.toFront()
+                },
+            )
+            Item("停止当前运行", onClick = { controller.game.stop() })
+            Separator()
+            Item(
+                "退出启动器",
+                onClick = {
+                    windowVisible = true
+                    windowState.isMinimized = false
                     if (controller.jobs.busy) confirmExit = true else exitApplication()
                 },
-                state = windowState,
-                visible = windowVisible,
-                title = "MoliFox",
-                icon = painterResource("icons/app/icon.png"),
-                undecorated = true,
-                transparent = windowTransparent,
-                resizable = true,
-            ) {
-                window.minimumSize = Dimension(1000, 640)
-                SideEffect { mainWindow = window }
-                // 首帧真正提交后再记一次启动耗时，作为「窗口可见」的可测量时间点。
-                LaunchedEffect(Unit) {
-                    withFrameNanos { }
-                    controller.store.log("启动：first frame，用时 ${startupMillis()} ms")
-                }
-                val actions = remember(window) { UiActions(controller, window) }
-                MoliTheme(launcherState.data.settings) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            // 实时上报启动器窗口大小，供「与启动器一样大」的游戏窗口模式使用。
-                            .onSizeChanged {
-                                controller.reportLauncherWindowSize(it.width, it.height)
-                            }.background(
-                                if (launcherState.data.settings.windowTransparent) {
-                                    MaterialTheme.colorScheme.background.copy(alpha = .82f)
-                                } else {
-                                    MaterialTheme.colorScheme.background
-                                },
-                            ).border(1.dp, MaterialTheme.colorScheme.outline)
-                            .packDropTarget(actions),
+            )
+        }
+    }
+    // 窗口透明必须在创建时决定；运行中切换该设置需重启生效。
+    val windowTransparent = launcherState.data.settings.windowTransparent
+    Window(
+        onCloseRequest = {
+            if (controller.jobs.busy) confirmExit = true else exitApplication()
+        },
+        state = windowState,
+        visible = windowVisible,
+        title = "MoliFox",
+        icon = painterResource("icons/app/icon.png"),
+        undecorated = true,
+        transparent = windowTransparent,
+        resizable = true,
+    ) {
+        window.minimumSize = Dimension(1000, 640)
+        SideEffect { mainWindow = window }
+        // 首帧真正提交后再记一次启动耗时，作为「窗口可见」的可测量时间点。
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            controller.store.log("启动：first frame，用时 ${startupMillis()} ms")
+        }
+        val actions = remember(window) { UiActions(controller, window) }
+        LauncherRoot(
+            controller,
+            launcherState,
+            actions,
+            windowState,
+            toggleMaximize,
+            confirmExit,
+            onConfirmExit = { confirmExit = true },
+            onDismissConfirmExit = { confirmExit = false },
+            onExit = { exitApplication() },
+        )
+    }
+}
+
+/** 窗口内容：主题、标题栏、页面容器、退出确认与拖放目标。 */
+@Composable
+private fun FrameWindowScope.LauncherRoot(
+    controller: LauncherController,
+    launcherState: LauncherState,
+    actions: UiActions,
+    windowState: WindowState,
+    toggleMaximize: () -> Unit,
+    confirmExit: Boolean,
+    onConfirmExit: () -> Unit,
+    onDismissConfirmExit: () -> Unit,
+    onExit: () -> Unit,
+) {
+    MoliTheme(launcherState.data.settings) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                // 实时上报启动器窗口大小，供「与启动器一样大」的游戏窗口模式使用。
+                .onSizeChanged {
+                    controller.reportLauncherWindowSize(it.width, it.height)
+                }.background(
+                    if (launcherState.data.settings.windowTransparent) {
+                        MaterialTheme.colorScheme.background.copy(alpha = .82f)
+                    } else {
+                        MaterialTheme.colorScheme.background
+                    },
+                ).border(1.dp, MaterialTheme.colorScheme.outline)
+                .packDropTarget(actions),
+        ) {
+            LauncherBackdrop(launcherState.data.settings)
+            Column(Modifier.fillMaxSize()) {
+                // 标题栏固定在顶部，双击拖动区切换最大化（拖动逻辑不变）。
+                WindowDraggableArea {
+                    AppHeader(
+                        actions.navigation,
+                        launcherState,
+                        onTitlebarDoubleClick = toggleMaximize,
                     ) {
-                        LauncherBackdrop(launcherState.data.settings)
-                        Column(Modifier.fillMaxSize()) {
-                            // 标题栏固定在顶部，双击拖动区切换最大化（拖动逻辑不变）。
-                            WindowDraggableArea {
-                                AppHeader(
-                                    actions.navigation,
-                                    launcherState,
-                                    onTitlebarDoubleClick = toggleMaximize,
-                                ) {
-                                    val tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    if (launcherState.jobs.isNotEmpty()) {
-                                        SmallIconButton(
-                                            Icons.Outlined.CloudDownload,
-                                            "任务中心",
-                                            { actions.showTasks() },
-                                            tint,
-                                        )
-                                    }
-                                    SmallIconButton(
-                                        Icons.Outlined.Remove,
-                                        "最小化",
-                                        { windowState.isMinimized = true },
-                                        tint,
-                                    )
-                                    SmallIconButton(
-                                        Icons.Outlined.CropSquare,
-                                        "最大化",
-                                        toggleMaximize,
-                                        tint,
-                                    )
-                                    SmallIconButton(
-                                        Icons.Outlined.Close,
-                                        "关闭",
-                                        {
-                                            if (controller.jobs.busy) {
-                                                confirmExit = true
-                                            } else {
-                                                exitApplication()
-                                            }
-                                        },
-                                        tint,
-                                    )
-                                }
-                            }
-                            Box(Modifier.weight(1f).fillMaxWidth()) {
-                                MoliApp(launcherState, actions)
-                            }
+                        val tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        if (launcherState.jobs.isNotEmpty()) {
+                            SmallIconButton(
+                                Icons.Outlined.CloudDownload,
+                                "任务中心",
+                                { actions.showTasks() },
+                                tint,
+                            )
                         }
-                    }
-                    if (confirmExit) {
-                        AlertDialog(
-                            onDismissRequest = { confirmExit = false },
-                            title = { Text("退出 MoliFox？") },
-                            text = { Text("下载任务将取消，正在运行的 Minecraft 会继续运行。") },
-                            confirmButton = {
-                                TextButton(onClick = { exitApplication() }) { Text("退出启动器") }
+                        SmallIconButton(
+                            Icons.Outlined.Remove,
+                            "最小化",
+                            { windowState.isMinimized = true },
+                            tint,
+                        )
+                        SmallIconButton(
+                            Icons.Outlined.CropSquare,
+                            "最大化",
+                            toggleMaximize,
+                            tint,
+                        )
+                        SmallIconButton(
+                            Icons.Outlined.Close,
+                            "关闭",
+                            {
+                                if (controller.jobs.busy) {
+                                    onConfirmExit()
+                                } else {
+                                    onExit()
+                                }
                             },
-                            dismissButton = {
-                                TextButton(onClick = { confirmExit = false }) { Text("继续使用") }
-                            },
+                            tint,
                         )
                     }
                 }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    MoliApp(launcherState, actions)
+                }
             }
         }
-    } finally {
-        controller.close()
+        if (confirmExit) {
+            AlertDialog(
+                onDismissRequest = onDismissConfirmExit,
+                title = { Text("退出 MoliFox？") },
+                text = { Text("下载任务将取消，正在运行的 Minecraft 会继续运行。") },
+                confirmButton = {
+                    TextButton(onClick = { onExit() }) { Text("退出启动器") }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissConfirmExit) { Text("继续使用") }
+                },
+            )
+        }
     }
 }
 

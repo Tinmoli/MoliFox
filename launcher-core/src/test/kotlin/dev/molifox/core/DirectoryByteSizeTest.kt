@@ -14,6 +14,7 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DirectoryByteSizeTest {
     @TempDir lateinit var temporary: Path
@@ -34,5 +35,19 @@ class DirectoryByteSizeTest {
         assertFailsWith<CancellationException> {
             directoryByteSize(temporary) { throw CancellationException("Fixture cancelled") }
         }
+    }
+
+    @Test
+    fun `a walk cancelled part way never returns the partial total`() {
+        repeat(20) { Files.write(temporary.resolve("part-$it.bin"), ByteArray(512)) }
+        var checked = 0
+        assertFailsWith<CancellationException> {
+            directoryByteSize(temporary) {
+                checked++
+                if (checked > 3) throw CancellationException("Fixture cancelled midway")
+            }.getOrThrow()
+        }
+        // 遍历在中途停止，而不是绕过取消把已经累计的部分大小当成结果返回。
+        assertTrue(checked in 4..20, "walk should stop early, checked=$checked")
     }
 }

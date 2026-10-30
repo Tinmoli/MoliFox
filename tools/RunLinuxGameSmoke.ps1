@@ -82,7 +82,7 @@ try {
     $linuxClasspath = (($classpath -split ';' | ForEach-Object { Convert-ToLinuxPath $_ }) -join ':')
     $fontConfig = "<fontconfig><dir>$linuxLibraries/usr/share/fonts</dir><cachedir>$linuxRoot/font-cache</cachedir></fontconfig>"
     [IO.File]::WriteAllText((Join-Path $testRoot 'fonts.conf'), $fontConfig, [Text.UTF8Encoding]::new($false))
-    $linuxReport = Convert-ToLinuxPath (Join-Path $projectRoot "docs\validation\real-game-linux-$($Loader.ToLowerInvariant()).json")
+    $linuxReport = Convert-ToLinuxPath (Join-Path $projectRoot "build\validation\real-game-linux-$($Loader.ToLowerInvariant()).json")
     # Only this process gets project-local libraries, fonts, caches and software rendering.
     $environment = @("PATH=$linuxLibraries/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LD_LIBRARY_PATH=$linuxLibraries/usr/lib:/usr/lib/wsl/lib", "LIBGL_DRIVERS_PATH=$linuxLibraries/usr/lib/dri", 'LIBGL_ALWAYS_SOFTWARE=true', 'GALLIUM_DRIVER=llvmpipe', "HOME=$linuxRoot/home", "XDG_CACHE_HOME=$linuxRoot/home/.cache", "TMPDIR=$linuxRoot/tmp", "FONTCONFIG_FILE=$linuxRoot/fonts.conf", "JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$linuxRoot/tmp")
     $properties = @("-Duser.home=$linuxRoot/home", "-Djava.io.tmpdir=$linuxRoot/tmp", "-Djna.tmpdir=$linuxRoot/tmp", "-Dmolifox.test.dir=$linuxRoot", '-Dmolifox.game.prepared=true', "-Dmolifox.game.javaPath=$linuxJava", "-Dmolifox.game.version=$GameVersion", "-Dmolifox.game.loader=$Loader", "-Dmolifox.game.loaderVersion=$LoaderVersion", '-Dmolifox.game.windowMode=launcher', "-Dmolifox.game.report=$linuxReport")
@@ -100,6 +100,6 @@ try {
     if (-not $resolved.StartsWith($projectRoot + '\.work\tests\', [StringComparison]::OrdinalIgnoreCase) -or ((Get-Item -LiteralPath $testRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe Linux test cleanup path.' }
     Remove-Item -LiteralPath $testRoot -Recurse -Force
     if (Test-Path -LiteralPath $classpathFile) { Remove-Item -LiteralPath $classpathFile -Force }
-    [IO.File]::WriteAllText((Join-Path $projectRoot 'docs\validation\linux-gameSmoke.md'), "# Linux game smoke`n`nResult: $result`nTemporary data: removed`nEnvironment: WSLg, project-local libraries, software rendering; artifacts prepared on Windows`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $projectRoot 'build\validation\linux-gameSmoke.md'), "# Linux game smoke`n`nResult: $result`nTemporary data: removed`nEnvironment: WSLg, project-local libraries, software rendering; artifacts prepared on Windows`n", [Text.UTF8Encoding]::new($false))
     }
 }

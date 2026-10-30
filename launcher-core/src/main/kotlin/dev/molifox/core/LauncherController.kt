@@ -783,14 +783,33 @@ class LauncherController
             }
 
         fun saveSettings(input: LauncherSettings) {
-            // 旧的 mirror（国内镜像站）与未知下载源取值在这里迁移成当前支持的取值。
-            val settings =
-                input.copy(
-                    javaDownloadSource = input.effectiveJavaDownloadSource,
-                    downloadSource = input.effectiveDownloadSource,
-                    versionListSource = input.effectiveVersionListSource,
-                    mirrorConcurrency = normalizedMirrorConcurrency(input.mirrorConcurrency),
-                )
+            val settings = normalizedSettings(input)
+            validateSettings(settings)
+            applySettings(settings)
+        }
+
+        /** 旧的 mirror（国内镜像站）与未知下载源取值在这里迁移成当前支持的取值。 */
+        private fun normalizedSettings(input: LauncherSettings): LauncherSettings =
+            input.copy(
+                javaDownloadSource = input.effectiveJavaDownloadSource,
+                downloadSource = input.effectiveDownloadSource,
+                versionListSource = input.effectiveVersionListSource,
+                mirrorConcurrency = normalizedMirrorConcurrency(input.mirrorConcurrency),
+            )
+
+        private fun validateSettings(settings: LauncherSettings) {
+            validateEngineSettings(settings)
+            validateGameRootSettings(settings)
+            validateMemoryAndWindowSettings(settings)
+            validateBackgroundSettings(settings)
+            validateScaleSettings(settings)
+            validateDownloadSettings(settings)
+            validateInterfaceSettings(settings)
+            validateProxySettings(settings)
+            validateExtraJvmArguments(settings.extraJvmArgs)
+        }
+
+        private fun validateEngineSettings(settings: LauncherSettings) {
             require(
                 settings.downloadAttempts in 1..8 && settings.networkTimeoutSeconds in 10..180,
             ) {
@@ -800,6 +819,9 @@ class LauncherController
             require(settings.mirrorConcurrency in setOf(2, 4, 8)) { "镜像并发无效" }
             validateAdvancedLaunchSettings(settings.advancedLaunch, platform.osName)
             if (settings.isolateVersions != store.data.settings.isolateVersions) requireIdle()
+        }
+
+        private fun validateGameRootSettings(settings: LauncherSettings) {
             require(
                 Path.of(settings.gameRoot).isAbsolute && Path.of(settings.gameRoot).parent != null,
             ) {
@@ -809,11 +831,17 @@ class LauncherController
                 requireIdle()
                 require(store.data.instances.isEmpty()) { "已有实例时不能直接切换目录，请先导出并删除实例" }
             }
+        }
+
+        private fun validateMemoryAndWindowSettings(settings: LauncherSettings) {
             require(settings.memoryMb in 512..maxOf(512, platform.totalMemoryMb - 512)) {
                 "内存需在 512 MB 到物理内存减 512 MB 之间"
             }
             require(settings.width in 640..7680 && settings.height in 480..4320) { "游戏窗口尺寸无效" }
             require(settings.initialMemoryMb in 128..settings.memoryMb) { "初始内存需在 128 MB 到最大内存之间" }
+        }
+
+        private fun validateBackgroundSettings(settings: LauncherSettings) {
             require(settings.themeMode in listOf("", "light", "dark", "system")) { "主题模式无效" }
             require(settings.backgroundFit in listOf("crop", "fit", "stretch")) { "背景适配模式无效" }
             require(settings.cornerRadiusDp in 0..24) { "界面圆角需在 0–24 dp 之间" }
@@ -833,6 +861,9 @@ class LauncherController
             ) {
                 "背景对齐位置无效"
             }
+        }
+
+        private fun validateScaleSettings(settings: LauncherSettings) {
             require(settings.uiScale.isFinite() && settings.uiScale in .85f..1.2f) {
                 "界面缩放需在 85%–120% 之间"
             }
@@ -859,6 +890,9 @@ class LauncherController
             ) {
                 "页面设置无效"
             }
+        }
+
+        private fun validateDownloadSettings(settings: LauncherSettings) {
             require(
                 settings.maxConcurrent in 1..32 &&
                     settings.downloadSource in listOf("auto", "official", "bmclapi") &&
@@ -870,6 +904,9 @@ class LauncherController
             require(settings.javaDownloadSource in listOf("auto", "official")) {
                 "Java 下载源无效"
             }
+        }
+
+        private fun validateInterfaceSettings(settings: LauncherSettings) {
             require(
                 settings.accentColor == "sakura" ||
                     Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor) ||
@@ -888,6 +925,9 @@ class LauncherController
             require(settings.gameWindowMode in listOf("launcher", "fullscreen", "custom")) {
                 "游戏窗口模式无效"
             }
+        }
+
+        private fun validateProxySettings(settings: LauncherSettings) {
             require(settings.proxyType in listOf("http", "socks")) { "代理类型无效" }
             require(settings.proxyMode in listOf("", "system", "direct", "manual")) { "代理模式无效" }
             if (settings.effectiveProxyMode() == "manual") {
@@ -914,17 +954,10 @@ class LauncherController
             ) {
                 "Microsoft 客户端 ID 格式无效"
             }
-            validateExtraJvmArguments(settings.extraJvmArgs)
-            if (settings.downloadCachePath != store.data.settings.downloadCachePath) {
-                store.directories.cache(settings.downloadCachePath).initialize()
-            }
-            // 换源后重新评估健康度；测速顺序只属于正在执行的单次任务。
-            if (
-                settings.downloadSource != store.data.settings.downloadSource ||
-                settings.versionListSource != store.data.settings.versionListSource
-            ) {
-                network.resetSourceHealth()
-            }
+        }
+
+        private fun applySettings(settings: LauncherSettings) {
+            applyDownloadSettings(settings)
             val javaPathChanged = settings.javaPath != store.data.settings.javaPath
             store.mutate {
                 it.copy(
@@ -935,11 +968,26 @@ class LauncherController
                         ),
                 )
             }
-            if (javaPathChanged) {
-                java.invalidate()
-                refreshJavaPrompt()
-            }
+            if (javaPathChanged) applyLaunchSettings()
             store.notify("设置已保存")
+        }
+
+        private fun applyDownloadSettings(settings: LauncherSettings) {
+            if (settings.downloadCachePath != store.data.settings.downloadCachePath) {
+                store.directories.cache(settings.downloadCachePath).initialize()
+            }
+            // 换源后重新评估健康度；测速顺序只属于正在执行的单次任务。
+            if (
+                settings.downloadSource != store.data.settings.downloadSource ||
+                settings.versionListSource != store.data.settings.versionListSource
+            ) {
+                network.resetSourceHealth()
+            }
+        }
+
+        private fun applyLaunchSettings() {
+            java.invalidate()
+            refreshJavaPrompt()
         }
 
         /**

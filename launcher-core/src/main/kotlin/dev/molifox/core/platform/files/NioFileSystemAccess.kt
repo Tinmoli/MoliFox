@@ -27,6 +27,12 @@ class NioFileSystemAccess : FileSystemAccess {
             Files.newDirectoryStream(directory).use { entries -> entries.toList() }
         }
 
+    override fun createDirectory(directory: Path): Result<Path> =
+        read {
+            Files.createDirectories(directory)
+            directory
+        }
+
     private inline fun <T> read(operation: () -> T): Result<T> =
         try {
             Result.success(operation())

@@ -33,6 +33,17 @@ class InstanceWorkspaceQueries(
                 GameFolder.entries.filter { it.relativePath in paths }
             }
 
+    /** 打开页签前确保目录存在；根目录本身不创建，返回实例目录。 */
+    suspend fun ensureFolder(
+        instanceId: String,
+        folder: GameFolder,
+    ): Result<Unit> =
+        if (folder == GameFolder.Root) {
+            Result.success(Unit)
+        } else {
+            repository.ensureDirectory(instanceId, folder.relativePath).map { }
+        }
+
     suspend fun listDirectory(
         instanceId: String,
         folder: String,

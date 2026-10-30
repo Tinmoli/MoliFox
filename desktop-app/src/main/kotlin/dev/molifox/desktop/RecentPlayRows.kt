@@ -44,7 +44,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.EntryKind
-import dev.molifox.core.ping
 import java.time.Duration
 import java.time.Instant
 

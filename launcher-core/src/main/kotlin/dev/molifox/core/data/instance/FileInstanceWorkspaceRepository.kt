@@ -30,6 +30,24 @@ class FileInstanceWorkspaceRepository(
             Result.success(relativePaths.filter { existingDirectory(root.resolve(it)) })
         }
 
+    override suspend fun ensureDirectory(
+        instanceId: String,
+        relativePath: String,
+    ): Result<Path> =
+        withContext(Dispatchers.IO) {
+            val root =
+                resolve(instanceId, "", emptyList()).getOrElse {
+                    return@withContext Result.failure(it)
+                }
+            val directory = root.resolve(relativePath).normalize()
+            if (!directory.startsWith(root)) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("目录必须是实例内的相对路径"),
+                )
+            }
+            files.createDirectory(directory).onFailure { reportFailure(directory, it) }
+        }
+
     private suspend fun existingDirectory(path: Path): Boolean {
         currentCoroutineContext().ensureActive()
         return files

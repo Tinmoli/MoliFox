@@ -18,6 +18,10 @@ plugins {
 
 evaluationDependsOn(":launcher-bootstrap")
 
+// 界面与文档资源统一放在仓库根的 assets/；legal 与 brand 由打包任务单独处理，不进类路径。
+sourceSets["main"].resources.srcDir(rootProject.file("assets"))
+sourceSets["main"].resources.exclude("legal/**", "brand/**")
+
 val bootstrapProject = project(":launcher-bootstrap")
 val bootstrapSourceSets = bootstrapProject.extensions.getByType<SourceSetContainer>()
 val runtimeManifestFile = layout.buildDirectory.file("portable/deps.json")
@@ -185,11 +189,12 @@ fun bootstrapPayloadFiles(): List<File> =
         }
 
 tasks.processResources {
-    from(rootProject.files("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
+    from(rootProject.file("LICENSE")) { into("META-INF/molifox") }
+    // 声明与第三方许可的唯一来源在 assets/legal，随包复制到同一目录；中文说明不随包分发。
+    from(rootProject.file("assets/legal")) {
         into("META-INF/molifox")
+        exclude("zh/**")
     }
-    // 第三方许可清单的唯一来源；关于页弹窗从同一份随包文件读取。
-    from(rootProject.file("docs/THIRD_PARTY_LICENSES.md")) { into("META-INF/molifox") }
 }
 
 tasks.register<Jar>("portableJar") {
@@ -225,8 +230,10 @@ tasks.register<Jar>("portableJar") {
     }
     // 依赖清单固定落在 /molifox-runtime.json，引导程序按这个路径读取。
     from(runtimeManifestFile) { rename { "molifox-runtime.json" } }
-    from(rootProject.files("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
+    from(rootProject.file("LICENSE")) { into("META-INF/molifox") }
+    from(rootProject.file("assets/legal")) {
         into("META-INF/molifox")
+        exclude("zh/**")
     }
     from(rootProject.file("launcher-bootstrap/native/miniz/LICENSE")) {
         into("META-INF/molifox/miniz")
@@ -247,7 +254,7 @@ val windowsResource =
             val output = nativeBuildDirectory.get().file("molifox.rc").asFile
             output.parentFile.mkdirs()
             val icon =
-                file("src/main/resources/icons/app/icon.ico").absolutePath.replace('\\', '/')
+                rootProject.file("assets/icons/app/icon.ico").absolutePath.replace('\\', '/')
             val payload =
                 layout.buildDirectory
                     .file("portable/MoliFox.jar")
@@ -264,7 +271,7 @@ val compileWindowsResource =
         dependsOn(windowsResource)
         inputs.files(
             layout.buildDirectory.file("portable/MoliFox.jar"),
-            file("src/main/resources/icons/app/icon.ico"),
+            rootProject.file("assets/icons/app/icon.ico"),
         )
         outputs.file(nativeBuildDirectory.map { it.file("resource.o") })
         commandLine(
@@ -288,7 +295,7 @@ tasks.register<Exec>("portableWindows") {
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
     outputs.file(rootProject.file("MoliFox.exe"))
-    outputs.file(rootProject.file("docs/validation/windows-package.sha256"))
+    outputs.file(rootProject.file("build/validation/windows-package.sha256"))
     commandLine(
         nativeCompiler("g++"),
         *windowsNativeDefinitions.toTypedArray(),
@@ -319,7 +326,7 @@ tasks.register<Exec>("portableWindows") {
     doLast {
         val executable = rootProject.file("MoliFox.exe")
         val digest = sha256Of(executable)
-        val checksum = rootProject.file("docs/validation/windows-package.sha256")
+        val checksum = rootProject.file("build/validation/windows-package.sha256")
         checksum.parentFile.mkdirs()
         checksum.writeText("$digest  MoliFox.exe\n")
     }
@@ -423,7 +430,7 @@ tasks.register("portableLinux") {
     inputs.file(rootProject.file("launcher-bootstrap/native/LinuxMain.sh"))
     inputs.file(payload)
     outputs.file(rootProject.file("MoliFox-linux-x64.run"))
-    outputs.file(rootProject.file("docs/validation/linux-package.sha256"))
+    outputs.file(rootProject.file("build/validation/linux-package.sha256"))
     doLast {
         val jar = payload.get().asFile
         val digest = sha256Of(jar)
@@ -440,7 +447,7 @@ tasks.register("portableLinux") {
             jar.inputStream().buffered().use { it.copyTo(destination) }
         }
         output.setExecutable(true, false)
-        val checksum = rootProject.file("docs/validation/linux-package.sha256")
+        val checksum = rootProject.file("build/validation/linux-package.sha256")
         checksum.parentFile.mkdirs()
         val hash = sha256Of(output)
         checksum.writeText(hash + "  MoliFox-linux-x64.run\n")
@@ -530,7 +537,7 @@ tasks.register("verifyDesktopPackages") {
                 )
             }
         }
-        val report = rootProject.file("docs/validation/desktop-packages.md")
+        val report = rootProject.file("build/validation/desktop-packages.md")
         report.parentFile.mkdirs()
         report.writeText(
             "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: not executed on this Windows host\n",
@@ -552,6 +559,15 @@ dependencies {
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
     implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// 桌面模块的普通单元测试不打开窗口，只验证界面侧的有界内存缓存等纯内存行为。
+tasks.test {
+    useJUnitPlatform()
+    systemProperty("java.awt.headless", "true")
 }
 
 val uiChecksCompilation =
@@ -599,7 +615,7 @@ fun registerGuiSmoke(
     mainClass.set(probe)
     systemProperty(
         "molifox.actions.report",
-        rootProject.file("docs/validation/$name-actions.json").absolutePath,
+        rootProject.file("build/validation/$name-actions.json").absolutePath,
     )
     systemProperty("molifox.actions.seedPublicCache", (name == "packActionsSmoke").toString())
     timeout.set(Duration.ofMinutes(3))
@@ -760,7 +776,7 @@ nativeSmoke.configure {
     timeout.set(Duration.ofMinutes(8))
     systemProperty(
         "molifox.native.report",
-        rootProject.file("docs/validation/native-startup.json").absolutePath,
+        rootProject.file("build/validation/native-startup.json").absolutePath,
     )
 }
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+﻿// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
 // 负责验证资源包与光影更新检查的识别顺序与游戏版本过滤规则。
@@ -310,7 +310,7 @@ class PackUpdatesTest {
             val report = PackUpdateService(store, listOf(FakeSource())).check(instance.id)
             val item = report.items.single()
             assertEquals(PackUpdateStatus.Unknown, item.status)
-            assertTrue(item.warning.contains("未找到匹配项目"))
+            assertTrue(item.warning.contains("未收录或名称无法匹配"))
             assertEquals(1, report.unknown(PackFolder.ResourcePacks))
         }
 

@@ -40,6 +40,7 @@ import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentSource
 import dev.molifox.core.ContentUpdateReport
 import dev.molifox.core.ModFile
+import dev.molifox.desktop.content.contentSourceName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO

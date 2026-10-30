@@ -148,6 +148,29 @@ static std::string sha256(const fs::path& path) {
     return result;
 }
 
+/** 直接对内存中的内嵌负载求摘要，避免每次启动都把整包写到临时文件再删。 */
+static std::string sha256Bytes(const void* data, size_t size) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    check(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0, "Open SHA-256");
+    check(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) == 0, "Create SHA-256");
+    auto remaining = size;
+    auto cursor = static_cast<const unsigned char*>(data);
+    while (remaining > 0) {
+        auto chunk = remaining > 1024 * 1024 ? 1024 * 1024 : remaining;
+        check(BCryptHashData(hash, (PUCHAR)cursor, (ULONG)chunk, 0) == 0, "Hash payload");
+        cursor += chunk;
+        remaining -= chunk;
+    }
+    unsigned char digest[32];
+    check(BCryptFinishHash(hash, digest, 32, 0) == 0, "Finish checksum");
+    BCryptDestroyHash(hash); BCryptCloseAlgorithmProvider(algorithm, 0);
+    const char* hex = "0123456789abcdef";
+    std::string result;
+    for (unsigned char value : digest) { result += hex[value >> 4]; result += hex[value & 15]; }
+    return result;
+}
+
 struct HttpHandle {
     HINTERNET handle;
     ~HttpHandle() { if (handle) WinHttpCloseHandle(handle); }
@@ -359,10 +382,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
         auto jar = data / L"dependencies/launcher/MoliFox-0.4.0-beta.jar";
-        auto pending = temporary.path / L"launcher-payload.part";
-        { std::ofstream output(pending, std::ios::binary | std::ios::trunc); output.write((const char*)bytes, size); check(output.good(), "Extract launcher payload"); }
-        if (fs::exists(jar) && sha256(jar) == sha256(pending)) fs::remove(pending);
-        else check(MoveFileExW(pending.c_str(), jar.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), "Install launcher payload");
+        // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
+        if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
+            auto pending = temporary.path / L"launcher-payload.part";
+            { std::ofstream output(pending, std::ios::binary | std::ios::trunc); output.write((const char*)bytes, size); check(output.good(), "Extract launcher payload"); }
+            check(MoveFileExW(pending.c_str(), jar.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), "Install launcher payload");
+        }
         auto java = findJava(data);
         if (java.empty()) java = prepareJava(data, temporary.path);
         { std::ofstream log(data / L"logs/bootstrap.log", std::ios::binary); log << "Java: " << utf8(java.wstring()) << "\nData: " << utf8(data.wstring()) << "\n"; }

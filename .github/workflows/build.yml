@@ -40,11 +40,11 @@ jobs:
           name: MoliFox-${{ runner.os }}-x64
           path: |
             MoliFox.exe
-            docs/validation/windows-package.sha256
+            build/validation/windows-package.sha256
             MoliFox-linux-x64.run
-            docs/validation/linux-package.sha256
+            build/validation/linux-package.sha256
             LICENSE
-            THIRD_PARTY.md
+            assets/legal/THIRD_PARTY.md
             README.md
       - uses: actions/upload-artifact@v4
         if: always()
