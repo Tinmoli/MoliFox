@@ -5,13 +5,8 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.UUID
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -19,8 +14,19 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import com.google.gson.JsonArray
-import com.google.gson.JsonObject
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class PackUpdatesTest {
     private val temporary: Path = workTestDirectory("launcher-core-pack-updates")
@@ -33,7 +39,10 @@ class PackUpdatesTest {
     private fun store(): LauncherStore {
         val platform =
             object : PlatformServices by DesktopPlatform() {
-                override val defaultDataDirectory = temporary.resolve("profile-${UUID.randomUUID()}")
+                override val defaultDataDirectory =
+                    temporary.resolve(
+                        "profile-${UUID.randomUUID()}",
+                    )
 
                 override fun moveToTrash(file: Path) {
                     val target = temporary.resolve("trash/${UUID.randomUUID()}-${file.fileName}")
@@ -72,7 +81,10 @@ class PackUpdatesTest {
             }
         }
 
-    private fun project(id: String, title: String = id) = RemoteModProject(id, id, title, "modrinth")
+    private fun project(
+        id: String,
+        title: String = id,
+    ) = RemoteModProject(id, id, title, "modrinth")
 
     private fun version(
         project: RemoteModProject,
@@ -108,8 +120,13 @@ class PackUpdatesTest {
         var versionCalls = 0
             private set
 
-        override suspend fun fingerprint(files: List<LocalPackFile>, folder: PackFolder) =
-            files.mapNotNull { file -> fingerprints[file.filename]?.let { file.filename to it } }.toMap()
+        override suspend fun fingerprint(
+            files: List<LocalPackFile>,
+            folder: PackFolder,
+        ) = files
+            .mapNotNull { file ->
+                fingerprints[file.filename]?.let { file.filename to it }
+            }.toMap()
 
         override suspend fun latestVersions(
             files: List<LocalPackFile>,
@@ -119,9 +136,10 @@ class PackUpdatesTest {
         ): Map<String, RemoteModVersion>? {
             val known = batchLatest ?: return null
             batchCalls++
-            return files.mapNotNull { file ->
-                known[file.filename]?.let { file.filename to it }
-            }.toMap()
+            return files
+                .mapNotNull { file ->
+                    known[file.filename]?.let { file.filename to it }
+                }.toMap()
         }
 
         override suspend fun search(
@@ -155,14 +173,15 @@ class PackUpdatesTest {
     }
 
     @Test
-    fun `resource pack update ignores candidates for other minecraft versions`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        zip(store.instancePath(instance.id).resolve("resourcepacks/FoxPack-1.0.zip"))
-        val fox = project("fox")
-        val current = version(fox, "1.0", filename = "FoxPack-1.0.zip")
-        val report =
-            PackUpdateService(
+    fun `resource pack update ignores candidates for other minecraft versions`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            zip(store.instancePath(instance.id).resolve("resourcepacks/FoxPack-1.0.zip"))
+            val fox = project("fox")
+            val current = version(fox, "1.0", filename = "FoxPack-1.0.zip")
+            val report =
+                PackUpdateService(
                     store,
                     listOf(
                         FakeSource(
@@ -173,27 +192,27 @@ class PackUpdatesTest {
                                         listOf(
                                             current,
                                             version(fox, "1.1", gameVersions = listOf("1.19.2")),
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-                )
-                .check(instance.id)
-        val item = report.items.single()
-        assertEquals(PackUpdateStatus.Latest, item.status)
-        assertEquals(PackMatchSource.Fingerprint, item.matchSource)
-        assertEquals("1.0", item.latestVersion)
-    }
+                ).check(instance.id)
+            val item = report.items.single()
+            assertEquals(PackUpdateStatus.Latest, item.status)
+            assertEquals(PackMatchSource.Fingerprint, item.matchSource)
+            assertEquals("1.0", item.latestVersion)
+        }
 
     @Test
-    fun `shader update accepts versions without a minecraft constraint`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        zip(store.instancePath(instance.id).resolve("shaderpacks/FoxShader.zip"))
-        val shader = project("foxshader")
-        val current = version(shader, "1.0", gameVersions = emptyList())
-        val report =
-            PackUpdateService(
+    fun `shader update accepts versions without a minecraft constraint`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            zip(store.instancePath(instance.id).resolve("shaderpacks/FoxShader.zip"))
+            val shader = project("foxshader")
+            val current = version(shader, "1.0", gameVersions = emptyList())
+            val report =
+                PackUpdateService(
                     store,
                     listOf(
                         FakeSource(
@@ -204,29 +223,29 @@ class PackUpdatesTest {
                                         listOf(
                                             current,
                                             version(shader, "2.0", gameVersions = emptyList()),
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-                )
-                .check(instance.id)
-        val item = report.items.single()
-        assertEquals(PackFolder.ShaderPacks, item.folder)
-        assertEquals(PackUpdateStatus.Updatable, item.status)
-        assertEquals("2.0", item.latestVersion)
-        assertNotNull(item.candidate)
-        assertEquals(1, report.updatable(PackFolder.ShaderPacks))
-    }
+                ).check(instance.id)
+            val item = report.items.single()
+            assertEquals(PackFolder.ShaderPacks, item.folder)
+            assertEquals(PackUpdateStatus.Updatable, item.status)
+            assertEquals("2.0", item.latestVersion)
+            assertNotNull(item.candidate)
+            assertEquals(1, report.updatable(PackFolder.ShaderPacks))
+        }
 
     @Test
-    fun `shader candidates declaring another version are skipped`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        zip(store.instancePath(instance.id).resolve("shaderpacks/FoxShader.zip"))
-        val shader = project("foxshader")
-        val current = version(shader, "1.0", gameVersions = listOf("1.19.2"))
-        val report =
-            PackUpdateService(
+    fun `shader candidates declaring another version are skipped`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            zip(store.instancePath(instance.id).resolve("shaderpacks/FoxShader.zip"))
+            val shader = project("foxshader")
+            val current = version(shader, "1.0", gameVersions = listOf("1.19.2"))
+            val report =
+                PackUpdateService(
                     store,
                     listOf(
                         FakeSource(
@@ -237,15 +256,19 @@ class PackUpdatesTest {
                                         listOf(
                                             current,
                                             version(shader, "2.0", gameVersions = listOf("1.19.2")),
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-                )
-                .check(instance.id)
-        assertEquals(PackUpdateStatus.Unknown, report.items.single().status)
-        assertTrue(report.items.single().warning.contains("当前游戏版本"))
-    }
+                ).check(instance.id)
+            assertEquals(PackUpdateStatus.Unknown, report.items.single().status)
+            assertTrue(
+                report.items
+                    .single()
+                    .warning
+                    .contains("当前游戏版本"),
+            )
+        }
 
     @Test
     fun `name fallback matches a single project and uses the same file name as current version`() =
@@ -256,22 +279,21 @@ class PackUpdatesTest {
             val fox = RemoteModProject("fox", "fox-pack", "Fox Pack", "modrinth")
             val report =
                 PackUpdateService(
-                        store,
-                        listOf(
-                            FakeSource(
-                                searchHits = listOf(fox),
-                                versionMap =
-                                    mapOf(
-                                        fox.id to
-                                            listOf(
-                                                version(fox, "1.0", filename = "Fox Pack 1.0.zip"),
-                                                version(fox, "1.1"),
-                                            )
-                                    ),
-                            )
+                    store,
+                    listOf(
+                        FakeSource(
+                            searchHits = listOf(fox),
+                            versionMap =
+                                mapOf(
+                                    fox.id to
+                                        listOf(
+                                            version(fox, "1.0", filename = "Fox Pack 1.0.zip"),
+                                            version(fox, "1.1"),
+                                        ),
+                                ),
                         ),
-                    )
-                    .check(instance.id)
+                    ),
+                ).check(instance.id)
             val item = report.items.single()
             assertEquals(PackMatchSource.Name, item.matchSource)
             assertEquals(PackUpdateStatus.Updatable, item.status)
@@ -280,132 +302,137 @@ class PackUpdatesTest {
         }
 
     @Test
-    fun `no matching project is reported as no update found`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        zip(store.instancePath(instance.id).resolve("resourcepacks/Unknown Pack.zip"))
-        val report = PackUpdateService(store, listOf(FakeSource())).check(instance.id)
-        val item = report.items.single()
-        assertEquals(PackUpdateStatus.Unknown, item.status)
-        assertTrue(item.warning.contains("未找到匹配项目"))
-        assertEquals(1, report.unknown(PackFolder.ResourcePacks))
-    }
+    fun `no matching project is reported as no update found`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            zip(store.instancePath(instance.id).resolve("resourcepacks/Unknown Pack.zip"))
+            val report = PackUpdateService(store, listOf(FakeSource())).check(instance.id)
+            val item = report.items.single()
+            assertEquals(PackUpdateStatus.Unknown, item.status)
+            assertTrue(item.warning.contains("未找到匹配项目"))
+            assertEquals(1, report.unknown(PackFolder.ResourcePacks))
+        }
 
     @Test
-    fun `folder packs are listed but only name matched`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val folder = store.instancePath(instance.id).resolve("shaderpacks/Shader Folder")
-        folder.createDirectories()
-        folder.resolve("shaders").createDirectories()
-        val report = PackUpdateService(store, listOf(FakeSource())).check(instance.id)
-        assertEquals("Shader Folder", report.items.single().filename)
-    }
+    fun `folder packs are listed but only name matched`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val folder = store.instancePath(instance.id).resolve("shaderpacks/Shader Folder")
+            folder.createDirectories()
+            folder.resolve("shaders").createDirectories()
+            val report = PackUpdateService(store, listOf(FakeSource())).check(instance.id)
+            assertEquals("Shader Folder", report.items.single().filename)
+        }
 
     @Test
-    fun `batch latest avoids per project version requests`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        zip(store.instancePath(instance.id).resolve("resourcepacks/FoxPack-1.0.zip"))
-        val fox = project("fox")
-        val current = version(fox, "1.0", filename = "FoxPack-1.0.zip")
-        val latest = version(fox, "1.1")
-        val source =
-            FakeSource(
-                fingerprints = mapOf("FoxPack-1.0.zip" to current),
-                batchLatest = mapOf("FoxPack-1.0.zip" to latest),
-            )
-        val item = PackUpdateService(store, listOf(source)).check(instance.id).items.single()
-        assertEquals(PackUpdateStatus.Updatable, item.status)
-        assertEquals("1.1", item.latestVersion)
-        assertEquals(1, source.batchCalls)
-        assertEquals(0, source.versionCalls)
-    }
+    fun `batch latest avoids per project version requests`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            zip(store.instancePath(instance.id).resolve("resourcepacks/FoxPack-1.0.zip"))
+            val fox = project("fox")
+            val current = version(fox, "1.0", filename = "FoxPack-1.0.zip")
+            val latest = version(fox, "1.1")
+            val source =
+                FakeSource(
+                    fingerprints = mapOf("FoxPack-1.0.zip" to current),
+                    batchLatest = mapOf("FoxPack-1.0.zip" to latest),
+                )
+            val item = PackUpdateService(store, listOf(source)).check(instance.id).items.single()
+            assertEquals(PackUpdateStatus.Updatable, item.status)
+            assertEquals("1.1", item.latestVersion)
+            assertEquals(1, source.batchCalls)
+            assertEquals(0, source.versionCalls)
+        }
 
     @Test
-    fun `pack fingerprint and latest versions use one batch request each`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val root = store.instancePath(instance.id)
-        val installed =
-            (0 until 4).map { index ->
-                val name = "FoxPack-$index-1.0.zip"
-                val file = zip(root.resolve("resourcepacks/$name"))
-                name to sha512(file.readBytes())
-            }
-        val current =
-            JsonObject().apply {
-                installed.forEachIndexed { index, (name, hash) ->
-                    add(hash, packVersionJson("pack$index", "1.0", name, listOf("1.20.1")))
+    fun `pack fingerprint and latest versions use one batch request each`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val root = store.instancePath(instance.id)
+            val installed =
+                (0 until 4).map { index ->
+                    val name = "FoxPack-$index-1.0.zip"
+                    val file = zip(root.resolve("resourcepacks/$name"))
+                    name to sha512(file.readBytes())
                 }
-            }
-        val latest =
-            JsonObject().apply {
-                installed.forEachIndexed { index, (name, hash) ->
-                    add(
-                        hash,
-                        packVersionJson(
-                            "pack$index",
-                            "1.1",
-                            name.replace("1.0", "1.1"),
-                            listOf("1.20.1"),
-                        ),
-                    )
-                }
-            }
-        val kinds =
-            JsonArray().apply {
-                installed.forEachIndexed { index, _ ->
-                    add(
-                        JsonObject().apply {
-                            addProperty("id", "pack$index")
-                            addProperty("project_type", "resourcepack")
-                        }
-                    )
-                }
-            }
-        val requests = mutableListOf<String>()
-        MockWebServer().use { server ->
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse {
-                        val path = request.path.orEmpty().substringBefore('?')
-                        requests += path
-                        val body: Any =
-                            when (path) {
-                                "/v2/version_files" -> current
-                                "/v2/version_files/update" -> latest
-                                "/v2/projects" -> kinds
-                                else -> JsonObject()
-                            }
-                        return MockResponse()
-                            .setBody(body.toString())
-                            .setHeader("Content-Type", "application/json")
+            val current =
+                JsonObject().apply {
+                    installed.forEachIndexed { index, (name, hash) ->
+                        add(hash, packVersionJson("pack$index", "1.0", name, listOf("1.20.1")))
                     }
                 }
-            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
-            val report =
-                PackUpdateService(
+            val latest =
+                JsonObject().apply {
+                    installed.forEachIndexed { index, (name, hash) ->
+                        add(
+                            hash,
+                            packVersionJson(
+                                "pack$index",
+                                "1.1",
+                                name.replace("1.0", "1.1"),
+                                listOf("1.20.1"),
+                            ),
+                        )
+                    }
+                }
+            val kinds =
+                JsonArray().apply {
+                    installed.forEachIndexed { index, _ ->
+                        add(
+                            JsonObject().apply {
+                                addProperty("id", "pack$index")
+                                addProperty("project_type", "resourcepack")
+                            },
+                        )
+                    }
+                }
+            val requests = mutableListOf<String>()
+            MockWebServer().use { server ->
+                server.dispatcher =
+                    object : Dispatcher() {
+                        override fun dispatch(request: RecordedRequest): MockResponse {
+                            val path = request.path.orEmpty().substringBefore('?')
+                            requests += path
+                            val body: Any =
+                                when (path) {
+                                    "/v2/version_files" -> current
+                                    "/v2/version_files/update" -> latest
+                                    "/v2/projects" -> kinds
+                                    else -> JsonObject()
+                                }
+                            return MockResponse()
+                                .setBody(body.toString())
+                                .setHeader("Content-Type", "application/json")
+                        }
+                    }
+                server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+                val report =
+                    PackUpdateService(
                         store,
                         listOf(
                             ModrinthPackUpdateSource(
                                 NetworkClient(),
                                 "http://127.0.0.1:${server.port}/v2",
-                            )
+                            ),
                         ),
-                    )
-                    .check(instance.id)
-            assertEquals(4, report.items.size)
-            assertEquals(4, report.updatable(PackFolder.ResourcePacks))
-            assertEquals(1, requests.count { it == "/v2/version_files" })
-            assertEquals(1, requests.count { it == "/v2/version_files/update" })
-            assertEquals(1, requests.count { it == "/v2/projects" })
-            assertTrue(requests.none { it.startsWith("/v2/project/") })
+                    ).check(instance.id)
+                assertEquals(4, report.items.size)
+                assertEquals(4, report.updatable(PackFolder.ResourcePacks))
+                assertEquals(1, requests.count { it == "/v2/version_files" })
+                assertEquals(1, requests.count { it == "/v2/version_files/update" })
+                assertEquals(1, requests.count { it == "/v2/projects" })
+                assertTrue(requests.none { it.startsWith("/v2/project/") })
+            }
         }
-    }
 
     private fun sha512(bytes: ByteArray): String =
-        java.security.MessageDigest.getInstance("SHA-512").digest(bytes)
+        java.security.MessageDigest
+            .getInstance("SHA-512")
+            .digest(bytes)
             .joinToString("") { "%02x".format(it) }
 
     private fun packVersionJson(
@@ -436,7 +463,7 @@ class PackUpdatesTest {
                                 addProperty("sha1", "0".repeat(40))
                             },
                         )
-                    }
+                    },
                 )
             },
         )

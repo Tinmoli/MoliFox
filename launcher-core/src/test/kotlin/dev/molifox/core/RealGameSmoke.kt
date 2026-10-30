@@ -5,6 +5,12 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Robot
@@ -12,53 +18,68 @@ import java.nio.file.Path
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.bufferedReader
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.inputStream
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.readText
 
 /** Opt-in acceptance against actual game files. A rendered window is not a main-menu verdict. */
-fun main(): Unit = runBlocking {
-    val prepared = System.getProperty("molifox.game.prepared", "false").toBoolean()
-    val loader = System.getProperty("molifox.game.loader", "Vanilla")
-    val report = System.getProperty("molifox.game.report")
-    val root = Path.of(requireNotNull(System.getProperty("molifox.test.dir")))
-    var failure: Throwable? = null
-    val includeVanilla = System.getProperty("molifox.game.includeVanilla", "true").toBoolean()
-    val targets =
-        if (prepared && loader != "Vanilla" && includeVanilla) listOf(loader, "Vanilla")
-        else listOf(loader)
-    for (target in targets) {
-        for (file in listOf("game-status.json", "game-review.json", "game-input.json")) root
-            .resolve(file)
-            .deleteIfExists()
-        if (target != loader) {
-            val original =
-                gson.fromJson(
-                    root.resolve("prepared-instance.json").readText(),
-                    GameInstance::class.java,
+fun main(): Unit =
+    runBlocking {
+        val prepared = System.getProperty("molifox.game.prepared", "false").toBoolean()
+        val loader = System.getProperty("molifox.game.loader", "Vanilla")
+        val report = System.getProperty("molifox.game.report")
+        val root = Path.of(requireNotNull(System.getProperty("molifox.test.dir")))
+        var failure: Throwable? = null
+        val includeVanilla = System.getProperty("molifox.game.includeVanilla", "true").toBoolean()
+        val targets =
+            if (prepared && loader != "Vanilla" && includeVanilla) {
+                listOf(loader, "Vanilla")
+            } else {
+                listOf(loader)
+            }
+        for (target in targets) {
+            for (file in listOf("game-status.json", "game-review.json", "game-input.json")) {
+                root
+                    .resolve(file)
+                    .deleteIfExists()
+            }
+            if (target != loader) {
+                val original =
+                    gson.fromJson(
+                        root.resolve("prepared-instance.json").readText(),
+                        GameInstance::class.java,
+                    )
+                writeJson(
+                    root.resolve("prepared-instance.json"),
+                    original.copy(
+                        id =
+                            java.util.UUID
+                                .randomUUID()
+                                .toString(),
+                        loader = LoaderType.Vanilla,
+                        loaderVersion = "",
+                        versionId = original.gameVersion,
+                    ),
                 )
-            writeJson(
-                root.resolve("prepared-instance.json"),
-                original.copy(
-                    id = java.util.UUID.randomUUID().toString(),
-                    loader = LoaderType.Vanilla,
-                    loaderVersion = "",
-                    versionId = original.gameVersion,
-                ),
+            }
+            System.setProperty("molifox.game.loader", target)
+            System.setProperty(
+                "molifox.game.report",
+                report.replace("-${loader.lowercase()}.json", "-${target.lowercase()}.json"),
             )
+            try {
+                runRealGameSmoke()
+            } catch (error: Throwable) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
         }
-        System.setProperty("molifox.game.loader", target)
-        System.setProperty(
-            "molifox.game.report",
-            report.replace("-${loader.lowercase()}.json", "-${target.lowercase()}.json"),
-        )
-        try {
-            runRealGameSmoke()
-        } catch (error: Throwable) {
-            if (failure == null) failure = error else failure.addSuppressed(error)
-        }
+        failure?.let { throw it }
     }
-    failure?.let { throw it }
-}
 
 private suspend fun runRealGameSmoke() {
     check(!GraphicsEnvironment.isHeadless()) { "Real game acceptance requires a graphical desktop" }
@@ -86,9 +107,13 @@ private suspend fun runRealGameSmoke() {
             "loader" to loader.name,
             "mainMenuConfirmed" to false,
             "installationMode" to
-                if (prepared) "cross-prepared-offline-launch"
-                else if (seedRoot != null) "online-install-with-copied-public-cache"
-                else "online-install",
+                if (prepared) {
+                    "cross-prepared-offline-launch"
+                } else if (seedRoot != null) {
+                    "online-install-with-copied-public-cache"
+                } else {
+                    "online-install"
+                },
         )
     var gameHandle: ProcessHandle? = null
     LauncherController(dataDirectory = profileRoot).use { controller ->
@@ -96,7 +121,9 @@ private suspend fun runRealGameSmoke() {
             withTimeout(30 * 60_000L) {
                 var previous = ""
                 while (true) {
-                    val job = controller.state.value.jobs.first { it.id == id }
+                    val job =
+                        controller.state.value.jobs
+                            .first { it.id == id }
                     val status = "${job.status}: ${job.detail}"
                     if (status != previous) {
                         println(status)
@@ -105,7 +132,8 @@ private suspend fun runRealGameSmoke() {
                     when (job.status) {
                         JobStatus.Completed -> return@withTimeout
                         JobStatus.Cancelled,
-                        JobStatus.Failed -> error(job.error ?: job.detail)
+                        JobStatus.Failed,
+                        -> error(job.error ?: job.detail)
                         else -> delay(1_000)
                     }
                 }
@@ -121,11 +149,13 @@ private suspend fun runRealGameSmoke() {
                     downloadSource = System.getProperty("molifox.game.downloadSource", "official"),
                     gameWindowMode = windowMode,
                     javaPath = System.getProperty("molifox.game.javaPath", ""),
-                )
+                ),
             )
             if (windowMode == "launcher") controller.reportLauncherWindowSize(1280, 725)
             report["windowMode"] = windowMode
-            report["proxyMode"] = controller.store.data.settings.effectiveProxyMode()
+            report["proxyMode"] =
+                controller.store.data.settings
+                    .effectiveProxyMode()
             report["proxyType"] =
                 controller.network.client.proxySelector
                     .select(java.net.URI("https://piston-meta.mojang.com"))
@@ -134,14 +164,16 @@ private suspend fun runRealGameSmoke() {
                     .name
             controller.accounts.addOffline("MoliTester")
             val requestedLoader =
-                if (loader == LoaderType.Vanilla) ""
-                else
+                if (loader == LoaderType.Vanilla) {
+                    ""
+                } else {
                     loaderVersion.ifBlank {
                         controller.installer
                             .loaderVersions(loader, version)
                             .first { it.stable }
                             .version
                     }
+                }
             report["loaderVersion"] = requestedLoader
             if (prepared) {
                 val imported =
@@ -152,7 +184,7 @@ private suspend fun runRealGameSmoke() {
                 check(
                     imported.gameVersion == version &&
                         imported.loader == loader &&
-                        imported.installed
+                        imported.installed,
                 )
                 controller.store.mutate {
                     it.copy(instances = listOf(imported), selectedInstanceId = imported.id)
@@ -160,11 +192,14 @@ private suspend fun runRealGameSmoke() {
             } else {
                 awaitJob(
                     controller.install(
-                        InstallRequest("Real game acceptance", version, loader, requestedLoader)
-                    )
+                        InstallRequest("Real game acceptance", version, loader, requestedLoader),
+                    ),
                 )
             }
-            val instance = controller.store.instance(controller.store.data.selectedInstanceId!!)
+            val instance =
+                controller.store.instance(
+                    checkNotNull(controller.store.data.selectedInstanceId),
+                )
             val resolved =
                 VersionResolver(controller.store.minecraftRoot(instance), controller.platform)
                     .resolve(instance.versionId)
@@ -192,7 +227,7 @@ private suspend fun runRealGameSmoke() {
             val screenshots = testRoot.resolve("screenshots").apply { createDirectories() }
             val frame =
                 screenshots.resolve(
-                    "MoliFox-game-${controller.platform.osName}-${loader.name.lowercase()}.png"
+                    "MoliFox-game-${controller.platform.osName}-${loader.name.lowercase()}.png",
                 )
             val statusFile = testRoot.resolve("game-status.json")
             println("GAME_REVIEW_DIRECTORY $testRoot")
@@ -221,15 +256,19 @@ private suspend fun runRealGameSmoke() {
                     val window = GameWindowCapture.find(handle.pid(), controller.platform.osName)
                     if (window != null) {
                         val clientSize =
-                            if (window.os == "windows") WindowsGameWindow.clientSize(window)
-                            else window.rectangle.width to window.rectangle.height
+                            if (window.os == "windows") {
+                                WindowsGameWindow.clientSize(window)
+                            } else {
+                                window.rectangle.width to window.rectangle.height
+                            }
                         report["clientWidth"] = clientSize.first
                         report["clientHeight"] = clientSize.second
                         GameWindowCapture.capture(window, frame)
                         report["stage"] = "waiting-for-visual-review"
                         report["workingScreenshot"] = frame.toString()
-                        if (frame.isRegularFile())
+                        if (frame.isRegularFile()) {
                             report["screenshot"] = "docs/screenshots/current/${frame.fileName}"
+                        }
                         writeJson(statusFile, report)
                         val input = testRoot.resolve("game-input.json")
                         if (input.isRegularFile()) {
@@ -272,7 +311,8 @@ private suspend fun runRealGameSmoke() {
             }
             withTimeout(30_000) { while (controller.game.isRunning) delay(200) }
             val exit =
-                controller.state.value.logs.lastOrNull { it.message.startsWith("游戏已退出，退出码 ") }
+                controller.state.value.logs
+                    .lastOrNull { it.message.startsWith("游戏已退出，退出码 ") }
             check(exit != null && exit.message.endsWith("退出码 0")) {
                 "Game did not exit normally: ${exit?.message}"
             }
@@ -308,20 +348,28 @@ internal data class GameWindow(
 
 /** Looks up and captures only a window whose process is a child launched by this check. */
 internal object GameWindowCapture {
-    fun find(pid: Long, os: String): GameWindow? =
-        if (os == "windows") WindowsGameWindow.find(pid) else linuxWindow(pid)
+    fun find(
+        pid: Long,
+        os: String,
+    ): GameWindow? = if (os == "windows") WindowsGameWindow.find(pid) else linuxWindow(pid)
 
-    private fun command(vararg args: String): String? = runCatching {
-        val process = ProcessBuilder(*args).redirectErrorStream(true).start()
-        try {
-            check(process.waitFor(3, TimeUnit.SECONDS))
-            if (process.exitValue() == 0) process.inputStream.bufferedReader().readText().trim()
-            else null
-        } finally {
-            if (process.isAlive) process.destroyForcibly()
-        }
-    }
-        .getOrNull()
+    private fun command(vararg args: String): String? =
+        runCatching {
+            val process = ProcessBuilder(*args).redirectErrorStream(true).start()
+            try {
+                check(process.waitFor(3, TimeUnit.SECONDS))
+                if (process.exitValue() == 0) {
+                    process.inputStream
+                        .bufferedReader()
+                        .readText()
+                        .trim()
+                } else {
+                    null
+                }
+            } finally {
+                if (process.isAlive) process.destroyForcibly()
+            }
+        }.getOrNull()
 
     private fun linuxWindow(pid: Long): GameWindow? {
         val id =
@@ -335,8 +383,7 @@ internal object GameWindowCapture {
                 .mapNotNull { line ->
                     val pair = line.split('=', limit = 2)
                     if (pair.size == 2) pair[1].toIntOrNull()?.let { pair[0] to it } else null
-                }
-                .toMap()
+                }.toMap()
         return GameWindow(
             "linux",
             id,
@@ -351,13 +398,18 @@ internal object GameWindowCapture {
     }
 
     private fun activate(window: GameWindow): Boolean =
-        if (window.os == "windows") WindowsGameWindow.activate(window)
-        else {
+        if (window.os == "windows") {
+            WindowsGameWindow.activate(window)
+        } else {
             command("xdotool", "windowactivate", "--sync", window.id)
             command("xdotool", "getactivewindow") == window.id
         }
 
-    fun click(window: GameWindow, x: Int, y: Int) {
+    fun click(
+        window: GameWindow,
+        x: Int,
+        y: Int,
+    ) {
         check(x in 0 until window.rectangle.width && y in 0 until window.rectangle.height)
         check(activate(window)) { "Game window lost focus; input was not sent" }
         if (window.os == "linux") {
@@ -375,7 +427,7 @@ internal object GameWindowCapture {
                     "0.12",
                     "mouseup",
                     "1",
-                ) != null
+                ) != null,
             ) {
                 "Cannot click the owned game window"
             }
@@ -390,7 +442,10 @@ internal object GameWindowCapture {
         }
     }
 
-    fun capture(window: GameWindow, destination: Path) {
+    fun capture(
+        window: GameWindow,
+        destination: Path,
+    ) {
         val active = activate(window)
         if (active && window.rectangle.width > 100 && window.rectangle.height > 100) {
             val writing = destination.resolveSibling(".${destination.fileName}.writing")
@@ -412,7 +467,10 @@ internal object GameWindowCapture {
     }
 
     fun close(window: GameWindow) {
-        if (window.os == "windows") WindowsGameWindow.close(window)
-        else LinuxGameWindow.close(window)
+        if (window.os == "windows") {
+            WindowsGameWindow.close(window)
+        } else {
+            LinuxGameWindow.close(window)
+        }
     }
 }

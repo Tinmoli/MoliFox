@@ -17,7 +17,17 @@ import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.absolute
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readAttributes
 
 /**
  * `saves/<世界>/datapacks/` 里的一个数据包：`.zip` 文件或文件夹。
@@ -58,18 +68,24 @@ private const val VANILLA_PACK_ID = "vanilla"
  * - `session.lock` 被占用（世界正被游戏打开）时拒绝安装、删除与切换。
  * - 删除走 [PlatformServices.moveToTrash]，并尽力清掉 `level.dat` 里对应的旧条目（失败只记日志）。
  */
-class DatapackManager(private val store: LauncherStore) {
-
+class DatapackManager(
+    private val store: LauncherStore,
+) {
     /** 列出一个世界的数据包与启用状态；世界不存在或 level.dat 无法解析时不抛异常，返回只读清单。 */
-    fun list(instanceId: String, worldName: String): DatapackListing {
+    fun list(
+        instanceId: String,
+        worldName: String,
+    ): DatapackListing {
         val world = worldDirectory(instanceId, worldName)
         val packs =
             runCatching { packsOf(readNbtDocument(world.resolve("level.dat"))) }.getOrNull()
         val directory = world.resolve(DATAPACKS_DIRECTORY)
         val children =
-            if (!directory.isDirectory(LinkOption.NOFOLLOW_LINKS) || isLink(directory))
+            if (!directory.isDirectory(LinkOption.NOFOLLOW_LINKS) || isLink(directory)) {
                 emptyList()
-            else runCatching { directory.listDirectoryEntries() }.getOrDefault(emptyList())
+            } else {
+                runCatching { directory.listDirectoryEntries() }.getOrDefault(emptyList())
+            }
         val entries =
             children
                 .mapNotNull { child -> describe(child, packs) }
@@ -94,7 +110,11 @@ class DatapackManager(private val store: LauncherStore) {
      *
      * 只接受根目录带 `pack.mcmeta`、且 `pack.pack_format` 为数字的压缩包；同名文件已存在时拒绝，不覆盖。
      */
-    fun install(instanceId: String, worldName: String, archive: Path): String {
+    fun install(
+        instanceId: String,
+        worldName: String,
+        archive: Path,
+    ): String {
         requireGameStopped(instanceId)
         val world = worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
@@ -120,7 +140,11 @@ class DatapackManager(private val store: LauncherStore) {
         } finally {
             Files.deleteIfExists(staging)
         }
-        store.log("已安装数据包：${store.instance(instanceId).name} / $worldName / $name（pack_format $packFormat）")
+        store.log(
+            "已安装数据包：${store.instance(
+                instanceId,
+            ).name} / $worldName / $name（pack_format $packFormat）",
+        )
         return name
     }
 
@@ -130,20 +154,29 @@ class DatapackManager(private val store: LauncherStore) {
      * 启用 = 从 `Disabled` 移除并加入 `Enabled`，禁用反之；其他条目（`vanilla`、其他数据包）原样保留。
      * 写入前要求 `level.dat` 可解析、世界未被游戏打开，写入用临时文件 + 原子改名。
      */
-    fun setEnabled(instanceId: String, worldName: String, name: String, enabled: Boolean) {
+    fun setEnabled(
+        instanceId: String,
+        worldName: String,
+        name: String,
+        enabled: Boolean,
+    ) {
         requireGameStopped(instanceId)
         val world = worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
             "世界「$worldName」正在游戏中打开，请先退出游戏再切换数据包"
         }
         val entry = datapackEntry(world, name) ?: throw IllegalArgumentException("找不到数据包：$name")
-        require(entry.isRegularFile(LinkOption.NOFOLLOW_LINKS) || entry.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
+        require(
+            entry.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
+                entry.isDirectory(LinkOption.NOFOLLOW_LINKS),
+        ) {
             "数据包路径不是文件或文件夹：$name"
         }
         val level = world.resolve("level.dat")
-        val before = runCatching { Files.readAllBytes(level) }.getOrElse {
-            throw IllegalArgumentException("无法读取 level.dat，数据包开关暂时只读")
-        }
+        val before =
+            runCatching { Files.readAllBytes(level) }.getOrElse {
+                throw IllegalArgumentException("无法读取 level.dat，数据包开关暂时只读")
+            }
         val document =
             runCatching { readNbtDocument(level) }.getOrElse {
                 throw IllegalArgumentException("level.dat 无法解析，数据包开关暂时只读；未修改任何文件")
@@ -159,13 +192,19 @@ class DatapackManager(private val store: LauncherStore) {
         if (enabled) {
             nextDisabled = currentDisabled.filterNot { matchesPackId(it, name) }
             nextEnabled =
-                if (currentEnabled.any { matchesPackId(it, name) }) currentEnabled
-                else currentEnabled + existingId
+                if (currentEnabled.any { matchesPackId(it, name) }) {
+                    currentEnabled
+                } else {
+                    currentEnabled + existingId
+                }
         } else {
             nextEnabled = currentEnabled.filterNot { matchesPackId(it, name) }
             nextDisabled =
-                if (currentDisabled.any { matchesPackId(it, name) }) currentDisabled
-                else currentDisabled + existingId
+                if (currentDisabled.any { matchesPackId(it, name) }) {
+                    currentDisabled
+                } else {
+                    currentDisabled + existingId
+                }
         }
         if (nextEnabled == currentEnabled && nextDisabled == currentDisabled) return
         val root = withPacks(document.root, nextEnabled, nextDisabled)
@@ -182,12 +221,18 @@ class DatapackManager(private val store: LauncherStore) {
             Files.deleteIfExists(temporary)
         }
         store.log(
-            "数据包已${if (enabled) "启用" else "禁用"}：${store.instance(instanceId).name} / $worldName / $name"
+            "数据包已${if (enabled) "启用" else "禁用"}：${store.instance(
+                instanceId,
+            ).name} / $worldName / $name",
         )
     }
 
     /** 删除一个数据包（移入回收站），并尽力清理 `level.dat` 里的旧条目；找不到或失败返回 false。 */
-    fun delete(instanceId: String, worldName: String, name: String): Boolean {
+    fun delete(
+        instanceId: String,
+        worldName: String,
+        name: String,
+    ): Boolean {
         requireGameStopped(instanceId)
         val world = worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
@@ -202,17 +247,19 @@ class DatapackManager(private val store: LauncherStore) {
                     store.log("清理 level.dat 里的数据包条目失败：${it.message ?: name}", true)
                 }
             true
+        }.getOrElse {
+            store.log("删除数据包失败：${it.message ?: name}", true)
+            false
         }
-            .getOrElse {
-                store.log("删除数据包失败：${it.message ?: name}", true)
-                false
-            }
     }
 
     // ---- 内部 ----
 
     /** 从 level.dat 的列表里移除一个数据包条目；level.dat 解析失败时跳过，不算删除失败。 */
-    private fun forgetPack(world: Path, name: String) {
+    private fun forgetPack(
+        world: Path,
+        name: String,
+    ) {
         val level = world.resolve("level.dat")
         val before = runCatching { Files.readAllBytes(level) }.getOrNull() ?: return
         val document = runCatching { readNbtDocument(level) }.getOrNull() ?: return
@@ -238,7 +285,10 @@ class DatapackManager(private val store: LauncherStore) {
         return Triple(packs, packStrings(packs, "Enabled"), packStrings(packs, "Disabled"))
     }
 
-    private fun packStrings(packs: NbtCompound, key: String): List<String> {
+    private fun packStrings(
+        packs: NbtCompound,
+        key: String,
+    ): List<String> {
         val list = packs.list(key) ?: return emptyList()
         require(list.elementType == NBT_TAG_STRING || list.elements.isEmpty()) {
             "level.dat 的 Packs.$key 不是字符串列表，未修改文件"
@@ -261,26 +311,38 @@ class DatapackManager(private val store: LauncherStore) {
         val enabledIds =
             if (packs.list("Enabled") == null && VANILLA_PACK_ID !in enabled) {
                 listOf(VANILLA_PACK_ID) + enabled
-            } else enabled
+            } else {
+                enabled
+            }
         val updated =
             NbtCompound(
                 packs.entries +
                     ("Enabled" to NbtList(enabledIds.map(::NbtString), NBT_TAG_STRING)) +
-                    ("Disabled" to NbtList(disabled.map(::NbtString), NBT_TAG_STRING))
+                    ("Disabled" to NbtList(disabled.map(::NbtString), NBT_TAG_STRING)),
             )
-        return NbtCompound(root.entries + ("Data" to NbtCompound(data.entries + ("Packs" to updated))))
+        return NbtCompound(
+            root.entries + ("Data" to NbtCompound(data.entries + ("Packs" to updated))),
+        )
     }
 
     /** 数据包标识匹配：同时接受 `file/<名称>` 与裸名称（手改过的 level.dat 常见）。 */
-    private fun matchesPackId(id: String, name: String): Boolean =
-        id == name || id == "file/$name"
+    private fun matchesPackId(
+        id: String,
+        name: String,
+    ): Boolean = id == name || id == "file/$name"
 
-    private fun describe(path: Path, packs: Triple<NbtCompound, List<String>, List<String>>?): DatapackEntry? {
+    private fun describe(
+        path: Path,
+        packs: Triple<NbtCompound, List<String>, List<String>>?,
+    ): DatapackEntry? {
         val attributes =
             runCatching {
-                Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-            }
-                .getOrNull() ?: return null
+                Files.readAttributes(
+                    path,
+                    BasicFileAttributes::class.java,
+                    LinkOption.NOFOLLOW_LINKS,
+                )
+            }.getOrNull() ?: return null
         if (attributes.isSymbolicLink || attributes.isOther) return null
         val name = path.fileName?.toString() ?: return null
         // 安装过程的临时文件不列出。
@@ -308,42 +370,49 @@ class DatapackManager(private val store: LauncherStore) {
     /** 校验 `pack.mcmeta` 与 `pack_format`，返回 pack_format；不合法时抛中文错误。 */
     private fun validatePackArchive(archive: Path): Int =
         runCatching {
-                ZipFile(archive.toFile()).use { zip ->
-                    val manifest = zip.getEntry("pack.mcmeta")
+            ZipFile(archive.toFile()).use { zip ->
+                val manifest =
+                    zip.getEntry("pack.mcmeta")
                         ?: throw IllegalArgumentException("数据包缺少 pack.mcmeta（必须在 ZIP 根目录）")
-                    require(!manifest.isDirectory && manifest.size in 1..65536L) {
-                        "pack.mcmeta 大小异常"
-                    }
-                    val text = zip.getInputStream(manifest).use { it.readNBytes(65537) }
-                    require(text.size <= 65536) { "pack.mcmeta 过大" }
-                    val json = JsonParser.parseString(text.toString(Charsets.UTF_8)).asJsonObject
-                    val pack = json.getAsJsonObject("pack") ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack 对象")
-                    val format =
-                        pack.get("pack_format") ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack_format")
-                    require(format.isJsonPrimitive && format.asJsonPrimitive.isNumber) {
-                        "pack.mcmeta 的 pack_format 不是数字"
-                    }
-                    val value = format.asInt
-                    require(value in 1..1000) { "pack_format 超出支持范围：$value" }
-                    value
+                require(!manifest.isDirectory && manifest.size in 1..65536L) {
+                    "pack.mcmeta 大小异常"
                 }
+                val text = zip.getInputStream(manifest).use { it.readNBytes(65537) }
+                require(text.size <= 65536) { "pack.mcmeta 过大" }
+                val json = JsonParser.parseString(text.toString(Charsets.UTF_8)).asJsonObject
+                val pack =
+                    json.getAsJsonObject("pack")
+                        ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack 对象")
+                val format =
+                    pack.get("pack_format")
+                        ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack_format")
+                require(format.isJsonPrimitive && format.asJsonPrimitive.isNumber) {
+                    "pack.mcmeta 的 pack_format 不是数字"
+                }
+                val value = format.asInt
+                require(value in 1..1000) { "pack_format 超出支持范围：$value" }
+                value
             }
-            .getOrElse { failure ->
-                if (failure is IllegalArgumentException) throw failure
-                throw IllegalArgumentException("数据包不是有效的 ZIP：${archive.name}", failure)
-            }
+        }.getOrElse { failure ->
+            if (failure is IllegalArgumentException) throw failure
+            throw IllegalArgumentException("数据包不是有效的 ZIP：${archive.name}", failure)
+        }
 
     /** 世界目录：必须是 `saves/` 的直接普通子目录，并带 level.dat。 */
-    private fun worldDirectory(instanceId: String, worldName: String): Path {
+    private fun worldDirectory(
+        instanceId: String,
+        worldName: String,
+    ): Path {
         require(worldName.isNotBlank() && worldName.length <= 80) { "世界名称无效" }
         require('/' !in worldName && '\\' !in worldName && ':' !in worldName) {
             "世界名称无效：$worldName"
         }
         require(store.instance(instanceId).id.isNotBlank())
         val saves = store.instancePath(instanceId).resolve("saves")
-        val world = runCatching { safePath(saves, worldName) }.getOrElse {
-            throw IllegalArgumentException("世界名称不安全：$worldName")
-        }
+        val world =
+            runCatching { safePath(saves, worldName) }.getOrElse {
+                throw IllegalArgumentException("世界名称不安全：$worldName")
+            }
         require(world.parent.toAbsolutePath().normalize() == absolute(saves)) {
             "只能操作 saves 目录下的世界：$worldName"
         }
@@ -352,14 +421,17 @@ class DatapackManager(private val store: LauncherStore) {
         }
         require(
             world.resolve("level.dat").isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
-                !isLink(world.resolve("level.dat"))
+                !isLink(world.resolve("level.dat")),
         ) {
             "世界缺少 level.dat，无法管理数据包：$worldName"
         }
         return world
     }
 
-    private fun datapacksDirectory(world: Path, create: Boolean): Path {
+    private fun datapacksDirectory(
+        world: Path,
+        create: Boolean,
+    ): Path {
         val directory = world.resolve(DATAPACKS_DIRECTORY)
         if (directory.exists(LinkOption.NOFOLLOW_LINKS)) {
             require(directory.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(directory)) {
@@ -371,7 +443,10 @@ class DatapackManager(private val store: LauncherStore) {
         return directory
     }
 
-    private fun datapackEntry(world: Path, name: String): Path? {
+    private fun datapackEntry(
+        world: Path,
+        name: String,
+    ): Path? {
         require(name.isNotBlank() && name.length <= 200) { "数据包名称无效" }
         require('/' !in name && '\\' !in name && ':' !in name) { "数据包名称无效：$name" }
         val directory = world.resolve(DATAPACKS_DIRECTORY)
@@ -382,26 +457,33 @@ class DatapackManager(private val store: LauncherStore) {
     }
 
     /** 原始 `level.dat` 的滚动备份：每个世界一个文件，覆盖写，不随操作次数膨胀。 */
-    private fun backupLevelDat(world: Path, bytes: ByteArray) {
+    private fun backupLevelDat(
+        world: Path,
+        bytes: ByteArray,
+    ) {
         runCatching {
-                val directory = store.dataDirectory.resolve("backups/level-dat")
-                directory.createDirectories()
-                val label =
-                    world.fileName.toString().replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
-                Files.write(
-                    directory.resolve("$label.dat"),
-                    bytes,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE,
-                )
-            }
-            .onFailure { store.log("备份 level.dat 失败：${it.message ?: world.fileName}", true) }
+            val directory = store.dataDirectory.resolve("backups/level-dat")
+            directory.createDirectories()
+            val label =
+                world.fileName.toString().replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
+            Files.write(
+                directory.resolve("$label.dat"),
+                bytes,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE,
+            )
+        }.onFailure { store.log("备份 level.dat 失败：${it.message ?: world.fileName}", true) }
     }
 
     private fun requireGameStopped(instanceId: String) {
         val target = taskPathKey(store.instancePath(instanceId))
-        require(store.state.value.runningGames.none { taskPathKey(store.instancePath(it.instanceId)) == target }) {
+        require(
+            store.state.value.runningGames.none {
+                taskPathKey(store.instancePath(it.instanceId)) ==
+                    target
+            },
+        ) {
             "游戏正在使用此存档目录，请先退出游戏"
         }
     }
@@ -416,16 +498,19 @@ class DatapackManager(private val store: LauncherStore) {
                         dir: Path,
                         attrs: BasicFileAttributes,
                     ): FileVisitResult =
-                        if (dir != directory && (attrs.isOther || attrs.isSymbolicLink))
+                        if (dir != directory && (attrs.isOther || attrs.isSymbolicLink)) {
                             FileVisitResult.SKIP_SUBTREE
-                        else FileVisitResult.CONTINUE
+                        } else {
+                            FileVisitResult.CONTINUE
+                        }
 
                     override fun visitFile(
                         file: Path,
                         attrs: BasicFileAttributes,
                     ): FileVisitResult {
-                        if (attrs.isRegularFile && !attrs.isOther)
+                        if (attrs.isRegularFile && !attrs.isOther) {
                             total += runCatching { file.fileSize() }.getOrDefault(0L)
+                        }
                         return FileVisitResult.CONTINUE
                     }
 
@@ -441,13 +526,16 @@ class DatapackManager(private val store: LauncherStore) {
 
     private fun absolute(path: Path): Path = path.toAbsolutePath().normalize()
 
-    private fun isLink(path: Path): Boolean = runCatching {
-        Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-    }
-        .map { it.isSymbolicLink || it.isOther }
-        .getOrDefault(false)
+    private fun isLink(path: Path): Boolean =
+        runCatching {
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        }.map { it.isSymbolicLink || it.isOther }
+            .getOrDefault(false)
 
-    private fun filesMove(source: Path, target: Path) {
+    private fun filesMove(
+        source: Path,
+        target: Path,
+    ) {
         runCatching { Files.move(source, target, StandardCopyOption.ATOMIC_MOVE) }
             .getOrElse { Files.move(source, target, StandardCopyOption.REPLACE_EXISTING) }
     }

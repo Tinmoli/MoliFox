@@ -7,12 +7,32 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,16 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.EntryKind
+import dev.molifox.core.ping
 import java.time.Duration
 import java.time.Instant
-
-internal data class RecentPlayActions(
-    val play: (RecentPlayItem) -> Unit,
-    val primary: (RecentPlayItem) -> Unit,
-    val hide: (RecentPlayItem) -> Unit,
-    val delete: (RecentPlayItem) -> Unit,
-)
 
 @Composable
 internal fun RecentPlayRow(
@@ -42,13 +56,23 @@ internal fun RecentPlayRow(
     actions: RecentPlayActions,
 ) {
     val server = item.kind == EntryKind.Server
-    val snapshot = if (server) rememberRecentServerStatus(item.key, refresh) else null
+    val snapshot =
+        if (server) {
+            rememberRecentServerStatus(
+                item.key,
+                refresh,
+                actions.statusQuery,
+            )
+        } else {
+            null
+        }
     val shape = RoundedCornerShape(Metrics.innerRadius)
     BoxWithConstraints(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .hoverHighlight(shape)
             .padding(horizontal = 8.dp, vertical = 8.dp)
-            .semantics { contentDescription = "最近游玩条目 ${item.title}" }
+            .semantics { contentDescription = "最近游玩条目 ${item.title}" },
     ) {
         val compact = maxWidth < 550.dp
         Column(
@@ -63,15 +87,19 @@ internal fun RecentPlayRow(
                 RecentIdentity(item, Modifier.width(252.dp))
                 if (!compact) {
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        if (server) RecentMotd(snapshot?.status?.motd.orEmpty())
-                        else
+                        if (server) {
+                            RecentMotd(snapshot?.status?.motd.orEmpty())
+                        } else {
                             Text(
                                 "单人存档",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
                     }
-                } else Spacer(Modifier.weight(1f))
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
                 Column(
                     Modifier.width(124.dp),
                     horizontalAlignment = Alignment.End,
@@ -92,14 +120,18 @@ internal fun RecentPlayRow(
                     }
                 }
             }
-            if (compact && server)
+            if (compact && server) {
                 RecentMotd(snapshot?.status?.motd.orEmpty(), Modifier.fillMaxWidth())
+            }
         }
     }
 }
 
 @Composable
-private fun RecentIdentity(item: RecentPlayItem, modifier: Modifier) {
+private fun RecentIdentity(
+    item: RecentPlayItem,
+    modifier: Modifier,
+) {
     Row(
         modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -163,7 +195,7 @@ private fun RecentIdentity(item: RecentPlayItem, modifier: Modifier) {
                 }
             }
             val usage = item.usage
-            if (usage.totalSeconds > 0 || usage.active)
+            if (usage.totalSeconds > 0 || usage.active) {
                 Text(
                     (if (usage.active) "本次 ${durationLabel(usage.activeSeconds)} · " else "") +
                         (if (usage.estimated) "累计约 " else "累计 ") +
@@ -173,25 +205,29 @@ private fun RecentIdentity(item: RecentPlayItem, modifier: Modifier) {
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
         }
     }
 }
 
 @Composable
-private fun RecentServerMetrics(title: String, snapshot: RecentServerStatus?) {
+private fun RecentServerMetrics(
+    title: String,
+    snapshot: RecentServerStatus?,
+) {
     val status = snapshot?.status
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (status == null)
+        if (status == null) {
             Text(
                 if (snapshot == null) "查询中…" else "离线",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        else {
+        } else {
             Text("${status.players}/${status.maxPlayers}", fontSize = 11.sp, maxLines = 1)
             Spacer(Modifier.width(8.dp))
             val color =
@@ -216,12 +252,13 @@ private fun RecentServerMetrics(title: String, snapshot: RecentServerStatus?) {
                 ) {
                     repeat(4) { index ->
                         Box(
-                            Modifier.width(2.dp)
+                            Modifier
+                                .width(2.dp)
                                 .height((4 + index * 2.5).dp)
                                 .background(
                                     if (index < litBars) color else color.copy(alpha = .22f),
                                     RoundedCornerShape(1.dp),
-                                )
+                                ),
                         )
                     }
                 }
@@ -231,7 +268,11 @@ private fun RecentServerMetrics(title: String, snapshot: RecentServerStatus?) {
 }
 
 @Composable
-private fun RecentRowMenu(item: RecentPlayItem, busy: Boolean, actions: RecentPlayActions) {
+private fun RecentRowMenu(
+    item: RecentPlayItem,
+    busy: Boolean,
+    actions: RecentPlayActions,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         SmallIconButton(Icons.Outlined.MoreHoriz, "更多操作 ${item.title}", onClick = { open = true })

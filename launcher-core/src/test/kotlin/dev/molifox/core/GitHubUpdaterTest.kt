@@ -5,15 +5,26 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import java.security.MessageDigest
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.security.MessageDigest
+import kotlin.io.path.readBytes
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class GitHubUpdaterTest {
     @TempDir lateinit var directory: Path
@@ -32,17 +43,16 @@ class GitHubUpdaterTest {
         tag: String,
         asset: Map<String, Any> = emptyMap(),
         prerelease: Boolean = false,
-    ) =
-        mapOf(
-            "tag_name" to tag,
-            "draft" to false,
-            "prerelease" to prerelease,
-            "name" to "MoliFox $tag",
-            "html_url" to "${MoliFoxIdentity.releases}/tag/$tag",
-            "body" to "Release notes",
-            "published_at" to "2026-10-28T10:00:00Z",
-            "assets" to listOf(asset).filter { it.isNotEmpty() },
-        )
+    ) = mapOf(
+        "tag_name" to tag,
+        "draft" to false,
+        "prerelease" to prerelease,
+        "name" to "MoliFox $tag",
+        "html_url" to "${MoliFoxIdentity.RELEASES}/tag/$tag",
+        "body" to "Release notes",
+        "published_at" to "2026-10-28T10:00:00Z",
+        "assets" to listOf(asset).filter { it.isNotEmpty() },
+    )
 
     @Test
     fun `check excludes previews and verifies downloaded bytes before reporting success`() =
@@ -56,8 +66,11 @@ class GitHubUpdaterTest {
                     }
                 val store = LauncherStore(DesktopPlatform(), directory)
                 val filename =
-                    if (store.platform.osName == "windows") "MoliFox.exe"
-                    else "MoliFox-linux-x64.run"
+                    if (store.platform.osName == "windows") {
+                        "MoliFox.exe"
+                    } else {
+                        "MoliFox-linux-x64.run"
+                    }
                 val asset =
                     mapOf(
                         "name" to filename,
@@ -73,9 +86,9 @@ class GitHubUpdaterTest {
                                     release("v0.10.0", asset),
                                     release("v9.0.0", prerelease = true),
                                     release("v0.9.0"),
-                                )
-                            )
-                        )
+                                ),
+                            ),
+                        ),
                 )
                 NetworkClient().use { network ->
                     val updater =
@@ -94,16 +107,29 @@ class GitHubUpdaterTest {
                         val jobs = JobQueue(store, scope)
                         jobs.enqueue("Update") { updater.download(release, this) }
                         jobs.awaitIdle()
-                        assertEquals(JobStatus.Completed, store.state.value.jobs.single().status)
+                        assertEquals(
+                            JobStatus.Completed,
+                            store.state.value.jobs
+                                .single()
+                                .status,
+                        )
                         assertContentEquals(
                             payload,
-                            Path.of(assertNotNull(store.state.value.update.downloadedFile))
+                            Path
+                                .of(assertNotNull(store.state.value.update.downloadedFile))
                                 .readBytes(),
                         )
-                        assertEquals(1, store.state.value.jobs.single().completedFiles)
+                        assertEquals(
+                            1,
+                            store.state.value.jobs
+                                .single()
+                                .completedFiles,
+                        )
                         assertEquals(
                             payload.size.toLong(),
-                            store.state.value.jobs.single().downloadedBytes,
+                            store.state.value.jobs
+                                .single()
+                                .downloadedBytes,
                         )
                         assertEquals(
                             "/repos/Tinmoli/MoliFox/releases?per_page=100",
@@ -117,24 +143,25 @@ class GitHubUpdaterTest {
         }
 
     @Test
-    fun `failed check is visible and untrusted release origins are rejected`(): Unit = runBlocking {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(403))
-            server.start()
-            val store = LauncherStore(DesktopPlatform(), directory)
-            NetworkClient().use { network ->
-                val updater =
-                    GitHubUpdater(store, network, server.loopbackUrl("/repos/test").toString())
-                updater.check()
-                assertTrue(assertNotNull(store.state.value.update.error).contains("受限"))
-                assertFalse(store.state.value.update.checking)
-                val wrong = gson.toJsonTree(release("v0.4.0")).asJsonObject
-                wrong.addProperty(
-                    "html_url",
-                    "https://github.com/other/project/releases/tag/v0.4.0",
-                )
-                assertFailsWith<IllegalArgumentException> { updater.parseRelease(wrong) }
+    fun `failed check is visible and untrusted release origins are rejected`(): Unit =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().setResponseCode(403))
+                server.start()
+                val store = LauncherStore(DesktopPlatform(), directory)
+                NetworkClient().use { network ->
+                    val updater =
+                        GitHubUpdater(store, network, server.loopbackUrl("/repos/test").toString())
+                    updater.check()
+                    assertTrue(assertNotNull(store.state.value.update.error).contains("受限"))
+                    assertFalse(store.state.value.update.checking)
+                    val wrong = gson.toJsonTree(release("v0.4.0")).asJsonObject
+                    wrong.addProperty(
+                        "html_url",
+                        "https://github.com/other/project/releases/tag/v0.4.0",
+                    )
+                    assertFailsWith<IllegalArgumentException> { updater.parseRelease(wrong) }
+                }
             }
         }
-    }
 }

@@ -13,13 +13,19 @@ internal interface ContentBackend {
 
     suspend fun version(id: String): JsonObject
 
-    suspend fun versions(id: String, instance: GameInstance, kind: String): List<JsonObject>
+    suspend fun versions(
+        id: String,
+        instance: GameInstance,
+        kind: String,
+    ): List<JsonObject>
 
     suspend fun browseVersions(id: String): List<JsonObject>
 }
 
-internal class ModrinthBackend(private val network: NetworkClient, private val api: String) :
-    ContentBackend {
+internal class ModrinthBackend(
+    private val network: NetworkClient,
+    private val api: String,
+) : ContentBackend {
     override suspend fun project(id: String) =
         network.json("$api/project/${encoded(id)}").asJsonObject
 
@@ -39,9 +45,11 @@ internal class ModrinthBackend(private val network: NetworkClient, private val a
     ): List<JsonObject> {
         val filters =
             "game_versions=${encoded(gson.toJson(listOf(instance.gameVersion)))}" +
-                if (kind == "mod")
+                if (kind == "mod") {
                     "&loaders=${encoded(gson.toJson(listOf(instance.loader.name.lowercase())))}"
-                else ""
+                } else {
+                    ""
+                }
         return network.json("$api/project/${encoded(id)}/version?$filters").asJsonArray.map {
             it.asJsonObject
         }
@@ -58,8 +66,11 @@ internal class ContentBackends(
 
     override suspend fun version(id: String) = backend(id).version(id)
 
-    override suspend fun versions(id: String, instance: GameInstance, kind: String) =
-        backend(id).versions(id, instance, kind)
+    override suspend fun versions(
+        id: String,
+        instance: GameInstance,
+        kind: String,
+    ) = backend(id).versions(id, instance, kind)
 
     override suspend fun browseVersions(id: String) = backend(id).browseVersions(id)
 }
@@ -74,11 +85,10 @@ data class ManualContentFile(
 class ManualContentRequired(
     val files: List<ManualContentFile>,
     instruction: String = "请从以上官方页面下载；普通模组可使用导入模组，整合包 ZIP 可从本地导入。",
-) :
-    IllegalStateException(
+) : IllegalStateException(
         "以下文件需要手动从项目页面下载，未猜测或绕过下载地址：\n" +
             files.joinToString("\n") { "${it.filename} · ${it.website}" } +
-            "\n$instruction"
+            "\n$instruction",
     )
 
 /** Stable website routing for the UI; IDs remain independent of the currently selected source. */
@@ -91,7 +101,9 @@ fun contentWebsite(hit: ContentHit): String {
             "datapack" -> "data-packs"
             else -> "mc-mods"
         }
-    return if (hit.id.startsWith("curseforge:"))
+    return if (hit.id.startsWith("curseforge:")) {
         "https://www.curseforge.com/minecraft/$path/${encoded(hit.slug)}"
-    else "https://modrinth.com/${hit.type}/${encoded(hit.slug)}"
+    } else {
+        "https://modrinth.com/${hit.type}/${encoded(hit.slug)}"
+    }
 }

@@ -14,18 +14,29 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
-import kotlin.io.path.*
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 /**
  * 删除被拒绝：实例自己的版本/游戏目录仍被其他实例使用，或目录无法安全核对。
  *
  * 抛出这个异常时磁盘与记录都不动，界面直接展示 [message]，不会出现「记录删了、文件还在」的半成品。
  */
-class InstanceDeletionBlockedException(message: String) : IOException(message)
+class InstanceDeletionBlockedException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
 
-/** 删除实例的计划：真正会永久删除的路径，以及因共用而保留的路径。 */
+/** 删除实例的计划：待删除或移入回收站的路径，以及保留原因。 */
 data class InstanceDeletionPlan(
-    /** 要删除的绝对路径，只可能是 `<游戏根>/versions/<版本标识>` 或 `<游戏根>/instances/<实例 id>`。 */
+    /** 实例版本目录与仍存在的旧实例目录；共享游戏根不在范围内。 */
     val targets: List<Path>,
     /** 保留不删的路径与原因，写入日志供用户核对。 */
     val preserved: List<String> = emptyList(),
@@ -44,25 +55,19 @@ data class InstanceDeletionReport(
 )
 
 /** 删除实例会一并删除的存档：名称与上次修改时间，只用于确认框展示。 */
-data class InstanceDeletionWorld(val name: String, val modified: Instant?)
+data class InstanceDeletionWorld(
+    val name: String,
+    val modified: Instant?,
+)
 
 /**
- * 删除实例的版本文件夹与游戏文件夹：默认移入系统回收站，按住 Shift 时永久删除。
- *
- * 删除范围就是实例自己的两部分目录：
- * - `<游戏根>/versions/<版本标识>/`：版本 json、客户端 jar；另一个实例仍在用同一版本目录时整次删除被拒绝。
- * - `<游戏根>/instances/<实例 id>/`：实例的独立游戏目录（含 `mods/`、`config/`、`saves/`、
- *   `resourcepacks/`、`shaderpacks/`、`logs/` 等全部内容）。
- *
- * 「实例要么有记录、要么有文件」是硬约束：任何一项自有目录仍被别的实例占用时，[plan] 直接抛出
- * [InstanceDeletionBlockedException]，记录与文件都原样保留；只有所有目标都真正删除（或移入回收站）后，
- * 调用方才会移除记录。共用游戏根、`libraries/`、`assets/` 与非隔离实例的 `saves/` 仍不在删除范围内：
- * 它们不属于任何单个实例。 默认按系统回收站处理（[delete] 的
- * `permanent = false`），用户按住 Shift 确认时永久删除；回收站不可用时回退为 永久删除并在结果中注明。永久删除用 `Files.walkFileTree`
- * 递归进行，不跟随符号链接（遇到符号链接只解除链接本身）， 缺失文件视为已删除，权限不足等失败会带中文路径报错并停止。
+ * 核对并删除实例版本目录，以及尚存的旧实例目录；不触及共享游戏根、assets 或 libraries。
+ * 规划时发现真实共享引用或不安全路径就拒绝操作；执行完成后调用方才能移除实例记录。
+ * 默认移入系统回收站；永久删除不跟随符号链接，处理失败时保留原因并停止。
  */
-class InstanceDeletionService(private val store: LauncherStore) {
-
+class InstanceDeletionService(
+    private val store: LauncherStore,
+) {
     /**
      * 计算 [instanceId] 的删除计划；不修改磁盘。
      *
@@ -76,25 +81,28 @@ class InstanceDeletionService(private val store: LauncherStore) {
                 store.minecraftRoot(instance)
             } catch (failure: Exception) {
                 throw InstanceDeletionBlockedException(
-                    "无法删除：${failure.message ?: "游戏目录已被移除"}"
+                    "无法删除：${failure.message ?: "游戏目录已被移除"}",
+                    failure,
                 )
             }
         val root =
             try {
                 declared.toRealPath()
             } catch (failure: Exception) {
-                throw InstanceDeletionBlockedException("无法删除：游戏目录不存在（$declared）")
+                throw InstanceDeletionBlockedException("无法删除：游戏目录不存在（$declared）", failure)
             }
-        if (!Files.isDirectory(root))
+        if (!Files.isDirectory(root)) {
             throw InstanceDeletionBlockedException("无法删除：游戏目录不是文件夹（$root）")
+        }
         val targets = mutableListOf<Path>()
         val preserved = mutableListOf<String>()
         val handled = mutableSetOf<Path>()
         val versionId = instance.versionId
         if (versionId.isNotBlank()) {
             val name = runCatching { safeFilename(versionId) }.getOrNull()
-            if (name == null) preserved += "versions/$versionId（版本标识不合法，未删除）"
-            else {
+            if (name == null) {
+                preserved += "versions/$versionId（版本标识不合法，未删除）"
+            } else {
                 val folder = ownedTarget(root, root.resolve("versions").resolve(name))
                 if (folder != null) {
                     handled.add(folder)
@@ -118,11 +126,15 @@ class InstanceDeletionService(private val store: LauncherStore) {
      *
      * 抛出的消息正是界面与日志要显示的一句话，包含占用者名称，告诉用户先处理哪个实例。
      */
-    private fun requireNotShared(instance: GameInstance, root: Path, versionId: String) {
+    private fun requireNotShared(
+        instance: GameInstance,
+        root: Path,
+        versionId: String,
+    ) {
         val sharers = sharers(instance, root, versionId)
         if (sharers.isEmpty()) return
         throw InstanceDeletionBlockedException(
-            "无法删除：版本目录仍被实例${sharers.joinToString("、") { "「$it」" }}使用；请先处理该实例"
+            "无法删除：版本目录仍被实例${sharers.joinToString("、") { "「$it」" }}使用；请先处理该实例",
         )
     }
 
@@ -133,7 +145,10 @@ class InstanceDeletionService(private val store: LauncherStore) {
      * 缺失的文件视为已删除；权限不足等失败抛出带路径的中文异常，已处理的部分不回滚。
      * 每个目标处理完都再核对一次是否真的消失：只要还有目标留在磁盘上就抛出异常，调用方不得移除记录。
      */
-    fun delete(plan: InstanceDeletionPlan, permanent: Boolean = false): InstanceDeletionReport {
+    fun delete(
+        plan: InstanceDeletionPlan,
+        permanent: Boolean = false,
+    ): InstanceDeletionReport {
         val freed = plan.targets.sumOf { bytesOf(it) }
         val removed = mutableListOf<String>()
         var trashedAny = false
@@ -173,8 +188,13 @@ class InstanceDeletionService(private val store: LauncherStore) {
             }
             removed += target.toString()
             store.log(
-                if (trashedThis) "实例文件已移入回收站：$target"
-                else if (permanent) "实例文件已永久删除：$target" else "实例文件已改为永久删除：$target"
+                if (trashedThis) {
+                    "实例文件已移入回收站：$target"
+                } else if (permanent) {
+                    "实例文件已永久删除：$target"
+                } else {
+                    "实例文件已改为永久删除：$target"
+                },
             )
         }
         // 二次核对：任何自有目录还在，就不能让调用方把它当成「删干净了」。
@@ -203,22 +223,19 @@ class InstanceDeletionService(private val store: LauncherStore) {
         if (!Files.isDirectory(saves, LinkOption.NOFOLLOW_LINKS)) return emptyList()
         if (Files.isSymbolicLink(saves)) return emptyList()
         return runCatching {
-                saves
-                    .listDirectoryEntries()
-                    .filter { !Files.isSymbolicLink(it) }
-                    .filter {
-                        Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) ||
-                            it.name.endsWith(".zip", ignoreCase = true)
-                    }
-                    .map { world ->
-                        InstanceDeletionWorld(
-                            world.name,
-                            runCatching { world.getLastModifiedTime().toInstant() }.getOrNull(),
-                        )
-                    }
-                    .sortedByDescending { it.modified ?: Instant.EPOCH }
-            }
-            .getOrDefault(emptyList())
+            saves
+                .listDirectoryEntries()
+                .filter { !Files.isSymbolicLink(it) }
+                .filter {
+                    Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) ||
+                        it.name.endsWith(".zip", ignoreCase = true)
+                }.map { world ->
+                    InstanceDeletionWorld(
+                        world.name,
+                        runCatching { world.getLastModifiedTime().toInstant() }.getOrNull(),
+                    )
+                }.sortedByDescending { it.modified ?: Instant.EPOCH }
+        }.getOrDefault(emptyList())
     }
 
     /**
@@ -227,26 +244,32 @@ class InstanceDeletionService(private val store: LauncherStore) {
      * 只认实际文件身份：另一个实例解析后的版本目录是同一物理路径，或它的版本 JSON 的
      * `inheritsFrom`/`jar` 真指向这个目录或版本标识。`gameVersion` 相同不算共用。
      */
-    private fun sharers(instance: GameInstance, root: Path, versionId: String): List<String> {
+    private fun sharers(
+        instance: GameInstance,
+        root: Path,
+        versionId: String,
+    ): List<String> {
         val target = versionFolder(root, versionId) ?: return emptyList()
         val targetKey = physical(target)
         return store.data.instances
             .filter { other ->
                 other.id != instance.id &&
                     runCatching {
-                            val otherRoot = store.minecraftRoot(other).toRealPath()
-                            otherRoot == root &&
-                                (versionFolder(otherRoot, other.versionId)
+                        val otherRoot = store.minecraftRoot(other).toRealPath()
+                        otherRoot == root &&
+                            (
+                                versionFolder(otherRoot, other.versionId)
                                     ?.let { physical(it) == targetKey } == true ||
-                                    referencesVersion(other, otherRoot, targetKey, versionId))
-                        }
-                        .getOrDefault(false)
-            }
-            .map { it.name }
+                                    referencesVersion(other, otherRoot, targetKey, versionId)
+                            )
+                    }.getOrDefault(false)
+            }.map { it.name }
     }
 
-    private fun versionFolder(root: Path, id: String): Path? =
-        runCatching { safePath(root.resolve("versions"), safeFilename(id)) }.getOrNull()
+    private fun versionFolder(
+        root: Path,
+        id: String,
+    ): Path? = runCatching { safePath(root.resolve("versions"), safeFilename(id)) }.getOrNull()
 
     /** 存在时取真实路径；目录还没创建时用规范化的绝对路径，保证两侧同一种比较。 */
     private fun physical(path: Path): Path =
@@ -283,7 +306,10 @@ class InstanceDeletionService(private val store: LauncherStore) {
      *
      * 返回解析后的真实路径（与 [root] 同一套真实路径比较，避免符号链接把删除带出游戏目录）。
      */
-    private fun ownedTarget(root: Path, candidate: Path): Path? {
+    private fun ownedTarget(
+        root: Path,
+        candidate: Path,
+    ): Path? {
         if (!candidate.exists(LinkOption.NOFOLLOW_LINKS)) return null
         if (Files.isSymbolicLink(candidate)) throw IOException("实例路径是符号链接，不能删除：$candidate")
         if (!Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)) return null
@@ -319,13 +345,19 @@ class InstanceDeletionService(private val store: LauncherStore) {
                     return FileVisitResult.CONTINUE
                 }
 
-                override fun visitFileFailed(file: Path, failure: IOException): FileVisitResult {
+                override fun visitFileFailed(
+                    file: Path,
+                    failure: IOException,
+                ): FileVisitResult {
                     // 并发删除或本来就不存在：视为已删除；其余（权限等）向上抛出。
                     if (failure is NoSuchFileException) return FileVisitResult.CONTINUE
                     throw failure
                 }
 
-                override fun postVisitDirectory(dir: Path, failure: IOException?): FileVisitResult {
+                override fun postVisitDirectory(
+                    dir: Path,
+                    failure: IOException?,
+                ): FileVisitResult {
                     if (failure != null) throw failure
                     Files.deleteIfExists(dir)
                     return FileVisitResult.CONTINUE
@@ -342,8 +374,9 @@ class InstanceDeletionService(private val store: LauncherStore) {
     private fun bytesOf(path: Path): Long {
         if (!path.exists(LinkOption.NOFOLLOW_LINKS)) return 0L
         if (Files.isSymbolicLink(path)) return 0L
-        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
+        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
             return runCatching { path.fileSize() }.getOrDefault(0L)
+        }
         var total = 0L
         runCatching {
             Files.walkFileTree(
@@ -353,13 +386,16 @@ class InstanceDeletionService(private val store: LauncherStore) {
                         file: Path,
                         attributes: BasicFileAttributes,
                     ): FileVisitResult {
-                        if (attributes.isRegularFile && !attributes.isSymbolicLink)
+                        if (attributes.isRegularFile && !attributes.isSymbolicLink) {
                             total += runCatching { attributes.size() }.getOrDefault(0L)
+                        }
                         return FileVisitResult.CONTINUE
                     }
 
-                    override fun visitFileFailed(file: Path, failure: IOException) =
-                        FileVisitResult.CONTINUE
+                    override fun visitFileFailed(
+                        file: Path,
+                        failure: IOException,
+                    ) = FileVisitResult.CONTINUE
                 },
             )
         }

@@ -54,7 +54,11 @@ tasks.register("writeGameSmokeClasspath") {
     doLast {
         rootProject.file(".work/build-tmp/game-smoke-classpath.txt").apply {
             parentFile.mkdirs()
-            writeText(sourceSets.test.get().runtimeClasspath.asPath)
+            writeText(
+                sourceSets.test
+                    .get()
+                    .runtimeClasspath.asPath,
+            )
         }
     }
 }
@@ -95,9 +99,12 @@ tasks.register<JavaExec>("gameSmoke") {
         "molifox.game.report",
         rootProject
             .file(
-                "docs/validation/real-game-${System.getProperty("os.name").lowercase().substringBefore(' ')}-${providers.gradleProperty("gameLoader").getOrElse("Vanilla").lowercase()}.json"
-            )
-            .absolutePath,
+                "docs/validation/real-game-${System.getProperty(
+                    "os.name",
+                ).lowercase().substringBefore(
+                    ' ',
+                )}-${providers.gradleProperty("gameLoader").getOrElse("Vanilla").lowercase()}.json",
+            ).absolutePath,
     )
 }
 
@@ -114,7 +121,7 @@ tasks.register<JavaExec>("onlineSmoke") {
         rootProject.layout.projectDirectory
             .dir(".work/tests/launcher-core-onlineSmoke/profile")
             .asFile
-            .absolutePath
+            .absolutePath,
     )
 }
 

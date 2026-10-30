@@ -39,18 +39,24 @@ internal fun BundledBlockIcon(
     modifier: Modifier = Modifier,
 ) {
     val bitmap = remember(resource) { loadBundledImage(resource) }
-    if (bitmap != null) Image(bitmap, description, modifier, contentScale = ContentScale.Fit)
-    else Box(modifier)
-}
-
-private fun loadBundledImage(resource: String): ImageBitmap? = runCatching {
-    val stream =
-        LoaderType::class.java.classLoader.getResourceAsStream(resource) ?: return@runCatching null
-    stream.use {
-        org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap()
+    if (bitmap != null) {
+        Image(bitmap, description, modifier, contentScale = ContentScale.Fit)
+    } else {
+        Box(modifier)
     }
 }
-    .getOrNull()
+
+private fun loadBundledImage(resource: String): ImageBitmap? =
+    runCatching {
+        val stream =
+            LoaderType::class.java.classLoader.getResourceAsStream(resource)
+                ?: return@runCatching null
+        stream.use {
+            org.jetbrains.skia.Image
+                .makeFromEncoded(it.readBytes())
+                .toComposeImageBitmap()
+        }
+    }.getOrNull()
 
 /** 加载器标识使用随包内置的方块图片。 */
 private fun LoaderType.blockIcon(): String =
@@ -64,6 +70,9 @@ private fun LoaderType.blockIcon(): String =
 
 /** 内置的原版/加载器方块图标；图片随包分发，调用方无需再绘制。 */
 @Composable
-fun LoaderMark(loader: LoaderType, modifier: Modifier = Modifier.size(22.dp)) {
+fun LoaderMark(
+    loader: LoaderType,
+    modifier: Modifier = Modifier.size(22.dp),
+) {
     BundledBlockIcon(loader.blockIcon(), loader.title, modifier)
 }

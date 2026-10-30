@@ -20,12 +20,20 @@ private val loaderLibraryPrefixes =
  * 只更新 `mainClass`、加载器自有依赖库与加载器参数。不会写入 `molifoxManaged`，也不会展开成
  * 自包含配置，因此原启动器仍然认得这份文件。
  */
-internal fun mergeExternalLoaderProfile(original: JsonObject, loader: JsonObject): JsonObject {
+internal fun mergeExternalLoaderProfile(
+    original: JsonObject,
+    loader: JsonObject,
+): JsonObject {
     val merged = original.deepCopy()
-    loader.string("mainClass").takeIf { it.isNotBlank() }?.let { merged.addProperty("mainClass", it) }
+    loader
+        .string(
+            "mainClass",
+        ).takeIf { it.isNotBlank() }
+        ?.let { merged.addProperty("mainClass", it) }
     merged.add("libraries", mergedExternalLibraries(original, loader))
-    if (original.has("arguments") || loader.has("arguments"))
+    if (original.has("arguments") || loader.has("arguments")) {
         merged.add("arguments", mergedExternalArguments(original, loader))
+    }
     // 1.12 及更早的 Forge 用 minecraftArguments；加载器给出新值时替换，没给就保留原文。
     loader.string("minecraftArguments").takeIf { it.isNotBlank() }?.let {
         merged.addProperty("minecraftArguments", it)
@@ -34,7 +42,10 @@ internal fun mergeExternalLoaderProfile(original: JsonObject, loader: JsonObject
 }
 
 /** 保留非加载器库，再追加新加载器库；同一坐标以新库为准。 */
-private fun mergedExternalLibraries(original: JsonObject, loader: JsonObject): JsonArray {
+private fun mergedExternalLibraries(
+    original: JsonObject,
+    loader: JsonObject,
+): JsonArray {
     val byCoordinate = linkedMapOf<String, JsonElement>()
     original.array("libraries").forEach { element ->
         val name = runCatching { element.asJsonObject.string("name") }.getOrDefault("")
@@ -58,7 +69,10 @@ private fun libraryCoordinate(name: String): String {
  * 合并参数：新加载器声明的开关（含紧跟的值）替换旧值，其余原有参数按顺序保留，
  * 重复项只留一份；这样旧版本的 `--fml.forgeVersion` 之类不会和新值并存。
  */
-private fun mergedExternalArguments(original: JsonObject, loader: JsonObject): JsonObject {
+private fun mergedExternalArguments(
+    original: JsonObject,
+    loader: JsonObject,
+): JsonObject {
     val result = JsonObject()
     val oldArguments = original.obj("arguments")
     val newArguments = loader.obj("arguments")

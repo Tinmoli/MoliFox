@@ -8,20 +8,25 @@ package dev.molifox.desktop
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** 自定义图标上限：2 MB、边长 16–1024 像素；足够放在 22dp 的品牌位，也不会拖慢启动。 */
 internal const val BRAND_ICON_MAX_BYTES = 2L * 1024 * 1024
@@ -43,7 +48,10 @@ private fun brandIconDirectory(dataDirectory: Path): Path =
  * 校验顺序：普通文件 → 不超过 2 MB → 能识别出 PNG/JPEG → 边长 16–1024 → 真正解码一次排除损坏文件。
  * 任一步失败都抛出带中文说明的 [IllegalArgumentException]，由设置页就地提示，不会让启动器崩溃。
  */
-internal fun importBrandIcon(dataDirectory: Path, source: Path): Path {
+internal fun importBrandIcon(
+    dataDirectory: Path,
+    source: Path,
+): Path {
     require(Files.isRegularFile(source)) { "请选择 PNG 或 JPEG 图片" }
     require(Files.size(source) in 1..BRAND_ICON_MAX_BYTES) { "图片不能超过 2 MB" }
     val format =
@@ -60,7 +68,7 @@ internal fun importBrandIcon(dataDirectory: Path, source: Path): Path {
                 val height = reader.getHeight(0)
                 require(
                     width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
-                        height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE
+                        height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
                 ) {
                     "图片边长需在 16–1024 像素之间"
                 }
@@ -91,20 +99,26 @@ internal fun importBrandIcon(dataDirectory: Path, source: Path): Path {
     // 换格式后旧副本不再被引用，顺手清掉，目录里只留当前这一张。
     runCatching {
         Files.deleteIfExists(
-            directory.resolve(if (format == "png") BRAND_ICON_JPEG else BRAND_ICON_PNG)
+            directory.resolve(if (format == "png") BRAND_ICON_JPEG else BRAND_ICON_PNG),
         )
     }
     return target
 }
 
 /** 删除启动器自己保存的图标副本；只处理 branding 目录下的固定文件名，手改配置不会波及别的文件。 */
-internal fun removeBrandIcon(dataDirectory: Path, stored: String) {
+internal fun removeBrandIcon(
+    dataDirectory: Path,
+    stored: String,
+) {
     if (stored.isBlank()) return
     runCatching {
         val directory = dataDirectory.resolve("appearance/branding").toAbsolutePath().normalize()
         val file = Path.of(stored).toAbsolutePath().normalize()
-        if (file.parent == directory && file.fileName.toString() in setOf(BRAND_ICON_PNG, BRAND_ICON_JPEG))
+        if (file.parent == directory &&
+            file.fileName.toString() in setOf(BRAND_ICON_PNG, BRAND_ICON_JPEG)
+        ) {
             Files.deleteIfExists(file)
+        }
     }
 }
 
@@ -114,29 +128,29 @@ internal fun loadBrandIcon(path: String): ImageBitmap? =
         val file = Path.of(path)
         if (!Files.isRegularFile(file)) return@runCatching null
         if (Files.size(file) !in 1..BRAND_ICON_MAX_BYTES) return@runCatching null
-        org.jetbrains.skia.Image.makeFromEncoded(Files.readAllBytes(file)).toComposeImageBitmap()
-    }
-        .getOrNull()
+        org.jetbrains.skia.Image
+            .makeFromEncoded(Files.readAllBytes(file))
+            .toComposeImageBitmap()
+    }.getOrNull()
 
 /** 启动时检查已保存的自定义图标：返回 null 表示可用，否则是回退原因（用于记一行日志）。 */
 internal fun brandIconProblem(path: String): String? {
     if (path.isBlank()) return null
     return runCatching {
-            val file = Path.of(path)
-            require(Files.isRegularFile(file)) { "文件不存在" }
-            require(Files.size(file) in 1..BRAND_ICON_MAX_BYTES) { "文件大小异常" }
-            val image = ImageIO.read(file.toFile()) ?: error("图片无法解码")
-            require(
-                image.width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
-                    image.height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE
-            ) {
-                "图片尺寸异常"
-            }
-            null
+        val file = Path.of(path)
+        require(Files.isRegularFile(file)) { "文件不存在" }
+        require(Files.size(file) in 1..BRAND_ICON_MAX_BYTES) { "文件大小异常" }
+        val image = ImageIO.read(file.toFile()) ?: error("图片无法解码")
+        require(
+            image.width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
+                image.height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
+        ) {
+            "图片尺寸异常"
         }
-        .getOrElse { error ->
-            error.message ?: error.javaClass.simpleName
-        }
+        null
+    }.getOrElse { error ->
+        error.message ?: error.javaClass.simpleName
+    }
 }
 
 /**
@@ -153,8 +167,11 @@ fun BrandMark(modifier: Modifier = Modifier.size(22.dp)) {
     var bitmap by remember(path, revision) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(path, revision) {
         bitmap =
-            if (path.isBlank()) null
-            else withContext(Dispatchers.IO) { loadBrandIcon(path) }
+            if (path.isBlank()) {
+                null
+            } else {
+                withContext(Dispatchers.IO) { loadBrandIcon(path) }
+            }
     }
     val custom = bitmap
     if (custom != null) {

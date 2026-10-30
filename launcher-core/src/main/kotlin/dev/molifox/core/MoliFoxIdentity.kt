@@ -5,11 +5,11 @@
 
 package dev.molifox.core
 
-/** Public OAuth application identity; this is not a client secret. */
+/** OAuth 公共应用标识随客户端分发，不包含客户端密钥。 */
 object MoliFoxIdentity {
-    const val microsoftClientId = "f7a97d7c-8dc7-42eb-81bb-5bf19c29d213"
-    const val repository = "https://github.com/Tinmoli/MoliFox"
-    const val releases = "$repository/releases"
-    const val issues = "$repository/issues"
-    const val license = "GPL-3.0-only · 保留署名与修改版区分"
+    const val MICROSOFT_CLIENT_ID = "f7a97d7c-8dc7-42eb-81bb-5bf19c29d213"
+    const val REPOSITORY = "https://github.com/Tinmoli/MoliFox"
+    const val RELEASES = "$REPOSITORY/releases"
+    const val ISSUES = "$REPOSITORY/issues"
+    const val LICENSE = "GPL-3.0-only · 保留署名与修改版区分"
 }

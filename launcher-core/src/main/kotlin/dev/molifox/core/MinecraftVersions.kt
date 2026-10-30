@@ -17,8 +17,7 @@ private val minecraftVersionTokenPattern =
     Regex("""(?<![\d.])([1-9]\d{0,1}\.\d{1,2}(?:\.\d{1,2})?)(?![\d.])""")
 
 /** 这个值本身就是一个 Minecraft 版本号（可直接作为 CurseForge / Modrinth 的版本筛选）。 */
-fun isMinecraftVersionTag(value: String): Boolean =
-    minecraftVersionTagPattern.matches(value.trim())
+fun isMinecraftVersionTag(value: String): Boolean = minecraftVersionTagPattern.matches(value.trim())
 
 /**
  * 把实例版本目录名之类的标识解析成真实的游戏版本：`TwilightMC-26.3v1.0` → `26.3`。

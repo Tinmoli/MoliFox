@@ -6,6 +6,8 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.DataInputStream
@@ -16,9 +18,11 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * [ServerPing] 的本地回归：地址解析、MOTD 样式、现代 / 旧版两种 ping 与离线兜底。
@@ -31,8 +35,8 @@ class ServerPingTest {
         val motd =
             parseMotd(
                 JsonParser.parseString(
-                    """{"text":"First line\r\n","color":"red","extra":[{"text":"Second line","color":"green"}]}"""
-                )
+                    """{"text":"First line\r\n","color":"red","extra":[{"text":"Second line","color":"green"}]}""",
+                ),
             )
         assertEquals("First line\nSecond line", motd.joinToString("") { it.text })
         assertEquals(2, motd.size)
@@ -64,7 +68,7 @@ class ServerPingTest {
             JsonParser.parseString(
                 """{"text":"hello ","color":"gold","bold":true,"extra":[""" +
                     """{"text":"world","color":"#123456","strikethrough":true},""" +
-                    """{"text":"§a green","bold":false}]}"""
+                    """{"text":"§a green","bold":false}]}""",
             )
         val segments = parseMotd(description)
         assertEquals(3, segments.size)
@@ -99,42 +103,43 @@ class ServerPingTest {
     }
 
     @Test
-    fun `modern ping returns motd players version and latency`() = runBlocking {
-        val json =
-            """{"version":{"name":"1.20.6","protocol":766},"players":{"max":20,"online":3},""" +
-                """"description":{"text":"","extra":[{"text":"Moli","color":"aqua"},""" +
-                """{"text":"Fox","bold":true}]}}"""
-        FakeServer { socket -> serveStatus(socket, json) }
-            .use { server ->
-                val status = ping("127.0.0.1", server.port, 3_000)
-                assertNotNull(status)
-                assertTrue(status.online)
-                assertEquals(3, status.players)
-                assertEquals(20, status.maxPlayers)
-                assertEquals("1.20.6", status.version)
-                assertEquals(
-                    listOf(
-                        MotdSegment("Moli", 0x55FFFF, false, false, false, false),
-                        MotdSegment("Fox", null, true, false, false, false),
-                    ),
-                    status.motd,
-                )
-                assertTrue(status.ping >= 0)
-            }
-    }
+    fun `modern ping returns motd players version and latency`() =
+        runBlocking {
+            val json =
+                """{"version":{"name":"1.20.6","protocol":766},"players":{"max":20,"online":3},""" +
+                    """"description":{"text":"","extra":[{"text":"Moli","color":"aqua"},""" +
+                    """{"text":"Fox","bold":true}]}}"""
+            FakeServer { socket -> serveStatus(socket, json) }
+                .use { server ->
+                    val status = ping("127.0.0.1", server.port, 3_000)
+                    assertNotNull(status)
+                    assertTrue(status.online)
+                    assertEquals(3, status.players)
+                    assertEquals(20, status.maxPlayers)
+                    assertEquals("1.20.6", status.version)
+                    assertEquals(
+                        listOf(
+                            MotdSegment("Moli", 0x55FFFF, false, false, false, false),
+                            MotdSegment("Fox", null, true, false, false, false),
+                        ),
+                        status.motd,
+                    )
+                    assertTrue(status.ping >= 0)
+                }
+        }
 
     @Test
-    fun `legacy ping is used when the modern handshake fails`() = runBlocking {
-        val connections = AtomicInteger()
-        FakeServer { socket ->
-            if (connections.getAndIncrement() == 0) {
-                // 第一次连接不回数据直接断开，模拟拒绝现代协议的服务端。
-                socket.getOutputStream().close()
-            } else {
-                serveLegacy(socket, "1.5.2", "§6Moli§r Fox", 4, 12)
-            }
-        }
-            .use { server ->
+    fun `legacy ping is used when the modern handshake fails`() =
+        runBlocking {
+            val connections = AtomicInteger()
+            FakeServer { socket ->
+                if (connections.getAndIncrement() == 0) {
+                    // 第一次连接不回数据直接断开，模拟拒绝现代协议的服务端。
+                    socket.getOutputStream().close()
+                } else {
+                    serveLegacy(socket, "1.5.2", "§6Moli§r Fox", 4, 12)
+                }
+            }.use { server ->
                 val status = ping("127.0.0.1", server.port, 2_000)
                 assertNotNull(status)
                 assertEquals(4, status.players)
@@ -148,20 +153,23 @@ class ServerPingTest {
                     status.motd,
                 )
             }
-    }
+        }
 
     @Test
-    fun `unreachable server and invalid host return null`() = runBlocking {
-        val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
-        assertNull(ping("127.0.0.1", port, 500))
-        assertNull(ping("", DEFAULT_SERVER_PORT))
-        assertNull(ping("127.0.0.1", 0))
-        assertNull(pingAddress("bad host"))
-    }
+    fun `unreachable server and invalid host return null`() =
+        runBlocking {
+            val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            assertNull(ping("127.0.0.1", port, 500))
+            assertNull(ping("", DEFAULT_SERVER_PORT))
+            assertNull(ping("127.0.0.1", 0))
+            assertNull(pingAddress("bad host"))
+        }
 
     // ---- 本地测试服务端：只实现「握手一帧 + 状态请求一帧 + 状态响应」
 
-    private class FakeServer(private val handler: (Socket) -> Unit) : Closeable {
+    private class FakeServer(
+        private val handler: (Socket) -> Unit,
+    ) : Closeable {
         private val server = ServerSocket(0, 5, InetAddress.getByName("127.0.0.1"))
         val port: Int = server.localPort
         private val worker =
@@ -184,7 +192,10 @@ class ServerPingTest {
         }
     }
 
-    private fun serveStatus(socket: Socket, json: String) {
+    private fun serveStatus(
+        socket: Socket,
+        json: String,
+    ) {
         val input = DataInputStream(socket.getInputStream())
         readFrame(input) // 握手
         readFrame(input) // 状态请求
@@ -200,7 +211,13 @@ class ServerPingTest {
         output.flush()
     }
 
-    private fun serveLegacy(socket: Socket, version: String, motd: String, online: Int, max: Int) {
+    private fun serveLegacy(
+        socket: Socket,
+        version: String,
+        motd: String,
+        online: Int,
+        max: Int,
+    ) {
         val input = DataInputStream(socket.getInputStream())
         assertEquals(0xFE, input.readUnsignedByte())
         assertEquals(0x01, input.readUnsignedByte())
@@ -242,7 +259,10 @@ class ServerPingTest {
         }
     }
 
-    private fun writeVarInt(output: DataOutputStream, value: Int) {
+    private fun writeVarInt(
+        output: DataOutputStream,
+        value: Int,
+    ) {
         var remaining = value
         while (true) {
             if ((remaining and 0x7F.inv()) == 0) {
@@ -254,7 +274,10 @@ class ServerPingTest {
         }
     }
 
-    private fun writeVarInt(output: ByteArrayOutputStream, value: Int) {
+    private fun writeVarInt(
+        output: ByteArrayOutputStream,
+        value: Int,
+    ) {
         var remaining = value
         while (true) {
             if ((remaining and 0x7F.inv()) == 0) {

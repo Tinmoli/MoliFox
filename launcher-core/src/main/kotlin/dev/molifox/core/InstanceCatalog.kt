@@ -10,10 +10,20 @@ import com.google.gson.JsonParser
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.reader
 
 /** 一个已登记的游戏根及其界面目录标识；null 表示默认游戏根（`settings.gameRoot`）。 */
-internal data class InstanceRoot(val path: Path, val directoryId: String?)
+internal data class InstanceRoot(
+    val path: Path,
+    val directoryId: String?,
+)
 
 /**
  * `versions` 目录扫描器。目录名就是实例身份，`<name>/<name>.json`
@@ -51,10 +61,15 @@ internal object InstanceCatalog {
     fun roots(data: LauncherData): List<InstanceRoot> {
         val result = mutableListOf<InstanceRoot>()
         val seen = mutableSetOf<String>()
-        fun add(path: Path, directoryId: String?) {
-            val key = runCatching { path.toRealPath().toString() }.getOrElse {
-                path.toAbsolutePath().normalize().toString()
-            }
+
+        fun add(
+            path: Path,
+            directoryId: String?,
+        ) {
+            val key =
+                runCatching { path.toRealPath().toString() }.getOrElse {
+                    path.toAbsolutePath().normalize().toString()
+                }
             if (seen.add(key)) result += InstanceRoot(path, directoryId)
         }
         add(Path.of(data.settings.gameRoot), null)
@@ -69,7 +84,11 @@ internal object InstanceCatalog {
     fun signature(roots: List<InstanceRoot>): String {
         val text = StringBuilder()
         for (root in roots) {
-            text.append(root.directoryId).append('|').append(root.path).append('\n')
+            text
+                .append(root.directoryId)
+                .append('|')
+                .append(root.path)
+                .append('\n')
             val versions = root.path.resolve("versions")
             if (!versions.isDirectory()) {
                 text.append("<missing>\n")
@@ -86,19 +105,33 @@ internal object InstanceCatalog {
                     text.append('|')
                     if (json.isRegularFile()) {
                         val modified =
-                            runCatching { Files.getLastModifiedTime(json).toMillis() }.getOrDefault(0)
+                            runCatching {
+                                Files
+                                    .getLastModifiedTime(
+                                        json,
+                                    ).toMillis()
+                            }.getOrDefault(0)
                         val size = runCatching { json.fileSize() }.getOrDefault(0)
                         text.append(modified).append(':').append(size)
-                    } else text.append("no-json")
+                    } else {
+                        text.append("no-json")
+                    }
                     // 手动补上/移除同名 JAR 也要在下一次可见时反映为已安装/待修复。
                     val jar = child.resolve("$name.jar")
                     text.append('|')
                     if (jar.isRegularFile()) {
                         val modified =
-                            runCatching { Files.getLastModifiedTime(jar).toMillis() }.getOrDefault(0)
+                            runCatching {
+                                Files
+                                    .getLastModifiedTime(
+                                        jar,
+                                    ).toMillis()
+                            }.getOrDefault(0)
                         val size = runCatching { jar.fileSize() }.getOrDefault(0)
                         text.append(modified).append(':').append(size)
-                    } else text.append("no-jar")
+                    } else {
+                        text.append("no-jar")
+                    }
                 }
                 text.append('\n')
             }
@@ -138,10 +171,17 @@ internal object InstanceCatalog {
     }
 
     /** 记忆化读取单个版本目录；`inheritsFrom` 链只在目标真实存在且可解析时才算有效。 */
-    private fun readInstance(root: InstanceRoot, name: String): GameInstance {
+    private fun readInstance(
+        root: InstanceRoot,
+        name: String,
+    ): GameInstance {
         val cache = mutableMapOf<String, Profile>()
         val profile = readProfile(root.path, name, cache, mutableSetOf())
-        val jar = root.path.resolve("versions").resolve(name).resolve("$name.jar")
+        val jar =
+            root.path
+                .resolve("versions")
+                .resolve(name)
+                .resolve("$name.jar")
         val installed = jar.isRegularFile() || profile.parentJar
         return GameInstance(
             id = instanceId(root.directoryId, name),
@@ -200,25 +240,38 @@ internal object InstanceCatalog {
         val id = json.string("id").ifBlank { name }
         val parent = json.string("inheritsFrom").ifBlank { json.string("jar") }
         val parentProfile =
-            if (parent.isNotBlank() && parent != name)
+            if (parent.isNotBlank() && parent != name) {
                 readProfile(root, parent, cache, chain)
-            else null
+            } else {
+                null
+            }
         require(
             json.string("mainClass").isNotBlank() ||
                 parentProfile != null ||
-                json.array("libraries").size() > 0
+                json.array("libraries").size() > 0,
         ) { "版本配置缺少 mainClass：versions/$name/$name.json" }
         val libraries =
             json.array("libraries").mapNotNull {
                 runCatching { it.asJsonObject.string("name") }.getOrNull()?.ifBlank { null }
             }
         val ownLoader = loaderOf(id, libraries)
-        val loader = if (ownLoader.first != LoaderType.Vanilla) ownLoader
-        else parentProfile?.let { it.loader to it.loaderVersion } ?: ownLoader
+        val loader =
+            if (ownLoader.first != LoaderType.Vanilla) {
+                ownLoader
+            } else {
+                parentProfile?.let { it.loader to it.loaderVersion } ?: ownLoader
+            }
         val parentJar =
             parentProfile != null &&
-                (root.resolve("versions").resolve(parent).resolve("$parent.jar").isRegularFile() ||
-                    parentProfile.parentJar)
+                (
+                    root
+                        .resolve(
+                            "versions",
+                        ).resolve(parent)
+                        .resolve("$parent.jar")
+                        .isRegularFile() ||
+                        parentProfile.parentJar
+                )
         val profile =
             Profile(
                 id = id,
@@ -231,8 +284,11 @@ internal object InstanceCatalog {
                 gameVersion =
                     json.string("gameVersion").ifBlank {
                         parentProfile?.gameVersion
-                            ?: if (parent.isNotBlank()) minecraftVersionTag(parent) ?: parent
-                            else minecraftVersionTag(id) ?: id
+                            ?: if (parent.isNotBlank()) {
+                                minecraftVersionTag(parent) ?: parent
+                            } else {
+                                minecraftVersionTag(id) ?: id
+                            }
                     },
                 parent = parent,
                 parentJar = parentJar,
@@ -246,9 +302,11 @@ internal object InstanceCatalog {
         return profile
     }
 
-    private fun loaderOf(id: String, libraries: List<String>): Pair<LoaderType, String> {
-        fun coordinate(prefix: String): String? =
-            libraries.firstOrNull { it.startsWith(prefix) }
+    private fun loaderOf(
+        id: String,
+        libraries: List<String>,
+    ): Pair<LoaderType, String> {
+        fun coordinate(prefix: String): String? = libraries.firstOrNull { it.startsWith(prefix) }
         coordinate("net.fabricmc:fabric-loader:")?.let {
             return LoaderType.Fabric to it.split(':').getOrElse(2) { "" }
         }
@@ -283,27 +341,34 @@ internal object InstanceCatalog {
             versionId = name,
             gameDirectoryName = name,
             gameDirectoryId = root.directoryId,
-            createdAt = runCatching {
+            createdAt =
+                runCatching {
                     Files.getLastModifiedTime(json).toInstant().toString()
-                }
-                .getOrDefault(""),
+                }.getOrDefault(""),
             installed = false,
             externalProfile = true,
             broken = true,
             brokenReason = reason,
         )
 
-    private fun directoryTime(root: InstanceRoot, name: String): String =
+    private fun directoryTime(
+        root: InstanceRoot,
+        name: String,
+    ): String =
         runCatching {
-                Files.getLastModifiedTime(root.path.resolve("versions").resolve(name))
-                    .toInstant()
-                    .toString()
-            }
-            .getOrDefault("")
+            Files
+                .getLastModifiedTime(root.path.resolve("versions").resolve(name))
+                .toInstant()
+                .toString()
+        }.getOrDefault("")
 
     /** 稳定 id：同一游戏目录下同一文件夹始终得到同一 UUID（运行目录等仍要求 UUID）。 */
-    fun instanceId(directoryId: String?, folder: String): String =
-        UUID.nameUUIDFromBytes("MoliFoxInstance:${directoryId.orEmpty()}:$folder".toByteArray())
+    fun instanceId(
+        directoryId: String?,
+        folder: String,
+    ): String =
+        UUID
+            .nameUUIDFromBytes("MoliFoxInstance:${directoryId.orEmpty()}:$folder".toByteArray())
             .toString()
 
     /** 读取版本 JSON 的 `inheritsFrom`，用于重命名后同步兄弟配置；读不到时返回空。 */

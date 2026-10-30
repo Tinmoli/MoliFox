@@ -6,17 +6,33 @@
 package dev.molifox.core
 
 import com.google.gson.JsonArray
-import java.nio.file.Path
-import java.util.UUID
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.util.UUID
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteRecursively
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class InstanceCatalogTest {
     @TempDir lateinit var temporary: Path
 
-    private fun version(root: Path, name: String, body: String? = null, jar: Boolean = true): Path {
+    private fun version(
+        root: Path,
+        name: String,
+        body: String? = null,
+        jar: Boolean = true,
+    ): Path {
         val folder = root.resolve("versions/$name").apply { createDirectories() }
         folder.resolve("$name.json").writeText(
             body
@@ -27,8 +43,8 @@ class InstanceCatalogTest {
                         "time" to "2026-10-29T10:00:00Z",
                         "mainClass" to "fixture.Main",
                         "libraries" to emptyList<Any>(),
-                    )
-                )
+                    ),
+                ),
         )
         if (jar) folder.resolve("$name.jar").writeBytes(byteArrayOf())
         return folder
@@ -166,7 +182,9 @@ class InstanceCatalogTest {
             val renamed = controller.renameInstance(before.id, "new-name")
             assertEquals("new-name", renamed.name)
             assertFalse(folder.exists())
-            assertTrue(store.minecraftRoot.resolve("versions/new-name/new-name.json").isRegularFile())
+            assertTrue(
+                store.minecraftRoot.resolve("versions/new-name/new-name.json").isRegularFile(),
+            )
             val settings = requireNotNull(store.instanceSettings("new-name"))
             assertEquals(VersionIsolation.Enabled, settings.isolation)
             assertEquals("C:/Java/bin/java.exe", settings.javaPath)
@@ -237,7 +255,7 @@ class InstanceCatalogTest {
         assertTrue(
             store.state.value.logs.any {
                 it.message.contains("实例列表迁移") && it.message.contains("保留 1 个实例设置")
-            }
+            },
         )
         val saved = readObject(dataDirectory.resolve("config/launcher.json"))
         assertFalse(saved.has("instances"))

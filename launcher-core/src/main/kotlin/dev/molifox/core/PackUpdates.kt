@@ -7,17 +7,36 @@ package dev.molifox.core
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import java.nio.file.Files
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 /** 实例内容目录：资源包与光影共用同一套更新检查，只是内容源的类型不同。 */
-enum class PackFolder(val directory: String, val kind: String, val title: String) {
+enum class PackFolder(
+    val directory: String,
+    val kind: String,
+    val title: String,
+) {
     ResourcePacks("resourcepacks", "resourcepack", "资源包"),
-    ShaderPacks("shaderpacks", "shader", "光影");
+    ShaderPacks("shaderpacks", "shader", "光影"),
+    ;
 
     companion object {
         fun of(directory: String): PackFolder? = entries.find { it.directory == directory }
@@ -25,14 +44,18 @@ enum class PackFolder(val directory: String, val kind: String, val title: String
 }
 
 /** 与模组一致的三态：有更新、已是最新、无法确认当前版本。 */
-enum class PackUpdateStatus(val title: String) {
+enum class PackUpdateStatus(
+    val title: String,
+) {
     Updatable("有更新"),
     Latest("已是最新"),
     Unknown("无法确认"),
 }
 
 /** 识别依据：文件指纹最可靠，名称搜索只作兜底。 */
-enum class PackMatchSource(val title: String) {
+enum class PackMatchSource(
+    val title: String,
+) {
     Fingerprint("文件指纹"),
     Name("名称搜索"),
 }
@@ -135,356 +158,380 @@ internal interface PackUpdateSource {
  * 否则标记「无法确认」并说明原因。结果只读，不下载、不替换文件。
  */
 class PackUpdateService
-internal constructor(
-    private val store: LauncherStore,
-    private val sources: List<PackUpdateSource>,
-) {
-    private data class Cached(val size: Long, val modified: Long, val sha512: String)
+    internal constructor(
+        private val store: LauncherStore,
+        private val sources: List<PackUpdateSource>,
+    ) {
+        private data class Cached(
+            val size: Long,
+            val modified: Long,
+            val sha512: String,
+        )
 
-    private val cache =
-        object : LinkedHashMap<Path, Cached>(64, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) =
-                size > 512
+        private val cache =
+            object : LinkedHashMap<Path, Cached>(64, .75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) =
+                    size > 512
+            }
+
+        @Synchronized
+        private fun localFile(path: Path): LocalPackFile {
+            val normalized = path.toAbsolutePath().normalize()
+            val directory = runCatching { path.isDirectory() }.getOrDefault(false)
+            val size = runCatching { if (directory) 0L else path.fileSize() }.getOrDefault(0L)
+            val modified = runCatching { path.getLastModifiedTime().toMillis() }.getOrDefault(0L)
+            // 文件夹形式的包没有单文件指纹，只能按名称匹配。
+            val hash =
+                if (directory) {
+                    ""
+                } else {
+                    cache[normalized]
+                        ?.takeIf { it.size == size && it.modified == modified }
+                        ?.sha512
+                        ?: runCatching { digest(path, "SHA-512") }
+                            .getOrDefault("")
+                            .also { cache[normalized] = Cached(size, modified, it) }
+                }
+            return LocalPackFile(normalized, path.name, size, modified, hash)
         }
 
-    @Synchronized
-    private fun localFile(path: Path): LocalPackFile {
-        val normalized = path.toAbsolutePath().normalize()
-        val directory = runCatching { path.isDirectory() }.getOrDefault(false)
-        val size = runCatching { if (directory) 0L else path.fileSize() }.getOrDefault(0L)
-        val modified = runCatching { path.getLastModifiedTime().toMillis() }.getOrDefault(0L)
-        // 文件夹形式的包没有单文件指纹，只能按名称匹配。
-        val hash =
-            if (directory) ""
-            else
-                cache[normalized]
-                    ?.takeIf { it.size == size && it.modified == modified }
-                    ?.sha512
-                    ?: runCatching { digest(path, "SHA-512") }
-                        .getOrDefault("")
-                        .also { cache[normalized] = Cached(size, modified, it) }
-        return LocalPackFile(normalized, path.name, size, modified, hash)
-    }
-
-    suspend fun check(
-        instanceId: String,
-        includePrerelease: Boolean = false,
-    ): PackUpdateReport =
-        withContext(Dispatchers.IO) {
-            val startedAt = System.nanoTime()
-            val instance = store.instance(instanceId)
-            val root = store.instancePath(instanceId)
-            val items = mutableListOf<PackUpdateItem>()
-            val failures = mutableListOf<String>()
-            var attempted = 0
-            var scanned = 0
-            var scanMs = 0L
-            var fingerprintMs = 0L
-            val versionStarted = System.nanoTime()
-            for (folder in PackFolder.entries) {
-                currentCoroutineContext().ensureActive()
-                val scanStarted = System.nanoTime()
-                val files = readLocalPacks(root.resolve(folder.directory))
-                scanMs += elapsedMillis(scanStarted)
-                scanned += files.size
-                if (files.isEmpty()) continue
-                val fingerprints =
-                    mutableMapOf<String, Pair<PackUpdateSource, RemoteModVersion>>()
-                // 某个源失败只影响它自己；两个源都失败时整次检查报错，而不是当成「没有更新」。
-                val fingerprintStarted = System.nanoTime()
-                for (source in sources) {
+        suspend fun check(
+            instanceId: String,
+            includePrerelease: Boolean = false,
+        ): PackUpdateReport =
+            withContext(Dispatchers.IO) {
+                val startedAt = System.nanoTime()
+                val instance = store.instance(instanceId)
+                val root = store.instancePath(instanceId)
+                val items = mutableListOf<PackUpdateItem>()
+                val failures = mutableListOf<String>()
+                var attempted = 0
+                var scanned = 0
+                var scanMs = 0L
+                var fingerprintMs = 0L
+                val versionStarted = System.nanoTime()
+                for (folder in PackFolder.entries) {
                     currentCoroutineContext().ensureActive()
-                    val pending = files.filter { it.filename !in fingerprints }
-                    if (pending.isEmpty()) break
-                    attempted++
-                    try {
-                        source.fingerprint(pending, folder).forEach { (filename, version) ->
-                            fingerprints[filename] = source to version
+                    val scanStarted = System.nanoTime()
+                    val files = readLocalPacks(root.resolve(folder.directory))
+                    scanMs += elapsedMillis(scanStarted)
+                    scanned += files.size
+                    if (files.isEmpty()) continue
+                    val fingerprints =
+                        mutableMapOf<String, Pair<PackUpdateSource, RemoteModVersion>>()
+                    // 某个源失败只影响它自己；两个源都失败时整次检查报错，而不是当成「没有更新」。
+                    val fingerprintStarted = System.nanoTime()
+                    for (source in sources) {
+                        currentCoroutineContext().ensureActive()
+                        val pending = files.filter { it.filename !in fingerprints }
+                        if (pending.isEmpty()) break
+                        attempted++
+                        try {
+                            source.fingerprint(pending, folder).forEach { (filename, version) ->
+                                fingerprints[filename] = source to version
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            failures +=
+                                "${source.provider}：${
+                                    error.message.orEmpty().take(160).ifBlank { "请求失败" }
+                                }"
                         }
+                    }
+                    fingerprintMs += elapsedMillis(fingerprintStarted)
+                    // 指纹命中的包先用批量接口结算最新版本，只有名称匹配才逐项目查询。
+                    val batch =
+                        batchLatest(files, fingerprints, folder, instance, includePrerelease)
+                    val inspected =
+                        coroutineScope {
+                            val gate = Semaphore(UPDATE_LOOKUP_CONCURRENCY)
+                            files
+                                .map { file ->
+                                    async(Dispatchers.IO) {
+                                        gate.withPermit {
+                                            inspect(
+                                                instance,
+                                                folder,
+                                                file,
+                                                fingerprints[file.filename],
+                                                batch[file.filename],
+                                                includePrerelease,
+                                            )
+                                        }
+                                    }
+                                }.awaitAll()
+                        }
+                    items += inspected
+                }
+                val versionMs = elapsedMillis(versionStarted) - scanMs - fingerprintMs
+                if (attempted > 0 && failures.size == attempted && scanned > 0) {
+                    throw IllegalStateException("检查更新失败：${failures.joinToString("；")}")
+                }
+                store.log(
+                    "资源包与光影更新检查：扫描 $scanned 个文件 $scanMs ms，指纹查询 $fingerprintMs ms，" +
+                        "版本查询 $versionMs ms，总计 ${elapsedMillis(startedAt)} ms",
+                )
+                PackUpdateReport(instanceId, instance.gameVersion, items)
+            }
+
+        /**
+         * 按「内容源 + 是否接受预发布」分组调用批量接口；不支持的源返回 null，对应文件留待逐项目查询。
+         */
+        private suspend fun batchLatest(
+            files: List<LocalPackFile>,
+            fingerprints: Map<String, Pair<PackUpdateSource, RemoteModVersion>>,
+            folder: PackFolder,
+            instance: GameInstance,
+            includePrerelease: Boolean,
+        ): Map<String, BatchLatest> {
+            val result = mutableMapOf<String, BatchLatest>()
+            val groups =
+                files
+                    .mapNotNull { file ->
+                        val hit = fingerprints[file.filename] ?: return@mapNotNull null
+                        Triple(file, hit.first, hit.second)
+                    }.groupBy { (_, source, installed) ->
+                        source.provider to
+                            (includePrerelease || isPrereleaseVersion(installed.number))
+                    }
+            for ((key, group) in groups) {
+                val (provider, allowPrerelease) = key
+                val latest =
+                    try {
+                        group.first().second.latestVersions(
+                            group.map { it.first },
+                            folder,
+                            instance,
+                            allowPrerelease,
+                        )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        failures +=
-                            "${source.provider}：${
-                                error.message.orEmpty().take(160).ifBlank { "请求失败" }
-                            }"
-                    }
+                        store.log(
+                            "$provider 批量版本查询失败，回退到逐项目查询：" +
+                                error.message
+                                    .orEmpty()
+                                    .take(120)
+                                    .ifBlank { "请求失败" },
+                            true,
+                        )
+                        null
+                    } ?: continue
+                group.forEach { (file, _, _) ->
+                    result[file.filename] = BatchLatest(true, latest[file.filename])
                 }
-                fingerprintMs += elapsedMillis(fingerprintStarted)
-                // 指纹命中的包先用批量接口结算最新版本，只有名称匹配才逐项目查询。
-                val batch = batchLatest(files, fingerprints, folder, instance, includePrerelease)
-                val inspected =
-                    coroutineScope {
-                        val gate = Semaphore(UPDATE_LOOKUP_CONCURRENCY)
-                        files.map { file ->
-                                async(Dispatchers.IO) {
-                                    gate.withPermit {
-                                        inspect(
-                                            instance,
-                                            folder,
-                                            file,
-                                            fingerprints[file.filename],
-                                            batch[file.filename],
-                                            includePrerelease,
-                                        )
-                                    }
-                                }
-                            }
-                            .awaitAll()
-                    }
-                items += inspected
             }
-            val versionMs = elapsedMillis(versionStarted) - scanMs - fingerprintMs
-            if (attempted > 0 && failures.size == attempted && scanned > 0) {
-                throw IllegalStateException("检查更新失败：${failures.joinToString("；")}")
-            }
-            store.log(
-                "资源包与光影更新检查：扫描 $scanned 个文件 $scanMs ms，指纹查询 $fingerprintMs ms，" +
-                    "版本查询 $versionMs ms，总计 ${elapsedMillis(startedAt)} ms"
-            )
-            PackUpdateReport(instanceId, instance.gameVersion, items)
+            return result
         }
 
-    /**
-     * 按「内容源 + 是否接受预发布」分组调用批量接口；不支持的源返回 null，对应文件留待逐项目查询。
-     */
-    private suspend fun batchLatest(
-        files: List<LocalPackFile>,
-        fingerprints: Map<String, Pair<PackUpdateSource, RemoteModVersion>>,
-        folder: PackFolder,
-        instance: GameInstance,
-        includePrerelease: Boolean,
-    ): Map<String, BatchLatest> {
-        val result = mutableMapOf<String, BatchLatest>()
-        val groups =
-            files.mapNotNull { file ->
-                    val hit = fingerprints[file.filename] ?: return@mapNotNull null
-                    Triple(file, hit.first, hit.second)
-                }
-                .groupBy { (_, source, installed) ->
-                    source.provider to (includePrerelease || isPrereleaseVersion(installed.number))
-                }
-        for ((key, group) in groups) {
-            val (provider, allowPrerelease) = key
-            val latest =
+        private suspend fun inspect(
+            instance: GameInstance,
+            folder: PackFolder,
+            file: LocalPackFile,
+            fingerprint: Pair<PackUpdateSource, RemoteModVersion>?,
+            batch: BatchLatest?,
+            includePrerelease: Boolean,
+        ): PackUpdateItem {
+            val base =
+                PackUpdateItem(
+                    filename = file.filename,
+                    folder = folder,
+                    currentVersion = fingerprint?.second?.number.orEmpty(),
+                )
+            if (fingerprint != null) {
+                val (source, version) = fingerprint
+                return resolve(
+                    instance,
+                    folder,
+                    file,
+                    base,
+                    source,
+                    version.project,
+                    version.number,
+                    PackMatchSource.Fingerprint,
+                    false,
+                    includePrerelease,
+                    latestKnown = batch?.version,
+                    batchChecked = batch?.checked == true,
+                )
+            }
+            // 名称搜索：去掉扩展名，把 . - _ 换成空格，只保留较长的名字片段。
+            val query = packSearchName(file.filename)
+            val candidates = mutableListOf<Pair<PackUpdateSource, RemoteModProject>>()
+            var searchError = ""
+            for (source in sources) {
+                currentCoroutineContext().ensureActive()
                 try {
-                    group.first().second.latestVersions(
-                        group.map { it.first },
-                        folder,
-                        instance,
-                        allowPrerelease,
-                    )
+                    source.search(query, folder, instance).forEach { project ->
+                        if (nameMatches(query, project.title) || nameMatches(query, project.slug)) {
+                            candidates += source to project
+                        }
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    store.log(
-                        "$provider 批量版本查询失败，回退到逐项目查询：" +
-                            error.message.orEmpty().take(120).ifBlank { "请求失败" },
-                        true,
-                    )
-                    null
-                } ?: continue
-            group.forEach { (file, _, _) ->
-                result[file.filename] = BatchLatest(true, latest[file.filename])
+                    searchError = error.message.orEmpty().take(120)
+                }
             }
-        }
-        return result
-    }
-
-    private suspend fun inspect(
-        instance: GameInstance,
-        folder: PackFolder,
-        file: LocalPackFile,
-        fingerprint: Pair<PackUpdateSource, RemoteModVersion>?,
-        batch: BatchLatest?,
-        includePrerelease: Boolean,
-    ): PackUpdateItem {
-        val base =
-            PackUpdateItem(
-                filename = file.filename,
-                folder = folder,
-                currentVersion = fingerprint?.second?.number.orEmpty(),
-            )
-        if (fingerprint != null) {
-            val (source, version) = fingerprint
+            val distinct = candidates.distinctBy { it.second.id }
+            if (distinct.isEmpty()) {
+                return base.copy(
+                    status = PackUpdateStatus.Unknown,
+                    warning =
+                        if (searchError.isNotBlank()) "名称搜索失败：$searchError" else "未找到匹配项目",
+                )
+            }
+            if (distinct.size > 1) {
+                return base.copy(
+                    status = PackUpdateStatus.Unknown,
+                    possibleMatch = true,
+                    warning =
+                        "可能匹配到多个项目（" +
+                            distinct.take(3).joinToString("、") { it.second.title } +
+                            "），请在项目页确认",
+                )
+            }
+            val (source, project) = distinct.single()
             return resolve(
                 instance,
                 folder,
                 file,
                 base,
                 source,
-                version.project,
-                version.number,
-                PackMatchSource.Fingerprint,
-                false,
+                project,
+                "",
+                PackMatchSource.Name,
+                true,
                 includePrerelease,
-                latestKnown = batch?.version,
-                batchChecked = batch?.checked == true,
             )
         }
-        // 名称搜索：去掉扩展名，把 . - _ 换成空格，只保留较长的名字片段。
-        val query = packSearchName(file.filename)
-        val candidates = mutableListOf<Pair<PackUpdateSource, RemoteModProject>>()
-        var searchError = ""
-        for (source in sources) {
-            currentCoroutineContext().ensureActive()
-            try {
-                source.search(query, folder, instance).forEach { project ->
-                    if (nameMatches(query, project.title) || nameMatches(query, project.slug))
-                        candidates += source to project
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                searchError = error.message.orEmpty().take(120)
-            }
-        }
-        val distinct = candidates.distinctBy { it.second.id }
-        if (distinct.isEmpty()) {
-            return base.copy(
-                status = PackUpdateStatus.Unknown,
-                warning =
-                    if (searchError.isNotBlank()) "名称搜索失败：$searchError" else "未找到匹配项目",
-            )
-        }
-        if (distinct.size > 1) {
-            return base.copy(
-                status = PackUpdateStatus.Unknown,
-                possibleMatch = true,
-                warning =
-                    "可能匹配到多个项目（" +
-                        distinct.take(3).joinToString("、") { it.second.title } +
-                        "），请在项目页确认",
-            )
-        }
-        val (source, project) = distinct.single()
-        return resolve(
-            instance,
-            folder,
-            file,
-            base,
-            source,
-            project,
-            "",
-            PackMatchSource.Name,
-            true,
-            includePrerelease,
-        )
-    }
 
-    private suspend fun resolve(
-        instance: GameInstance,
-        folder: PackFolder,
-        file: LocalPackFile,
-        base: PackUpdateItem,
-        source: PackUpdateSource,
-        project: RemoteModProject,
-        currentVersion: String,
-        matchSource: PackMatchSource,
-        possible: Boolean,
-        includePrerelease: Boolean,
-        latestKnown: RemoteModVersion? = null,
-        batchChecked: Boolean = false,
-    ): PackUpdateItem {
-        val versions =
-            if (batchChecked) emptyList()
-            else
-                try {
-                    source.versions(project, folder, instance)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    return base.copy(
-                        matchSource = matchSource,
-                        possibleMatch = possible,
-                        warning = "读取项目版本失败：${error.message.orEmpty().take(120)}",
-                    )
+        private suspend fun resolve(
+            instance: GameInstance,
+            folder: PackFolder,
+            file: LocalPackFile,
+            base: PackUpdateItem,
+            source: PackUpdateSource,
+            project: RemoteModProject,
+            currentVersion: String,
+            matchSource: PackMatchSource,
+            possible: Boolean,
+            includePrerelease: Boolean,
+            latestKnown: RemoteModVersion? = null,
+            batchChecked: Boolean = false,
+        ): PackUpdateItem {
+            val versions =
+                if (batchChecked) {
+                    emptyList()
+                } else {
+                    try {
+                        source.versions(project, folder, instance)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        return base.copy(
+                            matchSource = matchSource,
+                            possibleMatch = possible,
+                            warning = "读取项目版本失败：${error.message.orEmpty().take(120)}",
+                        )
+                    }
                 }
-        val pool =
-            if (batchChecked) {
-                // 批量接口已按游戏版本与发布类型筛选，这里只做一次本地复核。
-                listOfNotNull(
-                    latestKnown?.takeIf {
-                        it.number.isNotBlank() &&
+            val pool =
+                if (batchChecked) {
+                    // 批量接口已按游戏版本与发布类型筛选，这里只做一次本地复核。
+                    listOfNotNull(
+                        latestKnown?.takeIf {
+                            it.number.isNotBlank() &&
+                                packVersionMatches(folder, it.gameVersions, instance.gameVersion)
+                        },
+                    )
+                } else {
+                    val compatible =
+                        versions.filter {
                             packVersionMatches(folder, it.gameVersions, instance.gameVersion)
-                    }
+                        }
+                    val allowPrerelease = includePrerelease || isPrereleaseVersion(currentVersion)
+                    compatible.filter { allowPrerelease || it.versionType.equals("release", true) }
+                }
+            val latest =
+                pool.maxWithOrNull(
+                    Comparator { left, right ->
+                        compareModVersions(left.number, right.number)
+                    },
                 )
-            } else {
-                val compatible =
-                    versions.filter {
-                        packVersionMatches(folder, it.gameVersions, instance.gameVersion)
-                    }
-                val allowPrerelease = includePrerelease || isPrereleaseVersion(currentVersion)
-                compatible.filter { allowPrerelease || it.versionType.equals("release", true) }
+            // 名称匹配时，项目版本里与本地文件同名的那个就是当前安装的版本。
+            val current =
+                currentVersion.ifBlank {
+                    versions
+                        .firstOrNull {
+                            it.filename.equals(
+                                file.filename,
+                                true,
+                            )
+                        }?.number
+                        .orEmpty()
+                }
+            if (current.isBlank() || latest == null || latest.number.isBlank()) {
+                return base.copy(
+                    status = PackUpdateStatus.Unknown,
+                    matchSource = matchSource,
+                    possibleMatch = possible,
+                    warning =
+                        if (latest == null) {
+                            "没有适用于当前游戏版本的版本"
+                        } else {
+                            "无法确认当前版本，请到项目页核对"
+                        },
+                )
             }
-        val latest =
-            pool.maxWithOrNull(Comparator { left, right ->
-                compareModVersions(left.number, right.number)
-            })
-        // 名称匹配时，项目版本里与本地文件同名的那个就是当前安装的版本。
-        val current =
-            currentVersion.ifBlank {
-                versions.firstOrNull { it.filename.equals(file.filename, true) }?.number.orEmpty()
-            }
-        if (current.isBlank() || latest == null || latest.number.isBlank()) {
+            val newer = compareModVersions(latest.number, current) > 0
             return base.copy(
-                status = PackUpdateStatus.Unknown,
+                status = if (newer) PackUpdateStatus.Updatable else PackUpdateStatus.Latest,
+                currentVersion = current,
+                latestVersion = latest.number,
+                candidate = if (newer) candidateOf(latest) else null,
                 matchSource = matchSource,
                 possibleMatch = possible,
                 warning =
-                    if (latest == null) "没有适用于当前游戏版本的版本"
-                    else "无法确认当前版本，请到项目页核对",
+                    when {
+                        newer && latest.downloadUrl.isBlank() -> "最新版本需要到项目页手动下载"
+                        possible -> "按名称匹配，可能不是同一项目"
+                        else -> ""
+                    },
             )
         }
-        val newer = compareModVersions(latest.number, current) > 0
-        return base.copy(
-            status = if (newer) PackUpdateStatus.Updatable else PackUpdateStatus.Latest,
-            currentVersion = current,
-            latestVersion = latest.number,
-            candidate = if (newer) candidateOf(latest) else null,
-            matchSource = matchSource,
-            possibleMatch = possible,
-            warning =
-                when {
-                    newer && latest.downloadUrl.isBlank() -> "最新版本需要到项目页手动下载"
-                    possible -> "按名称匹配，可能不是同一项目"
-                    else -> ""
-                },
-        )
-    }
 
-    private fun candidateOf(version: RemoteModVersion): PackUpdateCandidate? {
-        if (version.filename.isBlank() || !version.filename.endsWith(".zip", true)) return null
-        return PackUpdateCandidate(
-            projectId = version.project.id,
-            projectTitle = version.project.title,
-            versionId = version.id,
-            versionNumber = version.number,
-            filename = version.filename,
-            downloadUrl = version.downloadUrl,
-            provider = version.project.provider,
-            gameVersions = version.gameVersions,
-        )
-    }
+        private fun candidateOf(version: RemoteModVersion): PackUpdateCandidate? {
+            if (version.filename.isBlank() || !version.filename.endsWith(".zip", true)) return null
+            return PackUpdateCandidate(
+                projectId = version.project.id,
+                projectTitle = version.project.title,
+                versionId = version.id,
+                versionNumber = version.number,
+                filename = version.filename,
+                downloadUrl = version.downloadUrl,
+                provider = version.project.provider,
+                gameVersions = version.gameVersions,
+            )
+        }
 
-    /** 只列直接子项：`.zip` 文件与文件夹；跳过隐藏文件、临时文件与符号链接。 */
-    private fun readLocalPacks(directory: Path): List<LocalPackFile> {
-        if (!directory.isDirectory() || Files.isSymbolicLink(directory)) return emptyList()
-        return runCatching {
+        /** 只列直接子项：`.zip` 文件与文件夹；跳过隐藏文件、临时文件与符号链接。 */
+        private fun readLocalPacks(directory: Path): List<LocalPackFile> {
+            if (!directory.isDirectory() || Files.isSymbolicLink(directory)) return emptyList()
+            return runCatching {
                 directory
                     .listDirectoryEntries()
                     .filter {
                         !it.name.startsWith(".") &&
                             !Files.isSymbolicLink(it) &&
                             (it.isRegularFile() || it.isDirectory())
-                    }
-                    .filter { it.isDirectory() || it.name.endsWith(".zip", true) }
+                    }.filter { it.isDirectory() || it.name.endsWith(".zip", true) }
                     .sortedBy { it.name.lowercase() }
                     .map { localFile(it) }
-            }
-            .getOrElse { emptyList() }
+            }.getOrElse { emptyList() }
+        }
     }
-}
 
 /**
  * 候选版本的 Minecraft 版本规则。
@@ -512,7 +559,8 @@ internal fun packSearchName(filename: String): String {
             .removeSuffix(".zip")
             .replace(Regex("(?i)\\.zip$"), "")
     val cleaned =
-        base.replace(Regex("[._-]+"), " ")
+        base
+            .replace(Regex("[._-]+"), " ")
             .split(' ')
             .filter { it.isNotBlank() && !it.matches(Regex("(?i)v?\\d+(?:\\.\\d+)*[a-z]?")) }
             .joinToString(" ")
@@ -542,16 +590,17 @@ internal class ModrinthPackUpdateSource(
         if (missing.isNotEmpty()) {
             for (batch in missing.chunked(50)) {
                 runCatching {
-                        network.json("$api/projects?ids=${encoded(gson.toJson(batch))}")
-                            .asJsonArray
-                            .forEach { element ->
-                                val info = runCatching { element.asJsonObject }.getOrNull()
+                    network
+                        .json("$api/projects?ids=${encoded(gson.toJson(batch))}")
+                        .asJsonArray
+                        .forEach { element ->
+                            val info =
+                                runCatching { element.asJsonObject }.getOrNull()
                                     ?: return@forEach
-                                val id = info.string("id")
-                                if (id.isNotBlank()) projectKinds[id] = info.string("project_type")
-                            }
-                    }
-                    .onFailure { missing.forEach { id -> projectKinds.putIfAbsent(id, null) } }
+                            val id = info.string("id")
+                            if (id.isNotBlank()) projectKinds[id] = info.string("project_type")
+                        }
+                }.onFailure { missing.forEach { id -> projectKinds.putIfAbsent(id, null) } }
             }
         }
         return ids.associateWith { projectKinds[it] }
@@ -562,7 +611,11 @@ internal class ModrinthPackUpdateSource(
         folder: PackFolder,
     ): Map<String, RemoteModVersion> {
         val result = mutableMapOf<String, RemoteModVersion>()
-        for (batch in files.map { it.sha512 }.filter { it.isNotBlank() }.distinct().chunked(100)) {
+        for (batch in files
+            .map { it.sha512 }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .chunked(100)) {
             val body =
                 JsonObject().apply {
                     add("hashes", gson.toJsonTree(batch))
@@ -601,13 +654,17 @@ internal class ModrinthPackUpdateSource(
                     add("hashes", gson.toJsonTree(batch))
                     addProperty("algorithm", "sha512")
                     // 资源包必须匹配游戏版本；光影常不声明版本，交给本地规则判断。
-                    if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank())
+                    if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank()) {
                         add("game_versions", gson.toJsonTree(listOf(instance.gameVersion)))
+                    }
                     add(
                         "version_types",
                         gson.toJsonTree(
-                            if (allowPrerelease) listOf("release", "beta", "alpha")
-                            else listOf("release")
+                            if (allowPrerelease) {
+                                listOf("release", "beta", "alpha")
+                            } else {
+                                listOf("release")
+                            },
                         ),
                     )
                 }
@@ -633,16 +690,19 @@ internal class ModrinthPackUpdateSource(
     ): List<RemoteModProject> {
         val facets = mutableListOf(listOf("project_type:${folder.kind}"))
         // 资源包必须匹配游戏版本；光影常不声明版本，因此不按版本筛，交给统一规则判断。
-        if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank())
+        if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank()) {
             facets += listOf("versions:${instance.gameVersion}")
+        }
         val response =
             network
                 .json(
-                    "$api/search?query=${encoded(name)}&limit=8&facets=${encoded(gson.toJson(facets))}"
-                )
-                .asJsonObject
+                    "$api/search?query=${encoded(
+                        name,
+                    )}&limit=8&facets=${encoded(gson.toJson(facets))}",
+                ).asJsonObject
         return response.array("hits").mapNotNull { element ->
-            val hit = element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
+            val hit =
+                element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
             val id = hit.string("project_id").ifBlank { hit.string("id") }
             val type = hit.string("project_type")
             if (id.isBlank() || (type.isNotBlank() && type != folder.kind)) return@mapNotNull null
@@ -665,8 +725,9 @@ internal class ModrinthPackUpdateSource(
             }
 }
 
-internal class CurseForgePackUpdateSource(private val curseForge: CurseForgeBackend) :
-    PackUpdateSource {
+internal class CurseForgePackUpdateSource(
+    private val curseForge: CurseForgeBackend,
+) : PackUpdateSource {
     override val provider = "curseforge"
 
     /** 批量指纹 + 批量文件/项目查询：请求数与包数量无关，并按镜像分类表过滤资源类型。 */

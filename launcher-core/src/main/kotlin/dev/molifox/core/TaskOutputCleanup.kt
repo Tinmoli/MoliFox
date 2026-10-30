@@ -10,9 +10,16 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.*
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.walk
 
-internal class TaskOutputCleanup(private val task: JobContext) {
+internal class TaskOutputCleanup(
+    private val task: JobContext,
+) {
     private val journal = TaskDownloadJournal(task)
     private val directories = ConcurrentHashMap.newKeySet<Path>()
 
@@ -42,7 +49,10 @@ internal class TaskOutputCleanup(private val task: JobContext) {
         }
     }
 
-    fun write(path: Path, action: () -> Unit) {
+    fun write(
+        path: Path,
+        action: () -> Unit,
+    ) {
         val completed = track(path)
         try {
             action()

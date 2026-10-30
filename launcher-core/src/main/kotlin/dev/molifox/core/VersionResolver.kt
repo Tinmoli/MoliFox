@@ -11,7 +11,11 @@ import com.google.gson.JsonObject
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
-data class ResolvedProfile(val id: String, val jarId: String, val json: JsonObject) {
+data class ResolvedProfile(
+    val id: String,
+    val jarId: String,
+    val json: JsonObject,
+) {
     val requiredJava: Int
         get() = json.obj("javaVersion").int("majorVersion", 8)
 
@@ -19,37 +23,41 @@ data class ResolvedProfile(val id: String, val jarId: String, val json: JsonObje
         get() = json.string("mainClass")
 }
 
-class VersionResolver(private val root: Path, private val platform: PlatformServices) {
+class VersionResolver(
+    private val root: Path,
+    private val platform: PlatformServices,
+) {
     /** Launcher profile IDs may be pack names; resource APIs require the actual game version. */
     fun minecraftVersion(profile: ResolvedProfile): String {
         val json = profile.json
         val declared =
             listOf(
-                    json.string("_minecraftVersion"),
-                    json.string("clientVersion"),
-                    json
-                        .array("patches")
-                        .firstOrNull {
-                            it.isJsonObject &&
-                                it.asJsonObject.string("id") in setOf("game", "minecraft")
-                        }
-                        ?.asJsonObject
-                        ?.string("version")
-                        .orEmpty(),
-                )
-                .firstOrNull { it.isNotBlank() }
+                json.string("_minecraftVersion"),
+                json.string("clientVersion"),
+                json
+                    .array("patches")
+                    .firstOrNull {
+                        it.isJsonObject &&
+                            it.asJsonObject.string("id") in setOf("game", "minecraft")
+                    }?.asJsonObject
+                    ?.string("version")
+                    .orEmpty(),
+            ).firstOrNull { it.isNotBlank() }
         if (declared != null) return safeFilename(declared)
         val jar = safePath(root, "versions/${safeFilename(profile.jarId)}/${profile.jarId}.jar")
-        val embedded = runCatching {
-            ZipFile(jar.toFile()).use { zip ->
-                packJson(zip, "version.json")?.string("id")?.takeIf { it.isNotBlank() }
-            }
-        }
-            .getOrNull()
+        val embedded =
+            runCatching {
+                ZipFile(jar.toFile()).use { zip ->
+                    packJson(zip, "version.json")?.string("id")?.takeIf { it.isNotBlank() }
+                }
+            }.getOrNull()
         return embedded?.let(::safeFilename) ?: profile.jarId
     }
 
-    fun resolve(id: String, chain: Set<String> = emptySet()): ResolvedProfile {
+    fun resolve(
+        id: String,
+        chain: Set<String> = emptySet(),
+    ): ResolvedProfile {
         safeFilename(id)
         require(id !in chain && chain.size < 20) { "游戏版本继承出现循环" }
         val child = readObject(root.resolve("versions").resolve(id).resolve("$id.json"))
@@ -64,7 +72,10 @@ class VersionResolver(private val root: Path, private val platform: PlatformServ
         return ResolvedProfile(id, jar, merged)
     }
 
-    fun allowed(element: JsonObject, features: Map<String, Boolean> = emptyMap()): Boolean =
+    fun allowed(
+        element: JsonObject,
+        features: Map<String, Boolean> = emptyMap(),
+    ): Boolean =
         rulesAllow(
             element.getAsJsonArray("rules"),
             platform.osName,
@@ -74,7 +85,10 @@ class VersionResolver(private val root: Path, private val platform: PlatformServ
         )
 
     fun libraries(profile: ResolvedProfile): List<JsonObject> =
-        profile.json.array("libraries").map { it.asJsonObject }.filter { allowed(it) }
+        profile.json
+            .array("libraries")
+            .map { it.asJsonObject }
+            .filter { allowed(it) }
 
     fun libraryArtifacts(library: JsonObject): List<Pair<DownloadArtifact, Boolean>> {
         val artifacts = mutableListOf<Pair<DownloadArtifact, Boolean>>()
@@ -134,8 +148,11 @@ class VersionResolver(private val root: Path, private val platform: PlatformServ
         val relative = artifact.string("path", fallbackPath)
         val declared = artifact.string("url")
         val url =
-            if (declared.isBlank() || isObjectStorageUrl(declared)) mavenUrl(library, relative)
-            else declared
+            if (declared.isBlank() || isObjectStorageUrl(declared)) {
+                mavenUrl(library, relative)
+            } else {
+                declared
+            }
         return DownloadArtifact(
             url,
             safePath(root.resolve("libraries"), relative),
@@ -145,7 +162,10 @@ class VersionResolver(private val root: Path, private val platform: PlatformServ
     }
 
     /** 库地址：库自己声明的 Maven 仓库优先，否则用官方 libraries 仓库。 */
-    private fun mavenUrl(library: JsonObject, relative: String): String =
+    private fun mavenUrl(
+        library: JsonObject,
+        relative: String,
+    ): String =
         library.string("url").trimEnd('/').ifBlank { "https://libraries.minecraft.net" } +
             "/$relative"
 
@@ -170,7 +190,10 @@ class VersionResolver(private val root: Path, private val platform: PlatformServ
  * 与 [VersionResolver.resolve] 同一套规则。安装加载器时用它把基础版本和加载器配置直接合成目标实例的
  * 完整配置，而不是让目标目录长期只放一个 `inheritsFrom` 存根、再额外保留两个版本目录。
  */
-internal fun mergeVersionProfiles(parent: JsonObject, child: JsonObject): JsonObject {
+internal fun mergeVersionProfiles(
+    parent: JsonObject,
+    child: JsonObject,
+): JsonObject {
     val merged = parent.deepCopy()
     child
         .entrySet()
@@ -189,8 +212,11 @@ internal fun mergeVersionProfiles(parent: JsonObject, child: JsonObject): JsonOb
         val library = element.asJsonObject
         val parts = library.string("name").split(':')
         val key =
-            if (parts.size >= 3) "${parts[0]}:${parts[1]}:${parts.getOrElse(3) { "" }}"
-            else library.string("name")
+            if (parts.size >= 3) {
+                "${parts[0]}:${parts[1]}:${parts.getOrElse(3) { "" }}"
+            } else {
+                library.string("name")
+            }
         libraries[key] = library.deepCopy()
     }
     merged.add("libraries", JsonArray().apply { libraries.values.forEach { add(it) } })
@@ -212,32 +238,38 @@ fun rulesAllow(
         if (restriction.has("name") && restriction.string("name") != os) continue
         if (
             restriction.has("arch") &&
-                !Regex(restriction.string("arch")).containsMatchIn(architecture)
-        )
+            !Regex(restriction.string("arch")).containsMatchIn(architecture)
+        ) {
             continue
+        }
         if (
             restriction.has("version") &&
-                !Regex(restriction.string("version")).containsMatchIn(osVersion)
-        )
+            !Regex(restriction.string("version")).containsMatchIn(osVersion)
+        ) {
             continue
+        }
         if (
             rule.obj("features").entrySet().any { (key, value) ->
                 (features[key] ?: false) != value.asBoolean
             }
-        )
+        ) {
             continue
+        }
         result = rule.string("action") == "allow"
     }
     return result
 }
 
-fun mavenPath(coordinate: String, classifierOverride: String? = null): String {
+fun mavenPath(
+    coordinate: String,
+    classifierOverride: String? = null,
+): String {
     val extension = coordinate.substringAfter('@', "jar")
     val parts = coordinate.substringBefore('@').split(':')
     require(
         parts.size in 3..4 &&
             parts.none { it.isBlank() } &&
-            extension.matches(Regex("[a-zA-Z0-9]+"))
+            extension.matches(Regex("[a-zA-Z0-9]+")),
     ) {
         "无效的 Maven 依赖：$coordinate"
     }
@@ -256,8 +288,9 @@ internal fun expandArguments(
 ): List<String> {
     val result = mutableListOf<String>()
     for (argument in arguments) {
-        if (argument.isJsonPrimitive) result += substitute(argument.asString, values)
-        else {
+        if (argument.isJsonPrimitive) {
+            result += substitute(argument.asString, values)
+        } else {
             val objectArgument = argument.asJsonObject
             if (
                 !rulesAllow(
@@ -267,18 +300,24 @@ internal fun expandArguments(
                     System.getProperty("os.version"),
                     features,
                 )
-            )
+            ) {
                 continue
+            }
             val value = objectArgument.get("value") ?: continue
-            if (value.isJsonArray)
+            if (value.isJsonArray) {
                 value.asJsonArray.forEach { result += substitute(it.asString, values) }
-            else result += substitute(value.asString, values)
+            } else {
+                result += substitute(value.asString, values)
+            }
         }
     }
     return result
 }
 
-internal fun substitute(argument: String, values: Map<String, String>): String =
+internal fun substitute(
+    argument: String,
+    values: Map<String, String>,
+): String =
     Regex("\\$\\{([^}]+)}").replace(argument) { match ->
         values[match.groupValues[1]] ?: error("不支持的游戏启动参数：${match.value}")
     }

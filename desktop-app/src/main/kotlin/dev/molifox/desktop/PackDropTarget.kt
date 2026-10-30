@@ -9,7 +9,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
@@ -47,30 +51,31 @@ fun Modifier.packDropTarget(actions: UiActions): Modifier {
                         val file = files.single() as File
                         require(
                             file.extension.lowercase(java.util.Locale.ROOT) in
-                                setOf("mrpack", "zip")
+                                setOf("mrpack", "zip"),
                         ) {
                             "请拖入 .mrpack 或整合包 .zip 文件"
                         }
                         actions.previewPackFile(file.toPath())
                         true
+                    }.getOrElse {
+                        actions.controller.store.notify(it.message ?: "无法读取拖入的文件")
+                        false
                     }
-                        .getOrElse {
-                            actions.controller.store.notify(it.message ?: "无法读取拖入的文件")
-                            false
-                        }
                 }
             }
         }
-    return this.then(
-            if (hovered)
+    return this
+        .then(
+            if (hovered) {
                 Modifier.border(
                     2.dp,
                     MaterialTheme.colorScheme.primary,
                     RoundedCornerShape(Metrics.cardRadius),
                 )
-            else Modifier
-        )
-        .dragAndDropTarget(
+            } else {
+                Modifier
+            },
+        ).dragAndDropTarget(
             shouldStartDragAndDrop = { event ->
                 event.awtTransferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
             },

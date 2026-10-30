@@ -5,15 +5,41 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -21,12 +47,28 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.ContentDetails
+import dev.molifox.core.ContentFilter
+import dev.molifox.core.ContentHit
+import dev.molifox.core.ContentVersion
+import dev.molifox.core.LauncherState
+import dev.molifox.core.LoaderType
+import dev.molifox.core.SaveEntry
+import dev.molifox.core.compatibleContentVersion
+import dev.molifox.core.filteredContentVersions
+import dev.molifox.core.recommendedContentVersion
+import dev.molifox.desktop.platform.dialogs.PickMode
+import dev.molifox.desktop.platform.dialogs.PickRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
-import kotlinx.coroutines.*
-import kotlinx.coroutines.swing.Swing
 
 /** Project browsing is available without an installation target, including old versions. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -72,7 +114,10 @@ fun ContentProjectDialog(
         error = null
         try {
             details =
-                withContext(Dispatchers.IO) { actions.controller.content.catalog.browse(hit.id) }
+                withContext(Dispatchers.IO) {
+                    actions.controller.content.catalog
+                        .browse(hit.id)
+                }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -83,20 +128,21 @@ fun ContentProjectDialog(
     }
     val versions =
         filteredContentVersions(
-                details?.versions.orEmpty(),
-                ContentFilter(gameVersion, loader),
-                channel,
-            )
-            .sortedWith(newestVersionFirst)
+            details?.versions.orEmpty(),
+            ContentFilter(gameVersion, loader),
+            channel,
+        ).sortedWith(newestVersionFirst)
     val target = state.data.instances.find { it.id == targetId && it.installed }
     val recommendation = recommendedContentVersion(versions, target, hit.type)
     LaunchedEffect(hit.id, targetId, gameVersion, loader, channel, details) {
         val current = versions.find { it.id == versionId }
         if (
             current == null ||
-                (target != null &&
+            (
+                target != null &&
                     hit.type != "modpack" &&
-                    !compatibleContentVersion(current, target, hit.type))
+                    !compatibleContentVersion(current, target, hit.type)
+            )
         ) {
             versionId = recommendation?.id.orEmpty()
         }
@@ -111,7 +157,8 @@ fun ContentProjectDialog(
         try {
             changelog =
                 withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog.browseVersion(hit.id, versionId)
+                    actions.controller.content.catalog
+                        .browseVersion(hit.id, versionId)
                 }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -129,12 +176,13 @@ fun ContentProjectDialog(
         instanceRoot
             ?.let { root ->
                 runCatching {
-                    if (hit.type == "datapack") contentDestination(root, hit.type, worldName)
-                    else contentDestination(root, hit.type)
-                }
-                    .getOrNull()
-            }
-            ?.toAbsolutePath()
+                    if (hit.type == "datapack") {
+                        contentDestination(root, hit.type, worldName)
+                    } else {
+                        contentDestination(root, hit.type)
+                    }
+                }.getOrNull()
+            }?.toAbsolutePath()
             ?.normalize()
     LaunchedEffect(targetId, hit.type) {
         worlds = emptyList()
@@ -164,8 +212,9 @@ fun ContentProjectDialog(
             )
             defaultDestination?.let { folder ->
                 MutedText("下载位置 · $folder")
-                if (destination != null && destination != folder)
+                if (destination != null && destination != folder) {
                     MutedText("数据包只能放进存档的 datapacks，安装时会使用上面的位置。")
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton({ confirmDatapack = false }) { Text("取消") }
@@ -184,7 +233,7 @@ fun ContentProjectDialog(
         return
     }
     installVersion?.let { selected ->
-        if (target != null)
+        if (target != null) {
             ContentInstallDialog(
                 hit,
                 target.id,
@@ -194,15 +243,17 @@ fun ContentProjectDialog(
                 initialVersionId = selected.id,
                 destination = destination,
             )
+        }
         return
     }
     Modal(hit.title, "项目详情 · 先选游戏与资源版本，再安装", width = 740.dp, onDismiss = onDismiss) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (error != null)
+        if (error != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
                 TextButton({ retry++ }) { Text("重试") }
             }
+        }
         Column(
             Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -234,7 +285,11 @@ fun ContentProjectDialog(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val gameVersions =
-                    details?.versions.orEmpty().flatMap { it.gameVersions }.distinct()
+                    details
+                        ?.versions
+                        .orEmpty()
+                        .flatMap { it.gameVersions }
+                        .distinct()
                 SimpleDropdown(
                     gameVersion,
                     listOf("" to "全部游戏版本") +
@@ -244,7 +299,7 @@ fun ContentProjectDialog(
                     { gameVersion = it },
                     Modifier.weight(1f),
                 )
-                if (hit.type in setOf("mod", "modpack"))
+                if (hit.type in setOf("mod", "modpack")) {
                     SimpleDropdown(
                         loader?.name.orEmpty(),
                         listOf("" to "全部加载器") +
@@ -254,6 +309,7 @@ fun ContentProjectDialog(
                         { loader = LoaderType.entries.find { entry -> entry.name == it } },
                         Modifier.weight(1f),
                     )
+                }
                 SimpleDropdown(
                     channel,
                     listOf(
@@ -308,9 +364,13 @@ fun ContentProjectDialog(
                                     ) {
                                         Column(Modifier.weight(1f)) {
                                             Text(
-                                                if (best.channel != "release") "暂无正式版 · 最新测试文件"
-                                                else if (best.featured) "推荐版本 · 作者推荐的兼容正式版"
-                                                else "推荐版本 · 最新兼容正式版",
+                                                if (best.channel != "release") {
+                                                    "暂无正式版 · 最新测试文件"
+                                                } else if (best.featured) {
+                                                    "推荐版本 · 作者推荐的兼容正式版"
+                                                } else {
+                                                    "推荐版本 · 最新兼容正式版"
+                                                },
                                                 color = MaterialTheme.colorScheme.primary,
                                                 fontSize = 12.sp,
                                             )
@@ -326,7 +386,7 @@ fun ContentProjectDialog(
                                 }
                             }
                         }
-                        if (!loading && versions.isEmpty())
+                        if (!loading && versions.isEmpty()) {
                             item {
                                 EmptyState(
                                     "没有符合条件的版本",
@@ -342,24 +402,30 @@ fun ContentProjectDialog(
                                     }
                                 }
                             }
+                        }
                         items(versions, key = { it.id }) { version ->
                             Surface(
                                 onClick = { versionId = version.id },
                                 color =
-                                    if (version.id == versionId)
+                                    if (version.id == versionId) {
                                         MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerLow
+                                    },
                                 shape = MaterialTheme.shapes.small,
                             ) {
                                 Row(
-                                    Modifier.fillMaxWidth()
+                                    Modifier
+                                        .fillMaxWidth()
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Icon(
-                                        if (version.id == versionId)
+                                        if (version.id == versionId) {
                                             Icons.Outlined.RadioButtonChecked
-                                        else Icons.Outlined.RadioButtonUnchecked,
+                                        } else {
+                                            Icons.Outlined.RadioButtonUnchecked
+                                        },
                                         null,
                                         Modifier.size(16.dp),
                                     )
@@ -382,7 +448,9 @@ fun ContentProjectDialog(
                                         )
                                     }
                                     Text(
-                                        "${contentChannelTitle(version.channel)} · ${version.published.take(10)}",
+                                        "${contentChannelTitle(
+                                            version.channel,
+                                        )} · ${version.published.take(10)}",
                                         fontSize = 11.sp,
                                     )
                                 }
@@ -391,7 +459,7 @@ fun ContentProjectDialog(
                     }
                 }
             }
-            if (hit.type != "modpack")
+            if (hit.type != "modpack") {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -408,7 +476,8 @@ fun ContentProjectDialog(
                         Modifier.weight(1f),
                     )
                 }
-            if (hit.type == "datapack")
+            }
+            if (hit.type == "datapack") {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -417,25 +486,38 @@ fun ContentProjectDialog(
                     Text("目标存档", fontSize = 12.sp)
                     SimpleDropdown(
                         worldName,
-                        if (worlds.isEmpty()) listOf("" to (worldError ?: "此实例暂无可用世界"))
-                        else worlds.map { it.name to it.name },
+                        if (worlds.isEmpty()) {
+                            listOf("" to (worldError ?: "此实例暂无可用世界"))
+                        } else {
+                            worlds.map { it.name to it.name }
+                        },
                         { worldName = it },
                         Modifier.weight(1f),
                     )
                 }
+            }
         }
         val compatible =
             chosen != null &&
-                (hit.type == "modpack" ||
-                    target?.let {
-                        compatibleContentVersion(chosen, it, hit.type)
-                    } == true)
+                (
+                    hit.type == "modpack" ||
+                        target?.let {
+                            compatibleContentVersion(chosen, it, hit.type)
+                        } == true
+                )
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (hit.type == "modpack") "将先预览整合包，不会立即安装。"
-                else if (target == null) "先选实例或点「下载」挑一个保存文件夹。"
-                else if (!compatible) "所选文件不兼容此实例的游戏版本或加载器。"
-                else if (hit.type == "datapack") "数据包需要安装到具体存档。" else "下载前会确认目标文件夹，并检查前置与文件冲突。",
+                if (hit.type == "modpack") {
+                    "将先预览整合包，不会立即安装。"
+                } else if (target == null) {
+                    "先选实例或点「下载」挑一个保存文件夹。"
+                } else if (!compatible) {
+                    "所选文件不兼容此实例的游戏版本或加载器。"
+                } else if (hit.type == "datapack") {
+                    "数据包需要安装到具体存档。"
+                } else {
+                    "下载前会确认目标文件夹，并检查前置与文件冲突。"
+                },
                 Modifier.weight(1f),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -467,17 +549,19 @@ fun ContentProjectDialog(
                             // 选择器就能停在将来真正写入的位置，而不是上层的游戏根目录。
                             directory?.let { runCatching { Files.createDirectories(it) } }
                             val picked =
-                                PathPicker.pick(
+                                actions
+                                    .choose(
                                         PickRequest(
                                             title =
-                                                if (hit.type == "datapack")
+                                                if (hit.type == "datapack") {
                                                     "数据包会放进这个存档的 datapacks 文件夹"
-                                                else "下载的资源会放进这个文件夹",
+                                                } else {
+                                                    "下载的资源会放进这个文件夹"
+                                                },
                                             mode = PickMode.Directory,
                                             initialDirectory = directory ?: store.dataDirectory,
-                                        )
-                                    )
-                                    .firstOrNull()
+                                        ),
+                                    ).firstOrNull()
                             withContext(Dispatchers.Swing) {
                                 if (picked == null) return@withContext
                                 if (instanceRoot == null) {
@@ -485,8 +569,11 @@ fun ContentProjectDialog(
                                     return@withContext
                                 }
                                 destination = picked
-                                if (hit.type == "datapack") confirmDatapack = true
-                                else installVersion = version
+                                if (hit.type == "datapack") {
+                                    confirmDatapack = true
+                                } else {
+                                    installVersion = version
+                                }
                             }
                         }
                     }
@@ -514,15 +601,25 @@ internal fun contentFolderForType(type: String): String =
     }
 
 /** 默认下载目标：模组 / 资源包 / 光影落在实例内容目录，数据包落在所选存档的 datapacks。 显示给用户的就是最终会被写入的路径。 */
-internal fun contentDestination(instanceRoot: Path, type: String, worldName: String = ""): Path =
-    if (type == "datapack") instanceRoot.resolve("saves").resolve(worldName).resolve("datapacks")
-    else instanceRoot.resolve(contentFolderForType(type))
+internal fun contentDestination(
+    instanceRoot: Path,
+    type: String,
+    worldName: String = "",
+): Path =
+    if (type == "datapack") {
+        instanceRoot.resolve("saves").resolve(worldName).resolve("datapacks")
+    } else {
+        instanceRoot.resolve(contentFolderForType(type))
+    }
 
 /**
  * 用户确认的文件夹 → 实例内的资源子目录名（mods / resourcepacks / shaderpacks）。 不在实例内、或者不是这三个目录之一时返回
  * null：安装仍走默认目录，不写入用户没有确认的位置。
  */
-internal fun contentFolderOf(instanceRoot: Path?, destination: Path?): String? {
+internal fun contentFolderOf(
+    instanceRoot: Path?,
+    destination: Path?,
+): String? {
     if (instanceRoot == null || destination == null) return null
     val root = runCatching { instanceRoot.toAbsolutePath().normalize() }.getOrNull() ?: return null
     val target = runCatching { destination.toAbsolutePath().normalize() }.getOrNull() ?: return null
@@ -536,7 +633,10 @@ private val newestVersionFirst: Comparator<ContentVersion> =
     compareByDescending<ContentVersion> { it.published }
         .thenComparator { left, right -> compareVersionNumbers(right.number, left.number) }
 
-private fun compareVersionNumbers(left: String, right: String): Int {
+private fun compareVersionNumbers(
+    left: String,
+    right: String,
+): Int {
     val a = versionNumberSegments(left)
     val b = versionNumberSegments(right)
     repeat(maxOf(a.size, b.size)) { index ->
@@ -547,4 +647,8 @@ private fun compareVersionNumbers(left: String, right: String): Int {
 }
 
 private fun versionNumberSegments(value: String): List<Int> =
-    Regex("[0-9]+").findAll(value).mapNotNull { it.value.toIntOrNull() }.take(4).toList()
+    Regex("[0-9]+")
+        .findAll(value)
+        .mapNotNull { it.value.toIntOrNull() }
+        .take(4)
+        .toList()

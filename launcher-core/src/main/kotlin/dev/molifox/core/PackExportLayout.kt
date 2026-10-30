@@ -8,7 +8,9 @@ package dev.molifox.core
 import java.nio.file.Path
 import java.time.Instant
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
 
 /** 一次导出的归档结构：清单文档、按文件复制的条目、目录条目与必需条目。 */
 internal class PackExportLayout(
@@ -36,10 +38,18 @@ internal fun buildPackExportLayout(
     val payload = mutableListOf<Pair<String, MrpackExportFile>>()
     val directories = mutableListOf<String>()
     var required = listOf<String>()
-    fun document(name: String, value: Any) {
+
+    fun document(
+        name: String,
+        value: Any,
+    ) {
         documents += name to gson.toJson(value).toByteArray(Charsets.UTF_8)
     }
-    fun text(name: String, value: String) {
+
+    fun text(
+        name: String,
+        value: String,
+    ) {
         documents += name to value.toByteArray(Charsets.UTF_8)
     }
     when (format) {
@@ -104,7 +114,10 @@ internal fun multimcLoaderUid(loader: LoaderType): String? =
         LoaderType.NeoForge -> "net.neoforged"
     }
 
-private fun mrpackIndex(plan: MrpackExportPlan, files: List<MrpackExportFile>): Map<String, Any> {
+private fun mrpackIndex(
+    plan: MrpackExportPlan,
+    files: List<MrpackExportFile>,
+): Map<String, Any> {
     val dependencies = linkedMapOf("minecraft" to plan.components.gameVersion)
     mrpackLoaderKey(plan.components.loader)?.let {
         dependencies[it] = plan.components.loaderVersion
@@ -148,14 +161,16 @@ private fun curseForgeManifest(
             mapOf(
                 "version" to plan.components.gameVersion,
                 "modLoaders" to
-                    if (loaderId == null) emptyList<Map<String, Any>>()
-                    else
+                    if (loaderId == null) {
+                        emptyList<Map<String, Any>>()
+                    } else {
                         listOf(
                             mapOf(
                                 "id" to "$loaderId-${plan.components.loaderVersion}",
                                 "primary" to true,
-                            )
-                        ),
+                            ),
+                        )
+                    },
             ),
         "manifestType" to "minecraftModpack",
         "manifestVersion" to 1,
@@ -190,7 +205,10 @@ private fun multimcManifest(plan: MrpackExportPlan): Map<String, Any> {
 }
 
 private fun multimcInstanceConfig(plan: MrpackExportPlan): String {
-    val name = plan.metadata.name.replace(Regex("[\\r\\n]"), " ").trim()
+    val name =
+        plan.metadata.name
+            .replace(Regex("[\\r\\n]"), " ")
+            .trim()
     // MultiMC/Prism 的自由实例：OneSix + 由 mmc-pack.json 声明的组件。
     return buildString {
         appendLine("[General]")
@@ -205,7 +223,10 @@ private fun multimcInstanceConfig(plan: MrpackExportPlan): String {
     }
 }
 
-private fun mcbbsManifest(plan: MrpackExportPlan, files: List<MrpackExportFile>): Map<String, Any> =
+private fun mcbbsManifest(
+    plan: MrpackExportPlan,
+    files: List<MrpackExportFile>,
+): Map<String, Any> =
     mapOf(
         "manifestType" to "minecraftModpack",
         "manifestVersion" to 2,
@@ -216,14 +237,18 @@ private fun mcbbsManifest(plan: MrpackExportPlan, files: List<MrpackExportFile>)
         "fileApi" to "",
         "addons" to
             listOf(mapOf("id" to "game", "version" to plan.components.gameVersion)) +
-                if (plan.components.loader == LoaderType.Vanilla) emptyList()
-                else
-                    listOf(
-                        mapOf(
-                            "id" to plan.components.loader.name.lowercase(),
-                            "version" to plan.components.loaderVersion,
-                        )
+            if (plan.components.loader == LoaderType.Vanilla) {
+                emptyList()
+            } else {
+                listOf(
+                    mapOf(
+                        "id" to
+                            plan.components.loader.name
+                                .lowercase(),
+                        "version" to plan.components.loaderVersion,
                     ),
+                )
+            },
         "files" to
             files.map {
                 mapOf(
@@ -282,11 +307,17 @@ internal fun validatePackExport(
 ) {
     val allowLogs = format == PackExportFormat.Backup && options.includeLogs
     ZipFile(archive.toFile()).use { zip ->
-        val names = zip.entries().asSequence().map { it.name }.toList()
+        val names =
+            zip
+                .entries()
+                .asSequence()
+                .map { it.name }
+                .toList()
         val payloadNames = names.filterNot { it.endsWith("/") }
         require(payloadNames.size == payloadNames.distinct().size) { "导出包包含重复条目" }
-        for (name in layout.requiredEntries)
+        for (name in layout.requiredEntries) {
             require(zip.getEntry(name) != null) { "导出包缺少必需条目：$name" }
+        }
         // 只校验用户本次勾选的内容：未勾选的文件夹既不要求存在，也不允许混进来。
         val payloadPaths = layout.payload.map { it.second.path }
         require(payloadPaths.all { it in selected }) {
@@ -304,7 +335,9 @@ internal fun validatePackExport(
             require(entry != null && !entry.isDirectory && entry.size == file.size) {
                 "导出包条目缺失或大小不符：$archivePath"
             }
-            require(zip.getInputStream(entry).use { it.readNBytes(1) }.size == 1 || file.size == 0L) {
+            require(
+                zip.getInputStream(entry).use { it.readNBytes(1) }.size == 1 || file.size == 0L,
+            ) {
                 "导出包条目为空：$archivePath"
             }
         }
@@ -312,7 +345,10 @@ internal fun validatePackExport(
             require(
                 !name.startsWith("/") &&
                     name.split('/').none { it == ".." } &&
-                    !payloadPrefixes.any { name.startsWith(it) && forbiddenExportEntry(name, allowLogs) }
+                    !payloadPrefixes.any {
+                        name.startsWith(it) &&
+                            forbiddenExportEntry(name, allowLogs)
+                    },
             ) {
                 "导出包含有不应写入的条目：$name"
             }
@@ -320,16 +356,20 @@ internal fun validatePackExport(
         when (format) {
             PackExportFormat.Modrinth -> {
                 val index = requireNotNull(packJson(zip, "modrinth.index.json"))
-                require(index.get("formatVersion")?.asInt == 1 && index.string("game") == "minecraft") {
+                require(
+                    index.get("formatVersion")?.asInt == 1 && index.string("game") == "minecraft",
+                ) {
                     "modrinth.index.json 头部无效"
                 }
                 require(
                     index.string("name") == plan.metadata.name &&
-                        index.string("versionId") == plan.metadata.version
+                        index.string("versionId") == plan.metadata.version,
                 ) {
                     "modrinth.index.json 名称或版本不符"
                 }
-                require(index.obj("dependencies").string("minecraft") == plan.components.gameVersion) {
+                require(
+                    index.obj("dependencies").string("minecraft") == plan.components.gameVersion,
+                ) {
                     "modrinth.index.json 游戏版本不符"
                 }
                 val listed =
@@ -342,7 +382,7 @@ internal fun validatePackExport(
                     index.array("files").all {
                         it.asJsonObject.string("path").isNotBlank() &&
                             it.asJsonObject.array("downloads").size() == 1
-                    }
+                    },
                 ) {
                     "modrinth.index.json 文件条目缺少下载地址"
                 }
@@ -351,18 +391,22 @@ internal fun validatePackExport(
                 val manifest = requireNotNull(packJson(zip, "manifest.json"))
                 require(
                     manifest.string("manifestType") == "minecraftModpack" &&
-                        manifest.string("manifestVersion") == "1"
+                        manifest.string("manifestVersion") == "1",
                 ) {
                     "manifest.json 不是 CurseForge 整合包清单"
                 }
                 require(
                     manifest.string("name") == plan.metadata.name &&
-                        manifest.string("version") == plan.metadata.version
+                        manifest.string("version") == plan.metadata.version,
                 ) {
                     "manifest.json 名称或版本不符"
                 }
-                require(manifest.string("overrides") == "overrides") { "manifest.json overrides 路径无效" }
-                require(manifest.obj("minecraft").string("version") == plan.components.gameVersion) {
+                require(
+                    manifest.string("overrides") == "overrides",
+                ) { "manifest.json overrides 路径无效" }
+                require(
+                    manifest.obj("minecraft").string("version") == plan.components.gameVersion,
+                ) {
                     "manifest.json 游戏版本不符"
                 }
                 val entries = manifest.array("files").map { it.asJsonObject }
@@ -374,7 +418,7 @@ internal fun validatePackExport(
                         it.string("projectID").toLongOrNull() in 1L..0xffffffffL &&
                             it.string("fileID").toLongOrNull() in 1L..0xffffffffL &&
                             it.get("required")?.asBoolean == true
-                    }
+                    },
                 ) {
                     "manifest.json 文件条目缺少 projectID/fileID 或 required"
                 }
@@ -387,7 +431,7 @@ internal fun validatePackExport(
                     components.any {
                         it.string("uid") == "net.minecraft" &&
                             it.string("version") == plan.components.gameVersion
-                    }
+                    },
                 ) {
                     "mmc-pack.json 缺少匹配的 net.minecraft 组件"
                 }
@@ -396,13 +440,14 @@ internal fun validatePackExport(
                         components.any {
                             it.string("uid") == uid &&
                                 it.string("version") == plan.components.loaderVersion
-                        }
+                        },
                     ) {
                         "mmc-pack.json 缺少匹配的加载器组件"
                     }
                 }
                 val config =
-                    zip.getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
+                    zip
+                        .getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
                         .use { it.readBytes().toString(Charsets.UTF_8) }
                 require(
                     "[General]" in config &&
@@ -410,7 +455,7 @@ internal fun validatePackExport(
                         config.lineSequence().any {
                             it.trim().startsWith("name=") &&
                                 it.trim().removePrefix("name=").isNotBlank()
-                        }
+                        },
                 ) {
                     "instance.cfg 缺少实例名或 OneSix 类型"
                 }
@@ -424,7 +469,7 @@ internal fun validatePackExport(
                     info.array("addons").any {
                         it.asJsonObject.string("id") == "game" &&
                             it.asJsonObject.string("version") == plan.components.gameVersion
-                    }
+                    },
                 ) {
                     "mcbbs.packmeta 缺少游戏组件"
                 }
@@ -437,12 +482,16 @@ internal fun validatePackExport(
                     zip.getEntry("modrinth.index.json") == null &&
                         zip.getEntry("manifest.json") == null &&
                         zip.getEntry("mmc-pack.json") == null &&
-                        zip.getEntry("mcbbs.packmeta") == null
+                        zip.getEntry("mcbbs.packmeta") == null,
                 ) {
                     "完整备份不应包含其他启动器的整合包清单"
                 }
                 val info = requireNotNull(packJson(zip, "molifox-backup.json"))
-                require(info.string("type") == "molifox-backup" && info.get("formatVersion")?.asInt == 1) {
+                require(
+                    info.string(
+                        "type",
+                    ) == "molifox-backup" && info.get("formatVersion")?.asInt == 1,
+                ) {
                     "备份清单无效"
                 }
                 require(info.array("files").size() == layout.payload.size) {
@@ -453,7 +502,10 @@ internal fun validatePackExport(
     }
 }
 
-private fun forbiddenExportEntry(name: String, allowLogs: Boolean): Boolean {
+private fun forbiddenExportEntry(
+    name: String,
+    allowLogs: Boolean,
+): Boolean {
     val relative =
         payloadPrefixes.firstOrNull { name.startsWith(it) }?.let { name.removePrefix(it) }
             ?: return false

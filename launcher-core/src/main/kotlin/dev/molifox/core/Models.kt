@@ -19,7 +19,9 @@ import kotlin.jvm.Transient
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
 const val LAUNCHER_VERSION = "0.4.0-beta"
 
-enum class LoaderType(val title: String) {
+enum class LoaderType(
+    val title: String,
+) {
     Vanilla("原版"),
     Fabric("Fabric"),
     Quilt("Quilt"),
@@ -30,11 +32,14 @@ enum class LoaderType(val title: String) {
 enum class AccountType {
     Offline,
     Microsoft,
+
     /** 外置认证服务器账户（authlib-injector / Yggdrasil，如 LittleSkin）。 */
     Authlib,
 }
 
-enum class VersionIsolation(val title: String) {
+enum class VersionIsolation(
+    val title: String,
+) {
     Inherit("继承全局设置"),
     Enabled("版本隔离"),
     Disabled("共用游戏目录"),
@@ -44,7 +49,9 @@ enum class VersionIsolation(val title: String) {
  * 有效隔离值的来源：用户显式选择（版本隔离 / 共用游戏目录）、目录证据推断、或全局默认。
  * 推断值不能冒充用户选择：界面与日志都要说明来源，且显式选择永远优先于推断。
  */
-enum class IsolationSource(val title: String) {
+enum class IsolationSource(
+    val title: String,
+) {
     Explicit("显式设置"),
     Inferred("推断"),
     GlobalDefault("全局默认"),
@@ -64,7 +71,9 @@ val IsolationSource.logTitle: String
  * 不使用 RealTime，避免游戏抢占系统输入与音频线程。
  */
 @JsonAdapter(ProcessPriorityAdapter::class)
-enum class ProcessPriority(val title: String) {
+enum class ProcessPriority(
+    val title: String,
+) {
     Low("低"),
     Normal("中"),
     High("高"),
@@ -73,7 +82,10 @@ enum class ProcessPriority(val title: String) {
 
 /** 配置里出现未知优先级（手改配置、旧版本写入）时按 Normal 读入，绝不让整份配置读取失败。 */
 class ProcessPriorityAdapter : TypeAdapter<ProcessPriority>() {
-    override fun write(out: JsonWriter, value: ProcessPriority?) {
+    override fun write(
+        out: JsonWriter,
+        value: ProcessPriority?,
+    ) {
         if (value == null) out.nullValue() else out.value(value.name)
     }
 
@@ -125,7 +137,7 @@ data class LauncherSettings(
     val downloadSegments: Int = 4,
     val downloadAttempts: Int = 3,
     val networkTimeoutSeconds: Int = 45,
-    val microsoftClientId: String = MoliFoxIdentity.microsoftClientId,
+    val microsoftClientId: String = MoliFoxIdentity.MICROSOFT_CLIENT_ID,
     val isolateVersions: Boolean = true,
     val initialMemoryMb: Int = 512,
     val fullscreen: Boolean = false,
@@ -156,7 +168,6 @@ data class LauncherSettings(
     val fontScale: Float = 1f,
     val customFonts: List<LauncherFont> = emptyList(),
     val pages: PagePreferences = PagePreferences(),
-    // 页面与外观偏好均提供默认值，兼容缺少这些字段的配置。
     /** 主题颜色：预设键（sakura/ocean/mint/amber/lavender/graphite）或 #RRGGBB 自定义。 */
     val accentColor: String = "sakura",
     /** 关闭后页面切换与提示不使用过渡动画。 */
@@ -235,8 +246,11 @@ fun isValidCurseForgeBaseUrl(value: String): Boolean {
  * 调用方（CurseForgeBackend）在回落时写一条日志，避免静默使用非预期服务。
  */
 fun normalizedCurseForgeBaseUrl(value: String): String =
-    if (isValidCurseForgeBaseUrl(value)) value.trim().trimEnd('/')
-    else DEFAULT_CURSE_FORGE_BASE_URL
+    if (isValidCurseForgeBaseUrl(value)) {
+        value.trim().trimEnd('/')
+    } else {
+        DEFAULT_CURSE_FORGE_BASE_URL
+    }
 
 /** 设置里实际生效的 CurseForge 服务地址；UI 与请求层都读这个。 */
 val LauncherSettings.effectiveCurseForgeBaseUrl: String
@@ -471,13 +485,16 @@ data class DownloadJob(
  * TRACE = 命令输出逐行；DEBUG = 后台任务开始/完成；WARN = 尽力而为的步骤失败；
  * ERROR = 操作失败但启动器可继续；FATAL = 启动中止。
  */
-enum class LogLevel(val title: String) {
+enum class LogLevel(
+    val title: String,
+) {
     Trace("详细"),
     Debug("调试"),
     Info("信息"),
     Warn("警告"),
     Error("错误"),
-    Fatal("严重");
+    Fatal("严重"),
+    ;
 
     /** 写进日志文件与导出文件的档位名。 */
     val label: String
@@ -519,7 +536,10 @@ data class ReleaseVersion(
     val sha1: String? = null,
 )
 
-data class LoaderVersion(val version: String, val stable: Boolean = true)
+data class LoaderVersion(
+    val version: String,
+    val stable: Boolean = true,
+)
 
 data class InstallRequest(
     val name: String,
@@ -529,7 +549,9 @@ data class InstallRequest(
 )
 
 /** Java 来源：启动器自己安装（bundled）/ 系统（system）/ 用户显式指定（custom）。 */
-enum class JavaRuntimeSource(val title: String) {
+enum class JavaRuntimeSource(
+    val title: String,
+) {
     Custom("自定义"),
     Bundled("启动器安装"),
     System("系统"),
@@ -562,8 +584,11 @@ data class JavaRuntime(
     val displayName: String
         get() {
             val type = imageType.uppercase()
-            return if (vendor.isBlank()) "Java $majorVersion"
-            else "$vendor Java $majorVersion" + if (type.isBlank()) "" else "（$type）"
+            return if (vendor.isBlank()) {
+                "Java $majorVersion"
+            } else {
+                "$vendor Java $majorVersion" + if (type.isBlank()) "" else "（$type）"
+            }
         }
 }
 
@@ -596,9 +621,16 @@ data class ContentHit(
     val iconUrl: String?,
 )
 
-data class ContentSearch(val hits: List<ContentHit>, val total: Int)
+data class ContentSearch(
+    val hits: List<ContentHit>,
+    val total: Int,
+)
 
-data class DeviceCode(val userCode: String, val verificationUri: String, val expiresAt: Long)
+data class DeviceCode(
+    val userCode: String,
+    val verificationUri: String,
+    val expiresAt: Long,
+)
 
 data class GameCredentials(
     val name: String,

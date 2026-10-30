@@ -5,22 +5,31 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /** 删除实例的字节数：只用于提示与对话框展示，不参与业务计算。 */
 private fun deletionSizeText(bytes: Long): String =
@@ -90,12 +99,13 @@ fun DeleteInstanceDialog(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (separate && blockReason == null)
+        if (separate && blockReason == null) {
             Text(
                 "该实例的存档、资源包、Mod 等文件也将被一并删除！",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.error,
             )
+        }
         if (separate && blockReason == null && shownWorlds.isNotEmpty()) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
@@ -110,12 +120,13 @@ fun DeleteInstanceDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (worlds.size > shownWorlds.size)
+                if (worlds.size > shownWorlds.size) {
                     Text(
                         "…另有 " + (worlds.size - shownWorlds.size) + " 个存档",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
             }
         }
         if (targets.isNotEmpty()) {
@@ -162,7 +173,11 @@ fun DeleteInstanceDialog(
                 busy = true
                 error = null
                 actions.run {
-                    val result = actions.controller.deleteInstance(instance.id, permanent = permanent)
+                    val result =
+                        actions.controller.deleteInstance(
+                            instance.id,
+                            permanent = permanent,
+                        )
                     withContext(Dispatchers.Swing) {
                         busy = false
                         result
@@ -170,36 +185,47 @@ fun DeleteInstanceDialog(
                                 // 提示必须和实际结果一致：保留了什么就明说，删除的文件数/字节如实报告。
                                 val removed = report.removedPaths.size
                                 val removedText =
-                                    if (removed == 0) "未删除文件"
-                                    else
+                                    if (removed == 0) {
+                                        "未删除文件"
+                                    } else {
                                         "已删除 " +
                                             removed +
                                             " 项（" +
-                                            if (report.movedToTrash) "已移入回收站"
-                                            else "释放 " + deletionSizeText(report.freedBytes) +
-                                                "）"
+                                            if (report.movedToTrash) {
+                                                "已移入回收站"
+                                            } else {
+                                                "释放 " + deletionSizeText(report.freedBytes) +
+                                                    "）"
+                                            }
+                                    }
                                 val keptText =
-                                    if (report.preserved.isEmpty()) ""
-                                    else "；保留 " + report.preserved.size + " 项共用目录"
+                                    if (report.preserved.isEmpty()) {
+                                        ""
+                                    } else {
+                                        "；保留 " + report.preserved.size + " 项共用目录"
+                                    }
                                 val message =
-                                    if (removed == 0)
+                                    if (removed == 0) {
                                         "已删除实例：" + instance.name + "（目录已不存在，仅移除记录）"
-                                    else
+                                    } else {
                                         "已删除实例：" +
                                             instance.name +
                                             "（" +
                                             removedText +
                                             keptText +
                                             "）"
+                                    }
                                 actions.controller.store.notify(message)
                                 onDeleted()
-                            }
-                            .onFailure { failure ->
+                            }.onFailure { failure ->
                                 val message = failure.message ?: "删除实例失败"
                                 error = message
                                 actions.controller.store.notify(
-                                    if (message.startsWith("无法删除")) message
-                                    else "删除实例失败：" + message
+                                    if (message.startsWith("无法删除")) {
+                                        message
+                                    } else {
+                                        "删除实例失败：" + message
+                                    },
                                 )
                             }
                     }

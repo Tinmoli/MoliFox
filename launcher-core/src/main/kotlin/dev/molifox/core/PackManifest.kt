@@ -8,7 +8,6 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import java.nio.file.Path
 import java.util.zip.ZipFile
-import kotlin.io.path.*
 
 internal data class PackManifest(
     val index: JsonObject?,
@@ -34,7 +33,11 @@ internal data class PackManifest(
 }
 
 /** Shared by preview and installation: malformed packs never create an instance. */
-internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifest {
+internal fun readPackManifest(
+    zip: ZipFile,
+    root: Path,
+    os: String,
+): PackManifest {
     val index = packJson(zip, "modrinth.index.json")
     val exported = packJson(zip, "molifox-instance.json")
     val legacy = findArchiveMetadata(zip, setOf("mcbbs.packmeta", "modpack.json", "manifest.json"))
@@ -54,7 +57,7 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
     require(listOfNotNull(index, exported, curseForge, multiMc, mcbbs, legacyPackPath).size <= 1) {
         "整合包含有冲突的格式清单"
     }
-    if (mcbbs != null)
+    if (mcbbs != null) {
         return readMcbbsManifest(
             mcbbs,
             zip,
@@ -63,7 +66,8 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
             os,
             if (mcbbsPath == null) null else generic,
         )
-    if (legacyPackPath != null)
+    }
+    if (legacyPackPath != null) {
         return readLegacyPackManifest(
             requireNotNull(packJson(zip, legacyPackPath)),
             zip,
@@ -71,17 +75,20 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
             root,
             os,
         )
+    }
     if (multiMc != null) return readMultiMcManifest(zip, multiMc, root, os)
-    if (curseForge != null)
+    if (curseForge != null) {
         return readCurseForgeManifest(
             curseForge.deepCopy().apply {
-                if (legacyRoot.isNotEmpty())
+                if (legacyRoot.isNotEmpty()) {
                     addProperty("overrides", legacyRoot + curseForge.string("overrides"))
+                }
             },
             zip,
             root,
             os,
         )
+    }
     require(index != null || exported != null) {
         "请选择 Modrinth、CurseForge、MultiMC/Prism、HMCL/MCBBS 或 MoliFox 整合包"
     }
@@ -89,11 +96,19 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
         if (index != null) listOf("overrides/", "client-overrides/") else listOf("files/")
     for (prefix in prefixes) {
         for ((_, target) in validateArchive(zip, prefix, root)) {
-            packPath(root, root.toAbsolutePath().normalize().relativize(target).joinToString("/"))
+            packPath(
+                root,
+                root
+                    .toAbsolutePath()
+                    .normalize()
+                    .relativize(target)
+                    .joinToString("/"),
+            )
         }
     }
     if (index == null) {
-        require(exported!!.int("formatVersion") == 1) { "MoliFox 整合包格式无效" }
+        requireNotNull(exported) { "MoliFox 整合包清单缺失" }
+        require(exported.int("formatVersion") == 1) { "MoliFox 整合包格式无效" }
         return PackManifest(
             null,
             gson.fromJson(exported.obj("instance"), InstallRequest::class.java),
@@ -110,7 +125,7 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
                 it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.isNotBlank()
             } == true &&
             index.has("files") &&
-            index["files"].isJsonArray
+            index["files"].isJsonArray,
     ) {
         "整合包清单格式无效或缺少版本标识"
     }
@@ -118,7 +133,7 @@ internal fun readPackManifest(zip: ZipFile, root: Path, os: String): PackManifes
     require(
         dependencies.entrySet().all {
             it.value.isJsonPrimitive && it.value.asJsonPrimitive.isString
-        }
+        },
     ) {
         "整合包依赖版本必须是文本"
     }

@@ -8,7 +8,15 @@ package dev.molifox.core
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readLines
+import kotlin.io.path.walk
 
 /** 一条已安装的 Java。`path` 相对 runtimes/，便于整个数据目录迁移后继续可用。 */
 data class JavaRuntimeEntry(
@@ -48,13 +56,12 @@ internal class JavaRuntimeIndex(
     fun read(): List<JavaRuntimeEntry> {
         if (!indexFile.isRegularFile()) return emptyList()
         return runCatching {
-                readObject(indexFile).array("runtimes").mapNotNull { element ->
-                    runCatching { gson.fromJson(element, JavaRuntimeEntry::class.java) }
-                        .getOrNull()
-                        ?.takeIf { it.path.isNotBlank() && it.major > 0 }
-                }
+            readObject(indexFile).array("runtimes").mapNotNull { element ->
+                runCatching { gson.fromJson(element, JavaRuntimeEntry::class.java) }
+                    .getOrNull()
+                    ?.takeIf { it.path.isNotBlank() && it.major > 0 }
             }
-            .getOrDefault(emptyList())
+        }.getOrDefault(emptyList())
     }
 
     /** 已安装、可执行的条目：清单条目优先补全 release 缺失的版本/位数；目录里有但没登记的按 release 恢复。 */
@@ -81,7 +88,7 @@ internal class JavaRuntimeIndex(
                 found +=
                     entry.copy(
                         sizeBytes =
-                            resolve(entry.path)?.let(::directorySize) ?: entry.sizeBytes
+                            resolve(entry.path)?.let(::directorySize) ?: entry.sizeBytes,
                     )
             }
         return found.sortedWith(compareBy({ it.major }, { it.path }))
@@ -91,44 +98,42 @@ internal class JavaRuntimeIndex(
     fun scan(): List<JavaRuntimeEntry> {
         if (!runtimes.isDirectory()) return emptyList()
         return runCatching {
-                runtimes
-                    .listDirectoryEntries()
-                    .filter {
-                        it.isDirectory() &&
-                            !Files.isSymbolicLink(it) &&
-                            !it.fileName.toString().startsWith(".")
-                    }
-                    .mapNotNull { directory ->
-                        val executable = executable(directory) ?: return@mapNotNull null
-                        val release = readJavaRelease(directory)
-                        val version = release["JAVA_VERSION"].orEmpty()
-                        val major =
-                            version.takeIf { it.isNotBlank() }?.let(::javaMajorOfVersion)
-                                ?: Regex("-(\\d+)-").find(directory.fileName.toString())
-                                    ?.groupValues
-                                    ?.get(1)
-                                    ?.toIntOrNull()
-                                ?: return@mapNotNull null
-                        val arch = release["OS_ARCH"].orEmpty()
-                        JavaRuntimeEntry(
-                            path = directory.fileName.toString(),
-                            major = major,
-                            bits = bitsOf(arch).takeIf { it > 0 } ?: 64,
-                            vendor = release["IMPLEMENTOR"].orEmpty(),
-                            imageType = if (isJdk(directory)) "jdk" else "jre",
-                            version = version,
-                            sourceUrl = "release-file",
-                            installedAt =
-                                runCatching {
-                                        Files.getLastModifiedTime(directory).toInstant().toString()
-                                    }
-                                    .getOrDefault(Instant.EPOCH.toString()),
-                            os = release["OS_NAME"].orEmpty(),
-                            arch = arch,
-                        )
-                    }
-            }
-            .getOrDefault(emptyList())
+            runtimes
+                .listDirectoryEntries()
+                .filter {
+                    it.isDirectory() &&
+                        !Files.isSymbolicLink(it) &&
+                        !it.fileName.toString().startsWith(".")
+                }.mapNotNull { directory ->
+                    val executable = executable(directory) ?: return@mapNotNull null
+                    val release = readJavaRelease(directory)
+                    val version = release["JAVA_VERSION"].orEmpty()
+                    val major =
+                        version.takeIf { it.isNotBlank() }?.let(::javaMajorOfVersion)
+                            ?: Regex("-(\\d+)-")
+                                .find(directory.fileName.toString())
+                                ?.groupValues
+                                ?.get(1)
+                                ?.toIntOrNull()
+                            ?: return@mapNotNull null
+                    val arch = release["OS_ARCH"].orEmpty()
+                    JavaRuntimeEntry(
+                        path = directory.fileName.toString(),
+                        major = major,
+                        bits = bitsOf(arch).takeIf { it > 0 } ?: 64,
+                        vendor = release["IMPLEMENTOR"].orEmpty(),
+                        imageType = if (isJdk(directory)) "jdk" else "jre",
+                        version = version,
+                        sourceUrl = "release-file",
+                        installedAt =
+                            runCatching {
+                                Files.getLastModifiedTime(directory).toInstant().toString()
+                            }.getOrDefault(Instant.EPOCH.toString()),
+                        os = release["OS_NAME"].orEmpty(),
+                        arch = arch,
+                    )
+                }
+        }.getOrDefault(emptyList())
     }
 
     fun resolve(relative: String): Path? {
@@ -137,8 +142,7 @@ internal class JavaRuntimeIndex(
         return directory.takeIf { it.isDirectory() && !Files.isSymbolicLink(it) }
     }
 
-    fun executable(entry: JavaRuntimeEntry): Path? =
-        resolve(entry.path)?.let(::executable)
+    fun executable(entry: JavaRuntimeEntry): Path? = resolve(entry.path)?.let(::executable)
 
     fun executable(directory: Path): Path? =
         directory.resolve("bin").resolve(javaExecutableName).takeIf { it.isRegularFile() }
@@ -171,18 +175,21 @@ internal class JavaRuntimeIndex(
 
     private fun directorySize(directory: Path): Long =
         runCatching {
-                Files.walk(directory).use { stream ->
-                    stream
-                        .filter { Files.isRegularFile(it) }
-                        .mapToLong { runCatching { it.fileSize() }.getOrDefault(0) }
-                        .sum()
-                }
+            Files.walk(directory).use { stream ->
+                stream
+                    .filter { Files.isRegularFile(it) }
+                    .mapToLong { runCatching { it.fileSize() }.getOrDefault(0) }
+                    .sum()
             }
-            .getOrDefault(0)
+        }.getOrDefault(0)
 }
 
 internal fun javaMajorOfVersion(version: String): Int? =
-    Regex("^(?:1\\.)?(\\d+)").find(version)?.groupValues?.get(1)?.toIntOrNull()
+    Regex("^(?:1\\.)?(\\d+)")
+        .find(version)
+        ?.groupValues
+        ?.get(1)
+        ?.toIntOrNull()
 
 /**
  * 读取 JRE/JDK 自带的 `release` 文件（KEY="value"）。路径含空格或中文不影响；文件缺失、损坏或没有
@@ -193,18 +200,18 @@ fun readJavaRelease(javaHome: Path): Map<String, String> {
     val file = javaHome.resolve("release")
     if (!file.isRegularFile()) return emptyMap()
     return runCatching {
-            file.readLines().mapNotNull { raw ->
-                    val line = raw.trim().removePrefix("\uFEFF")
-                    if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
-                    val separator = line.indexOf('=')
-                    if (separator <= 0) return@mapNotNull null
-                    val key = line.substring(0, separator).trim()
-                    val value = line.substring(separator + 1).trim().trim('"')
-                    key.takeIf { it.isNotEmpty() }?.let { it to value }
-                }
-                .toMap()
-        }
-        .getOrDefault(emptyMap())
+        file
+            .readLines()
+            .mapNotNull { raw ->
+                val line = raw.trim().removePrefix("\uFEFF")
+                if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
+                val separator = line.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val key = line.substring(0, separator).trim()
+                val value = line.substring(separator + 1).trim().trim('"')
+                key.takeIf { it.isNotEmpty() }?.let { it to value }
+            }.toMap()
+    }.getOrDefault(emptyMap())
 }
 
 internal fun bitsOf(architecture: String): Int =
@@ -215,13 +222,15 @@ internal fun bitsOf(architecture: String): Int =
         "aarch64",
         "arm64",
         "ppc64le",
-        "s390x" -> 64
+        "s390x",
+        -> 64
         "x86",
         "i386",
         "i486",
         "i586",
         "i686",
         "arm",
-        "arm32" -> 32
+        "arm32",
+        -> 32
         else -> 0
     }

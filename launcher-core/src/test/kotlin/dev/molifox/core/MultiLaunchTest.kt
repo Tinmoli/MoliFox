@@ -5,18 +5,31 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import javax.tools.ToolProvider
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class MultiLaunchTest {
     @TempDir lateinit var directory: Path
@@ -36,12 +49,12 @@ class MultiLaunchTest {
                         while (!Files.exists(Path.of("exit-"+pid)) && System.nanoTime()<end) Thread.sleep(50);
                     }
                 }
-                """
-                    .trimIndent()
+                """.trimIndent(),
             )
             assertEquals(
                 0,
-                ToolProvider.getSystemJavaCompiler()
+                ToolProvider
+                    .getSystemJavaCompiler()
                     .run(
                         null,
                         null,
@@ -91,7 +104,13 @@ class MultiLaunchTest {
                         managedGameDirectory = true,
                     )
                 val second =
-                    instance.copy(id = java.util.UUID.randomUUID().toString(), name = "Second")
+                    instance.copy(
+                        id =
+                            java.util.UUID
+                                .randomUUID()
+                                .toString(),
+                        name = "Second",
+                    )
                 controller.store.mutate {
                     it.copy(
                         instances = listOf(instance, second),
@@ -99,12 +118,12 @@ class MultiLaunchTest {
                             it.settings.copy(
                                 gameRoot = root.toString(),
                                 javaPath =
-                                    Path.of(
+                                    Path
+                                        .of(
                                             System.getProperty("java.home"),
                                             "bin",
                                             controller.platform.javaExecutable,
-                                        )
-                                        .toString(),
+                                        ).toString(),
                                 autoMemory = false,
                                 memoryMb = 512,
                                 initialMemoryMb = 128,
@@ -136,23 +155,27 @@ class MultiLaunchTest {
                     assertEquals(
                         3,
                         runs.size,
-                        controller.state.value.logs.takeLast(10).joinToString { it.message },
+                        controller.state.value.logs
+                            .takeLast(10)
+                            .joinToString { it.message },
                     )
                     assertFalse(controller.busy)
                     assertTrue(controller.game.isRunning(instance.id))
                     assertFailsWith<IllegalStateException> { controller.requireIdle() }
-                    val nativeFiles = runs.map { run ->
-                        val gameDirectory = controller.store.instancePath(run.instanceId)
-                        val marker = gameDirectory.resolve("native-${run.processId}.txt")
-                        eventually { marker.exists() }
-                        Path.of(marker.readText())
-                    }
+                    val nativeFiles =
+                        runs.map { run ->
+                            val gameDirectory = controller.store.instancePath(run.instanceId)
+                            val marker = gameDirectory.resolve("native-${run.processId}.txt")
+                            eventually { marker.exists() }
+                            Path.of(marker.readText())
+                        }
                     assertEquals(3, nativeFiles.distinct().size)
                     assertTrue(nativeFiles.all { it.isDirectory() })
-                    if (controller.platform.osName == "windows")
+                    if (controller.platform.osName == "windows") {
                         assertTrue(
-                            nativeFiles.all { it.parent.resolve(".molifox-jvm.args").exists() }
+                            nativeFiles.all { it.parent.resolve(".molifox-jvm.args").exists() },
                         )
+                    }
                     MockWebServer().use { server ->
                         server.enqueue(MockResponse().setBody("download-while-playing"))
                         server.start()
@@ -164,7 +187,7 @@ class MultiLaunchTest {
                                         server.loopbackUrl("/game").toString(),
                                         target,
                                         size = 22,
-                                    )
+                                    ),
                                 ),
                                 1,
                                 this,
@@ -174,7 +197,9 @@ class MultiLaunchTest {
                         controller.jobs.awaitIdle()
                         assertEquals(
                             JobStatus.Completed,
-                            controller.state.value.jobs.first().status,
+                            controller.state.value.jobs
+                                .first()
+                                .status,
                         )
                         assertEquals("download-while-playing", target.readText())
                     }
@@ -190,12 +215,18 @@ class MultiLaunchTest {
                     eventually { controller.state.value.runningGames.size == 1 }
                     assertEquals(instance.id, controller.state.value.runningInstanceId)
                     controller.game.stop(instance.id)
-                    eventually { controller.state.value.runningGames.isEmpty() }
+                    eventually {
+                        controller.state.value.runningGames
+                            .isEmpty()
+                    }
                     assertFalse(controller.game.isRunning)
                     assertTrue(nativeFiles.none { it.exists() })
                 } finally {
                     controller.game.stop()
-                    eventually { controller.state.value.runningGames.isEmpty() }
+                    eventually {
+                        controller.state.value.runningGames
+                            .isEmpty()
+                    }
                 }
             }
         }

@@ -5,15 +5,48 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Subject
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -59,7 +92,10 @@ private fun levelColor(level: LogLevel): Color =
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
+internal fun ColumnScope.LogsPage(
+    state: LauncherState,
+    actions: UiActions,
+) {
     val preferences = state.data.settings.pages.logs
     var query by remember { mutableStateOf("") }
     // 空集合 = 全部级别；点「全部」清空选择，点某一级则切换该级。
@@ -91,10 +127,11 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
         LogAction(Icons.Outlined.Save, "导出日志") { actions.exportLogs() }
         LogAction(Icons.Outlined.Description, "导出诊断包") { actions.exportDiagnostics() }
         LogAction(Icons.Outlined.DeleteOutline, "清空") { confirmClear = true }
-        if (state.runningInstanceId != null)
+        if (state.runningInstanceId != null) {
             LogAction(Icons.Outlined.Stop, "停止游戏") {
                 actions.run { actions.controller.game.stop() }
             }
+        }
     }
 
     state.launchIssue?.let { issue ->
@@ -108,18 +145,20 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
                 )
                 Spacer(Modifier.weight(1f))
                 val issueInstance = state.data.selectedInstanceId
-                if (issueInstance != null)
+                if (issueInstance != null) {
                     SecondaryButton({ actions.previewLaunch(issueInstance) }) {
                         Text("查看启动参数", fontSize = 12.sp)
                     }
+                }
             }
             Text(issue.suggestion, fontSize = 12.sp)
-            if (issue.evidence.isNotBlank())
+            if (issue.evidence.isNotBlank()) {
                 Text(
                     issue.evidence,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
         }
     }
 
@@ -152,8 +191,11 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
         LogLevel.entries.forEach { level ->
             LevelChip(level.title, level in levels) {
                 levels =
-                    if (level in levels) levels - level
-                    else levels + level
+                    if (level in levels) {
+                        levels - level
+                    } else {
+                        levels + level
+                    }
             }
         }
     }
@@ -173,8 +215,11 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (state.runningInstanceId != null) Tag("游戏运行中")
-                else Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.runningInstanceId != null) {
+                    Tag("游戏运行中")
+                } else {
+                    Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Text(
                     logs.size.toString() + " 条",
                     fontSize = 11.sp,
@@ -193,9 +238,9 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
                                 settings.copy(
                                     pages =
                                         settings.pages.copy(
-                                            logs = settings.pages.logs.copy(autoScroll = enabled)
-                                        )
-                                )
+                                            logs = settings.pages.logs.copy(autoScroll = enabled),
+                                        ),
+                                ),
                             )
                         }
                     },
@@ -217,7 +262,7 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    if (logs.isEmpty())
+                    if (logs.isEmpty()) {
                         item(key = "log-empty") {
                             Box(Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
                                 Column(
@@ -232,21 +277,28 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
                                         logConsoleTimestamp,
                                     )
                                     Text(
-                                        if (state.logs.isEmpty()) "等待日志输出…"
-                                        else "没有符合当前筛选条件的日志",
+                                        if (state.logs.isEmpty()) {
+                                            "等待日志输出…"
+                                        } else {
+                                            "没有符合当前筛选条件的日志"
+                                        },
                                         color = logConsoleTimestamp,
                                         fontFamily = LocalLauncherFont.current,
                                         fontSize = 12.sp,
                                     )
                                     Text(
-                                        if (state.logs.isEmpty()) "启动游戏后这里会显示运行输出"
-                                        else "调整级别、关键词或「仅游戏」后再试",
+                                        if (state.logs.isEmpty()) {
+                                            "启动游戏后这里会显示运行输出"
+                                        } else {
+                                            "调整级别、关键词或「仅游戏」后再试"
+                                        },
                                         color = logConsoleTimestamp.copy(alpha = .8f),
                                         fontSize = 11.sp,
                                     )
                                 }
                             }
                         }
+                    }
                     items(
                         count = logs.size,
                         // 日志行没有全局 id：用「时间戳 + 下标」做稳定 key。
@@ -265,7 +317,7 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
-    if (confirmClear)
+    if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清空界面日志？") },
@@ -278,11 +330,15 @@ internal fun ColumnScope.LogsPage(state: LauncherState, actions: UiActions) {
             },
             dismissButton = { TextButton({ confirmClear = false }) { Text("取消") } },
         )
+    }
 }
 
 /** 一行日志：时间 + 固定宽度的级别列 + 自动换行的正文。 */
 @Composable
-private fun LogRow(line: LogLine, fontSize: Int) {
+private fun LogRow(
+    line: LogLine,
+    fontSize: Int,
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 20.dp),
         verticalAlignment = Alignment.Top,
@@ -328,7 +384,11 @@ private fun LogRow(line: LogLine, fontSize: Int) {
 
 /** 与 [DownloadsPage] 同风格的操作按钮：次按钮 + 15dp 图标 + 12sp 文字。 */
 @Composable
-private fun LogAction(icon: ImageVector, text: String, onClick: () -> Unit) {
+private fun LogAction(
+    icon: ImageVector,
+    text: String,
+    onClick: () -> Unit,
+) {
     SecondaryButton(onClick) {
         Icon(icon, null, Modifier.size(15.dp))
         Spacer(Modifier.width(6.dp))
@@ -338,7 +398,11 @@ private fun LogAction(icon: ImageVector, text: String, onClick: () -> Unit) {
 
 /** 级别筛选片：高度与搜索框一致，选中态沿用 Material3 FilterChip。 */
 @Composable
-private fun LevelChip(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun LevelChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     FilterChip(
         selected,
         onClick,

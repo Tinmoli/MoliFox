@@ -6,13 +6,25 @@
 package dev.molifox.core
 
 import com.sun.jna.platform.win32.Crypt32Util
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class TokenVaultTest {
     @TempDir lateinit var temporary: Path
@@ -24,13 +36,15 @@ class TokenVaultTest {
             override fun remove(id: String) {}
         }
 
-    private fun store(path: Path = temporary.resolve("profile"), os: String = "windows") =
-        LauncherStore(
-            object : PlatformServices by DesktopPlatform() {
-                override val osName = os
-            },
-            path,
-        )
+    private fun store(
+        path: Path = temporary.resolve("profile"),
+        os: String = "windows",
+    ) = LauncherStore(
+        object : PlatformServices by DesktopPlatform() {
+            override val osName = os
+        },
+        path,
+    )
 
     @Test
     fun `portable credential survives restart without readable tokens and uses a fresh nonce`() {
@@ -152,12 +166,14 @@ class TokenVaultTest {
         val store = store()
         val file = store.dataDirectory.resolve("credentials/$id.json")
         file.parent.createDirectories()
-        for (input in
-            listOf(
-                "{broken",
-                """{"formatVersion":999,"protection":"unknown"}""",
-                "x".repeat(65537),
-            )) {
+        for (
+        input in
+        listOf(
+            "{broken",
+            """{"formatVersion":999,"protection":"unknown"}""",
+            "x".repeat(65537),
+        )
+        ) {
             file.writeText(input)
             assertNull(TokenVault(store, none).read(id))
             assertEquals(input, file.readText())

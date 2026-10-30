@@ -5,14 +5,21 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.Base64
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ServerListTest {
     private val png: ByteArray =

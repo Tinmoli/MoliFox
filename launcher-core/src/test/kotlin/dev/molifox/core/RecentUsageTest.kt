@@ -5,10 +5,15 @@
 
 package dev.molifox.core
 
-import java.time.Instant
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
+import java.time.Instant
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RecentUsageTest {
     private val instance = "11111111-1111-1111-1111-111111111111"

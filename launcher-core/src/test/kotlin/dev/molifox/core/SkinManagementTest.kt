@@ -5,28 +5,52 @@
 
 package dev.molifox.core
 
-import java.awt.image.BufferedImage
-import java.nio.file.Path
-import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.awt.image.BufferedImage
+import java.nio.file.Path
+import javax.imageio.ImageIO
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.notExists
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SkinManagementTest {
     @TempDir lateinit var temporary: Path
 
-    private fun png(name: String = "skin.png", width: Int = 64, height: Int = 64): Path =
+    private fun png(
+        name: String = "skin.png",
+        width: Int = 64,
+        height: Int = 64,
+    ): Path =
         temporary.resolve(name).apply {
             val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-            for (x in 8 until minOf(16, width)) for (y in 8 until minOf(16, height)) image.setRGB(
-                x,
-                y,
-                0xFF36B5A5.toInt(),
-            )
+            for (x in 8 until minOf(16, width)) {
+                for (y in 8 until minOf(16, height)) {
+                    image.setRGB(
+                        x,
+                        y,
+                        0xFF36B5A5.toInt(),
+                    )
+                }
+            }
             ImageIO.write(image, "png", toFile())
         }
 
@@ -35,21 +59,23 @@ class SkinManagementTest {
     private fun account() =
         Account(name = "SkinUser", uuid = "a".repeat(32), type = AccountType.Microsoft)
 
-    private fun response(account: Account, variant: String = "SLIM") =
-        gson.toJson(
-            mapOf(
-                "id" to account.uuid,
-                "name" to "UpdatedName",
-                "skins" to
-                    listOf(
-                        mapOf(
-                            "state" to "ACTIVE",
-                            "variant" to variant,
-                            "url" to "http://textures.minecraft.net/texture/${"b".repeat(64)}",
-                        )
+    private fun response(
+        account: Account,
+        variant: String = "SLIM",
+    ) = gson.toJson(
+        mapOf(
+            "id" to account.uuid,
+            "name" to "UpdatedName",
+            "skins" to
+                listOf(
+                    mapOf(
+                        "state" to "ACTIVE",
+                        "variant" to variant,
+                        "url" to "http://textures.minecraft.net/texture/${"b".repeat(64)}",
                     ),
-            )
-        )
+                ),
+        ),
+    )
 
     @Test
     fun `local library snapshots original persists and deduplicates by bytes and model`() =
@@ -67,28 +93,33 @@ class SkinManagementTest {
             original.deleteExisting()
             assertContentEquals(bytes, library.texture(first.id).readBytes())
             assertTrue(store.minecraftRoot.notExists())
-            assertTrue(store.dataDirectory.resolve("skins").listDirectoryEntries("*.tmp").isEmpty())
+            assertTrue(
+                store.dataDirectory
+                    .resolve("skins")
+                    .listDirectoryEntries("*.tmp")
+                    .isEmpty(),
+            )
         }
 
     @Test
-    fun `legacy and HD previews are accepted but official upload validates standard sizes and model`():
-        Unit = runBlocking {
-        val library = SkinLibrary(store())
-        val legacy = png("legacy.png", height = 32)
-        val hd = png("hd.png", 128, 128)
-        assertNotNull(library.importSkin(legacy, "legacy", SkinVariant.Classic))
-        assertNotNull(library.importSkin(hd, "hd", SkinVariant.Slim))
-        validateUploadSkin(legacy, SkinVariant.Classic)
-        assertFailsWith<IllegalArgumentException> {
-            validateUploadSkin(legacy, SkinVariant.Slim)
+    fun `previews accept legacy and HD skins while upload validates standard skins`(): Unit =
+        runBlocking {
+            val library = SkinLibrary(store())
+            val legacy = png("legacy.png", height = 32)
+            val hd = png("hd.png", 128, 128)
+            assertNotNull(library.importSkin(legacy, "legacy", SkinVariant.Classic))
+            assertNotNull(library.importSkin(hd, "hd", SkinVariant.Slim))
+            validateUploadSkin(legacy, SkinVariant.Classic)
+            assertFailsWith<IllegalArgumentException> {
+                validateUploadSkin(legacy, SkinVariant.Slim)
+            }
+            assertFailsWith<IllegalArgumentException> {
+                validateUploadSkin(hd, SkinVariant.Classic)
+            }
         }
-        assertFailsWith<IllegalArgumentException> {
-            validateUploadSkin(hd, SkinVariant.Classic)
-        }
-    }
 
     @Test
-    fun `invalid source names and damaged managed textures fail without changing original output`() =
+    fun `invalid names and damaged textures leave original output unchanged`() =
         runBlocking {
             val store = store()
             val library = SkinLibrary(store)
@@ -109,22 +140,23 @@ class SkinManagementTest {
         }
 
     @Test
-    fun `export and removal use owned files and preserve imported source`() = runBlocking {
-        val store = store()
-        val library = SkinLibrary(store)
-        val source = png()
-        val entry = library.importSkin(source, "skin", SkinVariant.Classic)
-        val managed = library.texture(entry.id)
-        val target = temporary.resolve("output/skin.png")
-        library.exportSkin(entry.id, target)
-        assertContentEquals(source.readBytes(), target.readBytes())
-        assertFailsWith<IllegalArgumentException> { library.exportSkin(entry.id, managed) }
-        library.removeSkin(entry.id)
-        assertTrue(library.list().isEmpty())
-        assertFalse(managed.exists())
-        assertTrue(source.exists())
-        assertTrue(target.exists())
-    }
+    fun `export and removal use owned files and preserve imported source`() =
+        runBlocking {
+            val store = store()
+            val library = SkinLibrary(store)
+            val source = png()
+            val entry = library.importSkin(source, "skin", SkinVariant.Classic)
+            val managed = library.texture(entry.id)
+            val target = temporary.resolve("output/skin.png")
+            library.exportSkin(entry.id, target)
+            assertContentEquals(source.readBytes(), target.readBytes())
+            assertFailsWith<IllegalArgumentException> { library.exportSkin(entry.id, managed) }
+            library.removeSkin(entry.id)
+            assertTrue(library.list().isEmpty())
+            assertFalse(managed.exists())
+            assertTrue(source.exists())
+            assertTrue(target.exists())
+        }
 
     @Test
     fun `offline preview changes metadata only and cannot be deleted while referenced`() =
@@ -168,7 +200,7 @@ class SkinManagementTest {
                                 "name" to "bad",
                                 "variant" to "Classic",
                                 "sha256" to "a".repeat(64),
-                            )
+                            ),
                         ),
                 ),
             )
@@ -208,7 +240,9 @@ class SkinManagementTest {
                     assertEquals(other.id, store.data.activeAccountId)
                     assertEquals(
                         "UpdatedName",
-                        store.data.accounts.first { it.id == target.id }.name,
+                        store.data.accounts
+                            .first { it.id == target.id }
+                            .name,
                     )
                     assertEquals(other, store.data.accounts.first { it.id == other.id })
                     val upload = server.takeRequest()
@@ -265,30 +299,36 @@ class SkinManagementTest {
         }
 
     @Test
-    fun `upload denial does not expose server body or mutate local profile`() = runBlocking {
-        val store = store()
-        val account = account()
-        store.mutate { it.copy(accounts = listOf(account)) }
-        MockWebServer().use { server ->
-            NetworkClient().use { network ->
-                val service =
-                    SkinService(
-                        store,
-                        network,
-                        { GameCredentials(account.name, account.uuid, "secret-token") },
-                        server.loopbackUrl("").toString().trimEnd('/'),
-                    )
-                val entry = service.library.importSkin(png(), "skin", SkinVariant.Classic)
-                server.enqueue(MockResponse().setResponseCode(403).setBody("secret-response"))
-                val error =
-                    assertFailsWith<ServiceHttpException> { service.upload(account.id, entry.id) }
-                assertEquals(403, error.statusCode)
-                assertFalse(error.message.orEmpty().contains("secret-response"))
-                assertFalse(error.message.orEmpty().contains("secret-token"))
-                assertEquals(account, store.data.accounts.single())
+    fun `upload denial does not expose server body or mutate local profile`() =
+        runBlocking {
+            val store = store()
+            val account = account()
+            store.mutate { it.copy(accounts = listOf(account)) }
+            MockWebServer().use { server ->
+                NetworkClient().use { network ->
+                    val service =
+                        SkinService(
+                            store,
+                            network,
+                            { GameCredentials(account.name, account.uuid, "secret-token") },
+                            server.loopbackUrl("").toString().trimEnd('/'),
+                        )
+                    val entry = service.library.importSkin(png(), "skin", SkinVariant.Classic)
+                    server.enqueue(MockResponse().setResponseCode(403).setBody("secret-response"))
+                    val error =
+                        assertFailsWith<ServiceHttpException> {
+                            service.upload(
+                                account.id,
+                                entry.id,
+                            )
+                        }
+                    assertEquals(403, error.statusCode)
+                    assertFalse(error.message.orEmpty().contains("secret-response"))
+                    assertFalse(error.message.orEmpty().contains("secret-token"))
+                    assertEquals(account, store.data.accounts.single())
+                }
             }
         }
-    }
 
     @Test
     fun `upload redirects are refused and successful writes report failed refresh separately`() =
@@ -313,7 +353,7 @@ class SkinManagementTest {
                                 .setHeader(
                                     "Location",
                                     other.loopbackUrl("/minecraft/profile/skins"),
-                                )
+                                ),
                         )
                         assertFailsWith<ServiceHttpException> {
                             service.upload(account.id, entry.id)
@@ -324,7 +364,8 @@ class SkinManagementTest {
                         val result = service.upload(account.id, entry.id)
                         assertEquals("", result.textureUrl)
                         assertTrue(
-                            store.state.value.logs.any { it.message.contains("皮肤已上传，但档案刷新失败") }
+                            store.state.value.logs
+                                .any { it.message.contains("皮肤已上传，但档案刷新失败") },
                         )
                     }
                 }
@@ -347,16 +388,18 @@ class SkinManagementTest {
                             server.loopbackUrl("").toString().trimEnd('/'),
                         )
                     server.enqueue(
-                        MockResponse().setBody(response(account.copy(uuid = "c".repeat(32))))
+                        MockResponse().setBody(response(account.copy(uuid = "c".repeat(32)))),
                     )
                     assertFailsWith<IllegalArgumentException> { service.refreshProfile(account.id) }
                     assertEquals(account, store.data.accounts.single())
-                    for (url in
-                        listOf(
-                            "https://example.com/minecraft/profile/skins",
-                            "https://api.minecraftservices.com.evil/minecraft/profile/skins",
-                            "https://api.minecraftservices.com/minecraft/profile/skins?x=1",
-                        )) {
+                    for (
+                    url in
+                    listOf(
+                        "https://example.com/minecraft/profile/skins",
+                        "https://api.minecraftservices.com.evil/minecraft/profile/skins",
+                        "https://api.minecraftservices.com/minecraft/profile/skins?x=1",
+                    )
+                    ) {
                         assertFailsWith<IllegalArgumentException> {
                             network.uploadMinecraftSkin(url, "token", "classic", byteArrayOf(1))
                         }

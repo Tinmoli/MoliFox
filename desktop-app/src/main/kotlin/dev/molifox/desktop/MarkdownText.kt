@@ -60,7 +60,11 @@ import androidx.compose.ui.unit.sp
  * - 所有可点击链接只接受 http/https，点击后交给系统浏览器。
  */
 @Composable
-fun MarkdownText(markdown: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE) {
+fun MarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
     if (blocks.isEmpty()) return
     val lines = maxLines.coerceAtLeast(1)
@@ -118,19 +122,37 @@ private data class MarkdownPalette(
 
 private sealed interface MarkdownBlock
 
-private data class MarkdownHeading(val level: Int, val text: String) : MarkdownBlock
+private data class MarkdownHeading(
+    val level: Int,
+    val text: String,
+) : MarkdownBlock
 
-private data class MarkdownParagraph(val text: String) : MarkdownBlock
+private data class MarkdownParagraph(
+    val text: String,
+) : MarkdownBlock
 
-private data class MarkdownQuote(val text: String) : MarkdownBlock
+private data class MarkdownQuote(
+    val text: String,
+) : MarkdownBlock
 
-private data class MarkdownListItem(val marker: String, val level: Int, val text: String)
+private data class MarkdownListItem(
+    val marker: String,
+    val level: Int,
+    val text: String,
+)
 
-private data class MarkdownList(val items: List<MarkdownListItem>) : MarkdownBlock
+private data class MarkdownList(
+    val items: List<MarkdownListItem>,
+) : MarkdownBlock
 
-private data class MarkdownCode(val code: String, val language: String) : MarkdownBlock
+private data class MarkdownCode(
+    val code: String,
+    val language: String,
+) : MarkdownBlock
 
-private data class MarkdownTable(val rows: List<List<String>>) : MarkdownBlock
+private data class MarkdownTable(
+    val rows: List<List<String>>,
+) : MarkdownBlock
 
 private data object MarkdownRule : MarkdownBlock
 
@@ -154,14 +176,26 @@ private data class InlineMatch(
     val end: Int,
 )
 
-private data class InlineLink(val start: Int, val end: Int, val url: String)
+private data class InlineLink(
+    val start: Int,
+    val end: Int,
+    val url: String,
+)
 
-private class InlineMarkup(val text: AnnotatedString, val links: List<InlineLink>)
+private class InlineMarkup(
+    val text: AnnotatedString,
+    val links: List<InlineLink>,
+)
 
 private sealed interface ImageSegment {
-    data class Text(val text: String) : ImageSegment
+    data class Text(
+        val text: String,
+    ) : ImageSegment
 
-    data class Image(val alt: String, val url: String) : ImageSegment
+    data class Image(
+        val alt: String,
+        val url: String,
+    ) : ImageSegment
 }
 
 // ---------------------------------------------------------------- 正则
@@ -286,10 +320,13 @@ private fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
                     val label =
                         if (marker.first().isDigit()) {
                             // 保留作者起始序号，后续条目顺延。
-                            if (orderedNumber == 0)
+                            if (orderedNumber == 0) {
                                 orderedNumber = marker.dropLast(1).toIntOrNull() ?: 1
+                            }
                             "${orderedNumber++}."
-                        } else "•"
+                        } else {
+                            "•"
+                        }
                     items += MarkdownListItem(label, level, text)
                 }
                 cursor++
@@ -351,7 +388,12 @@ private fun isTableRow(line: String): Boolean {
 }
 
 private fun splitTableRow(line: String): List<String> =
-    line.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
+    line
+        .trim()
+        .removePrefix("|")
+        .removeSuffix("|")
+        .split('|')
+        .map { it.trim() }
 
 private fun isTableDelimiterRow(cells: List<String>): Boolean {
     if (cells.isEmpty()) return false
@@ -367,8 +409,11 @@ private fun joinParagraph(parts: List<String>): String {
     val joined = StringBuilder(parts.first())
     for (part in parts.drop(1)) {
         val previous = joined.lastOrNull() ?: ' '
-        if (isWideChar(previous) || isWideChar(part.firstOrNull() ?: ' ')) joined.append(part)
-        else joined.append(' ').append(part)
+        if (isWideChar(previous) || isWideChar(part.firstOrNull() ?: ' ')) {
+            joined.append(part)
+        } else {
+            joined.append(' ').append(part)
+        }
     }
     return joined.toString()
 }
@@ -377,10 +422,14 @@ private fun isWideChar(value: Char) = value.code >= 0x2E80
 
 // ---------------------------------------------------------------- 行内解析
 
-private fun buildInlineMarkup(source: String, palette: MarkdownPalette): InlineMarkup =
-    InlineRenderer(palette).render(source)
+private fun buildInlineMarkup(
+    source: String,
+    palette: MarkdownPalette,
+): InlineMarkup = InlineRenderer(palette).render(source)
 
-private class InlineRenderer(private val palette: MarkdownPalette) {
+private class InlineRenderer(
+    private val palette: MarkdownPalette,
+) {
     private val builder = AnnotatedString.Builder()
     private val links = mutableListOf<InlineLink>()
     private val linkStyle =
@@ -396,9 +445,15 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
         return InlineMarkup(builder.toAnnotatedString(), links.toList())
     }
 
-    private fun scan(source: String, style: SpanStyle, link: String?, depth: Int) {
+    private fun scan(
+        source: String,
+        style: SpanStyle,
+        link: String?,
+        depth: Int,
+    ) {
         val pending = StringBuilder()
         val failures = HashMap<Char, Int>()
+
         fun flush() {
             if (pending.isNotEmpty()) {
                 emit(pending.toString(), style, link)
@@ -424,11 +479,13 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
             val match =
                 if (
                     marker &&
-                        depth < MAX_INLINE_DEPTH &&
-                        (failures[current] ?: 0) < MAX_MARKER_FAILURES
-                )
+                    depth < MAX_INLINE_DEPTH &&
+                    (failures[current] ?: 0) < MAX_MARKER_FAILURES
+                ) {
                     inlineMatchAt(source, cursor)
-                else null
+                } else {
+                    null
+                }
             if (match == null) {
                 if (marker) failures[current] = (failures[current] ?: 0) + 1
                 pending.append(current)
@@ -471,13 +528,20 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
                         depth + 1,
                     )
                 InlineKind.Link,
-                InlineKind.Image -> {
+                InlineKind.Image,
+                -> {
                     val href = safeUrl(match.url)
                     val label =
-                        if (match.kind == InlineKind.Image) match.text.ifBlank { "图片" }
-                        else match.text
-                    if (href != null && link == null) scan(label, style, href, depth + 1)
-                    else scan(label, style, link, depth + 1)
+                        if (match.kind == InlineKind.Image) {
+                            match.text.ifBlank { "图片" }
+                        } else {
+                            match.text
+                        }
+                    if (href != null && link == null) {
+                        scan(label, style, href, depth + 1)
+                    } else {
+                        scan(label, style, link, depth + 1)
+                    }
                 }
             }
             cursor = match.end
@@ -485,7 +549,11 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
         flush()
     }
 
-    private fun emit(raw: String, style: SpanStyle, link: String?) {
+    private fun emit(
+        raw: String,
+        style: SpanStyle,
+        link: String?,
+    ) {
         if (raw.isEmpty()) return
         val start = builder.length
         builder.append(raw)
@@ -496,7 +564,10 @@ private class InlineRenderer(private val palette: MarkdownPalette) {
     }
 }
 
-private fun inlineMatchAt(source: String, index: Int): InlineMatch? {
+private fun inlineMatchAt(
+    source: String,
+    index: Int,
+): InlineMatch? {
     if (index < 0 || index >= source.length) return null
     val marker = source[index]
     return when (marker) {
@@ -529,9 +600,11 @@ private fun inlineMatchAt(source: String, index: Int): InlineMatch? {
             }
         }
         '!' ->
-            if (source.startsWith("![", index))
+            if (source.startsWith("![", index)) {
                 linkMatchAt(source, index, imagePattern, InlineKind.Image)
-            else null
+            } else {
+                null
+            }
         '[' -> linkMatchAt(source, index, linkPattern, InlineKind.Link)
         else -> null
     }
@@ -549,14 +622,20 @@ private fun emphasisMatchAt(
     return InlineMatch(kind, content, null, hit.range.last + 1)
 }
 
-private fun strikeMatchAt(source: String, index: Int): InlineMatch? {
+private fun strikeMatchAt(
+    source: String,
+    index: Int,
+): InlineMatch? {
     val hit = runCatching { strikePattern.matchAt(source, index) }.getOrNull() ?: return null
     val content = hit.groupValues.getOrNull(1).orEmpty()
     if (content.isEmpty() || content.length > MAX_EMPHASIS_CHARS) return null
     return InlineMatch(InlineKind.Strike, content, null, hit.range.last + 1)
 }
 
-private fun codeMatchAt(source: String, index: Int): InlineMatch? {
+private fun codeMatchAt(
+    source: String,
+    index: Int,
+): InlineMatch? {
     val hit = runCatching { codePattern.matchAt(source, index) }.getOrNull() ?: return null
     val content = hit.groupValues.getOrNull(2).orEmpty()
     if (content.isEmpty()) return null
@@ -586,7 +665,12 @@ private fun safeUrl(raw: String?): String? {
 
 private fun urlHost(url: String): String {
     val rest = url.substringAfter("://", url)
-    val host = rest.substringBefore('/').substringBefore('?').substringBefore('#').ifBlank { "链接" }
+    val host =
+        rest
+            .substringBefore('/')
+            .substringBefore('?')
+            .substringBefore('#')
+            .ifBlank { "链接" }
     return host.take(48)
 }
 
@@ -635,9 +719,10 @@ private fun MarkdownBlockView(
         is MarkdownQuote ->
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 Box(
-                    Modifier.width(3.dp)
+                    Modifier
+                        .width(3.dp)
                         .fillMaxHeight()
-                        .background(palette.quoteBar, RoundedCornerShape(2.dp))
+                        .background(palette.quoteBar, RoundedCornerShape(2.dp)),
                 )
                 Spacer(Modifier.width(8.dp))
                 ImageAwareText(
@@ -701,29 +786,34 @@ private fun MarkdownBlockView(
             }
         MarkdownRule ->
             Box(
-                Modifier.fillMaxWidth()
+                Modifier
+                    .fillMaxWidth()
                     .padding(vertical = 5.dp)
                     .height(1.dp)
-                    .background(palette.rule)
+                    .background(palette.rule),
             )
     }
 }
 
 @Composable
-private fun MarkdownCodeBlock(block: MarkdownCode, palette: MarkdownPalette) {
+private fun MarkdownCodeBlock(
+    block: MarkdownCode,
+    palette: MarkdownPalette,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = palette.codeBackground,
         shape = MaterialTheme.shapes.small,
     ) {
         Column(Modifier.fillMaxWidth().padding(8.dp)) {
-            if (block.language.isNotBlank())
+            if (block.language.isNotBlank()) {
                 Text(
                     block.language,
                     fontSize = 10.sp,
                     color = palette.muted,
                     maxLines = 1,
                 )
+            }
             Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 Text(
                     block.code,
@@ -769,7 +859,7 @@ private fun ImageAwareText(
         segments.forEach { segment ->
             when (segment) {
                 is ImageSegment.Text ->
-                    if (segment.text.isNotBlank())
+                    if (segment.text.isNotBlank()) {
                         InlineMarkdownText(
                             source = segment.text,
                             palette = palette,
@@ -778,6 +868,7 @@ private fun ImageAwareText(
                             maxLines = maxLines,
                             onOpenUrl = onOpenUrl,
                         )
+                    }
                 is ImageSegment.Image ->
                     ImagePlaceholderRow(segment.alt, segment.url, palette, onOpenUrl)
             }
@@ -789,8 +880,9 @@ private fun splitImageSegments(source: String): List<ImageSegment> {
     val segments = mutableListOf<ImageSegment>()
     var cursor = 0
     for (match in imagePattern.findAll(source)) {
-        if (match.range.first > cursor)
+        if (match.range.first > cursor) {
             segments += ImageSegment.Text(source.substring(cursor, match.range.first))
+        }
         segments += ImageSegment.Image(match.groupValues[1].trim(), match.groupValues[2].trim())
         cursor = match.range.last + 1
     }
@@ -815,7 +907,8 @@ private fun ImagePlaceholderRow(
         shape = MaterialTheme.shapes.small,
     ) {
         Row(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .then(if (href == null) Modifier else Modifier.clickable { onOpenUrl(href) })
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -858,7 +951,7 @@ private fun InlineMarkdownText(
         markup.text,
         modifier =
             modifier.then(
-                if (interactive)
+                if (interactive) {
                     // 不消费按下事件，保留 SelectionContainer 的拖选能力；
                     // 只有指针抬起且未被选中手势取消时才算点击链接。
                     Modifier.pointerInput(markup) {
@@ -874,7 +967,9 @@ private fun InlineMarkdownText(
                             }
                         }
                     }
-                else Modifier
+                } else {
+                    Modifier
+                },
             ),
         style = style,
         maxLines = maxLines,

@@ -5,15 +5,24 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readText
+import kotlin.io.path.setAttribute
+import kotlin.io.path.setPosixFilePermissions
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class JavaRuntimeExtractionTest {
     @TempDir lateinit var temporary: Path
@@ -54,9 +63,10 @@ class JavaRuntimeExtractionTest {
         blocked.createDirectories().resolve("occupied.tmp").writeText("occupied")
 
         val logs = mutableListOf<String>()
-        val failure = assertFailsWith<RuntimeFileWriteException> {
-            extractZipRuntime(archive, root) { logs += it }
-        }
+        val failure =
+            assertFailsWith<RuntimeFileWriteException> {
+                extractZipRuntime(archive, root) { logs += it }
+            }
 
         assertEquals(blocked.toAbsolutePath().normalize(), failure.file)
         assertTrue(logs.isNotEmpty(), "失败必须留下日志")
@@ -94,7 +104,10 @@ class JavaRuntimeExtractionTest {
         }
     }
 
-    private fun writeZip(archive: Path, entries: Map<String, String>) {
+    private fun writeZip(
+        archive: Path,
+        entries: Map<String, String>,
+    ) {
         ZipOutputStream(archive.outputStream()).use { zip ->
             entries.forEach { (name, content) ->
                 zip.putNextEntry(ZipEntry(name))

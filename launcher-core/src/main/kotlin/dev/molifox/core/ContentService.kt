@@ -5,6 +5,11 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -13,9 +18,17 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.Flow
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
 class ContentService(
     private val store: LauncherStore,
@@ -24,10 +37,12 @@ class ContentService(
     private val api: String = "https://api.modrinth.com/v2",
 ) {
     private val metadataReader = ModMetadataReader()
+
     // CurseForge 的根地址来自设置（默认社区镜像），不内置任何 API Key。
     private val curseForge = CurseForgeBackend(store, network)
     private val backend = ContentBackends(ModrinthBackend(network, api), curseForge)
     val catalog = ContentCatalog(store, network, api, backend, curseForge)
+
     // 模组更新：指纹优先匹配 Modrinth，CurseForge 走现有公共镜像后端（跟随设置），不需要 API Key。
     val modUpdates =
         ModUpdateService(
@@ -36,14 +51,30 @@ class ContentService(
             defaultModUpdateSources(network, api, curseForge),
             defaultModDownloader(network, api) { curseForge.api },
         )
+
     // 资源包与光影的更新检查：与模组同样的内容源与镜像设置，只读，不下载文件。
     val packUpdates =
         PackUpdateService(store, defaultPackUpdateSources(network, api, curseForge))
     private val localPacks = LocalPackStore(store)
+    private val installedIcons =
+        InstalledContentIcons(store, network, backend, api, identifyUnregistered = true)
+
+    suspend fun packIcon(
+        id: String,
+        path: Path,
+        folder: PackFolder,
+    ): ByteArray? =
+        installedIcons
+            .read(id, path, folder)
+            .onFailure {
+                store.log("无法读取${folder.title}头像 ${path.fileName}：${it.message}", true)
+            }.getOrNull()
 
     /** 列出 `resourcepacks/` / `shaderpacks/` 的直接子项（zip 或文件夹）。 */
-    fun listPacks(id: String, folder: PackFolder): List<LocalPackEntry> =
-        localPacks.list(id, folder)
+    fun listPacks(
+        id: String,
+        folder: PackFolder,
+    ): List<LocalPackEntry> = localPacks.list(id, folder)
 
     /** 把 `.zip` 或文件夹导入资源包/光影目录；重名加序号，不覆盖、失败不留残留。 */
     suspend fun importPacks(
@@ -54,8 +85,11 @@ class ContentService(
     ): List<LocalPackEntry> = localPacks.import(id, folder, sources, context)
 
     /** 删除一个资源包/光影（移入回收站）。 */
-    fun deletePack(id: String, folder: PackFolder, filename: String): Boolean =
-        localPacks.delete(id, folder, filename)
+    fun deletePack(
+        id: String,
+        folder: PackFolder,
+        filename: String,
+    ): Boolean = localPacks.delete(id, folder, filename)
 
     suspend fun installDatapack(
         hit: ContentHit,
@@ -63,14 +97,12 @@ class ContentService(
         instanceId: String,
         worldName: String,
         context: JobContext,
-    ) =
-        DatapackInstaller(
-                store,
-                network,
-                backend,
-                if (hit.id.startsWith("curseforge:")) curseForge.api else api,
-            )
-            .install(hit, versionId, instanceId, worldName, context)
+    ) = DatapackInstaller(
+        store,
+        network,
+        backend,
+        if (hit.id.startsWith("curseforge:")) curseForge.api else api,
+    ).install(hit, versionId, instanceId, worldName, context)
 
     suspend fun planContent(
         hit: ContentHit,
@@ -90,7 +122,7 @@ class ContentService(
         val registryFile = root.resolve(".molifox-content.json")
         require(
             contentSignature(store, store.instance(report.instanceId)) == report.signature &&
-                (if (registryFile.exists()) digest(registryFile) else "") == report.registryHash
+                (if (registryFile.exists()) digest(registryFile) else "") == report.registryHash,
         ) {
             "资源列表已改变，请重新检查更新"
         }
@@ -98,17 +130,18 @@ class ContentService(
         require(
             items.isNotEmpty() &&
                 items.size == selected.size &&
-                items.all { it.update != null && it.source != null && !it.source.locked }
+                items.all { it.update != null && it.source != null && !it.source.locked },
         ) {
             "更新选择无效"
         }
-        val requests = items.map { item ->
-            val source = requireNotNull(item.source)
-            ContentRequest(
-                ContentHit(source.projectId, "", source.title, "", "", 0, source.kind, null),
-                requireNotNull(item.update).id,
-            )
-        }
+        val requests =
+            items.map { item ->
+                val source = requireNotNull(item.source)
+                ContentRequest(
+                    ContentHit(source.projectId, "", source.title, "", "", 0, source.kind, null),
+                    requireNotNull(item.update).id,
+                )
+            }
         return ContentInstallPlanner(store, network, api, backend)
             .planMany(
                 requests,
@@ -118,14 +151,18 @@ class ContentService(
             )
     }
 
-    suspend fun installPlan(plan: ContentInstallPlan, context: JobContext) =
-        ContentInstallTransaction(
-                store,
-                network,
-                if (plan.files.all { it.projectId.startsWith("curseforge:") }) curseForge.api
-                else api,
-            )
-            .install(plan, context)
+    suspend fun installPlan(
+        plan: ContentInstallPlan,
+        context: JobContext,
+    ) = ContentInstallTransaction(
+        store,
+        network,
+        if (plan.files.all { it.projectId.startsWith("curseforge:") }) {
+            curseForge.api
+        } else {
+            api
+        },
+    ).install(plan, context)
 
     suspend fun search(
         query: String,
@@ -137,12 +174,13 @@ class ContentService(
         require(
             query.length <= 200 &&
                 kind in listOf("mod", "modpack", "resourcepack", "shader", "datapack") &&
-                offset in 0..10000
+                offset in 0..10000,
         ) {
             "搜索参数无效"
         }
-        if (store.data.settings.contentDownloadSource == "curseforge")
+        if (store.data.settings.contentDownloadSource == "curseforge") {
             return curseForge.search(query, kind, instanceId?.let(store::instance), offset, filter)
+        }
         val facets = mutableListOf(listOf("project_type:$kind"))
         val selection =
             filter
@@ -157,17 +195,25 @@ class ContentService(
         // 版本筛选只发送真实版本号：实例目录名（TwilightMC-26.3v1.0）解析成 26.3，解析不到就不筛。
         val gameVersion = minecraftVersionTag(selection.gameVersion)
         if (selection.gameVersion.isNotBlank()) {
-            if (gameVersion == null)
+            if (gameVersion == null) {
                 store.log("Modrinth 已忽略无法识别的游戏版本筛选：${selection.gameVersion}", true)
-            else facets += listOf("versions:${gson.toJson(gameVersion)}")
+            } else {
+                facets += listOf("versions:${gson.toJson(gameVersion)}")
+            }
         }
-        if (kind == "mod" && selection.loader != null && selection.loader != LoaderType.Vanilla)
+        if (kind == "mod" && selection.loader != null && selection.loader != LoaderType.Vanilla) {
             facets += listOf("categories:${selection.loader.name.lowercase()}")
+        }
         // 分类：同一子列表内的条件是「或」，与其他子列表之间是「与」，所以多选分类合成一组。
-        if (selection.categories.isNotEmpty())
+        if (selection.categories.isNotEmpty()) {
             facets += selection.categories.sorted().map { "categories:${gson.toJson(it)}" }
+        }
         val parameters =
-            "query=${encoded(query)}&facets=${encoded(gson.toJson(facets))}&limit=12&offset=$offset&index=${if (query.isBlank()) "downloads" else "relevance"}"
+            "query=${encoded(
+                query,
+            )}&facets=${encoded(
+                gson.toJson(facets),
+            )}&limit=12&offset=$offset&index=${if (query.isBlank()) "downloads" else "relevance"}"
         val result = network.json("$api/search?$parameters").asJsonObject
         return ContentSearch(
             result.array("hits").map { element ->
@@ -189,8 +235,11 @@ class ContentService(
 
     /** 内容源的分类列表：CurseForge 用镜像自己的编号与名称，Modrinth 由界面内置的 slug 列表提供。 */
     suspend fun contentCategories(kind: String): List<ContentCategoryOption> =
-        if (store.data.settings.contentDownloadSource == "curseforge") curseForge.categories(kind)
-        else emptyList()
+        if (store.data.settings.contentDownloadSource == "curseforge") {
+            curseForge.categories(kind)
+        } else {
+            emptyList()
+        }
 
     suspend fun installContent(
         hit: ContentHit,
@@ -210,25 +259,32 @@ class ContentService(
         }
     }
 
-    suspend fun downloadPack(hit: ContentHit, context: JobContext, versionId: String = ""): Path {
+    suspend fun downloadPack(
+        hit: ContentHit,
+        context: JobContext,
+        versionId: String = "",
+    ): Path {
         require(hit.type == "modpack")
         context.progress(0f, "读取整合包版本…")
         if (hit.id.startsWith("curseforge:")) {
             val available =
-                if (versionId.isBlank()) curseForge.available(hit.id)
-                else listOf(backend.version(versionId))
+                if (versionId.isBlank()) {
+                    curseForge.available(hit.id)
+                } else {
+                    listOf(backend.version(versionId))
+                }
             val version =
                 available.firstOrNull { it.string("version_type") == "release" }
                     ?: available.firstOrNull()
                     ?: error("整合包没有可用版本")
             require(
                 version.string("project_id") == hit.id &&
-                    (versionId.isBlank() || version.string("id") == versionId)
+                    (versionId.isBlank() || version.string("id") == versionId),
             ) {
                 "整合包版本不属于当前项目"
             }
             val file = version.array("files").first().asJsonObject
-            if (version.boolean("manual_download"))
+            if (version.boolean("manual_download")) {
                 throw ManualContentRequired(
                     listOf(
                         ManualContentFile(
@@ -236,13 +292,16 @@ class ContentService(
                             version.string("id"),
                             file.string("filename"),
                             version.string("website"),
-                        )
-                    )
+                        ),
+                    ),
                 )
+            }
             val archive =
                 safePath(
                     store.downloadDirectory,
-                    "packs/curseforge-${curseForgeProjectId(hit.id)}/${safeFilename(file.string("filename"))}",
+                    "packs/curseforge-${curseForgeProjectId(
+                        hit.id,
+                    )}/${safeFilename(file.string("filename"))}",
                 )
             require(archive.name.endsWith(".zip", true)) { "CurseForge 整合包必须为 ZIP" }
             network.downloadTracked(
@@ -262,11 +321,13 @@ class ContentService(
             return archive
         }
         val available =
-            if (versionId.isNotBlank()) listOf(backend.version(versionId))
-            else
+            if (versionId.isNotBlank()) {
+                listOf(backend.version(versionId))
+            } else {
                 network.json("$api/project/${encoded(hit.id)}/version").asJsonArray.map {
                     it.asJsonObject
                 }
+            }
         val version =
             available
                 .sortedByDescending { it.string("date_published") }
@@ -275,7 +336,7 @@ class ContentService(
                 } ?: error("整合包没有可用版本")
         require(
             version.string("project_id") == hit.id &&
-                (versionId.isBlank() || version.string("id") == versionId)
+                (versionId.isBlank() || version.string("id") == versionId),
         ) {
             "整合包版本不属于当前项目"
         }
@@ -294,7 +355,7 @@ class ContentService(
         require(
             (sha512.isBlank() || sha512.matches(Regex("[a-fA-F0-9]{128}"))) &&
                 (sha1.isBlank() || sha1.matches(Regex("[a-fA-F0-9]{40}"))) &&
-                (sha512.isNotBlank() || sha1.isNotBlank())
+                (sha512.isNotBlank() || sha1.isNotBlank()),
         ) {
             "整合包下载缺少有效校验信息"
         }
@@ -326,8 +387,7 @@ class ContentService(
                     !Files.isSymbolicLink(it) &&
                     !it.name.startsWith(".molifox-") &&
                     Regex("(?i).*\\.jar(?:\\.disabled)?").matches(it.name)
-            }
-            .map {
+            }.map {
                 ModFile(
                     it.name,
                     it.fileSize(),
@@ -335,32 +395,43 @@ class ContentService(
                     metadataReader.read(it),
                     it.getLastModifiedTime().toMillis(),
                 )
-            }
-            .sortedBy { it.filename.lowercase() }
+            }.sortedBy { it.filename.lowercase() }
     }
 
-    fun toggleMod(id: String, filename: String) {
+    fun toggleMod(
+        id: String,
+        filename: String,
+    ) {
         require(Regex("(?i).*\\.jar(?:\\.disabled)?").matches(filename)) { "无效的模组文件" }
         val directory = store.instancePath(id).resolve("mods")
         val source = safePath(directory, safeFilename(filename))
         val target =
             safePath(
                 directory,
-                if (filename.endsWith(".disabled", true)) contentBaseFilename(filename)
-                else "$filename.disabled",
+                if (filename.endsWith(".disabled", true)) {
+                    contentBaseFilename(filename)
+                } else {
+                    "$filename.disabled"
+                },
             )
         require(!target.exists()) { "目标文件已存在，请处理重复模组" }
         Files.move(source, target)
     }
 
-    fun deleteMod(id: String, filename: String) {
+    fun deleteMod(
+        id: String,
+        filename: String,
+    ) {
         require(Regex("(?i).*\\.jar(?:\\.disabled)?").matches(filename))
         store.platform.moveToTrash(
-            safePath(store.instancePath(id).resolve("mods"), safeFilename(filename))
+            safePath(store.instancePath(id).resolve("mods"), safeFilename(filename)),
         )
     }
 
-    fun importMods(id: String, files: List<Path>) {
+    fun importMods(
+        id: String,
+        files: List<Path>,
+    ) {
         require(store.instance(id).loader != LoaderType.Vanilla) { "请先选择带加载器的实例" }
         val destination = store.instancePath(id).resolve("mods").apply { createDirectories() }
         for (file in files) {
@@ -370,7 +441,10 @@ class ContentService(
     }
 
     /** 原理图（世界编辑 litematic/schem 等）导入到实例的 schematics 目录。 */
-    fun importSchematics(id: String, files: List<Path>) {
+    fun importSchematics(
+        id: String,
+        files: List<Path>,
+    ) {
         require(files.isNotEmpty()) { "请选择原理图文件" }
         val destination = store.instancePath(id).resolve("schematics").apply { createDirectories() }
         for (file in files) {
@@ -384,14 +458,20 @@ class ContentService(
         }
     }
 
-    fun deleteSchematic(id: String, filename: String) {
+    fun deleteSchematic(
+        id: String,
+        filename: String,
+    ) {
         require(Regex("(?i).*\\.(litematic|schem|schematic|nbt)").matches(filename)) { "无效的原理图文件" }
         store.platform.moveToTrash(
-            safePath(store.instancePath(id).resolve("schematics"), safeFilename(filename))
+            safePath(store.instancePath(id).resolve("schematics"), safeFilename(filename)),
         )
     }
 
-    private suspend fun <T> withPackSnapshot(archive: Path, action: suspend (Path) -> T): T =
+    private suspend fun <T> withPackSnapshot(
+        archive: Path,
+        action: suspend (Path) -> T,
+    ): T =
         withContext(Dispatchers.IO) {
             val snapshot =
                 Files.createTempFile(
@@ -439,161 +519,169 @@ class ContentService(
         optionalFiles: Set<String>? = null,
         expectedHash: String? = null,
         gameDirectoryId: String? = store.data.activeGameDirectoryId,
-    ) =
-        withPackSnapshot(archive) { snapshot ->
-            require(
-                expectedHash == null || digest(snapshot, "SHA-256").equals(expectedHash, true)
-            ) {
-                "整合包文件已改变，请重新选择"
-            }
-            ZipFile(snapshot.toFile()).use { zip ->
-                val manifest =
-                    readPackManifest(
-                        zip,
-                        store.temporaryDirectory.resolve("pack-validation"),
-                        store.platform.osName,
-                    )
-                val index = manifest.index
-                val request = manifest.request
-                installer.validate(request)
-                val launchDefaults =
-                    if (repairId == null)
-                        manifest.launchOptions?.resolve(store.data.settings, store.platform.osName)
-                    else null
-                if (repairId != null) {
-                    val existing = store.instance(repairId)
-                    require(
-                        existing.gameVersion == request.gameVersion &&
-                            existing.loader == request.loader &&
-                            existing.loaderVersion == request.loaderVersion
-                    ) {
-                        "修复包的游戏版本或加载器与实例不符，请新建实例导入；修复不能替代升级"
-                    }
+    ) = withPackSnapshot(archive) { snapshot ->
+        require(
+            expectedHash == null || digest(snapshot, "SHA-256").equals(expectedHash, true),
+        ) {
+            "整合包文件已改变，请重新选择"
+        }
+        ZipFile(snapshot.toFile()).use { zip ->
+            val manifest =
+                readPackManifest(
+                    zip,
+                    store.temporaryDirectory.resolve("pack-validation"),
+                    store.platform.osName,
+                )
+            val index = manifest.index
+            val request = manifest.request
+            installer.validate(request)
+            val launchDefaults =
+                if (repairId == null) {
+                    manifest.launchOptions?.resolve(store.data.settings, store.platform.osName)
+                } else {
+                    null
                 }
+            if (repairId != null) {
+                val existing = store.instance(repairId)
                 require(
-                    optionalFiles == null || optionalFiles.all { it in manifest.optionalFiles }
+                    existing.gameVersion == request.gameVersion &&
+                        existing.loader == request.loader &&
+                        existing.loaderVersion == request.loaderVersion,
                 ) {
-                    "所选可选文件已不在整合包中，请重新选择"
+                    "修复包的游戏版本或加载器与实例不符，请新建实例导入；修复不能替代升级"
                 }
-                val selection =
-                    optionalFiles ?: repairId?.let { store.instance(it).packOptionalFiles?.toSet() }
-                val curseForgeFiles =
-                    if (manifest.curseForge == null) emptyList()
-                    else
-                        prepareCurseForgePack(
-                            manifest,
-                            curseForge,
-                            selection,
-                            archive.toAbsolutePath().parent.resolve("manual-downloads"),
-                            context,
-                            repairId?.let(store::instancePath),
-                        )
-                val instance =
-                    repairId?.let { store.instance(it) }
-                        ?: installer.createInstance(request, gameDirectoryId).let { created ->
-                            store.updateInstance(created.id) {
-                                it.copy(
-                                    isolation = VersionIsolation.Inherit,
-                                    extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
-                                    advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
-                                )
-                            }
-                            store.instance(created.id)
-                        }
-                context.bindInstance(instance.id)
-                if (repairId == null) NewInstallationCleanup(store).register(instance, context)
-                var root = store.instancePath(instance.id)
-                // Validate every override path before any download or extraction.
-                for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)
-                val savedPack =
-                    store.directories.packArchives.resolve(
-                        "${instance.id}.${if (index != null) "mrpack" else "zip"}"
-                    )
-                savedPack.parent.createDirectories()
-                val replacement =
-                    Files.createTempFile(savedPack.parent, "${savedPack.fileName}.", ".part")
-                try {
-                    Files.copy(snapshot, replacement, StandardCopyOption.REPLACE_EXISTING)
-                    try {
-                        Files.move(
-                            replacement,
-                            savedPack,
-                            StandardCopyOption.REPLACE_EXISTING,
-                            StandardCopyOption.ATOMIC_MOVE,
-                        )
-                    } catch (_: AtomicMoveNotSupportedException) {
-                        Files.move(replacement, savedPack, StandardCopyOption.REPLACE_EXISTING)
-                    }
-                } finally {
-                    replacement.deleteIfExists()
-                }
-                store.updateInstance(instance.id) {
-                    it.copy(
-                        packFile = savedPack.toString(),
-                        installed = false,
-                        packOptionalFiles = selection?.toList(),
-                    )
-                }
-                var transaction: PackFileTransaction? = null
-                try {
-                    installer.install(instance.id, context)
-                    root = store.instancePath(instance.id)
-                    val staged = PackFileTransaction(store, root)
-                    transaction = staged
-                    store.updateInstance(instance.id) { it.copy(installed = false) }
-                    stageCurseForgePackFiles(curseForgeFiles, staged, context) {
-                        network.download(it)
-                    }
-                    stagePackFiles(
+            }
+            require(
+                optionalFiles == null || optionalFiles.all { it in manifest.optionalFiles },
+            ) {
+                "所选可选文件已不在整合包中，请重新选择"
+            }
+            val selection =
+                optionalFiles ?: repairId?.let { store.instance(it).packOptionalFiles?.toSet() }
+            val curseForgeFiles =
+                if (manifest.curseForge == null) {
+                    emptyList()
+                } else {
+                    prepareCurseForgePack(
                         manifest,
-                        zip,
-                        staged,
-                        root,
+                        curseForge,
                         selection,
-                        repairId != null,
+                        archive.toAbsolutePath().parent.resolve("manual-downloads"),
                         context,
-                    ) {
-                        network.download(it)
-                    }
-                    staged.commit(context)
-                    runCatching {
-                        PackOwnershipStore.write(
-                            root,
-                            PackOwnershipStore.buildOwnership(
-                                manifest,
-                                digest(snapshot, "SHA-256"),
-                                selection,
-                                zip,
-                                root,
-                            ),
-                        )
-                    }
-                        .onFailure {
-                            store.log("整合包文件归属账本写入失败，下次升级将按迁移模式处理：${it.message}", true)
-                        }
-                    store.updateInstance(instance.id) { it.copy(installed = true) }
-                    runCatching { applyPackIcon(store, instance.id, zip, manifest) }
-                        .onFailure {
-                            if (it is CancellationException) throw it
-                            store.log("整合包图标未采用，使用已有或默认图标：${it.message}", true)
-                        }
-                } catch (error: Exception) {
-                    store.updateInstance(instance.id) {
-                        it.copy(installed = repairId != null && instance.installed)
-                    }
-                    throw error
-                } finally {
-                    transaction?.cleanup()
+                        repairId?.let(store::instancePath),
+                    )
                 }
+            val instance =
+                repairId?.let { store.instance(it) }
+                    ?: installer.createInstance(request, gameDirectoryId).let { created ->
+                        store.updateInstance(created.id) {
+                            it.copy(
+                                isolation = VersionIsolation.Inherit,
+                                extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
+                                advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
+                            )
+                        }
+                        store.instance(created.id)
+                    }
+            context.bindInstance(instance.id)
+            if (repairId == null) NewInstallationCleanup(store).register(instance, context)
+            var root = store.instancePath(instance.id)
+            // Validate every override path before any download or extraction.
+            for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)
+            val savedPack =
+                store.directories.packArchives.resolve(
+                    "${instance.id}.${if (index != null) "mrpack" else "zip"}",
+                )
+            savedPack.parent.createDirectories()
+            val replacement =
+                Files.createTempFile(savedPack.parent, "${savedPack.fileName}.", ".part")
+            try {
+                Files.copy(snapshot, replacement, StandardCopyOption.REPLACE_EXISTING)
+                try {
+                    Files.move(
+                        replacement,
+                        savedPack,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE,
+                    )
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(replacement, savedPack, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                replacement.deleteIfExists()
+            }
+            store.updateInstance(instance.id) {
+                it.copy(
+                    packFile = savedPack.toString(),
+                    installed = false,
+                    packOptionalFiles = selection?.toList(),
+                )
+            }
+            var transaction: PackFileTransaction? = null
+            try {
+                installer.install(instance.id, context)
+                root = store.instancePath(instance.id)
+                val staged = PackFileTransaction(store, root)
+                transaction = staged
+                store.updateInstance(instance.id) { it.copy(installed = false) }
+                stageCurseForgePackFiles(curseForgeFiles, staged, context) {
+                    network.download(it)
+                }
+                stagePackFiles(
+                    manifest,
+                    zip,
+                    staged,
+                    root,
+                    selection,
+                    repairId != null,
+                    context,
+                ) {
+                    network.download(it)
+                }
+                staged.commit(context)
+                runCatching {
+                    PackOwnershipStore.write(
+                        root,
+                        PackOwnershipStore.buildOwnership(
+                            manifest,
+                            digest(snapshot, "SHA-256"),
+                            selection,
+                            zip,
+                            root,
+                        ),
+                    )
+                }.onFailure {
+                    store.log("整合包文件归属账本写入失败，下次升级将按迁移模式处理：${it.message}", true)
+                }
+                store.updateInstance(instance.id) { it.copy(installed = true) }
+                runCatching { applyPackIcon(store, instance.id, zip, manifest) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        store.log("整合包图标未采用，使用已有或默认图标：${it.message}", true)
+                    }
+            } catch (error: Exception) {
+                store.updateInstance(instance.id) {
+                    it.copy(installed = repairId != null && instance.installed)
+                }
+                throw error
+            } finally {
+                transaction?.cleanup()
             }
         }
+    }
 
     /** 只扫描升级计划可能涉及的路径，避免遍历整个实例目录。 */
-    private fun scanPackFileStates(root: Path, paths: Set<String>): Map<String, PackFileState> =
+    private fun scanPackFileStates(
+        root: Path,
+        paths: Set<String>,
+    ): Map<String, PackFileState> =
         paths.associateWith { relative ->
             val target = packPath(root, relative)
-            if (!target.isRegularFile() || Files.isSymbolicLink(target)) PackFileState(false, null)
-            else PackFileState(true, runCatching { digest(target) }.getOrNull())
+            if (!target.isRegularFile() || Files.isSymbolicLink(target)) {
+                PackFileState(false, null)
+            } else {
+                PackFileState(true, runCatching { digest(target) }.getOrNull())
+            }
         }
 
     /** 没有账本的老实例：优先用旧归档推断，再用实例记录补齐版本与组件信息。 */
@@ -689,7 +777,7 @@ class ContentService(
         withPackSnapshot(archive) { snapshot ->
             require(
                 expectedArchiveSha256.isNotBlank() &&
-                    digest(snapshot, "SHA-256").equals(expectedArchiveSha256, true)
+                    digest(snapshot, "SHA-256").equals(expectedArchiveSha256, true),
             ) {
                 "升级计划已过期，请重新预览"
             }
@@ -704,7 +792,7 @@ class ContentService(
                 }
                 val savedPack =
                     store.directories.packArchives.resolve(
-                        "${instance.id}.${if (prepared.manifest.index != null) "mrpack" else "zip"}"
+                        "${instance.id}.${if (prepared.manifest.index != null) "mrpack" else "zip"}",
                     )
                 savedPack.parent.createDirectories()
                 val staged = PackFileTransaction(store, root)
@@ -784,22 +872,24 @@ class ContentService(
         permittedLocalFiles: Set<String> = emptySet(),
         format: PackExportFormat = PackExportFormat.Modrinth,
         options: PackExportOptions = PackExportOptions(),
-    ) =
-        MrpackExporter(store, network, api, curseForge)
-            .export(plan, destination, selected, permittedLocalFiles, context, format, options)
+    ) = MrpackExporter(store, network, api, curseForge)
+        .export(plan, destination, selected, permittedLocalFiles, context, format, options)
 
-    fun exportInstance(id: String, destination: Path) {
+    fun exportInstance(
+        id: String,
+        destination: Path,
+    ) {
         val instance = store.instance(id)
         require(
             instance.installed &&
-                (!instance.externalProfile || instance.loader == LoaderType.Vanilla)
+                (!instance.externalProfile || instance.loader == LoaderType.Vanilla),
         ) {
             "外部加载器实例请先用原启动器导出，未完成的实例无法导出"
         }
         val root = store.instancePath(id)
         destination.parent?.createDirectories()
         require(
-            !destination.toAbsolutePath().normalize().startsWith(root.toAbsolutePath().normalize())
+            !destination.toAbsolutePath().normalize().startsWith(root.toAbsolutePath().normalize()),
         ) {
             "请将整合包保存到实例目录外"
         }
@@ -819,9 +909,8 @@ class ContentService(
                                         instance.loader,
                                         instance.loaderVersion,
                                     ),
-                            )
-                        )
-                        .toByteArray(Charsets.UTF_8)
+                            ),
+                        ).toByteArray(Charsets.UTF_8),
                 )
                 zip.closeEntry()
                 Files.walk(root).use { paths ->
@@ -831,23 +920,24 @@ class ContentService(
                             val relative = root.relativize(file)
                             if (
                                 (!store.isolated(instance) || instance.gameDirectoryId != null) &&
-                                    relative.first().toString() !in
-                                        setOf(
-                                            "mods",
-                                            "saves",
-                                            "config",
-                                            "resourcepacks",
-                                            "shaderpacks",
-                                            "screenshots",
-                                            "defaultconfigs",
-                                            "kubejs",
-                                            "scripts",
-                                            "options.txt",
-                                            "optionsof.txt",
-                                            "servers.dat",
-                                        )
-                            )
+                                relative.first().toString() !in
+                                setOf(
+                                    "mods",
+                                    "saves",
+                                    "config",
+                                    "resourcepacks",
+                                    "shaderpacks",
+                                    "screenshots",
+                                    "defaultconfigs",
+                                    "kubejs",
+                                    "scripts",
+                                    "options.txt",
+                                    "optionsof.txt",
+                                    "servers.dat",
+                                )
+                            ) {
                                 return@forEach
+                            }
                             if (
                                 relative.any {
                                     it.toString() in
@@ -859,8 +949,9 @@ class ContentService(
                                             ".molifox-content.json",
                                         )
                                 }
-                            )
+                            ) {
                                 return@forEach
+                            }
                             zip.putNextEntry(ZipEntry("files/${relative.joinToString("/")}"))
                             Files.copy(file, zip)
                             zip.closeEntry()

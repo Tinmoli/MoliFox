@@ -5,19 +5,41 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.*
-import okio.Buffer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class InstallationCancellationTest {
     @TempDir lateinit var directory: Path
@@ -53,9 +75,13 @@ class InstallationCancellationTest {
                 queue.cancel(cancelled)
                 withTimeout(5000) {
                     while (
-                        store.state.value.jobs.first { it.id == cancelled }.status !=
-                            JobStatus.Cancelled
-                    ) delay(20)
+                        store.state.value.jobs
+                            .first { it.id == cancelled }
+                            .status !=
+                        JobStatus.Cancelled
+                    ) {
+                        delay(20)
+                    }
                 }
                 assertFalse(folder.exists())
                 assertTrue(store.data.instances.none { it.id == instance.id })
@@ -66,7 +92,7 @@ class InstallationCancellationTest {
         }
 
     @Test
-    fun `real installation cancellation deletes downloads outputs and directories but retains referenced files`() =
+    fun `cancelling installation cleans outputs and retains referenced files`() =
         runBlocking {
             MockWebServer().use { server ->
                 server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
@@ -78,23 +104,26 @@ class InstallationCancellationTest {
                     gson.toJson(
                         mapOf(
                             "objects" to
-                                mapOf("asset" to mapOf("hash" to assetHash, "size" to asset.size))
-                        )
+                                mapOf("asset" to mapOf("hash" to assetHash, "size" to asset.size)),
+                        ),
                     )
-                fun library(name: String, path: String) =
-                    mapOf(
-                        "name" to name,
-                        "downloads" to
-                            mapOf(
-                                "artifact" to
-                                    mapOf(
-                                        "url" to "$base/library",
-                                        "path" to path,
-                                        "sha1" to sha1(jar),
-                                        "size" to jar.size,
-                                    )
-                            ),
-                    )
+
+                fun library(
+                    name: String,
+                    path: String,
+                ) = mapOf(
+                    "name" to name,
+                    "downloads" to
+                        mapOf(
+                            "artifact" to
+                                mapOf(
+                                    "url" to "$base/library",
+                                    "path" to path,
+                                    "sha1" to sha1(jar),
+                                    "size" to jar.size,
+                                ),
+                        ),
+                )
                 val shared = "fixture/shared/1/shared-1.jar"
                 val fresh = "fixture/fresh/1/fresh-1.jar"
                 val profile =
@@ -114,7 +143,7 @@ class InstallationCancellationTest {
                                             "url" to "$base/client",
                                             "sha1" to sha1(jar),
                                             "size" to jar.size,
-                                        )
+                                        ),
                                 ),
                             "assetIndex" to
                                 mapOf(
@@ -122,7 +151,7 @@ class InstallationCancellationTest {
                                     "url" to "$base/index",
                                     "sha1" to sha1(index.toByteArray()),
                                 ),
-                        )
+                        ),
                     )
                 val manifest =
                     gson.toJson(
@@ -134,9 +163,9 @@ class InstallationCancellationTest {
                                         "type" to "release",
                                         "url" to "$base/profile",
                                         "sha1" to sha1(profile.toByteArray()),
-                                    )
-                                )
-                        )
+                                    ),
+                                ),
+                        ),
                     )
                 val assetStarted = CountDownLatch(1)
                 server.dispatcher =
@@ -146,7 +175,8 @@ class InstallationCancellationTest {
                                 "/manifest" -> MockResponse().setBody(manifest)
                                 "/profile" -> MockResponse().setBody(profile)
                                 "/client",
-                                "/library" -> MockResponse().setBody(Buffer().write(jar))
+                                "/library",
+                                -> MockResponse().setBody(Buffer().write(jar))
                                 "/index" -> MockResponse().setBody(index)
                                 "/${assetHash.take(2)}/$assetHash" -> {
                                     assetStarted.countDown()
@@ -208,7 +238,7 @@ class InstallationCancellationTest {
                         assertTrue(assetStarted.await(10, TimeUnit.SECONDS))
                         val partial =
                             network.partialFile(
-                                root.resolve("assets/objects/${assetHash.take(2)}/$assetHash")
+                                root.resolve("assets/objects/${assetHash.take(2)}/$assetHash"),
                             )
                         withTimeout(3000) { while (!partial.exists()) delay(20) }
                         assertTrue(root.resolve("versions/1.20.1/1.20.1.jar").exists())
@@ -217,7 +247,9 @@ class InstallationCancellationTest {
                         withTimeout(5000) { queue.awaitIdle() }
                         assertEquals(
                             JobStatus.Cancelled,
-                            store.state.value.jobs.first { it.id == id }.status,
+                            store.state.value.jobs
+                                .first { it.id == id }
+                                .status,
                         )
                         assertFalse(store.versionGamePath(instance).exists())
                         assertFalse(root.resolve("versions/1.20.1").exists())
@@ -280,6 +312,5 @@ class InstallationCancellationTest {
                     zip.write(byteArrayOf(1, 2, 3))
                     zip.closeEntry()
                 }
-            }
-            .toByteArray()
+            }.toByteArray()
 }

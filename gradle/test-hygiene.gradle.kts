@@ -3,16 +3,19 @@
 
 // 负责配置测试临时目录、验收摘要和测试数据清理。
 
+import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.testing.Test
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.time.Instant
-import org.gradle.api.tasks.JavaExec
-import org.gradle.api.tasks.testing.Test
 
 // These directories belong to checks only. Application data is never a cleanup target.
-val workspaceRoot = rootProject.projectDir.toPath().toAbsolutePath().normalize()
+val workspaceRoot =
+    rootProject.projectDir
+        .toPath()
+        .toAbsolutePath()
+        .normalize()
 val managedRoot = workspaceRoot.resolve(".work/tests")
 val smokeNames =
     setOf(
@@ -44,6 +47,28 @@ val smokeNames =
         "gameSmoke",
     )
 
+fun replaceTestScreenshots(source: Path) {
+    if (!Files.isDirectory(source)) return
+    val generatedName = Regex("MoliFox-[a-z0-9-]+\\.png")
+    val screenshots =
+        Files.list(source).use { paths ->
+            paths.filter { generatedName.matches(it.fileName.toString()) }.toList()
+        }
+    if (screenshots.isEmpty()) return
+    val destination = workspaceRoot.resolve("docs/screenshots/current")
+    for (parent in listOf(destination.parent.parent, destination.parent, destination)) {
+        check(!Files.isSymbolicLink(parent)) { "截图目录不能是符号链接：$parent" }
+    }
+    Files.createDirectories(destination)
+    // 当前目录只保留本次截图；测试失败也用本次证据替换，避免混入上次成功页面。
+    Files.list(destination).use { paths ->
+        paths.filter { generatedName.matches(it.fileName.toString()) }.forEach(Files::delete)
+    }
+    for (screenshot in screenshots) {
+        Files.copy(screenshot, destination.resolve(screenshot.fileName))
+    }
+}
+
 fun deleteOwnedTestDirectory(directory: Path) {
     val target = directory.toAbsolutePath().normalize()
     check(target.startsWith(managedRoot) && target != managedRoot) {
@@ -65,8 +90,9 @@ fun deleteOwnedTestDirectory(directory: Path) {
                         Files.deleteIfExists(path)
                         break
                     } catch (failure: java.nio.file.FileSystemException) {
-                        if (++attempt < 4) Thread.sleep(150L * attempt)
-                        else {
+                        if (++attempt < 4) {
+                            Thread.sleep(150L * attempt)
+                        } else {
                             failures.add(failure)
                             break
                         }
@@ -91,8 +117,7 @@ allprojects {
             tasks
                 .filter {
                     it is Test || (it is JavaExec && it.name in smokeNames)
-                }
-                .toList()
+                }.toList()
         for (checkedTask in checkedTasks) {
             val testDirectory = managedRoot.resolve("${owner.name}-${checkedTask.name}")
             val cleanup =
@@ -109,27 +134,7 @@ allprojects {
                             rootProject.file("docs/validation/${owner.name}-${checkedTask.name}.md")
                         var cleanupSucceeded = false
                         try {
-                            val screenshots = testDirectory.resolve("screenshots")
-                            if (Files.isDirectory(screenshots)) {
-                                val destination =
-                                    rootProject.file("docs/screenshots/current").toPath()
-                                Files.createDirectories(destination)
-                                Files.list(screenshots).use { paths ->
-                                    paths
-                                        .filter {
-                                            it.fileName
-                                                .toString()
-                                                .matches(Regex("MoliFox-[a-z-]+\\.png"))
-                                        }
-                                        .forEach {
-                                            Files.copy(
-                                                it,
-                                                destination.resolve(it.fileName),
-                                                StandardCopyOption.REPLACE_EXISTING,
-                                            )
-                                        }
-                                }
-                            }
+                            replaceTestScreenshots(testDirectory.resolve("screenshots"))
                         } finally {
                             try {
                                 deleteOwnedTestDirectory(testDirectory)
@@ -137,13 +142,16 @@ allprojects {
                             } finally {
                                 report.parentFile.mkdirs()
                                 val cleanupStatus =
-                                    if (cleanupSucceeded) "removed"
-                                    else "cleanup failed; inspect the task error"
+                                    if (cleanupSucceeded) {
+                                        "removed"
+                                    } else {
+                                        "cleanup failed; inspect the task error"
+                                    }
                                 report.writeText(
                                     "# ${owner.name}:${checkedTask.name}\n\n" +
                                         "- Updated: ${Instant.now()}\n" +
                                         "- Result: $status\n" +
-                                        "- Temporary data: $cleanupStatus\n"
+                                        "- Temporary data: $cleanupStatus\n",
                                 )
                             }
                         }

@@ -16,13 +16,41 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,83 +60,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.DownloadJob
-import dev.molifox.core.GameInstance
 import dev.molifox.core.JobStatus
 import kotlinx.coroutines.delay
 
-/**
- * 开始页的启动浮窗状态。
- *
- * 这里只记录「哪个任务、哪个实例、从何时开始」，阶段与百分比一律读 [DownloadJob] 的真实进度（由 `JobContext.progress` 写入），不另造一套启动进度模型。状态挂在
- * `LaunchPage` 的 `remember` 上， 离开页面即随组合释放（启动任务本身仍在任务队列里继续）。
- */
-class LaunchCardState {
-    var jobId by mutableStateOf<String?>(null)
-        private set
-
-    var instanceId by mutableStateOf("")
-        private set
-
-    var instanceName by mutableStateOf("")
-        private set
-
-    var startedAtMillis by mutableLongStateOf(0L)
-        private set
-
-    /** `controller.launch()` 同步抛出的错误（尚未生成任务时也要在卡片里说明原因）。 */
-    var localError by mutableStateOf<String?>(null)
-        private set
-
-    /** 任务被「清除已结束任务」等操作移除后，卡片仍保留最后一帧真实进度。 */
-    var lastJob by mutableStateOf<DownloadJob?>(null)
-        private set
-
-    /** 是否真的看到过游戏进程运行：用来区分「上一次退出事件」和本次启动。 */
-    var sawRunning by mutableStateOf(false)
-        private set
-
-    val visible: Boolean
-        get() = jobId != null || localError != null
-
-    fun begin(instance: GameInstance) {
-        jobId = null
-        localError = null
-        lastJob = null
-        sawRunning = false
-        instanceId = instance.id
-        instanceName = instance.name
-        startedAtMillis = System.currentTimeMillis()
-    }
-
-    fun attach(id: String) {
-        jobId = id
-    }
-
-    fun fail(message: String) {
-        localError = message
-    }
-
-    fun remember(job: DownloadJob) {
-        lastJob = job
-    }
-
-    fun markRunning() {
-        sawRunning = true
-    }
-
-    fun clear() {
-        jobId = null
-        localError = null
-        lastJob = null
-        sawRunning = false
-        instanceId = ""
-        instanceName = ""
-        startedAtMillis = 0L
-    }
-}
-
 /** 启动阶段：标题 + 该阶段开始时的任务进度。阈值对应当前 `GameLauncher` 里的 progress 调用。 */
-private data class LaunchStage(val title: String, val threshold: Float)
+private data class LaunchStage(
+    val title: String,
+    val threshold: Float,
+)
 
 private val launchStages =
     listOf(
@@ -198,7 +157,7 @@ fun LaunchProgressCard(
     val appear by
         animateFloatAsState(
             targetValue = if (appeared) 1f else 0f,
-            animationSpec = tween(if (LocalReducedMotion.current) 0 else Motion.fast),
+            animationSpec = tween(if (LocalReducedMotion.current) 0 else Motion.FAST),
             label = "launchCardAppear",
         )
 
@@ -244,12 +203,17 @@ fun LaunchProgressCard(
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(28.dp)
+                    Modifier
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(
-                            (if (failed) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.primary)
-                                .copy(alpha = .12f)
+                            (
+                                if (failed) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                }
+                            ).copy(alpha = .12f),
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -262,8 +226,11 @@ fun LaunchProgressCard(
                         null,
                         Modifier.size(16.dp),
                         tint =
-                            if (failed) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary,
+                            if (failed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                     )
                 }
                 Spacer(Modifier.width(10.dp))
@@ -381,7 +348,10 @@ fun LaunchProgressCard(
 
 /** 阶段行：18dp 高，三态共用左侧 13–14dp 图标位，保证文字起始位置一致。 */
 @Composable
-private fun LaunchStageRow(title: String, phase: LaunchStagePhase) {
+private fun LaunchStageRow(
+    title: String,
+    phase: LaunchStagePhase,
+) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth().height(18.dp),
@@ -398,9 +368,9 @@ private fun LaunchStageRow(title: String, phase: LaunchStagePhase) {
             LaunchStagePhase.Done ->
                 Icon(Icons.Outlined.Check, null, Modifier.size(13.dp), colors.primary)
             LaunchStagePhase.Active ->
-                if (LocalReducedMotion.current)
+                if (LocalReducedMotion.current) {
                     Icon(Icons.Outlined.ChevronRight, null, Modifier.size(14.dp), colors.primary)
-                else {
+                } else {
                     val transition = rememberInfiniteTransition(label = "launchStage")
                     val pulse by
                         transition.animateFloat(
@@ -441,7 +411,11 @@ private fun LaunchStageRow(title: String, phase: LaunchStagePhase) {
 
 /** 结束态占位行：与按钮同高，避免卡片在成功/取消后跳高。 */
 @Composable
-private fun LaunchCardResult(success: Boolean, title: String, detail: String) {
+private fun LaunchCardResult(
+    success: Boolean,
+    title: String,
+    detail: String,
+) {
     Row(
         Modifier.fillMaxWidth().height(Metrics.controlHeight),
         verticalAlignment = Alignment.CenterVertically,
@@ -450,8 +424,11 @@ private fun LaunchCardResult(success: Boolean, title: String, detail: String) {
             if (success) Icons.Outlined.Check else Icons.Outlined.Close,
             null,
             Modifier.size(15.dp),
-            if (success) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+            if (success) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
         Spacer(Modifier.width(7.dp))
         Text(
@@ -459,8 +436,11 @@ private fun LaunchCardResult(success: Boolean, title: String, detail: String) {
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color =
-                if (success) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                if (success) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -480,6 +460,9 @@ private fun formatElapsed(millis: Long): String {
     val seconds = total % 60
     val minutes = (total / 60) % 60
     val hours = total / 3600
-    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
-    else "%02d:%02d".format(minutes, seconds)
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
+    }
 }

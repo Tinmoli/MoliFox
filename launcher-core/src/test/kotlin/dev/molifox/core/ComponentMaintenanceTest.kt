@@ -5,18 +5,35 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.*
-import okio.Buffer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ComponentMaintenanceTest {
     @TempDir lateinit var temporary: Path
@@ -42,8 +59,7 @@ class ComponentMaintenanceTest {
                     zip.write(byteArrayOf(1, 2, 3))
                     zip.closeEntry()
                 }
-            }
-            .toByteArray()
+            }.toByteArray()
 
     private fun baseUrl(server: MockWebServer): String =
         server.loopbackUrl("/").toString().removeSuffix("/")
@@ -73,7 +89,7 @@ class ComponentMaintenanceTest {
                                     "url" to "$base/client.jar",
                                     "sha1" to sha1(clientJar),
                                     "size" to clientJar.size,
-                                )
+                                ),
                         ),
                     "libraries" to
                         listOf(
@@ -87,17 +103,16 @@ class ComponentMaintenanceTest {
                                                 "path" to "fixture/base/1/base-1.jar",
                                                 "sha1" to sha1(baseLibrary),
                                                 "size" to baseLibrary.size,
-                                            )
+                                            ),
                                     ),
-                            )
+                            ),
                         ),
-                )
+                ),
             )
         return Fixture(base, profile, clientJar, baseLibrary, oldLibrary, newLibrary)
     }
 
     private fun loaderProfile(
-        base: String,
         version: String,
         libraryUrl: String,
         loaderLibrary: ByteArray,
@@ -121,11 +136,11 @@ class ComponentMaintenanceTest {
                                                 "net/fabricmc/fabric-loader/$version/fabric-loader-$version.jar",
                                             "sha1" to sha1(loaderLibrary),
                                             "size" to loaderLibrary.size,
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-            )
+            ),
         )
 
     private fun manifest(fixture: Fixture): String =
@@ -138,13 +153,16 @@ class ComponentMaintenanceTest {
                             "type" to "release",
                             "url" to "${fixture.base}/version.json",
                             "sha1" to sha1(fixture.profile.toByteArray()),
-                        )
-                    )
-            )
+                        ),
+                    ),
+            ),
         )
 
     /** 同一个本地服务既提供安装所需文件，也提供升级所需的新加载器配置；[newLibraryUrl] 可指向 404 制造失败。 */
-    private fun dispatcher(fixture: Fixture, newLibraryUrl: String? = null): Dispatcher =
+    private fun dispatcher(
+        fixture: Fixture,
+        newLibraryUrl: String? = null,
+    ): Dispatcher =
         object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse =
                 when (request.path) {
@@ -161,37 +179,38 @@ class ComponentMaintenanceTest {
                         MockResponse()
                             .setBody(
                                 loaderProfile(
-                                    fixture.base,
                                     oldLoader,
                                     "${fixture.base}/old-loader.jar",
                                     fixture.oldLibrary,
-                                )
+                                ),
                             )
                     "/v2/versions/loader/$gameVersion/$newLoader/profile/json" ->
                         MockResponse()
                             .setBody(
                                 loaderProfile(
-                                    fixture.base,
                                     newLoader,
                                     newLibraryUrl ?: "${fixture.base}/new-loader.jar",
                                     fixture.newLibrary,
-                                )
+                                ),
                             )
                     else -> MockResponse().setResponseCode(404)
                 }
         }
 
-    private fun installer(server: MockWebServer, store: LauncherStore, network: NetworkClient) =
-        MinecraftInstaller(
-            store,
-            network,
-            JavaService(store, network),
-            "${baseUrl(server)}/manifest.json",
-            baseUrl(server),
-            fabricMetaBase = baseUrl(server),
-            quiltMetaBase = baseUrl(server),
-            forgeMavenBase = baseUrl(server),
-        )
+    private fun installer(
+        server: MockWebServer,
+        store: LauncherStore,
+        network: NetworkClient,
+    ) = MinecraftInstaller(
+        store,
+        network,
+        JavaService(store, network),
+        "${baseUrl(server)}/manifest.json",
+        baseUrl(server),
+        fabricMetaBase = baseUrl(server),
+        quiltMetaBase = baseUrl(server),
+        forgeMavenBase = baseUrl(server),
+    )
 
     /** 安装一个 Fabric 旧版本实例，返回实例与可复用的本地服务数据。 */
     private suspend fun installOldFabricInstance(
@@ -205,58 +224,58 @@ class ComponentMaintenanceTest {
         val installer = installer(server, store, network)
         val instance =
             installer.createInstance(
-                InstallRequest("升级测试实例", gameVersion, LoaderType.Fabric, oldLoader)
+                InstallRequest("升级测试实例", gameVersion, LoaderType.Fabric, oldLoader),
             )
         installer.install(instance.id, JobContext(store, "install"))
         return store.instance(instance.id) to fixture
     }
 
     @Test
-    fun `upgrade offers only newer versions of the same loader and game version`() = runBlocking {
-        MockWebServer().use { server ->
-            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse =
-                        when (request.path) {
-                            "/net/minecraftforge/forge/maven-metadata.xml" ->
-                                MockResponse()
-                                    .setBody(
-                                        """
-                                        <metadata><versioning><versions>
-                                          <version>1.20.1-47.1.0</version>
-                                          <version>1.20.1-47.2.0</version>
-                                          <version>1.21.1-52.0.1</version>
-                                        </versions></versioning></metadata>
-                                        """
-                                            .trimIndent()
-                                    )
-                            else -> MockResponse().setResponseCode(404)
-                        }
+    fun `upgrade offers only newer versions of the same loader and game version`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+                server.dispatcher =
+                    object : Dispatcher() {
+                        override fun dispatch(request: RecordedRequest): MockResponse =
+                            when (request.path) {
+                                "/net/minecraftforge/forge/maven-metadata.xml" ->
+                                    MockResponse()
+                                        .setBody(
+                                            """
+                                            <metadata><versioning><versions>
+                                              <version>1.20.1-47.1.0</version>
+                                              <version>1.20.1-47.2.0</version>
+                                              <version>1.21.1-52.0.1</version>
+                                            </versions></versioning></metadata>
+                                            """.trimIndent(),
+                                        )
+                                else -> MockResponse().setResponseCode(404)
+                            }
+                    }
+                val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+                val instance =
+                    GameInstance(
+                        name = "Forge 实例",
+                        installed = true,
+                        gameVersion = gameVersion,
+                        versionId = "Forge 实例",
+                        loader = LoaderType.Forge,
+                        loaderVersion = "47.1.0",
+                    )
+                NetworkClient(source = { "official" }).use { network ->
+                    val installer = installer(server, store, network)
+                    val available = installer.loaderVersions(LoaderType.Forge, gameVersion)
+                    // 同一 MC 版本里更新的 Forge 会出现；另一个 MC 版本上更新的 Forge 不会出现。
+                    assertEquals(listOf("47.2.0", "47.1.0"), available.map { it.version })
+                    assertEquals(
+                        listOf("47.2.0"),
+                        loaderUpgradeCandidates(instance, available).map { it.version },
+                    )
+                    assertTrue(available.none { it.version.startsWith("52.") })
                 }
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            val instance =
-                GameInstance(
-                    name = "Forge 实例",
-                    installed = true,
-                    gameVersion = gameVersion,
-                    versionId = "Forge 实例",
-                    loader = LoaderType.Forge,
-                    loaderVersion = "47.1.0",
-                )
-            NetworkClient(source = { "official" }).use { network ->
-                val installer = installer(server, store, network)
-                val available = installer.loaderVersions(LoaderType.Forge, gameVersion)
-                // 同一 MC 版本里更新的 Forge 会出现；另一个 MC 版本上更新的 Forge 不会出现。
-                assertEquals(listOf("47.2.0", "47.1.0"), available.map { it.version })
-                assertEquals(
-                    listOf("47.2.0"),
-                    loaderUpgradeCandidates(instance, available).map { it.version },
-                )
-                assertTrue(available.none { it.version.startsWith("52.") })
             }
         }
-    }
 
     @Test
     fun `vanilla and already latest instances offer no upgrade but external can be a candidate`() {
@@ -307,7 +326,7 @@ class ComponentMaintenanceTest {
     }
 
     @Test
-    fun `upgrade replaces the profile with a self-contained config and keeps the instance directory`() =
+    fun `loader upgrade keeps a self-contained profile in the instance directory`() =
         runBlocking {
             MockWebServer().use { server ->
                 val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
@@ -359,29 +378,30 @@ class ComponentMaintenanceTest {
         }
 
     @Test
-    fun `a failed upgrade restores the previous profile`() = runBlocking {
-        MockWebServer().use { server ->
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            NetworkClient(source = { "official" }).use { network ->
-                val (installed, fixture) = installOldFabricInstance(server, store, network)
-                val jsonPath = store.versionGamePath(installed).resolve("升级测试实例.json")
-                val before = jsonPath.readText()
-                // 新加载器库下载失败：配置已经写盘，升级必须回滚到旧 JSON。
-                server.dispatcher =
-                    dispatcher(fixture, newLibraryUrl = "${fixture.base}/broken.jar")
-                assertFails {
-                    installer(server, store, network)
-                        .upgradeLoader(installed.id, newLoader, JobContext(store, "upgrade"))
+    fun `a failed upgrade restores the previous profile`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+                NetworkClient(source = { "official" }).use { network ->
+                    val (installed, fixture) = installOldFabricInstance(server, store, network)
+                    val jsonPath = store.versionGamePath(installed).resolve("升级测试实例.json")
+                    val before = jsonPath.readText()
+                    // 新加载器库下载失败：配置已经写盘，升级必须回滚到旧 JSON。
+                    server.dispatcher =
+                        dispatcher(fixture, newLibraryUrl = "${fixture.base}/broken.jar")
+                    assertFails {
+                        installer(server, store, network)
+                            .upgradeLoader(installed.id, newLoader, JobContext(store, "upgrade"))
+                    }
+                    assertEquals(before, jsonPath.readText())
+                    val after = store.instance(installed.id)
+                    assertEquals(oldLoader, after.loaderVersion)
+                    assertEquals(LoaderType.Fabric, after.loader)
+                    assertTrue(after.installed)
+                    assertNoComponentBackups(store)
                 }
-                assertEquals(before, jsonPath.readText())
-                val after = store.instance(installed.id)
-                assertEquals(oldLoader, after.loaderVersion)
-                assertEquals(LoaderType.Fabric, after.loader)
-                assertTrue(after.installed)
-                assertNoComponentBackups(store)
             }
         }
-    }
 
     /** 在外部游戏根写一个基础版本和一个外部加载器版本（没有 molifoxManaged 标记）。 */
     private fun writeExternalFabricVersion(
@@ -420,22 +440,25 @@ class ComponentMaintenanceTest {
                                                     "net/fabricmc/fabric-loader/$loader/fabric-loader-$loader.jar",
                                                 "sha1" to sha1(library),
                                                 "size" to library.size,
-                                            )
+                                            ),
                                     ),
-                            )
+                            ),
                         ),
                     "arguments" to
                         mapOf(
                             "game" to emptyList<Any>(),
                             "jvm" to listOf("-DForeignKnot=true"),
                         ),
-                )
-            )
+                ),
+            ),
         )
         return folder
     }
 
-    private fun registerExternalRoot(store: LauncherStore, root: Path) {
+    private fun registerExternalRoot(
+        store: LauncherStore,
+        root: Path,
+    ) {
         val directory = GameDirectory(name = "外部目录", path = root.toString())
         store.mutate {
             it.copy(gameDirectories = listOf(directory), activeGameDirectoryId = directory.id)
@@ -507,8 +530,8 @@ class ComponentMaintenanceTest {
                     assertEquals(1, backups.size)
                     assertTrue(
                         backups.single().name.matches(
-                            Regex("ForeignFabric\\.json\\.molifox-backup-\\d{8}-\\d{6}(-\\d+)?")
-                        )
+                            Regex("ForeignFabric\\.json\\.molifox-backup-\\d{8}-\\d{6}(-\\d+)?"),
+                        ),
                     )
                     assertContentEquals(before, Files.readAllBytes(backups.single()))
                 }
@@ -516,50 +539,51 @@ class ComponentMaintenanceTest {
         }
 
     @Test
-    fun `failed external upgrade restores the original json byte for byte`() = runBlocking {
-        MockWebServer().use { server ->
-            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
-            val fixture = fixture(server)
-            server.dispatcher = dispatcher(fixture)
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-            NetworkClient(source = { "official" }).use { network ->
-                val root = temporary.resolve("foreign-failure").createDirectories()
-                registerExternalRoot(store, root)
-                val folder =
-                    writeExternalFabricVersion(
-                        root,
-                        fixture,
-                        oldLoader,
-                        "${fixture.base}/old-loader.jar",
-                        fixture.oldLibrary,
-                    )
-                store.refreshInstances()
-                val external = store.instance("ForeignFabric")
-                val jsonPath = folder.resolve("ForeignFabric.json")
-                val before = Files.readAllBytes(jsonPath)
-                val sibling = folder.resolve("foreign.txt").apply { writeText("untouched") }
-                server.dispatcher =
-                    dispatcher(fixture, newLibraryUrl = "${fixture.base}/broken.jar")
-                assertFails {
-                    installer(server, store, network).upgradeLoader(
-                        external.id,
-                        newLoader,
-                        JobContext(store, "external-upgrade-failure"),
-                    )
-                }
-                assertContentEquals(before, Files.readAllBytes(jsonPath))
-                assertEquals(oldLoader, store.instance(external.id).loaderVersion)
-                assertEquals("untouched", sibling.readText())
-                // 备份保留，且与恢复后的 JSON 内容一致。
-                val backups =
-                    folder.listDirectoryEntries().filter {
-                        it.name.startsWith("ForeignFabric.json.molifox-backup-")
+    fun `failed external upgrade restores the original json byte for byte`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+                val fixture = fixture(server)
+                server.dispatcher = dispatcher(fixture)
+                val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+                NetworkClient(source = { "official" }).use { network ->
+                    val root = temporary.resolve("foreign-failure").createDirectories()
+                    registerExternalRoot(store, root)
+                    val folder =
+                        writeExternalFabricVersion(
+                            root,
+                            fixture,
+                            oldLoader,
+                            "${fixture.base}/old-loader.jar",
+                            fixture.oldLibrary,
+                        )
+                    store.refreshInstances()
+                    val external = store.instance("ForeignFabric")
+                    val jsonPath = folder.resolve("ForeignFabric.json")
+                    val before = Files.readAllBytes(jsonPath)
+                    val sibling = folder.resolve("foreign.txt").apply { writeText("untouched") }
+                    server.dispatcher =
+                        dispatcher(fixture, newLibraryUrl = "${fixture.base}/broken.jar")
+                    assertFails {
+                        installer(server, store, network).upgradeLoader(
+                            external.id,
+                            newLoader,
+                            JobContext(store, "external-upgrade-failure"),
+                        )
                     }
-                assertEquals(1, backups.size)
-                assertContentEquals(before, Files.readAllBytes(backups.single()))
+                    assertContentEquals(before, Files.readAllBytes(jsonPath))
+                    assertEquals(oldLoader, store.instance(external.id).loaderVersion)
+                    assertEquals("untouched", sibling.readText())
+                    // 备份保留，且与恢复后的 JSON 内容一致。
+                    val backups =
+                        folder.listDirectoryEntries().filter {
+                            it.name.startsWith("ForeignFabric.json.molifox-backup-")
+                        }
+                    assertEquals(1, backups.size)
+                    assertContentEquals(before, Files.readAllBytes(backups.single()))
+                }
             }
         }
-    }
 
     @Test
     fun `external upgrade with a missing base version reports the reason and changes nothing`() {
@@ -593,7 +617,7 @@ class ComponentMaintenanceTest {
             assertTrue(
                 folder.listDirectoryEntries().none {
                     it.name.contains(".molifox-backup-")
-                }
+                },
             )
         }
     }
@@ -611,7 +635,11 @@ class ComponentMaintenanceTest {
     }
 
     private fun versionDirectories(store: LauncherStore): List<String> =
-        store.minecraftRoot.resolve("versions").listDirectoryEntries().map { it.name }.sorted()
+        store.minecraftRoot
+            .resolve("versions")
+            .listDirectoryEntries()
+            .map { it.name }
+            .sorted()
 
     private fun assertNoComponentBackups(store: LauncherStore) {
         val folder = store.directories.instanceBackups.resolve("components")

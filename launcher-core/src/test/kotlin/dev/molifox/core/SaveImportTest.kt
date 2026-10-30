@@ -5,16 +5,28 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Test
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class SaveImportTest {
     private val temporary: Path = workTestDirectory("launcher-core-save-import")
@@ -27,7 +39,10 @@ class SaveImportTest {
     private fun store(): LauncherStore {
         val platform =
             object : PlatformServices by DesktopPlatform() {
-                override val defaultDataDirectory = temporary.resolve("profile-${UUID.randomUUID()}")
+                override val defaultDataDirectory =
+                    temporary.resolve(
+                        "profile-${UUID.randomUUID()}",
+                    )
 
                 override fun moveToTrash(file: Path) {
                     val target = temporary.resolve("trash/${UUID.randomUUID()}-${file.fileName}")
@@ -53,7 +68,10 @@ class SaveImportTest {
         return store.instance(instance.id)
     }
 
-    private fun zip(path: Path, entries: Map<String, ByteArray>): Path =
+    private fun zip(
+        path: Path,
+        entries: Map<String, ByteArray>,
+    ): Path =
         path.also { target ->
             target.parent.createDirectories()
             ZipOutputStream(target.outputStream()).use { archive ->
@@ -114,61 +132,71 @@ class SaveImportTest {
     }
 
     @Test
-    fun `importing a wrapped zip strips the wrapper and skips session lock`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val archive =
-            zip(
-                temporary.resolve("CoolWorld.zip"),
-                mapOf(
-                    "CoolWorld/level.dat" to level,
-                    "CoolWorld/region/r.0.0.mca" to byteArrayOf(1, 2, 3),
-                    "CoolWorld/session.lock" to byteArrayOf(9),
-                ),
-            )
-        val saves = SaveManager(store)
-        val world = saves.importSave(instance.id, archive)
-        assertEquals("CoolWorld", world.name)
-        assertTrue(world.resolve("level.dat").isRegularFile())
-        assertTrue(world.resolve("region/r.0.0.mca").isRegularFile())
-        assertFalse(world.resolve("session.lock").exists())
-        // 再次导入同一个压缩包：重名加序号，不覆盖已有世界。
-        val second = saves.importSave(instance.id, archive)
-        assertEquals("CoolWorld (2)", second.name)
-        assertEquals("level", world.resolve("level.dat").readText())
-    }
+    fun `importing a wrapped zip strips the wrapper and skips session lock`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val archive =
+                zip(
+                    temporary.resolve("CoolWorld.zip"),
+                    mapOf(
+                        "CoolWorld/level.dat" to level,
+                        "CoolWorld/region/r.0.0.mca" to byteArrayOf(1, 2, 3),
+                        "CoolWorld/session.lock" to byteArrayOf(9),
+                    ),
+                )
+            val saves = SaveManager(store)
+            val world = saves.importSave(instance.id, archive)
+            assertEquals("CoolWorld", world.name)
+            assertTrue(world.resolve("level.dat").isRegularFile())
+            assertTrue(world.resolve("region/r.0.0.mca").isRegularFile())
+            assertFalse(world.resolve("session.lock").exists())
+            // 再次导入同一个压缩包：重名加序号，不覆盖已有世界。
+            val second = saves.importSave(instance.id, archive)
+            assertEquals("CoolWorld (2)", second.name)
+            assertEquals("level", world.resolve("level.dat").readText())
+        }
 
     @Test
-    fun `importing a folder copies the world and rejects folders without level dat`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val saves = SaveManager(store)
-        val folder = temporary.resolve("FolderWorld")
-        folder.resolve("region").createDirectories()
-        folder.resolve("level.dat").writeText("level")
-        folder.resolve("region/r.0.0.mca").writeBytes(byteArrayOf(1, 2))
-        val world = saves.importSave(instance.id, folder)
-        assertEquals("FolderWorld", world.name)
-        assertTrue(world.resolve("region").isDirectory())
-        val broken = temporary.resolve("NotAWorld").apply { createDirectories() }
-        broken.resolve("notes.txt").writeText("no")
-        assertFailsWith<IllegalArgumentException> { runBlocking { saves.importSave(instance.id, broken) } }
-        assertFalse(
-            store.instancePath(instance.id).resolve("saves").listDirectoryEntries().any {
-                it.name.startsWith(".molifox-saves-")
+    fun `importing a folder copies the world and rejects folders without level dat`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val saves = SaveManager(store)
+            val folder = temporary.resolve("FolderWorld")
+            folder.resolve("region").createDirectories()
+            folder.resolve("level.dat").writeText("level")
+            folder.resolve("region/r.0.0.mca").writeBytes(byteArrayOf(1, 2))
+            val world = saves.importSave(instance.id, folder)
+            assertEquals("FolderWorld", world.name)
+            assertTrue(world.resolve("region").isDirectory())
+            val broken = temporary.resolve("NotAWorld").apply { createDirectories() }
+            broken.resolve("notes.txt").writeText("no")
+            assertFailsWith<IllegalArgumentException> {
+                runBlocking {
+                    saves.importSave(
+                        instance.id,
+                        broken,
+                    )
+                }
             }
-        )
-    }
+            assertFalse(
+                store.instancePath(instance.id).resolve("saves").listDirectoryEntries().any {
+                    it.name.startsWith(".molifox-saves-")
+                },
+            )
+        }
 
     @Test
-    fun `invalid zip leaves no staging directory behind`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val saves = SaveManager(store)
-        val invalid =
-            zip(temporary.resolve("Bad.zip"), mapOf("notes/readme.txt" to "x".toByteArray()))
-        assertFailsWith<IllegalArgumentException> { saves.importSave(instance.id, invalid) }
-        val leftovers = store.instancePath(instance.id).resolve("saves").listDirectoryEntries()
-        assertTrue(leftovers.isEmpty(), "不应留下临时目录：$leftovers")
-    }
+    fun `invalid zip leaves no staging directory behind`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val saves = SaveManager(store)
+            val invalid =
+                zip(temporary.resolve("Bad.zip"), mapOf("notes/readme.txt" to "x".toByteArray()))
+            assertFailsWith<IllegalArgumentException> { saves.importSave(instance.id, invalid) }
+            val leftovers = store.instancePath(instance.id).resolve("saves").listDirectoryEntries()
+            assertTrue(leftovers.isEmpty(), "不应留下临时目录：$leftovers")
+        }
 }

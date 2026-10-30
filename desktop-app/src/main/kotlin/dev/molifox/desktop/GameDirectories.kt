@@ -8,12 +8,40 @@ package dev.molifox.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.LinkOff
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,11 +50,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.GameDirectory
+import dev.molifox.core.LauncherState
 
 /** 游戏目录控件：34dp 工具行（下拉 + 选择 / 刷新 / 解绑）+ 44dp 目录行。 开始页之外的实例页与设置页共用，路径一律 12sp 单行省略。 */
 @Composable
-fun GameDirectoryControls(state: LauncherState, actions: UiActions) {
+fun GameDirectoryControls(
+    state: LauncherState,
+    actions: UiActions,
+) {
     val selected = state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }
     var removing by remember { mutableStateOf<GameDirectory?>(null) }
     val busy = actions.controller.busy
@@ -58,18 +90,21 @@ fun GameDirectoryControls(state: LauncherState, actions: UiActions) {
                 { actions.run { actions.controller.refreshGameDirectory() } },
                 enabled = selected != null && !busy,
             )
-            if (selected != null)
+            if (selected != null) {
                 SmallIconButton(
                     Icons.Outlined.LinkOff,
                     "移除游戏目录",
                     { removing = selected },
                     enabled = !busy,
                 )
+            }
         }
         // 当前目录行：路径单行省略，行尾保留解绑入口
         DirectoryRow(
             name = selected?.name ?: "MoliFox 默认目录",
-            path = selected?.path ?: actions.controller.store.minecraftRoot.toString(),
+            path =
+                selected?.path ?: actions.controller.store.minecraftRoot
+                    .toString(),
             current = true,
             onMakeDefault = null,
             onRemove = if (selected != null) ({ removing = selected }) else null,
@@ -120,7 +155,8 @@ internal fun CompactSelect(
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Box(modifier) {
         Row(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(Metrics.controlHeight)
                 .clip(shape)
                 .background(controlBackground(), shape)
@@ -135,8 +171,11 @@ internal fun CompactSelect(
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 color =
-                    if (enabled) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f),
+                    if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
+                    },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -162,8 +201,11 @@ internal fun CompactSelect(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color =
-                                if (current) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
+                                if (current) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
                         )
                     },
                     {
@@ -172,7 +214,7 @@ internal fun CompactSelect(
                     },
                     modifier =
                         Modifier.background(
-                            if (current) selectedRowBackground() else Color.Transparent
+                            if (current) selectedRowBackground() else Color.Transparent,
                         ),
                 )
             }
@@ -191,31 +233,37 @@ private fun DirectoryRow(
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .height(Metrics.rowHeight)
             .then(
-                if (onMakeDefault != null)
+                if (onMakeDefault != null) {
                     Modifier.hoverHighlight(shape).clickable(onClick = onMakeDefault)
-                else Modifier
-            )
-            .padding(horizontal = 6.dp),
+                } else {
+                    Modifier
+                },
+            ).padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.width(2.dp)
+            Modifier
+                .width(2.dp)
                 .height(20.dp)
                 .background(
                     if (current) MaterialTheme.colorScheme.primary else Color.Transparent,
                     RoundedCornerShape(1.dp),
-                )
+                ),
         )
         Spacer(Modifier.width(8.dp))
         Icon(
             if (current) Icons.Outlined.Folder else Icons.Outlined.FolderOpen,
             null,
             Modifier.size(16.dp),
-            if (current) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+            if (current) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -235,8 +283,9 @@ private fun DirectoryRow(
             )
         }
         if (current) Tag("当前")
-        if (onMakeDefault != null)
+        if (onMakeDefault != null) {
             SmallIconButton(Icons.Outlined.CheckCircle, "设为默认目录", onMakeDefault)
+        }
         if (onRemove != null) SmallIconButton(Icons.Outlined.DeleteOutline, "移除目录", onRemove)
     }
 }

@@ -5,11 +5,17 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.writeBytes
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SelectedGameDirectoryTest {
     @TempDir lateinit var directory: Path
@@ -33,7 +39,11 @@ class SelectedGameDirectoryTest {
         assertEquals(1, service.add(root))
         assertNull(store.data.activeGameDirectoryId)
         assertTrue(store.data.gameDirectories.isEmpty())
-        assertNull(store.data.instances.single().gameDirectoryId)
+        assertNull(
+            store.data.instances
+                .single()
+                .gameDirectoryId,
+        )
         service.add(root.resolve("."))
         service.refresh()
         assertEquals(1, store.data.instances.size)
@@ -41,7 +51,7 @@ class SelectedGameDirectoryTest {
     }
 
     @Test
-    fun `selected external directory is used by new vanilla and loader instances and survives later selection`() {
+    fun `new instances use the selected external directory and retain it`() {
         LauncherController(dataDirectory = directory.resolve("profile")).use { controller ->
             val a = directory.resolve("external-a").apply { createDirectories() }
             val b = directory.resolve("external-b").apply { createDirectories() }
@@ -50,7 +60,7 @@ class SelectedGameDirectoryTest {
             val vanilla = controller.installer.createInstance(InstallRequest("Vanilla", "26.3"))
             val fabric =
                 controller.installer.createInstance(
-                    InstallRequest("Fabric", "26.3", LoaderType.Fabric, "0.20.1")
+                    InstallRequest("Fabric", "26.3", LoaderType.Fabric, "0.20.1"),
                 )
             assertEquals(firstId, vanilla.gameDirectoryId)
             assertEquals(firstId, fabric.gameDirectoryId)
@@ -59,10 +69,18 @@ class SelectedGameDirectoryTest {
             assertEquals(a.toRealPath(), controller.store.minecraftRoot(vanilla))
             assertEquals(a.toRealPath(), controller.store.minecraftRoot(fabric))
             assertEquals(b.toRealPath(), controller.store.minecraftRoot(other))
-            assertFalse(controller.store.minecraftRoot.resolve("versions/Vanilla").exists())
+            assertFalse(
+                controller.store.minecraftRoot
+                    .resolve("versions/Vanilla")
+                    .exists(),
+            )
             controller.directories.select(firstId)
             controller.directories.refresh()
-            assertEquals(2, controller.store.data.instances.count { it.gameDirectoryId == firstId })
+            assertEquals(
+                2,
+                controller.store.data.instances
+                    .count { it.gameDirectoryId == firstId },
+            )
         }
     }
 }

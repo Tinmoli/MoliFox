@@ -1,18 +1,30 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责最近游玩面板的磁盘快照、历史合并和有界服务器状态缓存。
+// 合并最近游玩条目，在页面生命周期内展示实时查询的服务器状态。
 
 package dev.molifox.desktop
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import dev.molifox.core.*
+import dev.molifox.core.EntryKind
+import dev.molifox.core.GameInstance
+import dev.molifox.core.LauncherController
+import dev.molifox.core.SaveEntry
+import dev.molifox.core.ServerEntry
+import dev.molifox.core.ServerStatus
+import dev.molifox.core.UsageSummary
+import dev.molifox.core.domain.server.ServerStatusQuery
+import dev.molifox.core.listServers
+import dev.molifox.core.parseServerAddress
+import dev.molifox.core.sameServerAddress
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image as SkiaImage
 
 internal data class RecentPlayItem(
@@ -52,16 +64,14 @@ internal fun loadRecentPlays(
             .recent(EntryKind.Server, instance.id, 100)
             .filter { key ->
                 saved.none { sameServerAddress(parseServerAddress(it.ip), parseServerAddress(key)) }
-            }
-            .map { ServerEntry(it, it, null) }
+            }.map { ServerEntry(it, it, null) }
     val servers =
         (saved + history)
             .distinctBy {
                 parseServerAddress(it.ip)?.let { address ->
                     address.host.lowercase() + ":" + address.port
                 } ?: it.ip
-            }
-            .map { server ->
+            }.map { server ->
                 RecentPlayItem(
                     EntryKind.Server,
                     server.ip,
@@ -79,33 +89,20 @@ internal fun loadRecentPlays(
     return (worlds + servers).sortedByDescending { it.usage.lastEntered ?: Instant.EPOCH }
 }
 
-internal data class RecentServerStatus(val status: ServerStatus?, val at: Long)
-
-internal object RecentServerCache {
-    private val entries = ConcurrentHashMap<String, RecentServerStatus>()
-
-    fun get(address: String) =
-        entries[address]?.takeIf { System.currentTimeMillis() - it.at in 0..60_000 }
-
-    fun put(address: String, result: RecentServerStatus) {
-        if (entries.size >= 256) entries.clear()
-        entries[address] = result
-    }
-
-    fun clear() = entries.clear()
-}
+internal data class RecentServerStatus(
+    val status: ServerStatus?,
+    val at: Long,
+)
 
 @Composable
-internal fun rememberRecentServerStatus(address: String, refresh: Int): RecentServerStatus? {
-    var result by remember(address) { mutableStateOf(RecentServerCache.get(address)) }
-    LaunchedEffect(address, refresh) {
-        result =
-            RecentServerCache.get(address)
-                ?: withContext(Dispatchers.IO) {
-                    RecentServerStatus(pingAddress(address), System.currentTimeMillis()).also {
-                        RecentServerCache.put(address, it)
-                    }
-                }
+internal fun rememberRecentServerStatus(
+    address: String,
+    refresh: Int,
+    query: ServerStatusQuery,
+): RecentServerStatus? {
+    var result by remember(address, query) { mutableStateOf<RecentServerStatus?>(null) }
+    LaunchedEffect(address, refresh, query) {
+        result = RecentServerStatus(query.read(address), System.currentTimeMillis())
     }
     return result
 }

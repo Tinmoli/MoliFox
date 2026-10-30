@@ -8,6 +8,19 @@ package dev.molifox.bootstrap
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import dev.molifox.core.LauncherLocation
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -52,19 +65,6 @@ import javax.swing.JTextArea
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.Timer
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /** 清单中的一个运行时依赖：Maven 坐标、落盘文件名与校验值。 */
@@ -82,7 +82,10 @@ data class RuntimeDependency(
  *
  * [version] 是“应用版本-依赖列表哈希”：任何一个依赖的坐标或校验值变化都会得到新的缓存目录， 因此旧缓存不会被误用，也不需要额外的失效逻辑。
  */
-data class RuntimeManifest(val version: String, val dependencies: List<RuntimeDependency>)
+data class RuntimeManifest(
+    val version: String,
+    val dependencies: List<RuntimeDependency>,
+)
 
 /** 一个 Maven 源。[roots] 按顺序尝试：androidx.* 只发布在 Google Maven，其余在 Central。 */
 private data class Mirror(
@@ -134,12 +137,12 @@ fun main() {
     // 数据目录仍是启动器旁的 MoliFox/；未由原生启动器或环境变量指定时，
     // 按启动器自身（jar / 类目录）的位置推断，而不是用可能被 shell 改变的工作目录。
     val data =
-        Path.of(
+        Path
+            .of(
                 System.getProperty("molifox.data.dir")
                     ?: System.getenv("MOLIFOX_DATA_DIR")
-                    ?: LauncherLocation.locate().resolve("MoliFox").toString()
-            )
-            .toAbsolutePath()
+                    ?: LauncherLocation.locate().resolve("MoliFox").toString(),
+            ).toAbsolutePath()
             .normalize()
     var preparation: BootstrapWindow? = null
     val preparationJob = Job()
@@ -150,11 +153,12 @@ fun main() {
         System.setProperty("molifox.data.dir", data.toString())
         val temporaryRoot = data.resolve("cache/tmp")
         val temporary =
-            System.getProperty("molifox.temp.dir")
+            System
+                .getProperty("molifox.temp.dir")
                 ?.let { Path.of(it).toAbsolutePath().normalize() }
                 ?.also {
                     require(
-                        it.parent == temporaryRoot && it.fileName.toString().startsWith("session-")
+                        it.parent == temporaryRoot && it.fileName.toString().startsWith("session-"),
                     )
                 } ?: temporaryRoot
         Files.createDirectories(temporary)
@@ -174,12 +178,13 @@ fun main() {
         val cache = data.resolve("runtime").resolve(manifest.version)
         val marker = cache.resolve("ready.marker")
         log(
-            "运行时清单 ${manifest.version}，依赖 ${manifest.dependencies.size} 个，共 ${manifest.dependencies.sumOf { it.size }} 字节"
+            "运行时清单 ${manifest.version}，依赖 ${manifest.dependencies.size} 个，" +
+                "共 ${manifest.dependencies.sumOf { it.size }} 字节",
         )
         log("缓存目录：$cache")
         if (
             Files.isRegularFile(marker) &&
-                manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
+            manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
         ) {
             // ready.marker 表示“已逐字节校验过”：这里只确认真实存在，不再重复计算哈希。
             log("运行时组件已就绪，跳过下载")
@@ -263,17 +268,18 @@ private fun readManifest(): RuntimeManifest {
     val version = json.string("version")
     require(version.matches(Regex("[A-Za-z0-9._-]+"))) { "运行时清单版本号不合法：$version" }
     val items = json.getAsJsonArray("dependencies") ?: error("运行时清单缺少 dependencies")
-    val dependencies = items.map { element ->
-        val item = element.asJsonObject
-        RuntimeDependency(
-            group = item.string("group"),
-            artifact = item.string("artifact"),
-            version = item.string("version"),
-            filename = item.string("filename"),
-            sha256 = item.string("sha256"),
-            size = item.get("size")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L,
-        )
-    }
+    val dependencies =
+        items.map { element ->
+            val item = element.asJsonObject
+            RuntimeDependency(
+                group = item.string("group"),
+                artifact = item.string("artifact"),
+                version = item.string("version"),
+                filename = item.string("filename"),
+                sha256 = item.string("sha256"),
+                size = item.get("size")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L,
+            )
+        }
     require(dependencies.isNotEmpty()) { "运行时清单里没有任何依赖" }
     dependencies.forEach { dependency ->
         require(dependency.filename.matches(Regex("[A-Za-z0-9_.+-]+\\.jar"))) {
@@ -297,19 +303,24 @@ private fun probePath(manifest: RuntimeManifest): String {
         manifest.dependencies.firstOrNull {
             it.group == "org.jetbrains.kotlin" && it.artifact == "kotlin-stdlib"
         } ?: error("运行时清单缺少 kotlin-stdlib，无法探测镜像")
-    return "org/jetbrains/kotlin/kotlin-stdlib/${stdlib.version}/kotlin-stdlib-${stdlib.version}.pom"
+    return "org/jetbrains/kotlin/kotlin-stdlib/${stdlib.version}/" +
+        "kotlin-stdlib-${stdlib.version}.pom"
 }
 
 /** 同时探测全部镜像，按耗时升序返回可用源；失败的源不进入列表。 */
-private suspend fun selectMirrors(mirrorPath: String): List<Mirror> = coroutineScope {
-    mirrors
-        .map { mirror -> async(Dispatchers.IO) { probeMirror(mirror, mirrorPath) } }
-        .awaitAll()
-        .filterNotNull()
-        .sortedBy { it.latencyMillis }
-}
+private suspend fun selectMirrors(mirrorPath: String): List<Mirror> =
+    coroutineScope {
+        mirrors
+            .map { mirror -> async(Dispatchers.IO) { probeMirror(mirror, mirrorPath) } }
+            .awaitAll()
+            .filterNotNull()
+            .sortedBy { it.latencyMillis }
+    }
 
-private suspend fun probeMirror(mirror: Mirror, mirrorPath: String): Mirror? =
+private suspend fun probeMirror(
+    mirror: Mirror,
+    mirrorPath: String,
+): Mirror? =
     withTimeoutOrNull(PROBE_TIMEOUT_MILLIS) {
         for (root in mirror.roots) {
             val started = System.nanoTime()
@@ -326,7 +337,7 @@ private suspend fun probeMirror(mirror: Mirror, mirrorPath: String): Mirror? =
                         // 读一点响应体就断开：既确认能取到内容，也不浪费流量。
                         connection.inputStream.use { it.read(ByteArray(64)) }
                         val elapsed = (System.nanoTime() - started) / 1_000_000
-                        log("镜像探测成功：${mirror.name} $root ${elapsed} ms")
+                        log("镜像探测成功：${mirror.name} $root $elapsed ms")
                         return@withTimeoutOrNull mirror.copy(
                             roots = listOf(root) + mirror.roots.filter { it != root },
                             latencyMillis = elapsed,
@@ -360,6 +371,7 @@ private class RuntimeInstaller(
     private val verified = ConcurrentHashMap<String, Long>()
     private val active = ConcurrentHashMap<String, Long>()
     private val failures = Collections.synchronizedMap(LinkedHashMap<String, String>())
+
     @Volatile private var mirrorOrder: List<Mirror> = emptyList()
 
     val mirror: Mirror?
@@ -398,8 +410,7 @@ private class RuntimeInstaller(
                             }
                         }
                     }
-                }
-                .awaitAll()
+                }.awaitAll()
         }
         return failureMessages()
     }
@@ -427,8 +438,9 @@ private class RuntimeInstaller(
                             transfer(current, dependency, part)
                             true
                         }
-                    if (completed == null)
+                    if (completed == null) {
                         throw IOException("下载超时（${FILE_TIMEOUT_MILLIS / 1000} 秒）")
+                    }
                     moveIntoPlace(part, target)
                     verified[dependency.filename] = dependency.size
                     log("下载完成：${dependency.filename} via ${current.name}")
@@ -450,7 +462,11 @@ private class RuntimeInstaller(
     }
 
     /** 逐个尝试该镜像的根路径；HTTP 失败或校验失败都交给上层换镜像重试。 */
-    private suspend fun transfer(mirror: Mirror, dependency: RuntimeDependency, part: Path) {
+    private suspend fun transfer(
+        mirror: Mirror,
+        dependency: RuntimeDependency,
+        part: Path,
+    ) {
         val relative =
             dependency.group.replace('.', '/') +
                 "/" +
@@ -472,7 +488,11 @@ private class RuntimeInstaller(
         throw lastFailure ?: IOException("没有可用的下载地址")
     }
 
-    private suspend fun downloadFrom(url: String, dependency: RuntimeDependency, part: Path) {
+    private suspend fun downloadFrom(
+        url: String,
+        dependency: RuntimeDependency,
+        part: Path,
+    ) {
         val connection =
             open(url).apply {
                 connectTimeout = CONNECT_TIMEOUT_MILLIS
@@ -514,7 +534,10 @@ private class RuntimeInstaller(
         }
     }
 
-    private fun moveIntoPlace(part: Path, target: Path) {
+    private fun moveIntoPlace(
+        part: Path,
+        target: Path,
+    ) {
         try {
             Files.move(
                 part,
@@ -527,7 +550,10 @@ private class RuntimeInstaller(
         }
     }
 
-    private fun isCached(target: Path, dependency: RuntimeDependency): Boolean {
+    private fun isCached(
+        target: Path,
+        dependency: RuntimeDependency,
+    ): Boolean {
         if (!Files.isRegularFile(target) || Files.size(target) != dependency.size) return false
         return sha256Of(target).equals(dependency.sha256, ignoreCase = true)
     }
@@ -583,14 +609,18 @@ private val bootstrapFontFamily: String by lazy {
         )
     val available =
         runCatching {
-                java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames
-                    .toSet()
-            }
-            .getOrDefault(emptySet())
+            java.awt.GraphicsEnvironment
+                .getLocalGraphicsEnvironment()
+                .availableFontFamilyNames
+                .toSet()
+        }.getOrDefault(emptySet())
     preferred.firstOrNull { it in available } ?: Font.SANS_SERIF
 }
 
-private fun uiFont(size: Int, style: Int = Font.PLAIN) = Font(bootstrapFontFamily, style, size)
+private fun uiFont(
+    size: Int,
+    style: Int = Font.PLAIN,
+) = Font(bootstrapFontFamily, style, size)
 
 /** 圆角实色面板：白卡片、错误卡片与按钮共用同一套绘制方式（无新依赖，只用 Java2D）。 */
 private open class RoundedSurface(
@@ -648,13 +678,27 @@ private class RoundedProgressBar : JComponent() {
             g2.color = BootstrapPalette.track
             g2.fillRoundRect(0, top, width, height, height, height)
             val fillWidth =
-                if (indeterminate) (width * 0.34f)
-                else (width * progress.coerceIn(0f, 1f)).coerceAtLeast(if (progress > 0f) height.toFloat() else 0f)
+                if (indeterminate) {
+                    (width * 0.34f)
+                } else {
+                    (width * progress.coerceIn(0f, 1f)).coerceAtLeast(
+                        if (progress >
+                            0f
+                        ) {
+                            height.toFloat()
+                        } else {
+                            0f
+                        },
+                    )
+                }
             if (fillWidth >= 1f) {
                 g2.clipRect(0, 0, width, this.height)
                 val left =
-                    if (indeterminate) -fillWidth + (width + fillWidth) * phase
-                    else 0f
+                    if (indeterminate) {
+                        -fillWidth + (width + fillWidth) * phase
+                    } else {
+                        0f
+                    }
                 g2.color = BootstrapPalette.accent
                 g2.fillRoundRect(
                     left.roundToInt(),
@@ -672,7 +716,10 @@ private class RoundedProgressBar : JComponent() {
 }
 
 /** 与主界面主/次按钮同高（34dp）的圆角按钮：主按钮实色主题色，次按钮白底细边。 */
-private class RoundedButton(text: String, private val primary: Boolean) : JButton(text) {
+private class RoundedButton(
+    text: String,
+    private val primary: Boolean,
+) : JButton(text) {
     init {
         isFocusPainted = false
         isContentAreaFilled = false
@@ -723,36 +770,35 @@ private class RoundedButton(text: String, private val primary: Boolean) : JButto
 /** 内置狐狸图标：标题栏、任务栏与左上角品牌图共用同一张 icons/app/icon.png；缺失时窗口仍可打开。 */
 private val launcherIconBytes: ByteArray? by lazy {
     runCatching {
-            BootstrapMainMarker::class
-                .java
-                .getResourceAsStream("/icons/app/icon.png")
-                ?.use { it.readBytes() }
-        }
-        .getOrNull()
+        BootstrapMainMarker::class
+            .java
+            .getResourceAsStream("/icons/app/icon.png")
+            ?.use { it.readBytes() }
+    }.getOrNull()
 }
 
 private fun launcherIcon(size: Int): BufferedImage? {
     val bytes = launcherIconBytes ?: return null
     return runCatching {
-            val source = ImageIO.read(java.io.ByteArrayInputStream(bytes)) ?: return@runCatching null
-            val scaled = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
-            val g = scaled.createGraphics()
-            try {
-                g.setRenderingHint(
-                    RenderingHints.KEY_INTERPOLATION,
-                    RenderingHints.VALUE_INTERPOLATION_BICUBIC,
-                )
-                g.setRenderingHint(
-                    RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON,
-                )
-                g.drawImage(source, 0, 0, size, size, null)
-            } finally {
-                g.dispose()
-            }
-            scaled
+        val source =
+            ImageIO.read(java.io.ByteArrayInputStream(bytes)) ?: return@runCatching null
+        val scaled = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+        val g = scaled.createGraphics()
+        try {
+            g.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BICUBIC,
+            )
+            g.setRenderingHint(
+                RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON,
+            )
+            g.drawImage(source, 0, 0, size, size, null)
+        } finally {
+            g.dispose()
         }
-        .getOrNull()
+        scaled
+    }.getOrNull()
 }
 
 /**
@@ -760,10 +806,13 @@ private fun launcherIcon(size: Int): BufferedImage? {
  *
  * 只用 Swing，不加载 Compose（Compose 依赖正是在这一步下载的）。窗口固定大小、不可缩放； 文案与配色与桌面端一致，状态行随准备阶段切换动词（准备 / 下载 / 校验 / 完成）。
  */
-private class BootstrapWindow(private val installer: RuntimeInstaller) {
+private class BootstrapWindow(
+    private val installer: RuntimeInstaller,
+) {
     private enum class Phase { Preparing, Downloading, Verifying, Done }
 
     private val frame = JFrame("MoliFox · 准备启动")
+
     @Volatile private var phase = Phase.Preparing
 
     private val progressBar = RoundedProgressBar()
@@ -920,14 +969,14 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
                         JLabel("MoliFox").apply {
                             font = uiFont(26, Font.BOLD)
                             foreground = BootstrapPalette.heading
-                        }
+                        },
                     )
                     add(Box.createVerticalStrut(3))
                     add(
                         JLabel("正在为启动器准备运行环境").apply {
                             font = uiFont(12)
                             foreground = BootstrapPalette.muted
-                        }
+                        },
                     )
                 },
                 BorderLayout.CENTER,
@@ -1001,15 +1050,24 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
                     percentLabel.text = "100%"
                     speedValue.text = "—"
                 }
-            if (SwingUtilities.isEventDispatchThread()) done.run()
-            else runCatching { SwingUtilities.invokeAndWait(done) }
+            if (SwingUtilities.isEventDispatchThread()) {
+                done.run()
+            } else {
+                runCatching { SwingUtilities.invokeAndWait(done) }
+            }
             if (!SwingUtilities.isEventDispatchThread()) runCatching { Thread.sleep(420) }
         }
-        if (SwingUtilities.isEventDispatchThread()) frame.dispose()
-        else SwingUtilities.invokeLater { frame.dispose() }
+        if (SwingUtilities.isEventDispatchThread()) {
+            frame.dispose()
+        } else {
+            SwingUtilities.invokeLater { frame.dispose() }
+        }
     }
 
-    fun showError(messages: List<String>, canSwitchMirror: Boolean) {
+    fun showError(
+        messages: List<String>,
+        canSwitchMirror: Boolean,
+    ) {
         SwingUtilities.invokeLater {
             errorArea.text = messages.joinToString("\n")
             errorArea.caretPosition = 0
@@ -1054,8 +1112,11 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         }
         val totalBytes = installer.totalBytes
         val fraction =
-            if (totalBytes > 0) bytes.toFloat() / totalBytes
-            else done.toFloat() / installer.totalFiles.coerceAtLeast(1)
+            if (totalBytes > 0) {
+                bytes.toFloat() / totalBytes
+            } else {
+                done.toFloat() / installer.totalFiles.coerceAtLeast(1)
+            }
         progressBar.progress = fraction.coerceIn(0f, 1f)
         progressBar.indeterminate = phase == Phase.Preparing && installer.mirror == null
         progressBar.tick()
@@ -1064,8 +1125,11 @@ private class BootstrapWindow(private val installer: RuntimeInstaller) {
         bytesValue.text = "${formatBytes(bytes)} / ${formatBytes(totalBytes)}"
         installer.mirror?.let { mirror ->
             mirrorValue.text =
-                if (mirror.latencyMillis > 0) "${mirror.name} · ${mirror.latencyMillis} ms"
-                else mirror.name
+                if (mirror.latencyMillis > 0) {
+                    "${mirror.name} · ${mirror.latencyMillis} ms"
+                } else {
+                    mirror.name
+                }
         }
         val now = System.nanoTime()
         val seconds = (now - lastSampleAt) / 1_000_000_000.0
@@ -1090,7 +1154,10 @@ private fun statValue(text: String): JLabel =
         foreground = BootstrapPalette.onSurface
     }
 
-private fun statCell(title: String, value: JLabel): JPanel =
+private fun statCell(
+    title: String,
+    value: JLabel,
+): JPanel =
     JPanel().apply {
         isOpaque = false
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -1098,11 +1165,12 @@ private fun statCell(title: String, value: JLabel): JPanel =
             JLabel(title).apply {
                 font = uiFont(11)
                 foreground = BootstrapPalette.faint
-            }
+            },
         )
         add(Box.createVerticalStrut(3))
         add(value)
     }
+
 private fun formatBytes(bytes: Long): String =
     when {
         bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / 1024.0 / 1024 / 1024)
@@ -1112,7 +1180,10 @@ private fun formatBytes(bytes: Long): String =
     }
 
 /** 用缓存目录里的 jar 加上本程序集启动界面，使用同一个 JVM， 父加载器为平台加载器，主类仍是 dev.molifox.desktop.MainKt。 */
-private fun launchUi(manifest: RuntimeManifest, cache: Path) {
+private fun launchUi(
+    manifest: RuntimeManifest,
+    cache: Path,
+) {
     val ownJar = BootstrapMainMarker::class.java.protectionDomain.codeSource.location
     val urls =
         listOf(ownJar) + manifest.dependencies.map { cache.resolve(it.filename).toUri().toURL() }

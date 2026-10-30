@@ -8,18 +8,31 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.TooltipArea
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.*
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.MotdSegment
@@ -48,27 +61,29 @@ internal fun RecentMotd(
     modifier: Modifier = Modifier,
 ) {
     val full = segments.joinToString("") { it.text }
-    val text = buildAnnotatedString {
-        segments.forEach { segment ->
-            val original = segment.color?.let { Color(0xFF000000L or it.toLong()) } ?: Color.White
-            val decoration = buildList {
-                if (segment.underlined) add(TextDecoration.Underline)
-                if (segment.struck) add(TextDecoration.LineThrough)
-            }
-                .takeIf { it.isNotEmpty() }
-                ?.let(TextDecoration::combine)
-            withStyle(
-                SpanStyle(
-                    color = original,
-                    fontWeight = if (segment.bold) FontWeight.SemiBold else null,
-                    fontStyle = if (segment.italic) FontStyle.Italic else null,
-                    textDecoration = decoration,
-                )
-            ) {
-                append(segment.text)
+    val text =
+        buildAnnotatedString {
+            segments.forEach { segment ->
+                val original =
+                    segment.color?.let { Color(0xFF000000L or it.toLong()) } ?: Color.White
+                val decoration =
+                    buildList {
+                        if (segment.underlined) add(TextDecoration.Underline)
+                        if (segment.struck) add(TextDecoration.LineThrough)
+                    }.takeIf { it.isNotEmpty() }
+                        ?.let(TextDecoration::combine)
+                withStyle(
+                    SpanStyle(
+                        color = original,
+                        fontWeight = if (segment.bold) FontWeight.SemiBold else null,
+                        fontStyle = if (segment.italic) FontStyle.Italic else null,
+                        textDecoration = decoration,
+                    ),
+                ) {
+                    append(segment.text)
+                }
             }
         }
-    }
     RecentTooltip(full.ifBlank { "服务器尚未返回公告" }, modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -79,11 +94,17 @@ internal fun RecentMotd(
                     .ifEmpty { listOf("") }
                     .forEachIndexed { index, line ->
                         val slice =
-                            if (full.isBlank()) AnnotatedString("—")
-                            else text.subSequence(offset, offset + line.length)
+                            if (full.isBlank()) {
+                                AnnotatedString("—")
+                            } else {
+                                text.subSequence(offset, offset + line.length)
+                            }
                         val rendered =
-                            if (index == 1 && lines.size > 2) slice + AnnotatedString("…")
-                            else slice
+                            if (index == 1 && lines.size > 2) {
+                                slice + AnnotatedString("…")
+                            } else {
+                                slice
+                            }
                         Text(
                             rendered,
                             Modifier.wrapContentWidth(),

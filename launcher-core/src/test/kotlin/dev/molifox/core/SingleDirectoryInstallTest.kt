@@ -5,19 +5,40 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.*
-import okio.Buffer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.writeBytes
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class SingleDirectoryInstallTest {
     @TempDir lateinit var directory: Path
@@ -34,13 +55,16 @@ class SingleDirectoryInstallTest {
                     zip.write(byteArrayOf(1, 2, 3))
                     zip.closeEntry()
                 }
-            }
-            .toByteArray()
+            }.toByteArray()
 
     private fun baseUrl(server: MockWebServer): String =
         server.loopbackUrl("/").toString().removeSuffix("/")
 
-    private fun baseProfile(base: String, clientJar: ByteArray, baseLibrary: ByteArray): String {
+    private fun baseProfile(
+        base: String,
+        clientJar: ByteArray,
+        baseLibrary: ByteArray,
+    ): String {
         val index = assetsIndex().toByteArray()
         val logConfig = "<configuration/>".toByteArray()
         return gson.toJson(
@@ -61,7 +85,7 @@ class SingleDirectoryInstallTest {
                                 "url" to "$base/client.jar",
                                 "sha1" to sha1(clientJar),
                                 "size" to clientJar.size,
-                            )
+                            ),
                     ),
                 "assetIndex" to
                     mapOf(
@@ -80,7 +104,7 @@ class SingleDirectoryInstallTest {
                                         "url" to "$base/log.xml",
                                         "sha1" to sha1(logConfig),
                                     ),
-                            )
+                            ),
                     ),
                 "libraries" to
                     listOf(
@@ -94,15 +118,18 @@ class SingleDirectoryInstallTest {
                                             "path" to "fixture/base/1/base-1.jar",
                                             "sha1" to sha1(baseLibrary),
                                             "size" to baseLibrary.size,
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-            )
+            ),
         )
     }
 
-    private fun loaderProfile(base: String, loaderLibrary: ByteArray): String =
+    private fun loaderProfile(
+        base: String,
+        loaderLibrary: ByteArray,
+    ): String =
         gson.toJson(
             mapOf(
                 "id" to "fabric-loader-$loaderVersion-$gameVersion",
@@ -121,17 +148,20 @@ class SingleDirectoryInstallTest {
                                             "path" to loaderLibraryPath,
                                             "sha1" to sha1(loaderLibrary),
                                             "size" to loaderLibrary.size,
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     ),
-            )
+            ),
         )
 
     /** 资源索引必须和它声明的 sha1 用同一份字节，否则下载校验会失败。 */
     private fun assetsIndex(): String = gson.toJson(mapOf("objects" to emptyMap<String, Any>()))
 
-    private fun manifest(base: String, profile: String): String =
+    private fun manifest(
+        base: String,
+        profile: String,
+    ): String =
         gson.toJson(
             mapOf(
                 "versions" to
@@ -141,29 +171,40 @@ class SingleDirectoryInstallTest {
                             "type" to "release",
                             "url" to "$base/version.json",
                             "sha1" to sha1(profile.toByteArray()),
-                        )
-                    )
-            )
+                        ),
+                    ),
+            ),
         )
 
-    private fun installer(server: MockWebServer, store: LauncherStore, network: NetworkClient) =
-        MinecraftInstaller(
-            store,
-            network,
-            JavaService(store, network),
-            "${baseUrl(server)}/manifest.json",
-            baseUrl(server),
-            fabricMetaBase = baseUrl(server),
-            quiltMetaBase = baseUrl(server),
-        )
+    private fun installer(
+        server: MockWebServer,
+        store: LauncherStore,
+        network: NetworkClient,
+    ) = MinecraftInstaller(
+        store,
+        network,
+        JavaService(store, network),
+        "${baseUrl(server)}/manifest.json",
+        baseUrl(server),
+        fabricMetaBase = baseUrl(server),
+        quiltMetaBase = baseUrl(server),
+    )
 
     private fun versionDirectories(root: Path): List<String> =
         root.resolve("versions").let { versions ->
-            if (!versions.isDirectory()) emptyList() else versions.listDirectoryEntries().map { it.name }.sorted()
+            if (!versions.isDirectory()) {
+                emptyList()
+            } else {
+                versions
+                    .listDirectoryEntries()
+                    .map {
+                        it.name
+                    }.sorted()
+            }
         }
 
     @Test
-    fun `a loader on a fresh base publishes one self-contained directory named after the instance`() =
+    fun `a fresh loader install publishes one directory named after the instance`() =
         runBlocking {
             val clientJar = jarBytes("fixture/Main.class")
             val baseLibrary = jarBytes("fixture/Base.class")
@@ -197,7 +238,12 @@ class SingleDirectoryInstallTest {
                     val installer = installer(server, store, network)
                     val instance =
                         installer.createInstance(
-                            InstallRequest("forge26.3测试", gameVersion, LoaderType.Fabric, loaderVersion)
+                            InstallRequest(
+                                "forge26.3测试",
+                                gameVersion,
+                                LoaderType.Fabric,
+                                loaderVersion,
+                            ),
                         )
                     installer.install(instance.id, JobContext(store, "install"))
                     val installed = store.instance(instance.id)
@@ -223,7 +269,11 @@ class SingleDirectoryInstallTest {
                     )
                     assertContentEquals(clientJar, folder.resolve("forge26.3测试.jar").readBytes())
                     // 目录里配置自包含：按实例名解析就能拿到主类、JAR 与加载器库。
-                    val resolved = VersionResolver(root, store.platform).resolve(installed.versionId)
+                    val resolved =
+                        VersionResolver(
+                            root,
+                            store.platform,
+                        ).resolve(installed.versionId)
                     assertEquals("forge26.3测试", resolved.jarId)
                     assertEquals("fixture.KnotClient", resolved.mainClass)
                     assertTrue(
@@ -235,66 +285,80 @@ class SingleDirectoryInstallTest {
         }
 
     @Test
-    fun `a loader on a pre-existing base keeps that directory and inherits from it`() = runBlocking {
-        val clientJar = jarBytes("fixture/Main.class")
-        val baseLibrary = jarBytes("fixture/Base.class")
-        val loaderLibrary = jarBytes("fabric/Loader.class")
-        MockWebServer().use { server ->
-            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
-            val base = baseUrl(server)
-            val profile = baseProfile(base, clientJar, baseLibrary)
-            val loader = loaderProfile(base, loaderLibrary)
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse =
-                        when (request.path) {
-                            "/manifest.json" -> MockResponse().setBody(manifest(base, profile))
-                            "/version.json" -> MockResponse().setBody(profile)
-                            "/client.jar" -> MockResponse().setBody(Buffer().write(clientJar))
-                            "/base-library.jar" -> MockResponse().setBody(Buffer().write(baseLibrary))
-                            "/loader-library.jar" ->
-                                MockResponse().setBody(Buffer().write(loaderLibrary))
-                            "/index.json" -> MockResponse().setBody(assetsIndex())
-                            "/log.xml" -> MockResponse().setBody("<configuration/>")
-                            "/v2/versions/loader/$gameVersion/$loaderVersion/profile/json" ->
-                                MockResponse().setBody(loader)
-                            else -> MockResponse().setResponseCode(404)
-                        }
-                }
-            val store = LauncherStore(DesktopPlatform(), directory.resolve("profile"))
-            val root = store.minecraftRoot
-            // 用户此前装过原版：基础版本目录本来就完整存在。
-            val baseFolder = root.resolve("versions/$gameVersion").apply { createDirectories() }
-            writeJson(baseFolder.resolve("$gameVersion.json"), gson.fromJson(profile, Map::class.java))
-            baseFolder.resolve("$gameVersion.jar").writeBytes(clientJar)
-            NetworkClient(source = { "official" }).use { network ->
-                val installer = installer(server, store, network)
-                val instance =
-                    installer.createInstance(
-                        InstallRequest("我的整合包", gameVersion, LoaderType.Fabric, loaderVersion)
-                    )
-                installer.install(instance.id, JobContext(store, "install"))
-                val installed = store.instance(instance.id)
-                assertEquals("我的整合包", installed.versionId)
-                assertEquals(
-                    listOf("1.20.1", "我的整合包"),
-                    versionDirectories(root),
+    fun `a loader on a pre-existing base keeps that directory and inherits from it`() =
+        runBlocking {
+            val clientJar = jarBytes("fixture/Main.class")
+            val baseLibrary = jarBytes("fixture/Base.class")
+            val loaderLibrary = jarBytes("fabric/Loader.class")
+            MockWebServer().use { server ->
+                server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+                val base = baseUrl(server)
+                val profile = baseProfile(base, clientJar, baseLibrary)
+                val loader = loaderProfile(base, loaderLibrary)
+                server.dispatcher =
+                    object : Dispatcher() {
+                        override fun dispatch(request: RecordedRequest): MockResponse =
+                            when (request.path) {
+                                "/manifest.json" -> MockResponse().setBody(manifest(base, profile))
+                                "/version.json" -> MockResponse().setBody(profile)
+                                "/client.jar" -> MockResponse().setBody(Buffer().write(clientJar))
+                                "/base-library.jar" ->
+                                    MockResponse().setBody(
+                                        Buffer().write(baseLibrary),
+                                    )
+                                "/loader-library.jar" ->
+                                    MockResponse().setBody(Buffer().write(loaderLibrary))
+                                "/index.json" -> MockResponse().setBody(assetsIndex())
+                                "/log.xml" -> MockResponse().setBody("<configuration/>")
+                                "/v2/versions/loader/$gameVersion/$loaderVersion/profile/json" ->
+                                    MockResponse().setBody(loader)
+                                else -> MockResponse().setResponseCode(404)
+                            }
+                    }
+                val store = LauncherStore(DesktopPlatform(), directory.resolve("profile"))
+                val root = store.minecraftRoot
+                // 用户此前装过原版：基础版本目录本来就完整存在。
+                val baseFolder = root.resolve("versions/$gameVersion").apply { createDirectories() }
+                writeJson(
+                    baseFolder.resolve("$gameVersion.json"),
+                    gson.fromJson(profile, Map::class.java),
                 )
-                assertTrue(baseFolder.resolve("$gameVersion.json").isRegularFile())
-                assertContentEquals(clientJar, baseFolder.resolve("$gameVersion.jar").readBytes())
-                val json = readObject(root.resolve("versions/我的整合包/我的整合包.json"))
-                assertEquals("我的整合包", json.string("id"))
-                assertEquals(gameVersion, json.string("inheritsFrom"))
-                assertEquals("fixture.KnotClient", json.string("mainClass"))
-                // 不能一边写 inheritsFrom 一边声明自己的客户端 JAR。
-                assertFalse(json.has("downloads"))
-                assertFalse(root.resolve("versions/我的整合包/我的整合包.jar").exists())
-                val resolved = VersionResolver(root, store.platform).resolve(installed.versionId)
-                assertEquals(gameVersion, resolved.jarId)
-                assertEquals("fixture.KnotClient", resolved.mainClass)
+                baseFolder.resolve("$gameVersion.jar").writeBytes(clientJar)
+                NetworkClient(source = { "official" }).use { network ->
+                    val installer = installer(server, store, network)
+                    val instance =
+                        installer.createInstance(
+                            InstallRequest("我的整合包", gameVersion, LoaderType.Fabric, loaderVersion),
+                        )
+                    installer.install(instance.id, JobContext(store, "install"))
+                    val installed = store.instance(instance.id)
+                    assertEquals("我的整合包", installed.versionId)
+                    assertEquals(
+                        listOf("1.20.1", "我的整合包"),
+                        versionDirectories(root),
+                    )
+                    assertTrue(baseFolder.resolve("$gameVersion.json").isRegularFile())
+                    assertContentEquals(
+                        clientJar,
+                        baseFolder.resolve("$gameVersion.jar").readBytes(),
+                    )
+                    val json = readObject(root.resolve("versions/我的整合包/我的整合包.json"))
+                    assertEquals("我的整合包", json.string("id"))
+                    assertEquals(gameVersion, json.string("inheritsFrom"))
+                    assertEquals("fixture.KnotClient", json.string("mainClass"))
+                    // 不能一边写 inheritsFrom 一边声明自己的客户端 JAR。
+                    assertFalse(json.has("downloads"))
+                    assertFalse(root.resolve("versions/我的整合包/我的整合包.jar").exists())
+                    val resolved =
+                        VersionResolver(
+                            root,
+                            store.platform,
+                        ).resolve(installed.versionId)
+                    assertEquals(gameVersion, resolved.jarId)
+                    assertEquals("fixture.KnotClient", resolved.mainClass)
+                }
             }
         }
-    }
 
     @Test
     fun `a cancelled install reclaims the intermediate version directories it created`() =
@@ -339,7 +403,7 @@ class SingleDirectoryInstallTest {
                     val installer = installer(server, store, network)
                     val instance =
                         installer.createInstance(
-                            InstallRequest("取消的安装", gameVersion, LoaderType.Fabric, loaderVersion)
+                            InstallRequest("取消的安装", gameVersion, LoaderType.Fabric, loaderVersion),
                         )
                     val queue = JobQueue(store, scope)
                     try {
@@ -357,10 +421,13 @@ class SingleDirectoryInstallTest {
                         queue.cancel(id)
                         withTimeout(20_000) {
                             while (
-                                store.state.value.jobs.first { it.id == id }.status !=
-                                    JobStatus.Cancelled
-                            )
+                                store.state.value.jobs
+                                    .first { it.id == id }
+                                    .status !=
+                                JobStatus.Cancelled
+                            ) {
                                 delay(20)
+                            }
                         }
                         withTimeout(20_000) { queue.awaitIdle() }
                         assertFalse(store.versionGamePath(instance).exists())
@@ -390,7 +457,9 @@ class SingleDirectoryInstallTest {
             assertEquals(1, store.data.instances.size)
             assertEquals(listOf("26.3 测试"), versionDirectories(root))
             // 目录被别的来源占用时同样在写盘前拒绝，绝不另造一个「名字-2」目录。
-            store.mutate { data -> data.copy(instances = data.instances.filter { it.id != first.id }) }
+            store.mutate { data ->
+                data.copy(instances = data.instances.filter { it.id != first.id })
+            }
             root.resolve("versions/占用的名字").createDirectories()
             assertFailsWith<IllegalArgumentException> {
                 installer.createInstance(InstallRequest("占用的名字", gameVersion))

@@ -7,26 +7,55 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.AuthlibError
+import dev.molifox.core.AuthlibException
+import dev.molifox.core.AuthlibServer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
@@ -44,7 +73,9 @@ private enum class AuthlibLoginStep {
  */
 sealed interface AuthlibEntry {
     /** 已保存服务器各占账户页一行：点哪台就登录哪台。 */
-    data class Server(val server: AuthlibServer) : AuthlibEntry
+    data class Server(
+        val server: AuthlibServer,
+    ) : AuthlibEntry
 
     /** 「添加认证服务器」入口：先填地址、校验保存，再输入用户名与密码。 */
     data object NewServer : AuthlibEntry
@@ -77,7 +108,7 @@ fun AuthlibLoginDialog(
     val preset = (entry as? AuthlibEntry.Server)?.server
     var step by remember {
         mutableStateOf(
-            if (preset != null) AuthlibLoginStep.Credentials else AuthlibLoginStep.Server
+            if (preset != null) AuthlibLoginStep.Credentials else AuthlibLoginStep.Server,
         )
     }
     var address by remember { mutableStateOf(preset?.url.orEmpty()) }
@@ -183,13 +214,17 @@ fun AuthlibLoginDialog(
     val presetLabel = preset?.let { it.name.ifBlank { it.url } }
     Modal(
         if (presetLabel != null) "登录 " + presetLabel else "添加认证服务器",
-        if (presetLabel != null) "输入该服务器上的用户名与密码，登录后账户会出现在列表里。"
-        else "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。",
+        if (presetLabel != null) {
+            "输入该服务器上的用户名与密码，登录后账户会出现在列表里。"
+        } else {
+            "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
+        },
         width = 480.dp,
         onDismiss = onDismiss,
     ) {
         Column(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -199,25 +234,29 @@ fun AuthlibLoginDialog(
                             true
                         }
                         Key.Enter,
-                        Key.NumPadEnter ->
+                        Key.NumPadEnter,
+                        ->
                             when (step) {
                                 AuthlibLoginStep.Server ->
                                     if (canValidate) {
                                         validateServer()
                                         true
-                                    } else false
+                                    } else {
+                                        false
+                                    }
                                 AuthlibLoginStep.Credentials ->
                                     // 密码已填时，用户在用户名或密码任一框里按 Enter 都直接提交登录；
                                     // 密码还空着则让给输入框自己处理，不提前弹「请输入用户名和密码」。
                                     if (password.isNotEmpty()) {
                                         submitLogin()
                                         true
-                                    } else false
+                                    } else {
+                                        false
+                                    }
                             }
                         else -> false
                     }
-                }
-                .focusable(),
+                }.focusable(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             AuthlibStepLabel(
@@ -225,7 +264,7 @@ fun AuthlibLoginDialog(
                     preset != null -> "用户名与密码"
                     step == AuthlibLoginStep.Server -> "第 1 步 / 共 2 步 · 认证服务器"
                     else -> "第 2 步 / 共 2 步 · 用户名与密码"
-                }
+                },
             )
             if (step == AuthlibLoginStep.Server) {
                 if (servers.isEmpty()) {
@@ -237,7 +276,8 @@ fun AuthlibLoginDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Column(
-                        Modifier.fillMaxWidth()
+                        Modifier
+                            .fillMaxWidth()
                             .heightIn(max = 160.dp)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -254,18 +294,18 @@ fun AuthlibLoginDialog(
                                 selected = server.url == selectedUrl,
                                 onClick = { chooseSaved(server) },
                                 trailing = {
-                                    if (builtin)
+                                    if (builtin) {
                                         SmallIconButton(
                                             Icons.Outlined.Lock,
                                             "内置服务器不可删除",
                                             onClick = { if (!busy) error = "内置服务器不可删除" },
                                             tint =
                                                 MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                    alpha = .5f
+                                                    alpha = .5f,
                                                 ),
                                             enabled = !busy,
                                         )
-                                    else
+                                    } else {
                                         SmallIconButton(
                                             Icons.Outlined.DeleteOutline,
                                             "移除服务器「" + label + "」",
@@ -273,6 +313,7 @@ fun AuthlibLoginDialog(
                                             tint = MaterialTheme.colorScheme.error,
                                             enabled = !busy,
                                         )
+                                    }
                                 },
                             )
                         }
@@ -373,12 +414,13 @@ fun AuthlibLoginDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (busy)
+                if (busy) {
                     CircularProgressIndicator(
                         Modifier.size(14.dp),
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                }
                 Spacer(Modifier.weight(1f))
                 if (step == AuthlibLoginStep.Server) {
                     SecondaryButton(onDismiss, enabled = !busy) { Text("取消", fontSize = 13.sp) }
@@ -393,7 +435,7 @@ fun AuthlibLoginDialog(
                     )
                 } else {
                     // 从账户页的服务器行进来时没有第 1 步可回，不显示「上一步」。
-                    if (preset == null)
+                    if (preset == null) {
                         SecondaryButton(
                             onClick = {
                                 step = AuthlibLoginStep.Server
@@ -403,6 +445,7 @@ fun AuthlibLoginDialog(
                         ) {
                             Text("上一步", fontSize = 13.sp)
                         }
+                    }
                     PrimaryButton(
                         if (busy) "正在登录…" else "登录",
                         enabled = canLogin,

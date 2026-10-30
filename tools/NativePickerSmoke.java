@@ -1,8 +1,8 @@
 // 负责实际打开系统文件、目录和保存窗口并验证返回的路径。
 
-import dev.molifox.desktop.PickMode;
-import dev.molifox.desktop.PickRequest;
-import dev.molifox.desktop.WindowsFilePicker;
+import dev.molifox.desktop.platform.dialogs.PickMode;
+import dev.molifox.desktop.platform.dialogs.PickRequest;
+import dev.molifox.desktop.platform.dialogs.WindowsFilePicker;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

@@ -5,17 +5,38 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import org.junit.jupiter.api.Assumptions.assumeTrue
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class InstanceToolsTest {
     @TempDir lateinit var temporary: Path
@@ -25,7 +46,10 @@ class InstanceToolsTest {
 
     private fun store() = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
 
-    private fun instance(store: LauncherStore, name: String = "Fixture"): GameInstance {
+    private fun instance(
+        store: LauncherStore,
+        name: String = "Fixture",
+    ): GameInstance {
         val instance =
             GameInstance(
                 name = name,
@@ -62,16 +86,22 @@ class InstanceToolsTest {
                             false,
                             PackFileOrigin.Override,
                         )
-                    }
-                    .sortedBy { it.path },
+                    }.sortedBy { it.path },
         )
 
-    private fun write(file: Path, text: String) {
+    private fun write(
+        file: Path,
+        text: String,
+    ) {
         file.parent.createDirectories()
         file.writeText(text)
     }
 
-    private fun packArchive(instance: GameInstance, store: LauncherStore, text: String): Path {
+    private fun packArchive(
+        instance: GameInstance,
+        store: LauncherStore,
+        text: String,
+    ): Path {
         val archive = temporary.resolve("packs/${instance.id}.zip")
         archive.parent.createDirectories()
         archive.writeText(text)
@@ -82,162 +112,175 @@ class InstanceToolsTest {
     // ---- 复制实例 ----
 
     @Test
-    fun `copy duplicates game files ledger and pack archive into a fresh instance`() = runBlocking {
-        val store = store()
-        val tools = InstanceTools(store)
-        val source = instance(store)
-        val root = store.instancePath(source.id)
-        write(root.resolve("mods/a.jar"), "jar")
-        write(root.resolve("config/fixture.toml"), "config")
-        write(root.resolve("options.txt"), "options")
-        PackOwnershipStore.write(root, ledger("mods/a.jar" to "jar".toByteArray()))
-        val archive = packArchive(source, store, "archive-v1")
+    fun `copy duplicates game files ledger and pack archive into a fresh instance`() =
+        runBlocking {
+            val store = store()
+            val tools = InstanceTools(store)
+            val source = instance(store)
+            val root = store.instancePath(source.id)
+            write(root.resolve("mods/a.jar"), "jar")
+            write(root.resolve("config/fixture.toml"), "config")
+            write(root.resolve("options.txt"), "options")
+            PackOwnershipStore.write(root, ledger("mods/a.jar" to "jar".toByteArray()))
+            val archive = packArchive(source, store, "archive-v1")
 
-        val copy = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
+            val copy = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
 
-        assertNotEquals(source.id, copy.id)
-        assertEquals("Fixture - 副本", copy.name)
-        assertEquals("1.20.1", copy.gameVersion)
-        assertEquals(LoaderType.Fabric, copy.loader)
-        assertEquals("0.15.0", copy.loaderVersion)
-        assertTrue(copy.installed)
-        assertEquals(source.isolation, copy.isolation)
-        assertNull(copy.lastPlayed)
-        assertEquals(0, copy.playTimeSeconds)
-        val copyRoot = store.instancePath(copy.id)
-        assertEquals("jar", copyRoot.resolve("mods/a.jar").readText())
-        assertEquals("config", copyRoot.resolve("config/fixture.toml").readText())
-        assertEquals("options", copyRoot.resolve("options.txt").readText())
-        val copiedLedger = PackOwnershipStore.read(copyRoot, store)
-        assertNotNull(copiedLedger)
-        assertEquals(PackOwnershipStore.read(root, store)!!.files, copiedLedger.files)
-        val copiedArchive = Path.of(copy.packFile)
-        assertNotEquals(archive, copiedArchive)
-        assertTrue(copiedArchive.startsWith(store.directories.packArchives))
-        assertEquals("archive-v1", copiedArchive.readText())
-        assertEquals(2, store.data.instances.size)
-    }
-
-    @Test
-    fun `copy skips logs crash reports caches and pack upgrade backups`() = runBlocking {
-        val store = store()
-        val tools = InstanceTools(store)
-        val source = instance(store)
-        val root = store.instancePath(source.id)
-        write(root.resolve("mods/a.jar"), "jar")
-        write(root.resolve("logs/latest.log"), "log")
-        write(root.resolve("crash-reports/crash.txt"), "crash")
-        write(root.resolve("caches/one.bin"), "cache")
-        write(root.resolve(".cache/two.bin"), "cache")
-        write(root.resolve(".fabric/remappedJars/a.jar"), "remap")
-        write(root.resolve(".molifox-pack-upgrade-fixture/files/0/a.jar"), "backup")
-
-        val copy = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
-
-        val copyRoot = store.instancePath(copy.id)
-        assertEquals("jar", copyRoot.resolve("mods/a.jar").readText())
-        assertFalse(copyRoot.resolve("logs").exists())
-        assertFalse(copyRoot.resolve("crash-reports").exists())
-        assertFalse(copyRoot.resolve("caches").exists())
-        assertFalse(copyRoot.resolve(".cache").exists())
-        assertFalse(copyRoot.resolve(".fabric/remappedJars").exists())
-        assertTrue(copyRoot.listDirectoryEntries(".molifox-pack-upgrade-*").isEmpty())
-    }
-
-    @Test
-    fun `copy can omit mods and saves while keeping configuration`() = runBlocking {
-        val store = store()
-        val tools = InstanceTools(store)
-        val source = instance(store)
-        val root = store.instancePath(source.id)
-        write(root.resolve("mods/a.jar"), "jar")
-        write(root.resolve("saves/world/level.dat"), "level")
-        write(root.resolve("config/fixture.toml"), "config")
-
-        val copy =
-            tools.copyInstance(
-                source.id,
-                "只带配置",
-                copySaves = false,
-                copyMods = false,
-                context = JobContext(store, "fixture"),
+            assertNotEquals(source.id, copy.id)
+            assertEquals("Fixture - 副本", copy.name)
+            assertEquals("1.20.1", copy.gameVersion)
+            assertEquals(LoaderType.Fabric, copy.loader)
+            assertEquals("0.15.0", copy.loaderVersion)
+            assertTrue(copy.installed)
+            assertEquals(source.isolation, copy.isolation)
+            assertNull(copy.lastPlayed)
+            assertEquals(0, copy.playTimeSeconds)
+            val copyRoot = store.instancePath(copy.id)
+            assertEquals("jar", copyRoot.resolve("mods/a.jar").readText())
+            assertEquals("config", copyRoot.resolve("config/fixture.toml").readText())
+            assertEquals("options", copyRoot.resolve("options.txt").readText())
+            val copiedLedger = PackOwnershipStore.read(copyRoot, store)
+            assertNotNull(copiedLedger)
+            assertEquals(
+                checkNotNull(PackOwnershipStore.read(root, store)).files,
+                copiedLedger.files,
             )
-
-        assertEquals("只带配置", copy.name)
-        val copyRoot = store.instancePath(copy.id)
-        assertFalse(copyRoot.resolve("mods").exists())
-        assertFalse(copyRoot.resolve("saves").exists())
-        assertEquals("config", copyRoot.resolve("config/fixture.toml").readText())
-    }
-
-    @Test
-    fun `copy adds a sequence number when the duplicate name is taken`() = runBlocking {
-        val store = store()
-        val tools = InstanceTools(store)
-        val source = instance(store)
-        write(store.instancePath(source.id).resolve("config/a.txt"), "a")
-
-        val first = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
-        val second = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
-
-        assertEquals("Fixture - 副本", first.name)
-        assertEquals("Fixture - 副本 2", second.name)
-        assertEquals(3, store.data.instances.size)
-    }
-
-    @Test
-    fun `cancelled copy removes the partial directory and the instance record`() = runBlocking {
-        val store = store()
-        val tools = InstanceTools(store)
-        val source = instance(store)
-        val root = store.instancePath(source.id)
-        val payload = ByteArray(64 * 1024) { it.toByte() }
-        repeat(200) { index ->
-            val file = root.resolve("mods/f%03d.jar".format(index))
-            file.parent.createDirectories()
-            file.writeBytes(payload)
+            val copiedArchive = Path.of(copy.packFile)
+            assertNotEquals(archive, copiedArchive)
+            assertTrue(copiedArchive.startsWith(store.directories.packArchives))
+            assertEquals("archive-v1", copiedArchive.readText())
+            assertEquals(2, store.data.instances.size)
         }
-        val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("versions")
-        val job = Job()
-        val cancelled = AtomicBoolean(false)
-        val watcher = Thread {
-            val deadline = System.nanoTime() + 15_000_000_000L
-            while (System.nanoTime() < deadline) {
-                val fresh = runCatching {
-                    instancesRoot.listDirectoryEntries().any {
-                        it.name != source.gameDirectoryName
+
+    @Test
+    fun `copy skips logs crash reports caches and pack upgrade backups`() =
+        runBlocking {
+            val store = store()
+            val tools = InstanceTools(store)
+            val source = instance(store)
+            val root = store.instancePath(source.id)
+            write(root.resolve("mods/a.jar"), "jar")
+            write(root.resolve("logs/latest.log"), "log")
+            write(root.resolve("crash-reports/crash.txt"), "crash")
+            write(root.resolve("caches/one.bin"), "cache")
+            write(root.resolve(".cache/two.bin"), "cache")
+            write(root.resolve(".fabric/remappedJars/a.jar"), "remap")
+            write(root.resolve(".molifox-pack-upgrade-fixture/files/0/a.jar"), "backup")
+
+            val copy = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
+
+            val copyRoot = store.instancePath(copy.id)
+            assertEquals("jar", copyRoot.resolve("mods/a.jar").readText())
+            assertFalse(copyRoot.resolve("logs").exists())
+            assertFalse(copyRoot.resolve("crash-reports").exists())
+            assertFalse(copyRoot.resolve("caches").exists())
+            assertFalse(copyRoot.resolve(".cache").exists())
+            assertFalse(copyRoot.resolve(".fabric/remappedJars").exists())
+            assertTrue(copyRoot.listDirectoryEntries(".molifox-pack-upgrade-*").isEmpty())
+        }
+
+    @Test
+    fun `copy can omit mods and saves while keeping configuration`() =
+        runBlocking {
+            val store = store()
+            val tools = InstanceTools(store)
+            val source = instance(store)
+            val root = store.instancePath(source.id)
+            write(root.resolve("mods/a.jar"), "jar")
+            write(root.resolve("saves/world/level.dat"), "level")
+            write(root.resolve("config/fixture.toml"), "config")
+
+            val copy =
+                tools.copyInstance(
+                    source.id,
+                    "只带配置",
+                    copySaves = false,
+                    copyMods = false,
+                    context = JobContext(store, "fixture"),
+                )
+
+            assertEquals("只带配置", copy.name)
+            val copyRoot = store.instancePath(copy.id)
+            assertFalse(copyRoot.resolve("mods").exists())
+            assertFalse(copyRoot.resolve("saves").exists())
+            assertEquals("config", copyRoot.resolve("config/fixture.toml").readText())
+        }
+
+    @Test
+    fun `copy adds a sequence number when the duplicate name is taken`() =
+        runBlocking {
+            val store = store()
+            val tools = InstanceTools(store)
+            val source = instance(store)
+            write(store.instancePath(source.id).resolve("config/a.txt"), "a")
+
+            val first = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
+            val second = tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
+
+            assertEquals("Fixture - 副本", first.name)
+            assertEquals("Fixture - 副本 2", second.name)
+            assertEquals(3, store.data.instances.size)
+        }
+
+    @Test
+    fun `cancelled copy removes the partial directory and the instance record`() =
+        runBlocking {
+            val store = store()
+            val tools = InstanceTools(store)
+            val source = instance(store)
+            val root = store.instancePath(source.id)
+            val payload = ByteArray(64 * 1024) { it.toByte() }
+            repeat(200) { index ->
+                val file = root.resolve("mods/f%03d.jar".format(index))
+                file.parent.createDirectories()
+                file.writeBytes(payload)
+            }
+            val instancesRoot = Path.of(store.data.settings.gameRoot).resolve("versions")
+            val job = Job()
+            val cancelled = AtomicBoolean(false)
+            val watcher =
+                Thread {
+                    val deadline = System.nanoTime() + 15_000_000_000L
+                    while (System.nanoTime() < deadline) {
+                        val fresh =
+                            runCatching {
+                                instancesRoot.listDirectoryEntries().any {
+                                    it.name != source.gameDirectoryName
+                                }
+                            }.getOrDefault(false)
+                        if (fresh) {
+                            job.cancel()
+                            cancelled.set(true)
+                            return@Thread
+                        }
+                        Thread.yield()
+                    }
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+            try {
+                assertFailsWith<CancellationException> {
+                    withContext(job) {
+                        tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
                     }
                 }
-                    .getOrDefault(false)
-                if (fresh) {
-                    job.cancel()
-                    cancelled.set(true)
-                    return@Thread
-                }
-                Thread.yield()
+            } finally {
+                watcher.join(5_000)
             }
+            assertTrue(cancelled.get(), "watcher did not cancel the copy")
+            assertEquals(1, store.data.instances.size)
+            assertEquals(
+                source.id,
+                store.data.instances
+                    .single()
+                    .id,
+            )
+            assertEquals(
+                listOf(source.gameDirectoryName),
+                instancesRoot.listDirectoryEntries().map { it.name },
+            )
         }
-            .apply {
-                isDaemon = true
-                start()
-            }
-        try {
-            assertFailsWith<CancellationException> {
-                withContext(job) {
-                    tools.copyInstance(source.id, null, context = JobContext(store, "fixture"))
-                }
-            }
-        } finally {
-            watcher.join(5_000)
-        }
-        assertTrue(cancelled.get(), "watcher did not cancel the copy")
-        assertEquals(1, store.data.instances.size)
-        assertEquals(source.id, store.data.instances.single().id)
-        assertEquals(
-            listOf(source.gameDirectoryName),
-            instancesRoot.listDirectoryEntries().map { it.name },
-        )
-    }
 
     // ---- 整理实例目录 ----
 
@@ -322,21 +365,20 @@ class InstanceToolsTest {
         outside.resolve("nested").createDirectories()
         outside.resolve("keep.txt").writeText("outside")
         val link = root.resolve("linked")
-        val created = runCatching {
-            val process =
-                ProcessBuilder(
+        val created =
+            runCatching {
+                val process =
+                    ProcessBuilder(
                         "cmd",
                         "/c",
                         "mklink",
                         "/J",
                         link.toString(),
                         outside.toString(),
-                    )
-                    .redirectErrorStream(true)
-                    .start()
-            process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
-        }
-            .getOrDefault(false)
+                    ).redirectErrorStream(true)
+                        .start()
+                process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
+            }.getOrDefault(false)
         assumeTrue(created, "当前环境不允许创建目录联接")
 
         val report = InstanceTools(store).tidyInstance(source.id)

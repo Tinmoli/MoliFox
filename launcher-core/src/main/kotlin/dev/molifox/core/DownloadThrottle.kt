@@ -5,12 +5,12 @@
 
 package dev.molifox.core
 
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 单个主机的闸门：最多 [permits] 个并发请求，且相邻两次开始至少间隔 [spacingMillis]。
@@ -65,13 +65,25 @@ internal object DownloadThrottle {
 
     internal fun gateFor(host: String): HostGate =
         gates.computeIfAbsent(host.lowercase()) { name ->
-            if (isMirror(name)) HostGate(MIRROR_LIMIT, MIRROR_SPACING_MILLIS)
-            else HostGate(OFFICIAL_LIMIT, 0L)
+            if (isMirror(name)) {
+                HostGate(MIRROR_LIMIT, MIRROR_SPACING_MILLIS)
+            } else {
+                HostGate(OFFICIAL_LIMIT, 0L)
+            }
         }
 
     /** 按实际请求地址（可能是改写后的镜像地址）取闸门。 */
-    suspend fun <T> run(url: String, block: suspend () -> T): T {
-        val host = runCatching { java.net.URI(url).host.orEmpty() }.getOrNull().orEmpty()
+    suspend fun <T> run(
+        url: String,
+        block: suspend () -> T,
+    ): T {
+        val host =
+            runCatching {
+                java.net
+                    .URI(url)
+                    .host
+                    .orEmpty()
+            }.getOrNull().orEmpty()
         return gateFor(if (host.isBlank()) "unknown" else host).run(block)
     }
 

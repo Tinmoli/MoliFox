@@ -5,25 +5,38 @@
 
 package dev.molifox.core
 
-import java.io.IOException
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.IOException
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class InstanceRenameTest {
     @TempDir lateinit var temporary: Path
 
     private fun store() = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
 
-    private fun version(root: Path, name: String, json: String? = null) {
+    private fun version(
+        root: Path,
+        name: String,
+        json: String? = null,
+    ) {
         val folder = root.resolve("versions/$name").apply { createDirectories() }
         if (json != null) folder.resolve("$name.json").writeText(json)
     }
 
     private fun instance(
-        root: Path,
         store: LauncherStore,
         name: String = "旧名",
         versionId: String = "1.20.1",
@@ -55,7 +68,7 @@ class InstanceRenameTest {
         val root = store.minecraftRoot.apply { createDirectories() }
         version(root, "1.20.1", """{"id":"1.20.1"}""")
         version(root, "其它包", """{"id":"其它包","inheritsFrom":"旧名"}""")
-        val instance = instance(root, store)
+        val instance = instance(store)
         val folder = store.instancePath(instance.id).apply { createDirectories() }
         folder.resolve("旧名.json").writeText(ownProfile)
         folder.resolve("旧名.jar").writeBytes(byteArrayOf(1, 2, 3))
@@ -96,7 +109,7 @@ class InstanceRenameTest {
     fun `not yet installed instance moves its empty directory`() {
         val store = store()
         val root = store.minecraftRoot.apply { createDirectories() }
-        val instance = instance(root, store)
+        val instance = instance(store)
         store.updateInstance(instance.id) { it.copy(installed = false) }
         store.instancePath(instance.id).createDirectories()
 
@@ -111,7 +124,7 @@ class InstanceRenameTest {
     fun `rename refuses an existing directory or another instance name without touching disk`() {
         val store = store()
         val root = store.minecraftRoot.apply { createDirectories() }
-        val instance = instance(root, store)
+        val instance = instance(store)
         val folder = store.instancePath(instance.id).apply { createDirectories() }
         folder.resolve("旧名.json").writeText(ownProfile)
         root.resolve("versions/占用").createDirectories()
@@ -120,7 +133,7 @@ class InstanceRenameTest {
         val exists = assertFailsWith<IllegalArgumentException> { rename.plan(instance.id, "占用") }
         assertTrue(exists.message.orEmpty().contains("已存在"))
 
-        instance(root, store, name = "别人", gameDirectoryName = "别人")
+        instance(store, name = "别人", gameDirectoryName = "别人")
         val clash = assertFailsWith<IllegalArgumentException> { rename.plan(instance.id, "别人") }
         assertTrue(clash.message.orEmpty().contains("已有实例"))
 
@@ -132,7 +145,8 @@ class InstanceRenameTest {
     @Test
     fun `illegal names are rejected before moving anything`() {
         val store = store()
-        val instance = instance(store.minecraftRoot.apply { createDirectories() }, store)
+        store.minecraftRoot.createDirectories()
+        val instance = instance(store)
         store.instancePath(instance.id).createDirectories()
         val rename = InstanceRename(store)
         for (name in listOf("", "a/b", "a\\b", "a:b", "con", "x.")) {
@@ -152,14 +166,13 @@ class InstanceRenameTest {
         version(root, "1.20.1", """{"id":"1.20.1"}""")
         val base =
             instance(
-                root,
                 store,
                 name = "1.20.1",
                 versionId = "1.20.1",
                 gameDirectoryName = "",
                 externalProfile = true,
             )
-        instance(root, store, name = "加载器", versionId = "1.20.1", gameDirectoryName = "加载器")
+        instance(store, name = "加载器", versionId = "1.20.1", gameDirectoryName = "加载器")
 
         val failure =
             assertFailsWith<IllegalArgumentException> {
@@ -173,7 +186,7 @@ class InstanceRenameTest {
     fun `broken version json rolls the directory and record back`() {
         val store = store()
         val root = store.minecraftRoot.apply { createDirectories() }
-        val instance = instance(root, store)
+        val instance = instance(store)
         val folder = store.instancePath(instance.id).apply { createDirectories() }
         folder.resolve("旧名.json").writeText("{ not json")
         folder.resolve("旧名.jar").writeBytes(byteArrayOf(9))
@@ -197,7 +210,6 @@ class InstanceRenameTest {
         version(root, "PackX", """{"id":"PackX","mainClass":"fixture.Main"}""")
         val instance =
             instance(
-                root,
                 store,
                 name = "PackX",
                 versionId = "PackX",
@@ -219,12 +231,13 @@ class InstanceRenameTest {
     fun `component backup manifest paths follow the renamed directory`() {
         val store = store()
         val root = store.minecraftRoot.apply { createDirectories() }
-        val instance = instance(root, store)
+        val instance = instance(store)
         val folder = store.instancePath(instance.id).apply { createDirectories() }
         folder.resolve("旧名.json").writeText(ownProfile)
-        val backup = store.directories.instanceBackups.resolve("components/fixture").apply {
-            createDirectories()
-        }
+        val backup =
+            store.directories.instanceBackups.resolve("components/fixture").apply {
+                createDirectories()
+            }
         writeJson(
             backup.resolve("manifest.json"),
             mapOf(
@@ -236,7 +249,7 @@ class InstanceRenameTest {
                             "path" to "versions/旧名/旧名.json",
                             "file" to "0.json",
                             "sha256" to "0",
-                        )
+                        ),
                     ),
             ),
         )
@@ -247,7 +260,11 @@ class InstanceRenameTest {
         assertEquals("新名", manifest.getAsJsonObject("instance").string("name"))
         assertEquals(
             "versions/新名/新名.json",
-            manifest.getAsJsonArray("profiles").single().asJsonObject.string("path"),
+            manifest
+                .getAsJsonArray("profiles")
+                .single()
+                .asJsonObject
+                .string("path"),
         )
     }
 }

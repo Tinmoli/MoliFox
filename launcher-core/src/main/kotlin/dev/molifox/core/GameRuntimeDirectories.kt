@@ -8,10 +8,23 @@ package dev.molifox.core
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
-internal class GameRuntimeDirectories(private val store: LauncherStore) {
-    private val root = store.temporaryDirectory.resolve("games").toAbsolutePath().normalize()
+internal class GameRuntimeDirectories(
+    private val store: LauncherStore,
+) {
+    private val root =
+        store.temporaryDirectory
+            .resolve("games")
+            .toAbsolutePath()
+            .normalize()
 
     fun create(id: String): Path {
         UUID.fromString(id)
@@ -19,12 +32,20 @@ internal class GameRuntimeDirectories(private val store: LauncherStore) {
         return root.resolve(id).apply { createStorageDirectory(this) }
     }
 
-    fun attach(directory: Path, process: Process) {
+    fun attach(
+        directory: Path,
+        process: Process,
+    ) {
         writeJson(
             directory.resolve("process.json"),
             mapOf(
                 "pid" to process.pid(),
-                "startedAt" to process.info().startInstant().map { it.toString() }.orElse(""),
+                "startedAt" to
+                    process
+                        .info()
+                        .startInstant()
+                        .map { it.toString() }
+                        .orElse(""),
             ),
         )
     }
@@ -34,7 +55,7 @@ internal class GameRuntimeDirectories(private val store: LauncherStore) {
         UUID.fromString(directory.fileName.toString())
         if (!directory.exists()) return
         require(
-            !Files.isSymbolicLink(directory) && directory.toRealPath().parent == root.toRealPath()
+            !Files.isSymbolicLink(directory) && directory.toRealPath().parent == root.toRealPath(),
         )
         Files.walk(directory).use { paths ->
             paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
@@ -44,20 +65,27 @@ internal class GameRuntimeDirectories(private val store: LauncherStore) {
     /** 无法确认归属或进程状态的缓存保留；只处理有有效进程记录且已退出的会话。 */
     fun prune() {
         if (!root.isDirectory() || Files.isSymbolicLink(root)) return
-        for (directory in root.listDirectoryEntries()) runCatching {
-            UUID.fromString(directory.name)
-            val marker = directory.resolve("process.json")
-            if (!marker.isRegularFile() || Files.isSymbolicLink(marker)) return@runCatching
-            val data = readObject(marker)
-            val pid = data.get("pid")?.asLong ?: return@runCatching
-            val process = ProcessHandle.of(pid).orElse(null)
-            val alive =
-                process?.isAlive == true &&
-                    (data.string("startedAt").isBlank() ||
-                        process.info().startInstant().map { it.toString() }.orElse("") ==
-                            data.string("startedAt"))
-            if (!alive) release(directory)
+        for (directory in root.listDirectoryEntries()) {
+            runCatching {
+                UUID.fromString(directory.name)
+                val marker = directory.resolve("process.json")
+                if (!marker.isRegularFile() || Files.isSymbolicLink(marker)) return@runCatching
+                val data = readObject(marker)
+                val pid = data.get("pid")?.asLong ?: return@runCatching
+                val process = ProcessHandle.of(pid).orElse(null)
+                val alive =
+                    process?.isAlive == true &&
+                        (
+                            data.string("startedAt").isBlank() ||
+                                process
+                                    .info()
+                                    .startInstant()
+                                    .map { it.toString() }
+                                    .orElse("") ==
+                                data.string("startedAt")
+                        )
+                if (!alive) release(directory)
+            }.onFailure { store.log("保留无法确认的游戏运行缓存：${directory.fileName}") }
         }
-            .onFailure { store.log("保留无法确认的游戏运行缓存：${directory.fileName}") }
     }
 }

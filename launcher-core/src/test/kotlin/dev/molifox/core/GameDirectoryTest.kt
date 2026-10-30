@@ -5,16 +5,32 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import java.util.zip.ZipFile
 import javax.tools.ToolProvider
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class GameDirectoryTest {
     @TempDir lateinit var temporary: Path
@@ -35,10 +51,16 @@ class GameDirectoryTest {
             }
             assertEquals(firstPath, controller.store.instancePath(first.id))
             controller.directories.refresh()
-            assertTrue(controller.store.data.instances.any { it.id == first.id })
+            assertTrue(
+                controller.store.data.instances
+                    .any { it.id == first.id },
+            )
             assertEquals(
                 "world data",
-                controller.store.instancePath(first.id).resolve("saves/test.txt").readText(),
+                controller.store
+                    .instancePath(first.id)
+                    .resolve("saves/test.txt")
+                    .readText(),
             )
             val legacy =
                 GameInstance(
@@ -66,7 +88,10 @@ class GameDirectoryTest {
         }
     }
 
-    private fun version(root: Path, id: String = "fixture"): Path {
+    private fun version(
+        root: Path,
+        id: String = "fixture",
+    ): Path {
         val folder = root.resolve("versions/$id").apply { createDirectories() }
         writeJson(
             folder.resolve("$id.json"),
@@ -88,7 +113,7 @@ class GameDirectoryTest {
     }
 
     @Test
-    fun `directory selection uses original versions without copying and refresh preserves overrides`() {
+    fun `directory refresh preserves original versions and overrides without copying`() {
         val root = temporary.resolve("已有整合包/.minecraft")
         val folder = version(root)
         val original = folder.resolve("fixture.jar").readBytes()
@@ -102,9 +127,24 @@ class GameDirectoryTest {
         assertFalse(store.minecraftRoot.resolve("versions/fixture").exists())
         service.add(root)
         assertEquals(1, store.data.instances.size)
-        assertEquals(first.id, store.data.instances.single().id)
-        assertEquals("我的版本", store.data.instances.single().name)
-        assertEquals(2048, store.data.instances.single().memoryMb)
+        assertEquals(
+            first.id,
+            store.data.instances
+                .single()
+                .id,
+        )
+        assertEquals(
+            "我的版本",
+            store.data.instances
+                .single()
+                .name,
+        )
+        assertEquals(
+            2048,
+            store.data.instances
+                .single()
+                .memoryMb,
+        )
         version(root, "second")
         service.refresh()
         assertEquals(2, store.data.instances.size)
@@ -132,7 +172,10 @@ class GameDirectoryTest {
         assertEquals(root.toRealPath(), store.instancePath(instance.id))
         assertEquals(
             VersionIsolation.Disabled,
-            LauncherStore(DesktopPlatform(), store.dataDirectory).data.instances.single().isolation,
+            LauncherStore(DesktopPlatform(), store.dataDirectory)
+                .data.instances
+                .single()
+                .isolation,
         )
     }
 
@@ -140,22 +183,28 @@ class GameDirectoryTest {
     fun `deleting a linked version removes only its version folder and keeps the shared game`() {
         val root = temporary.resolve(".minecraft")
         val folder = version(root)
-        root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("my world")
+        root
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("my world")
         LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
             controller.store.mutate {
                 it.copy(settings = it.settings.copy(isolateVersions = false))
             }
             controller.directories.add(root)
-            val instance = controller.store.data.instances.single()
+            val instance =
+                controller.store.data.instances
+                    .single()
             assertEquals(VersionIsolation.Inherit, instance.isolation)
             assertEquals(root.toRealPath(), controller.store.instancePath(instance.id))
             val expected = folder.toRealPath()
             // 这里只验证删除范围，用永久删除避免把测试夹具放进用户系统回收站。
             // 共用游戏根、存档与其它版本必须原样保留。
-            val report = runBlocking {
-                controller.deleteInstance(instance.id, permanent = true)
-            }
-                .getOrThrow()
+            val report =
+                runBlocking {
+                    controller.deleteInstance(instance.id, permanent = true)
+                }.getOrThrow()
             assertEquals(listOf(expected), report.removedPaths.map { Path.of(it) })
             assertFalse(report.movedToTrash)
             assertTrue(report.freedBytes > 0)
@@ -163,8 +212,12 @@ class GameDirectoryTest {
             assertTrue(root.resolve("versions").isDirectory())
             assertEquals("my world", root.resolve("saves/world/level.dat").readText())
             controller.directories.refresh()
-            controller.store.data.activeGameDirectoryId?.let(controller::removeGameDirectory)
-            assertTrue(controller.store.data.instances.isEmpty())
+            controller.store.data.activeGameDirectoryId
+                ?.let(controller::removeGameDirectory)
+            assertTrue(
+                controller.store.data.instances
+                    .isEmpty(),
+            )
             assertEquals("my world", root.resolve("saves/world/level.dat").readText())
         }
     }
@@ -173,14 +226,20 @@ class GameDirectoryTest {
     fun `new versions use the selected directory and shared exports exclude launcher metadata`() {
         val root = temporary.resolve(".minecraft")
         version(root)
-        root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("my world")
+        root
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("my world")
         root.resolve("launcher_profiles.json").writeText("private launcher data")
         LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
             controller.store.mutate {
                 it.copy(settings = it.settings.copy(isolateVersions = false))
             }
             controller.directories.add(root)
-            val original = controller.store.data.instances.single()
+            val original =
+                controller.store.data.instances
+                    .single()
             assertEquals(root.toRealPath(), controller.store.instancePath(original.id))
             val created =
                 controller.installer.createInstance(InstallRequest("new version", "1.20.1"))
@@ -203,11 +262,12 @@ class GameDirectoryTest {
             val folder = version(root)
             val source = temporary.resolve("FixtureMinecraft.java")
             source.writeText(
-                "public class FixtureMinecraft { public static void main(String[] args) { System.out.println(\"DIRECTORY_PROBE=\" + java.nio.file.Path.of(\"\").toAbsolutePath()); System.out.println(\"ARGS=\" + String.join(\"|\", args)); } }"
+                "public class FixtureMinecraft { public static void main(String[] args) { System.out.println(\"DIRECTORY_PROBE=\" + java.nio.file.Path.of(\"\").toAbsolutePath()); System.out.println(\"ARGS=\" + String.join(\"|\", args)); } }",
             )
             assertEquals(
                 0,
-                ToolProvider.getSystemJavaCompiler()
+                ToolProvider
+                    .getSystemJavaCompiler()
                     .run(
                         null,
                         null,
@@ -227,27 +287,31 @@ class GameDirectoryTest {
             LauncherController(DesktopPlatform(), temporary.resolve("MoliFox")).use { controller ->
                 controller.directories.add(root)
                 controller.accounts.addOffline("MoliTester")
-                val instance = controller.store.data.instances.single()
-                for ((isolation, expected) in
-                    listOf(
-                        VersionIsolation.Enabled to folder.toRealPath(),
-                        VersionIsolation.Disabled to root.toRealPath(),
-                    )) {
+                val instance =
+                    controller.store.data.instances
+                        .single()
+                for (
+                (isolation, expected) in
+                listOf(
+                    VersionIsolation.Enabled to folder.toRealPath(),
+                    VersionIsolation.Disabled to root.toRealPath(),
+                )
+                ) {
                     controller.saveSettings(
                         controller.store.data.settings.copy(
-                            isolateVersions = isolation == VersionIsolation.Enabled
-                        )
+                            isolateVersions = isolation == VersionIsolation.Enabled,
+                        ),
                     )
                     controller.updateInstance(
                         instance.id,
                         instance.name,
                         768,
-                        Path.of(
+                        Path
+                            .of(
                                 System.getProperty("java.home"),
                                 "bin",
                                 controller.platform.javaExecutable,
-                            )
-                            .toString(),
+                            ).toString(),
                         isolation,
                     )
                     controller.launch(instance.id)
@@ -255,10 +319,12 @@ class GameDirectoryTest {
                         controller.jobs.awaitIdle()
                         while (controller.state.value.runningInstanceId != null) delay(20)
                     }
-                    val logs = controller.state.value.logs.map { it.message }
+                    val logs =
+                        controller.state.value.logs
+                            .map { it.message }
                     assertTrue(logs.contains("DIRECTORY_PROBE=$expected"), logs.joinToString("\n"))
                     assertTrue(
-                        logs.any { it.contains("ARGS=--username|MoliTester|--gameDir|$expected") }
+                        logs.any { it.contains("ARGS=--username|MoliTester|--gameDir|$expected") },
                     )
                 }
             }

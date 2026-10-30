@@ -16,11 +16,47 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.toLong
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,9 +96,9 @@ val LocalLauncherSettings = compositionLocalOf { LauncherSettings() }
 
 /** 统一过渡时长（毫秒）。页面与通用件复用同一组令牌，避免各处写 120/180/260。 */
 object Motion {
-    const val fast = 120
-    const val normal = 180
-    const val slow = 260
+    const val FAST = 120
+    const val NORMAL = 180
+    const val SLOW = 260
 }
 
 /** 按「减少动态效果」返回过渡曲线；关闭动画时直接跳到终值。 */
@@ -97,7 +133,10 @@ private fun parseHexColor(value: String): Color? {
 }
 
 /** 自定义颜色在浅色主题压深、深色主题提亮，保证两种模式下都有足够对比度。 */
-fun resolveAccent(setting: String, dark: Boolean): Color {
+fun resolveAccent(
+    setting: String,
+    dark: Boolean,
+): Color {
     val preset = accentPresets.firstOrNull { it.first == setting }
     if (preset != null) return if (dark) preset.second.second else preset.second.first
     val custom = parseHexColor(setting) ?: return resolveAccent("sakura", dark)
@@ -105,7 +144,10 @@ fun resolveAccent(setting: String, dark: Boolean): Color {
 }
 
 @Composable
-fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
+fun MoliTheme(
+    settings: LauncherSettings,
+    content: @Composable () -> Unit,
+) {
     val dark =
         when (settings.themeMode) {
             "dark" -> true
@@ -119,7 +161,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
     val surfaceAlpha = if (settings.glassEnabled) settings.surfaceOpacity.coerceIn(.6f, 1f) else 1f
     // 背景与卡片使用平面色，主题色只出现在选中态、主按钮、开关、滑块与进度上。
     val colors =
-        if (dark)
+        if (dark) {
             darkColorScheme(
                 primary = primary,
                 onPrimary = Color(0xFF1B1017),
@@ -144,7 +186,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
                 inverseOnSurface = Color(0xFF2E2830),
                 error = Color(0xFFFFABB2),
             )
-        else
+        } else {
             lightColorScheme(
                 primary = primary,
                 onPrimary = Color.White,
@@ -169,6 +211,7 @@ fun MoliTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
                 inverseOnSurface = Color(0xFFF7F1F4),
                 error = Color(0xFFB3384A),
             )
+        }
     val density = LocalDensity.current
     MaterialTheme(
         colorScheme = colors,
@@ -315,7 +358,10 @@ val LocalLauncherFont = staticCompositionLocalOf<FontFamily> { FontFamily.Defaul
  * 配可见细边，既压得住白卡片又保留樱花粉的柔和。
  */
 @Composable
-fun controlBackground(focused: Boolean = false, hovered: Boolean = false): Color {
+fun controlBackground(
+    focused: Boolean = false,
+    hovered: Boolean = false,
+): Color {
     val colors = MaterialTheme.colorScheme
     val dark = isDarkScheme()
     val base = lerp(colors.surfaceVariant, colors.primary, if (dark) .16f else .14f)
@@ -335,11 +381,10 @@ fun controlBorderColor(focused: Boolean = false): Color {
     if (focused) return colors.primary.copy(alpha = .78f)
     val dark = isDarkScheme()
     return lerp(
-            colors.outlineVariant,
-            colors.onSurfaceVariant,
-            if (dark) .45f else .30f,
-        )
-        .copy(alpha = .85f)
+        colors.outlineVariant,
+        colors.onSurfaceVariant,
+        if (dark) .45f else .30f,
+    ).copy(alpha = .85f)
 }
 
 /** 控件 1dp 边框：与 [controlBorderColor] 配套。 */
@@ -380,8 +425,9 @@ fun Panel(
         Column {
             if (!title.isNullOrBlank()) {
                 Column(
-                    Modifier.fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 11.dp, bottom = 10.dp)
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 11.dp, bottom = 10.dp),
                 ) {
                     Text(title, style = MaterialTheme.typography.titleMedium)
                     if (detail.isNotBlank()) {
@@ -401,11 +447,15 @@ fun Panel(
 }
 
 @Composable
-fun Tag(text: String, color: Color = MaterialTheme.colorScheme.primary) {
+fun Tag(
+    text: String,
+    color: Color = MaterialTheme.colorScheme.primary,
+) {
     Box(
-        Modifier.clip(RoundedCornerShape(3.dp))
+        Modifier
+            .clip(RoundedCornerShape(3.dp))
             .background(color.copy(alpha = .10f))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
@@ -426,13 +476,14 @@ fun SmallIconButton(
     val hoverAlpha by
         animateFloatAsState(
             targetValue = if (hovered && enabled) .06f else 0f,
-            animationSpec = motionSpec(Motion.fast),
+            animationSpec = motionSpec(Motion.FAST),
             label = "iconButtonHover",
         )
     IconButton(
         onClick = onClick,
         modifier =
-            Modifier.size(size)
+            Modifier
+                .size(size)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = hoverAlpha)),
         enabled = enabled,
@@ -471,7 +522,10 @@ fun PrimaryButton(
 }
 
 @Composable
-fun MutedText(text: String, modifier: Modifier = Modifier) {
+fun MutedText(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
     Text(
         text,
         modifier,
@@ -502,7 +556,7 @@ fun SecondaryButton(
         contentPadding = contentPadding,
     ) {
         ProvideTextStyle(
-            value = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium)
+            value = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
         ) {
             content()
         }
@@ -577,7 +631,7 @@ fun Modifier.hoverHighlight(
     val progress by
         animateFloatAsState(
             targetValue = if (hovered && enabled) alpha else 0f,
-            animationSpec = motionSpec(Motion.fast),
+            animationSpec = motionSpec(Motion.FAST),
             label = "hoverHighlight",
         )
     val tint = MaterialTheme.colorScheme.primary
@@ -599,7 +653,7 @@ fun Modifier.rowHoverHighlight(
     val progress by
         animateFloatAsState(
             targetValue = if (hovered && enabled) 1f else 0f,
-            animationSpec = motionSpec(Motion.fast),
+            animationSpec = motionSpec(Motion.FAST),
             label = "rowHover",
         )
     val tint = rowHoverColor()
@@ -618,11 +672,11 @@ fun Modifier.pressScale(pressedScale: Float = .98f): Modifier {
             animationSpec = motionSpec(70),
             label = "pressScale",
         )
-    return this.graphicsLayer {
+    return this
+        .graphicsLayer {
             scaleX = scale
             scaleY = scale
-        }
-        .pointerInput(Unit) {
+        }.pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)

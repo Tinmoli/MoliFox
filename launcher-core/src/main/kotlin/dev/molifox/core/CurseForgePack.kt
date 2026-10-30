@@ -10,7 +10,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
 
 internal fun readCurseForgeManifest(
     info: JsonObject,
@@ -19,14 +23,14 @@ internal fun readCurseForgeManifest(
     os: String,
 ): PackManifest {
     require(
-        info.string("manifestType") == "minecraftModpack" && info.string("manifestVersion") == "1"
+        info.string("manifestType") == "minecraftModpack" && info.string("manifestVersion") == "1",
     ) {
         "不支持的 CurseForge 整合包清单版本"
     }
     require(
         info.string("name").isNotBlank() &&
             info.obj("minecraft").string("version").isNotBlank() &&
-            info.get("files")?.isJsonArray == true
+            info.get("files")?.isJsonArray == true,
     ) {
         "CurseForge 整合包缺少名称、游戏版本或文件清单"
     }
@@ -42,7 +46,7 @@ internal fun readCurseForgeManifest(
         )
     require(
         loader.isBlank() ||
-            loader.substringBefore('-') in types && loader.substringAfter('-', "").isNotBlank()
+            loader.substringBefore('-') in types && loader.substringAfter('-', "").isNotBlank(),
     ) {
         "整合包使用了不支持的加载器：$loader"
     }
@@ -51,14 +55,19 @@ internal fun readCurseForgeManifest(
         overrides.isNotBlank() &&
             !overrides.endsWith('/') &&
             !overrides.contains('\\') &&
-            overrides.split('/').none { it.isBlank() || it == "." || it == ".." }
+            overrides.split('/').none { it.isBlank() || it == "." || it == ".." },
     ) {
         "CurseForge overrides 目录无效"
     }
     safePath(root, overrides)
     val paths =
         validateArchive(zip, "$overrides/", root).map { (_, path) ->
-            val relative = root.toAbsolutePath().normalize().relativize(path).joinToString("/")
+            val relative =
+                root
+                    .toAbsolutePath()
+                    .normalize()
+                    .relativize(path)
+                    .joinToString("/")
             packPath(root, relative)
             if (os == "windows") relative.lowercase() else relative
         }
@@ -77,7 +86,7 @@ internal fun readCurseForgeManifest(
         curseForgeVersionId(curseForgePackKey(file))
         require(
             file.get("required")?.isJsonPrimitive == true &&
-                file.getAsJsonPrimitive("required").isBoolean
+                file.getAsJsonPrimitive("required").isBoolean,
         ) {
             "CurseForge 文件缺少 required 布尔标记"
         }
@@ -143,11 +152,13 @@ internal suspend fun prepareCurseForgePack(
         require(kind in setOf("mod", "resourcepack", "shader")) { "整合包包含不支持的项目类型：$kind" }
         require(
             info.array("game_versions").any { it.asString == manifest.request.gameVersion } &&
-                (kind != "mod" ||
-                    manifest.request.loader != LoaderType.Vanilla &&
+                (
+                    kind != "mod" ||
+                        manifest.request.loader != LoaderType.Vanilla &&
                         info.array("loaders").any {
                             it.asString.equals(manifest.request.loader.name, true)
-                        })
+                        }
+                ),
         ) {
             "整合包中的文件与游戏版本或加载器不兼容：$versionId"
         }
@@ -168,19 +179,20 @@ internal suspend fun prepareCurseForgePack(
         if (info.boolean("manual_download")) {
             val local =
                 listOfNotNull(
-                        safePath(manualDirectory, filename),
-                        existingRoot?.let { packPath(it, relative) },
-                    )
-                    .firstOrNull {
-                        it.isRegularFile() &&
-                            !Files.isSymbolicLink(it) &&
-                            it.fileSize() == size &&
-                            digest(it).equals(hash, true)
-                    }
+                    safePath(manualDirectory, filename),
+                    existingRoot?.let { packPath(it, relative) },
+                ).firstOrNull {
+                    it.isRegularFile() &&
+                        !Files.isSymbolicLink(it) &&
+                        it.fileSize() == size &&
+                        digest(it).equals(hash, true)
+                }
             if (local == null) {
                 missing += ManualContentFile(id, versionId, filename, info.string("website"))
-            } else resolved += CurseForgePackFile(relative, null, local, hash, size)
-        } else
+            } else {
+                resolved += CurseForgePackFile(relative, null, local, hash, size)
+            }
+        } else {
             resolved +=
                 CurseForgePackFile(
                     relative,
@@ -189,12 +201,14 @@ internal suspend fun prepareCurseForgePack(
                     hash,
                     size,
                 )
+        }
     }
     require(resolved.map { it.path.lowercase() }.distinct().size == resolved.size) {
         "整合包中多个项目使用同名文件"
     }
-    if (missing.isNotEmpty())
+    if (missing.isNotEmpty()) {
         throw ManualContentRequired(missing, "请将文件按原文件名放到 $manualDirectory 后重试导入。")
+    }
     return resolved
 }
 
@@ -217,7 +231,9 @@ internal suspend fun stageCurseForgePackFiles(
             }
             target.parent.createDirectories()
             Files.copy(file.local, target, StandardCopyOption.REPLACE_EXISTING)
-        } else download(requireNotNull(file.artifact).copy(target = target))
+        } else {
+            download(requireNotNull(file.artifact).copy(target = target))
+        }
         require(target.fileSize() == file.size && digest(target).equals(file.hash, true)) {
             "整合包文件大小或 SHA-1 校验失败：${file.path}"
         }

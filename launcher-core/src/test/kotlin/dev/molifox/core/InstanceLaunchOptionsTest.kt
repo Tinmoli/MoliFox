@@ -6,12 +6,20 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.writeBytes
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class InstanceLaunchOptionsTest {
     @TempDir lateinit var temporary: Path
@@ -58,28 +66,29 @@ class InstanceLaunchOptionsTest {
 
     private fun profile(): ResolvedProfile {
         val json =
-            JsonParser.parseString(
-                    """{"id":"fixture","type":"release","mainClass":"fixture.Main","libraries":[],"minecraftArguments":"--username ${'$'}{auth_player_name}"}"""
-                )
-                .asJsonObject
+            JsonParser
+                .parseString(
+                    """{"id":"fixture","type":"release","mainClass":"fixture.Main","libraries":[],"minecraftArguments":"--username ${'$'}{auth_player_name}"}""",
+                ).asJsonObject
         return ResolvedProfile("fixture", "1.21.1", json)
     }
 
     private fun plan(
         instance: GameInstance,
         settings: LauncherSettings,
-    ): LaunchPlan = runBlocking {
-        val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
-        store.mutate { it.copy(settings = settings, instances = listOf(instance)) }
-        LaunchPlanner(store)
-            .plan(
-                instance,
-                profile(),
-                JavaRuntime("java", 21, "Test", "amd64"),
-                GameCredentials("Player", "0".repeat(32), "0", "legacy"),
-                prepareFiles = false,
-            )
-    }
+    ): LaunchPlan =
+        runBlocking {
+            val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
+            store.mutate { it.copy(settings = settings, instances = listOf(instance)) }
+            LaunchPlanner(store)
+                .plan(
+                    instance,
+                    profile(),
+                    JavaRuntime("java", 21, "Test", "amd64"),
+                    GameCredentials("Player", "0".repeat(32), "0", "legacy"),
+                    prepareFiles = false,
+                )
+        }
 
     @Test
     fun `explicit instance memory beats global and zero falls back`() {
@@ -122,7 +131,9 @@ class InstanceLaunchOptionsTest {
         assertContains(plan.arguments, "-Xmx4096M")
         assertContains(plan.arguments, "-Dinstance.flag=1")
         assertFalse(plan.arguments.contains("-Dglobal.flag=1"))
-        assertTrue(plan.arguments.indexOf("-Dinstance.flag=1") < plan.arguments.indexOf("fixture.Main"))
+        assertTrue(
+            plan.arguments.indexOf("-Dinstance.flag=1") < plan.arguments.indexOf("fixture.Main"),
+        )
         assertEquals("启动参数：内存 4096 MB，窗口 1280×720，额外 JVM -Dinstance.flag=1", plan.summary)
     }
 
@@ -184,8 +195,14 @@ class InstanceLaunchOptionsTest {
                         prepareFiles = false,
                     )
             }
-        assertEquals("1512", launcherSized.arguments[launcherSized.arguments.indexOf("--width") + 1])
-        assertEquals("982", launcherSized.arguments[launcherSized.arguments.indexOf("--height") + 1])
+        assertEquals(
+            "1512",
+            launcherSized.arguments[launcherSized.arguments.indexOf("--width") + 1],
+        )
+        assertEquals(
+            "982",
+            launcherSized.arguments[launcherSized.arguments.indexOf("--height") + 1],
+        )
     }
 
     @Test
@@ -257,7 +274,9 @@ class InstanceLaunchOptionsTest {
     fun `empty window fields follow global and round-trip through the store`() {
         LauncherController(dataDirectory = temporary.resolve("windows")).use { controller ->
             val folder =
-                controller.store.minecraftRoot.resolve("versions/WindowCfg").createDirectories()
+                controller.store.minecraftRoot
+                    .resolve("versions/WindowCfg")
+                    .createDirectories()
             writeJson(
                 folder.resolve("WindowCfg.json"),
                 mapOf(
@@ -294,7 +313,7 @@ class InstanceLaunchOptionsTest {
                 instance.copy(
                     width = parseInstanceLaunchNumberInput("") ?: -1,
                     height = parseInstanceLaunchNumberInput("  ") ?: -1,
-                )
+                ),
             )
             val stored = controller.store.instance(instance.id)
             assertEquals(0, stored.width)
@@ -314,7 +333,9 @@ class InstanceLaunchOptionsTest {
     fun `only manual memory policy applies and switching away clears the stored value`() {
         LauncherController(dataDirectory = temporary.resolve("memory")).use { controller ->
             val folder =
-                controller.store.minecraftRoot.resolve("versions/MemoryCfg").createDirectories()
+                controller.store.minecraftRoot
+                    .resolve("versions/MemoryCfg")
+                    .createDirectories()
             writeJson(
                 folder.resolve("MemoryCfg.json"),
                 mapOf(
@@ -381,11 +402,10 @@ class InstanceLaunchOptionsTest {
             assertEquals(
                 4096,
                 applyInstanceMemoryPolicy(
-                        autoStored,
-                        InstanceMemoryPolicy.Manual,
-                        4096,
-                    )
-                    .memoryMb,
+                    autoStored,
+                    InstanceMemoryPolicy.Manual,
+                    4096,
+                ).memoryMb,
             )
             // 继承全局：同样清空显式值，解析成全局 2048。
             val inherit =
@@ -414,7 +434,9 @@ class InstanceLaunchOptionsTest {
     fun `controller saves launch options and rejects invalid values without touching saved data`() {
         LauncherController(dataDirectory = temporary.resolve("controller")).use { controller ->
             val folder =
-                controller.store.minecraftRoot.resolve("versions/Cfg").createDirectories()
+                controller.store.minecraftRoot
+                    .resolve("versions/Cfg")
+                    .createDirectories()
             writeJson(
                 folder.resolve("Cfg.json"),
                 mapOf(
@@ -435,7 +457,7 @@ class InstanceLaunchOptionsTest {
                     windowMode = "fullscreen",
                     extraJvmArgs = "-Dfixture.option=value",
                     extraGameArgs = "--demo",
-                )
+                ),
             )
             val saved = controller.store.instance(instance.id)
             assertEquals(2048, saved.memoryMb)

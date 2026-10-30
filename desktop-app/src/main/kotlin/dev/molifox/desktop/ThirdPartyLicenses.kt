@@ -36,13 +36,17 @@ internal data class ThirdPartyLicense(
  * /META-INF/molifox/，关于页与文档因此永远读同一份数据。
  */
 internal object ThirdPartyLicenseCatalog {
-    private const val Resource = "/META-INF/molifox/THIRD_PARTY_LICENSES.md"
+    private const val LICENSE_RESOURCE_PATH = "/META-INF/molifox/THIRD_PARTY_LICENSES.md"
     private val separator = Regex(":?-{3,}:?")
 
     val entries: List<ThirdPartyLicense> by lazy { parse(load()) }
 
     private fun load(): String =
-        javaClass.getResourceAsStream(Resource)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+        javaClass
+            .getResourceAsStream(
+                LICENSE_RESOURCE_PATH,
+            )?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
             ?: ""
 
     private fun parse(markdown: String): List<ThirdPartyLicense> =
@@ -56,14 +60,16 @@ internal object ThirdPartyLicenseCatalog {
                     cells[0] != "组件" &&
                     cells.take(3).none { it.matches(separator) } &&
                     cells[3].startsWith("https://")
-            }
-            .map { cells -> ThirdPartyLicense(cells[0], cells[1], cells[2], cells[3]) }
+            }.map { cells -> ThirdPartyLicense(cells[0], cells[1], cells[2], cells[3]) }
             .toList()
 }
 
 /** 关于页「第三方许可」：只读清单，每项一行许可与一条可打开的项目链接。 */
 @Composable
-internal fun ThirdPartyLicensesDialog(onOpenUrl: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun ThirdPartyLicensesDialog(
+    onOpenUrl: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val entries = ThirdPartyLicenseCatalog.entries
     Modal(
         "第三方许可",
@@ -76,7 +82,11 @@ internal fun ThirdPartyLicensesDialog(onOpenUrl: (String) -> Unit, onDismiss: ()
         } else {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp), gap = 0.dp) {
                 entries.forEachIndexed { index, entry ->
-                    if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    if (index >
+                        0
+                    ) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
                     ThirdPartyLicenseRow(entry, onOpenUrl)
                 }
             }
@@ -88,7 +98,10 @@ internal fun ThirdPartyLicensesDialog(onOpenUrl: (String) -> Unit, onDismiss: ()
 }
 
 @Composable
-private fun ThirdPartyLicenseRow(entry: ThirdPartyLicense, onOpenUrl: (String) -> Unit) {
+private fun ThirdPartyLicenseRow(
+    entry: ThirdPartyLicense,
+    onOpenUrl: (String) -> Unit,
+) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),

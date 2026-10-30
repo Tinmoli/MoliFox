@@ -6,9 +6,12 @@
 package dev.molifox.core
 
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.isRegularFile
 
-internal class TaskFileReferences(store: LauncherStore, ownedIds: Set<String>) {
+internal class TaskFileReferences(
+    store: LauncherStore,
+    ownedIds: Set<String>,
+) {
     private data class References(
         val root: Path,
         val files: Set<Path> = emptySet(),
@@ -21,7 +24,7 @@ internal class TaskFileReferences(store: LauncherStore, ownedIds: Set<String>) {
             if (uncertain || path in files || trees.any { path.startsWith(it) }) return true
             return globalGameDirectory &&
                 root.relativize(path).firstOrNull()?.toString() !in
-                    setOf("versions", "libraries", "assets")
+                setOf("versions", "libraries", "assets")
         }
     }
 
@@ -29,8 +32,11 @@ internal class TaskFileReferences(store: LauncherStore, ownedIds: Set<String>) {
         store.data.instances
             .filter {
                 it.id !in ownedIds &&
-                    (it.installed ||
-                        store.state.value.runningGames.any { game -> game.instanceId == it.id })
+                    (
+                        it.installed ||
+                            store.state.value.runningGames
+                                .any { game -> game.instanceId == it.id }
+                    )
             }
             // 只被扫描出来、没有任何实例设置的版本目录不是「另一个实例」：安装器新建的基础
             // 版本目录常常同时被扫描成这样一个条目，否则它永远无法回收（用户装过原版时它
@@ -67,16 +73,23 @@ internal class TaskFileReferences(store: LauncherStore, ownedIds: Set<String>) {
                                 require(hash.matches(Regex("[a-fA-F0-9]{40}")))
                                 files.add(root.resolve("assets/objects/${hash.take(2)}/$hash"))
                             }
-                        } else trees.add(root.resolve("assets"))
+                        } else {
+                            trees.add(root.resolve("assets"))
+                        }
                     }
-                    val logId = profile.json.obj("logging").obj("client").obj("file").string("id")
-                    if (logId.isNotBlank())
+                    val logId =
+                        profile.json
+                            .obj("logging")
+                            .obj("client")
+                            .obj("file")
+                            .string("id")
+                    if (logId.isNotBlank()) {
                         files.add(safePath(root.resolve("assets/log_configs"), logId))
+                    }
                     val game = store.gamePath(instance).toAbsolutePath().normalize()
                     if (game != root) trees.add(game)
                     References(root, files, trees, globalGameDirectory = game == root)
-                }
-                    .getOrElse { References(root, uncertain = true) }
+                }.getOrElse { References(root, uncertain = true) }
             }
 
     fun protects(path: Path): Boolean = references.any { it.protects(path) }

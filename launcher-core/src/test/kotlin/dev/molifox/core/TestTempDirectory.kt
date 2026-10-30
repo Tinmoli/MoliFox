@@ -9,10 +9,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempDirectory
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.walk
 
 /** 在系统临时目录下建一个测试目录，块结束后无论成败都递归删除。 */
-internal fun <T> withTempDirectory(prefix: String, block: (Path) -> T): T {
+internal fun <T> withTempDirectory(
+    prefix: String,
+    block: (Path) -> T,
+): T {
     val directory = Files.createTempDirectory(prefix)
     try {
         return block(directory)
@@ -24,14 +32,20 @@ internal fun <T> withTempDirectory(prefix: String, block: (Path) -> T): T {
 /** 项目根目录：本机测试数据统一放在项目内 `.work/` 下，不允许落到 C 盘用户临时目录。 */
 internal fun projectRoot(): Path {
     var root = Path.of(System.getProperty("user.dir")).toAbsolutePath()
-    while (root.parent != null && !root.resolve("settings.gradle.kts").isRegularFile())
+    while (root.parent != null && !root.resolve("settings.gradle.kts").isRegularFile()) {
         root = root.parent
+    }
     return root
 }
 
 /** 在项目 `.work/tests/<prefix>/<uuid>` 下建一个独立测试目录；调用方负责用 [removeTestTree] 清理。 */
 internal fun workTestDirectory(prefix: String): Path {
-    val directory = projectRoot().resolve(".work/tests").resolve(prefix).resolve(UUID.randomUUID().toString())
+    val directory =
+        projectRoot()
+            .resolve(
+                ".work/tests",
+            ).resolve(prefix)
+            .resolve(UUID.randomUUID().toString())
     directory.createDirectories()
     return directory
 }
@@ -41,7 +55,10 @@ internal fun removeTestTree(root: Path) {
     if (!root.exists()) return
     runCatching {
         Files.walk(root).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach { runCatching { Files.deleteIfExists(it) } }
+            paths
+                .sorted(
+                    Comparator.reverseOrder(),
+                ).forEach { runCatching { Files.deleteIfExists(it) } }
         }
     }
 }

@@ -6,6 +6,16 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.net.URLEncoder
 import java.nio.file.Files
@@ -17,16 +27,30 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 import java.util.jar.JarFile
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.bufferedReader
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.inputStream
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.reader
+import kotlin.io.path.useLines
+import kotlin.io.path.walk
 
 internal fun encoded(value: String): String =
     URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 
 /** 版本列表源：official 使用 Mojang 官方清单，bmclapi 使用国内镜像；独立于文件下载源。 */
 internal fun versionManifestUrl(source: String): String =
-    if (source == "bmclapi") "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
-    else "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    if (source == "bmclapi") {
+        "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
+    } else {
+        "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    }
 
 /** 本启动器生成的版本配置标记：扫描器据此把目录当作受管实例（可修复、可升级加载器）。 */
 internal const val MANAGED_PROFILE_MARKER = "molifoxManaged"
@@ -54,12 +78,13 @@ class MinecraftInstaller(
             try {
                 network
                     .json(
-                        if (store.data.settings.versionListSource == "bmclapi")
+                        if (store.data.settings.versionListSource == "bmclapi") {
                             versionManifestUrl("bmclapi")
-                        else manifestUrl,
+                        } else {
+                            manifestUrl
+                        },
                         sourceOverride = store.data.settings.versionListSource,
-                    )
-                    .asJsonObject
+                    ).asJsonObject
                     .also { writeJson(cache, it) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -67,7 +92,9 @@ class MinecraftInstaller(
                 if (cache.exists()) {
                     store.log("网络不可用，使用缓存的游戏版本列表")
                     readObject(cache)
-                } else throw error
+                } else {
+                    throw error
+                }
             }
         return json
             .array("versions")
@@ -75,12 +102,16 @@ class MinecraftInstaller(
             .also { versionsCache = it }
     }
 
-    suspend fun loaderVersions(loader: LoaderType, gameVersion: String): List<LoaderVersion> {
+    suspend fun loaderVersions(
+        loader: LoaderType,
+        gameVersion: String,
+    ): List<LoaderVersion> {
         safeFilename(gameVersion)
         return when (loader) {
             LoaderType.Vanilla -> emptyList()
             LoaderType.Fabric,
-            LoaderType.Quilt -> {
+            LoaderType.Quilt,
+            -> {
                 val host =
                     if (loader == LoaderType.Fabric) fabricMetaBase else quiltMetaBase
                 val apiVersion = if (loader == LoaderType.Fabric) "v2" else "v3"
@@ -97,15 +128,14 @@ class MinecraftInstaller(
                                     .containsMatchIn(info.string("version")),
                             ),
                         )
-                    }
-                    .sortedWith { left, right ->
+                    }.sortedWith { left, right ->
                         compareLoaderVersions(right.version, left.version)
                     }
             }
             LoaderType.Forge -> {
                 val xml =
                     network.text(
-                        "$forgeMavenBase/net/minecraftforge/forge/maven-metadata.xml"
+                        "$forgeMavenBase/net/minecraftforge/forge/maven-metadata.xml",
                     )
                 Regex("<version>([^<]+)</version>")
                     .findAll(xml)
@@ -122,15 +152,17 @@ class MinecraftInstaller(
                 val project = if (legacy) "forge" else "neoforge"
                 val parts = gameVersion.split('.')
                 val prefix =
-                    if (legacy) "1.20.1-"
-                    else if (parts.first() == "1")
+                    if (legacy) {
+                        "1.20.1-"
+                    } else if (parts.first() == "1") {
                         "${parts.getOrElse(1) { "0" }}.${parts.getOrElse(2) { "0" }}."
-                    else "${parts[0]}.${parts.getOrElse(1) { "0" }}."
+                    } else {
+                        "${parts[0]}.${parts.getOrElse(1) { "0" }}."
+                    }
                 network
                     .json(
-                        "$neoforgeMavenBase/api/maven/versions/releases/net/neoforged/$project"
-                    )
-                    .asJsonObject
+                        "$neoforgeMavenBase/api/maven/versions/releases/net/neoforged/$project",
+                    ).asJsonObject
                     .array("versions")
                     .map { it.asString }
                     .filter { it.startsWith(prefix) }
@@ -167,7 +199,11 @@ class MinecraftInstaller(
         validate(request)
         val root =
             gameDirectoryId?.let { id ->
-                Path.of(store.data.gameDirectories.first { it.id == id }.path)
+                Path.of(
+                    store.data.gameDirectories
+                        .first { it.id == id }
+                        .path,
+                )
             } ?: store.minecraftRoot
         val directoryName = instanceDirectoryName(request.name.trim())
         val folder = safePath(root.resolve("versions"), directoryName)
@@ -179,15 +215,17 @@ class MinecraftInstaller(
             .firstOrNull {
                 taskPathKey(store.minecraftRoot(it)) == taskPathKey(root) &&
                     it.instanceFolderName().equals(directoryName, windows)
-            }
-            ?.let { clash ->
+            }?.let { clash ->
                 throw IllegalArgumentException("已有实例「${clash.name}」使用这个名称")
             }
         // 身份就是目录名：id 由目录名和游戏根算出来，和扫描结果是同一个。
         val id = store.instanceIdFor(directoryName, gameDirectoryId)
         val loaderId =
-            if (request.loader == LoaderType.Vanilla) ""
-            else "${request.loader.name.lowercase()}-${request.loaderVersion}"
+            if (request.loader == LoaderType.Vanilla) {
+                ""
+            } else {
+                "${request.loader.name.lowercase()}-${request.loaderVersion}"
+            }
         store.beginPendingInstall(directoryName, request.gameVersion, loaderId)
         try {
             folder.createDirectories()
@@ -207,8 +245,11 @@ class MinecraftInstaller(
                 it.copy(
                     instances = it.instances + instance,
                     selectedInstanceId =
-                        if (it.activeGameDirectoryId == gameDirectoryId) instance.id
-                        else it.selectedInstanceId,
+                        if (it.activeGameDirectoryId == gameDirectoryId) {
+                            instance.id
+                        } else {
+                            it.selectedInstanceId
+                        },
                 )
             }
             return store.instance(id)
@@ -216,8 +257,9 @@ class MinecraftInstaller(
             // 登记失败不留空目录，也不留着「安装中」标记。
             store.endPendingInstall(directoryName)
             runCatching {
-                if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty())
+                if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty()) {
                     Files.deleteIfExists(folder)
+                }
             }
             throw failure
         }
@@ -232,19 +274,26 @@ class MinecraftInstaller(
         val root = store.minecraftRoot(instance)
         val folderName = instance.instanceFolderName()
         val freshTarget = freshInstall && folderName.isNotBlank()
-        if (instance.installed)
+        if (instance.installed) {
             context.onFinished(
                 "installation-status:$instanceId",
                 cancel = { store.updateInstance(instanceId) { it.copy(installed = true) } },
                 complete = {},
             )
+        }
         store.updateInstance(instanceId) { it.copy(installed = false) }
         // 本任务新建的中间版本目录（基础版本目录等）：成功、失败和取消都只回收这些。
         val createdVersions = linkedSetOf<Path>()
         context.onFinished(
             "install-versions:$instanceId",
             cancel = {
-                runCatching { reclaimCreatedVersionDirectories(createdVersions, instanceId, context) }
+                runCatching {
+                    reclaimCreatedVersionDirectories(
+                        createdVersions,
+                        instanceId,
+                        context,
+                    )
+                }
                 runCatching { store.endPendingInstall(folderName) }
             },
             complete = {},
@@ -288,9 +337,18 @@ class MinecraftInstaller(
                     when (instance.loader) {
                         LoaderType.Vanilla -> null
                         LoaderType.Fabric,
-                        LoaderType.Quilt -> fetchFabricProfile(instance, context, .70f, .96f)
+                        LoaderType.Quilt,
+                        -> fetchFabricProfile(instance, context, .70f, .96f)
                         LoaderType.Forge,
-                        LoaderType.NeoForge -> fetchForgeProfile(instance, base, context, .70f, .96f)
+                        LoaderType.NeoForge,
+                        ->
+                            fetchForgeProfile(
+                                instance,
+                                base,
+                                context,
+                                .70f,
+                                .96f,
+                            )
                     }
                 context.checkCancelled()
                 // 发布：目标目录里一份完整配置，不再留下指向兄弟目录的存根。
@@ -323,17 +381,21 @@ class MinecraftInstaller(
                 val file = folder.resolve("$name.json")
                 if (
                     name != current.versionId &&
-                        name != current.gameVersion &&
-                        !file.isRegularFile(NOFOLLOW_LINKS)
-                )
-                    context.writeOutput(file) { VersionGameDirectories(store).writeProfile(current) }
+                    name != current.gameVersion &&
+                    !file.isRegularFile(NOFOLLOW_LINKS)
+                ) {
+                    context.writeOutput(
+                        file,
+                    ) { VersionGameDirectories(store).writeProfile(current) }
+                }
             }
             store.updateInstance(instanceId) { it.copy(installed = true) }
             store.endPendingInstall(folderName)
         } catch (failure: Throwable) {
             // 失败不保留中间目录，否则重试时会把它们当成「已有基础版本」永久留下。
-            if (failure !is CancellationException)
+            if (failure !is CancellationException) {
                 reclaimCreatedVersionDirectories(createdVersions, instanceId, context)
+            }
             if (failure !is CancellationException) {
                 store.endPendingInstall(folderName)
                 if (freshTarget) discardFailedFreshInstall(instance, folderName)
@@ -347,25 +409,32 @@ class MinecraftInstaller(
     }
 
     /** 新安装失败后不留下空目录和记录：它下次会被扫描成「无法识别」的实例。 */
-    private fun discardFailedFreshInstall(instance: GameInstance, folderName: String) {
+    private fun discardFailedFreshInstall(
+        instance: GameInstance,
+        folderName: String,
+    ) {
         runCatching {
             val folder = store.versionGamePath(instance)
-            if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty())
+            if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty()) {
                 Files.deleteIfExists(folder)
+            }
         }
         runCatching {
             store.mutate { data ->
                 data.copy(
                     instances = data.instances.filter { it.instanceSettingsKey() != folderName },
                     selectedInstanceId =
-                        if (data.selectedInstanceId == instance.id) null
-                        else data.selectedInstanceId,
+                        if (data.selectedInstanceId == instance.id) {
+                            null
+                        } else {
+                            data.selectedInstanceId
+                        },
                 )
             }
         }
     }
 
-/**
+    /**
      * 把已安装实例升级到**同一加载器**的更新版本：游戏版本、实例目录名与 `molifoxManaged` 标记都不变。
      *
      * 先备份当前版本配置，再用「真实基础版本 + 新加载器配置」合成一份自包含 JSON 写回原实例目录，
@@ -405,9 +474,11 @@ class MinecraftInstaller(
                 when (current.loader) {
                     LoaderType.Vanilla -> error("原版实例没有可升级的加载器")
                     LoaderType.Fabric,
-                    LoaderType.Quilt -> fetchFabricProfile(target, context, .05f, .90f)
+                    LoaderType.Quilt,
+                    -> fetchFabricProfile(target, context, .05f, .90f)
                     LoaderType.Forge,
-                    LoaderType.NeoForge -> fetchForgeProfile(target, base, context, .05f, .90f)
+                    LoaderType.NeoForge,
+                    -> fetchForgeProfile(target, base, context, .05f, .90f)
                 }
             context.checkCancelled()
             val folder = store.versionGamePath(current)
@@ -438,19 +509,18 @@ class MinecraftInstaller(
         } catch (failure: Throwable) {
             withContext(NonCancellable + Dispatchers.IO) {
                 runCatching {
-                        backups.restore(backupId, current)
-                        backups.discard(backupId)
-                        store.updateInstance(instanceId) {
-                            it.copy(
-                                loaderVersion = current.loaderVersion,
-                                installed = current.installed,
-                            )
-                        }
-                        store.refreshInstances()
+                    backups.restore(backupId, current)
+                    backups.discard(backupId)
+                    store.updateInstance(instanceId) {
+                        it.copy(
+                            loaderVersion = current.loaderVersion,
+                            installed = current.installed,
+                        )
                     }
-                    .onFailure {
-                        store.log("升级加载器失败后恢复原版本配置也失败：${it.message}", true)
-                    }
+                    store.refreshInstances()
+                }.onFailure {
+                    store.log("升级加载器失败后恢复原版本配置也失败：${it.message}", true)
+                }
             }
             throw failure
         }
@@ -468,25 +538,29 @@ class MinecraftInstaller(
             runCatching { store.versionGamePath(instance) }
                 .getOrElse { return "实例目录不可用：${it.message}" }
         val json = folder.resolve("${folder.fileName}.json")
-        if (!json.isRegularFile(NOFOLLOW_LINKS) || json.isSymbolicLink())
+        if (!json.isRegularFile(NOFOLLOW_LINKS) || json.isSymbolicLink()) {
             return "外部版本配置缺失或不是普通文件：$json"
+        }
         val root =
             runCatching { store.minecraftRoot(instance) }.getOrElse { return it.message }
         return try {
             val original = readObject(json)
             val parent = original.string("inheritsFrom").takeIf { it.isNotBlank() }
             if (parent != null) {
-                if (parent == folder.fileName.toString())
+                if (parent == folder.fileName.toString()) {
                     return "版本配置继承了自身（$parent），无法安全合并。"
+                }
                 val baseFile = root.resolve("versions").resolve(parent).resolve("$parent.json")
-                if (!baseFile.isRegularFile(NOFOLLOW_LINKS))
+                if (!baseFile.isRegularFile(NOFOLLOW_LINKS)) {
                     return "它继承的基础版本 $parent 在本地不存在；请先在原目录补齐该版本，再进行升级。"
+                }
                 // 校验整条 inheritsFrom 链，断链或循环都给出可读原因。
                 VersionResolver(root, store.platform).resolve(parent)
             } else if (
                 original.string("mainClass").isBlank() && original.array("libraries").isEmpty()
-            )
+            ) {
                 return "版本配置缺少 mainClass 与 libraries，无法安全合并。"
+            }
             null
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -513,16 +587,21 @@ class MinecraftInstaller(
         val original = readObject(jsonPath)
         val parent = original.string("inheritsFrom").takeIf { it.isNotBlank() }
         val base =
-            if (parent != null) VersionResolver(root, store.platform).resolve(parent)
-            else VersionResolver(root, store.platform).resolve(current.versionId)
+            if (parent != null) {
+                VersionResolver(root, store.platform).resolve(parent)
+            } else {
+                VersionResolver(root, store.platform).resolve(current.versionId)
+            }
         val target = current.copy(loaderVersion = loaderVersion)
         val loader =
             when (current.loader) {
                 LoaderType.Vanilla -> error("原版实例没有可升级的加载器")
                 LoaderType.Fabric,
-                LoaderType.Quilt -> fetchFabricProfile(target, context, .05f, .60f)
+                LoaderType.Quilt,
+                -> fetchFabricProfile(target, context, .05f, .60f)
                 LoaderType.Forge,
-                LoaderType.NeoForge -> fetchForgeProfile(target, base, context, .05f, .60f)
+                LoaderType.NeoForge,
+                -> fetchForgeProfile(target, base, context, .05f, .60f)
             }
         val merged = mergeExternalLoaderProfile(original, loader)
         context.checkCancelled()
@@ -547,20 +626,19 @@ class MinecraftInstaller(
         } catch (failure: Throwable) {
             withContext(NonCancellable + Dispatchers.IO) {
                 runCatching {
-                        Files.copy(
-                            backup,
-                            jsonPath,
-                            StandardCopyOption.REPLACE_EXISTING,
-                        )
-                        // 只恢复这一个版本 JSON，其它文件与备份都保留。
-                        store.refreshInstances()
-                    }
-                    .onFailure {
-                        store.log(
-                            "外部版本升级失败后恢复备份也失败：${it.message}；备份文件：$backup",
-                            true,
-                        )
-                    }
+                    Files.copy(
+                        backup,
+                        jsonPath,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                    // 只恢复这一个版本 JSON，其它文件与备份都保留。
+                    store.refreshInstances()
+                }.onFailure {
+                    store.log(
+                        "外部版本升级失败后恢复备份也失败：${it.message}；备份文件：$backup",
+                        true,
+                    )
+                }
             }
             throw failure
         }
@@ -592,8 +670,9 @@ class MinecraftInstaller(
     ): ResolvedProfile {
         val root = store.minecraftRoot(instance)
         val baseId = safeFilename(instance.gameVersion)
-        if (root.resolve("versions/$baseId/$baseId.json").isRegularFile(NOFOLLOW_LINKS))
+        if (root.resolve("versions/$baseId/$baseId.json").isRegularFile(NOFOLLOW_LINKS)) {
             return VersionResolver(root, store.platform).resolve(baseId)
+        }
         context.progress(.02f, "获取 Minecraft ${instance.gameVersion} 元数据…")
         context.checkCancelled()
         val metadata =
@@ -603,15 +682,19 @@ class MinecraftInstaller(
         return ResolvedProfile(baseId, baseId, json)
     }
 
-    suspend fun resolveForLaunch(instance: GameInstance, context: JobContext): ResolvedProfile {
+    suspend fun resolveForLaunch(
+        instance: GameInstance,
+        context: JobContext,
+    ): ResolvedProfile {
         val resolver = VersionResolver(store.minecraftRoot(instance), store.platform)
         try {
             return resolver.resolve(instance.versionId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            if (instance.externalProfile)
+            if (instance.externalProfile) {
                 throw IOException("外部版本配置缺失或损坏，请修复原版本：${instance.versionId}", error)
+            }
             context.progress(0f, "恢复游戏版本配置…")
             install(instance.id, context)
             return resolver.resolve(store.instance(instance.id).versionId)
@@ -636,7 +719,7 @@ class MinecraftInstaller(
         val progress = InstallProgress(context, from, to)
         val verifier =
             GameFileVerifier(network, store.data.settings.maxConcurrent, verifyHashes, progress)
-        progress.begin(InstallPhase.Verify)
+        progress.begin(InstallPhase.VERIFY)
         val resolver = VersionResolver(root, store.platform)
         val artifacts =
             resolver
@@ -656,10 +739,13 @@ class MinecraftInstaller(
         // 只有确实要下载且 JSON 没给地址时，才回查真实版本 JSON。
         if (
             clientArtifact.url.isBlank() &&
-                artifactProblem(if (verifyHashes) clientArtifact else clientArtifact.copy(sha1 = "")) !=
-                    null
-        )
+            artifactProblem(
+                if (verifyHashes) clientArtifact else clientArtifact.copy(sha1 = ""),
+            ) !=
+            null
+        ) {
             clientArtifact = clientArtifact.copy(url = clientJarUrl(profile, root))
+        }
         artifacts += clientArtifact
         // 日志配置是可选文件：老版本或镜像缺这个对象时不能中止整个安装。
         // 它只在启动时被定位，不属于安装必需文件；缺失只影响日志格式。
@@ -670,24 +756,28 @@ class MinecraftInstaller(
                 .obj("file")
                 .let { logging ->
                     val id = logging.string("id")
-                    if (logging.string("url").isNotBlank() && id.isNotBlank())
+                    if (logging.string("url").isNotBlank() && id.isNotBlank()) {
                         listOf(
                             DownloadArtifact(
                                 logging.string("url"),
                                 safePath(root.resolve("assets/log_configs"), id),
                                 logging.string("sha1"),
-                            )
+                            ),
                         )
-                    else emptyList()
+                    } else {
+                        emptyList()
+                    }
                 }
         // 资源索引先下载并解析：资源文件的数量与总字节是进度分母的一部分，
         // 必须先知道，否则「下载资源」阶段只能估一个假区间。
         val index = profile.json.obj("assetIndex")
         val indexPath =
-            if (index.string("url").isNotBlank())
+            if (index.string("url").isNotBlank()) {
                 safePath(root.resolve("assets/indexes"), "${index.string("id")}.json")
-            else null
-        if (indexPath != null)
+            } else {
+                null
+            }
+        if (indexPath != null) {
             verifier.ensure(
                 listOf(
                     DownloadArtifact(
@@ -695,11 +785,12 @@ class MinecraftInstaller(
                         indexPath,
                         index.string("sha1"),
                         index.get("size")?.asLong ?: 0,
-                    )
+                    ),
                 ),
                 context,
-                InstallPhase.Libraries,
+                InstallPhase.LIBRARIES,
             )
+        }
         val assets: List<DownloadArtifact> =
             if (indexPath != null) {
                 val objects = readObject(indexPath).obj("objects")
@@ -714,19 +805,21 @@ class MinecraftInstaller(
                         item.get("size")?.asLong ?: 0,
                     )
                 }
-            } else emptyList()
+            } else {
+                emptyList()
+            }
         // 资源数量与总字节现在已知：把库和资源的校验 + 下载总量一次登记进进度模型，
         // 再按 库 → 资源 的顺序校验并下载。分母固定后阶段之间不会假收尾。
-        verifier.reserve(InstallPhase.Libraries, artifacts)
-        verifier.reserve(InstallPhase.Assets, assets)
+        verifier.reserve(InstallPhase.LIBRARIES, artifacts)
+        verifier.reserve(InstallPhase.ASSETS, assets)
         verifier.ensure(
             artifacts,
             context,
-            InstallPhase.Libraries,
+            InstallPhase.LIBRARIES,
             optional = optional,
             warn = { store.log(it, level = LogLevel.Warn) },
         )
-        verifier.ensure(assets, context, InstallPhase.Assets)
+        verifier.ensure(assets, context, InstallPhase.ASSETS)
         progress.finish()
     }
 
@@ -738,7 +831,10 @@ class MinecraftInstaller(
      * 只取 `downloads.client.url`，缺失就留空而不是按名称猜路径（猜出来只会 404）；
      * 这里额外通过版本清单找到真实的该版本 JSON。
      */
-    internal suspend fun clientJarUrl(profile: ResolvedProfile, root: Path): String {
+    internal suspend fun clientJarUrl(
+        profile: ResolvedProfile,
+        root: Path,
+    ): String {
         profile.json.obj("downloads").obj("client").string("url").takeIf { it.isNotBlank() }?.let {
             return it
         }
@@ -752,9 +848,8 @@ class MinecraftInstaller(
                     ?: continue
             val url =
                 runCatching {
-                        readObject(file).obj("downloads").obj("client").string("url")
-                    }
-                    .getOrNull()
+                    readObject(file).obj("downloads").obj("client").string("url")
+                }.getOrNull()
             if (!url.isNullOrBlank()) return url
         }
         for (id in ids.filter { it.isNotBlank() }) {
@@ -763,10 +858,13 @@ class MinecraftInstaller(
                     ?: continue
             val url =
                 runCatching {
-                        network.json(metadata.url).asJsonObject.obj("downloads").obj("client")
-                            .string("url")
-                    }
-                    .getOrNull()
+                    network
+                        .json(metadata.url)
+                        .asJsonObject
+                        .obj("downloads")
+                        .obj("client")
+                        .string("url")
+                }.getOrNull()
             if (!url.isNullOrBlank()) return url
         }
         throw IOException("版本配置缺少客户端 JAR 下载地址，请检查版本 JSON 或使用修复功能：${profile.id}")
@@ -803,8 +901,13 @@ class MinecraftInstaller(
             profile.remove("inheritsFrom")
             profile.remove("jar")
             // 加载器配置可能带自己的 downloads；真实客户端 JAR 仍然只取基础版本那一份。
-            if (!profile.obj("downloads").has("client") && base.json.obj("downloads").has("client"))
+            if (!profile
+                    .obj(
+                        "downloads",
+                    ).has("client") && base.json.obj("downloads").has("client")
+            ) {
                 profile.add("downloads", base.json.obj("downloads").deepCopy())
+            }
             context.writeOutput(file) { writeJson(file, profile) }
             copyBaseJar(root, base, target, context)
         } else {
@@ -850,33 +953,43 @@ class MinecraftInstaller(
         // 取消时实例记录可能已经被回收，此时没有引用可判断，交给任务产物清理。
         val instance = store.data.instances.find { it.id == instanceId } ?: return
         val versionsRoot =
-            store.minecraftRoot(instance).toAbsolutePath().normalize().resolve("versions")
+            store
+                .minecraftRoot(instance)
+                .toAbsolutePath()
+                .normalize()
+                .resolve("versions")
         val target = store.versionGamePath(instance).toAbsolutePath().normalize()
         for (directory in created.sortedByDescending { it.nameCount }) {
             val path = directory.toAbsolutePath().normalize()
             if (path == target || path.parent != versionsRoot) continue
             runCatching {
-                    if (!path.isDirectory(NOFOLLOW_LINKS) || Files.isSymbolicLink(path)) return@runCatching
-                    require(path.toRealPath() == path) { "目录已变为链接，未删除" }
-                    if (!context.canRemoveDownload(path)) {
-                        store.log("中间版本目录仍被其他实例引用，已保留：versions/${path.fileName}")
-                        return@runCatching
-                    }
-                    val paths = Files.walk(path).use { it.toList() }
-                    require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
-                        "目录包含链接，未删除"
-                    }
-                    paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
-                    store.log("已回收安装中间版本目录：versions/${path.fileName}")
+                if (!path.isDirectory(NOFOLLOW_LINKS) ||
+                    Files.isSymbolicLink(path)
+                ) {
+                    return@runCatching
                 }
-                .onFailure {
-                    store.log("回收安装中间目录失败：versions/${path.fileName}（${it.message}）", true)
+                require(path.toRealPath() == path) { "目录已变为链接，未删除" }
+                if (!context.canRemoveDownload(path)) {
+                    store.log("中间版本目录仍被其他实例引用，已保留：versions/${path.fileName}")
+                    return@runCatching
                 }
+                val paths = Files.walk(path).use { it.toList() }
+                require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
+                    "目录包含链接，未删除"
+                }
+                paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
+                store.log("已回收安装中间版本目录：versions/${path.fileName}")
+            }.onFailure {
+                store.log("回收安装中间目录失败：versions/${path.fileName}（${it.message}）", true)
+            }
         }
     }
 
     /** 新安装必须在写盘前确认目标目录可用：显示名就是目录名，被占用时拒绝而不是另造目录。 */
-    private fun requireNewInstanceDirectory(root: Path, target: Path) {
+    private fun requireNewInstanceDirectory(
+        root: Path,
+        target: Path,
+    ) {
         require(target.startsWith(root.resolve("versions"))) { "实例目录不在所选游戏根下" }
         if (!target.exists(NOFOLLOW_LINKS)) return
         // 目录由 createInstance 建好时是空的；里面已经有内容说明名字被别的来源占用了。
@@ -897,17 +1010,18 @@ class MinecraftInstaller(
         from: Float = 0f,
         to: Float = 1f,
     ): JsonObject {
-        context.progress(from, "${InstallPhase.Loader}：${instance.loader.title} 配置…")
+        context.progress(from, "${InstallPhase.LOADER}：${instance.loader.title} 配置…")
         val host = if (instance.loader == LoaderType.Fabric) fabricMetaBase else quiltMetaBase
         val apiVersion = if (instance.loader == LoaderType.Fabric) "v2" else "v3"
         val profile =
             network
                 .json(
-                    "$host/$apiVersion/versions/loader/${encoded(instance.gameVersion)}/${encoded(instance.loaderVersion)}/profile/json"
-                )
-                .asJsonObject
+                    "$host/$apiVersion/versions/loader/${encoded(
+                        instance.gameVersion,
+                    )}/${encoded(instance.loaderVersion)}/profile/json",
+                ).asJsonObject
         context.checkCancelled()
-        context.progress(to, "${InstallPhase.Loader}：${instance.loader.title} 配置已就绪")
+        context.progress(to, "${InstallPhase.LOADER}：${instance.loader.title} 配置已就绪")
         return profile
     }
 
@@ -923,19 +1037,30 @@ class MinecraftInstaller(
         val isForge = instance.loader == LoaderType.Forge
         val project = if (isForge || instance.gameVersion == "1.20.1") "forge" else "neoforge"
         val version =
-            if (isForge) "${instance.gameVersion}-${instance.loaderVersion}"
-            else instance.loaderVersion
+            if (isForge) {
+                "${instance.gameVersion}-${instance.loaderVersion}"
+            } else {
+                instance.loaderVersion
+            }
         val host =
-            if (isForge) "https://maven.minecraftforge.net"
-            else "https://maven.neoforged.net/releases"
+            if (isForge) {
+                "https://maven.minecraftforge.net"
+            } else {
+                "https://maven.neoforged.net/releases"
+            }
         val group = if (isForge) "net/minecraftforge" else "net/neoforged"
         val url = "$host/$group/$project/$version/$project-$version-installer.jar"
         val archive =
             store.downloadDirectory.resolve(
-                "loaders/${safeFilename(project)}-${safeFilename(version)}-installer.jar"
+                "loaders/${safeFilename(project)}-${safeFilename(version)}-installer.jar",
             )
-        context.progress(at(.1f), "${InstallPhase.Loader}：下载 ${instance.loader.title} 安装程序…")
-        val installerHash = network.text("$url.sha1").trim().substringBefore(' ').trim()
+        context.progress(at(.1f), "${InstallPhase.LOADER}：下载 ${instance.loader.title} 安装程序…")
+        val installerHash =
+            network
+                .text("$url.sha1")
+                .trim()
+                .substringBefore(' ')
+                .trim()
         require(installerHash.matches(Regex("[a-fA-F0-9]{40}"))) { "加载器安装程序缺少有效校验信息" }
         network.downloadTracked(context, DownloadArtifact(url, archive, installerHash))
         val runtime =
@@ -953,17 +1078,22 @@ class MinecraftInstaller(
                 val profile =
                     zip.getEntry("install_profile.json")?.let {
                         zip.getInputStream(it).reader().use { reader ->
-                            com.google.gson.JsonParser.parseReader(reader).asJsonObject
+                            com.google.gson.JsonParser
+                                .parseReader(reader)
+                                .asJsonObject
                         }
                     } ?: error("加载器安装包缺少 install_profile.json")
                 val versionJson =
-                    if (profile.has("versionInfo")) profile.obj("versionInfo")
-                    else {
+                    if (profile.has("versionInfo")) {
+                        profile.obj("versionInfo")
+                    } else {
                         val jsonEntry =
                             zip.getEntry(profile.string("json", "/version.json").removePrefix("/"))
                                 ?: error("安装包缺少 version.json")
                         zip.getInputStream(jsonEntry).reader().use {
-                            com.google.gson.JsonParser.parseReader(it).asJsonObject
+                            com.google.gson.JsonParser
+                                .parseReader(it)
+                                .asJsonObject
                         }
                     }
                 // 加载器配置只作为合成输入：id/inheritsFrom 由发布阶段按目标实例决定，
@@ -1018,7 +1148,7 @@ class MinecraftInstaller(
                     libraries,
                     store.data.settings.maxConcurrent,
                     context,
-                    "${InstallPhase.Loader}：下载依赖",
+                    "${InstallPhase.LOADER}：下载依赖",
                     at(.2f),
                     at(.5f),
                 )
@@ -1045,8 +1175,11 @@ class MinecraftInstaller(
                                 Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
                             }
                             target.toString()
-                        } else value
+                        } else {
+                            value
+                        }
                 }
+
                 fun expand(value: String): String {
                     var result = value
                     repeat(12) {
@@ -1055,14 +1188,15 @@ class MinecraftInstaller(
                                 variables[match.groupValues[1]] ?: match.value
                             }
                     }
-                    if (result.startsWith('[') && result.endsWith(']'))
+                    if (result.startsWith('[') && result.endsWith(']')) {
                         return safePath(
-                                root.resolve("libraries"),
-                                mavenPath(result.substring(1, result.length - 1)),
-                            )
-                            .toString()
-                    if (result.startsWith('\'') && result.endsWith('\''))
+                            root.resolve("libraries"),
+                            mavenPath(result.substring(1, result.length - 1)),
+                        ).toString()
+                    }
+                    if (result.startsWith('\'') && result.endsWith('\'')) {
                         result = result.substring(1, result.length - 1)
+                    }
                     require(!Regex("\\{[^}]+}").containsMatchIn(result)) { "安装器包含无法解析的变量：$result" }
                     return result
                 }
@@ -1078,7 +1212,7 @@ class MinecraftInstaller(
                     context.checkCancelled()
                     context.progress(
                         at(.5f + index.toFloat() / maxOf(processors.size, 1) * .45f),
-                        "${InstallPhase.Loader}：处理组件 ${index + 1}/${processors.size}",
+                        "${InstallPhase.LOADER}：处理组件 ${index + 1}/${processors.size}",
                     )
                     val outputs =
                         processor.obj("outputs").entrySet().map {
@@ -1086,13 +1220,14 @@ class MinecraftInstaller(
                         }
                     if (
                         outputs.isNotEmpty() &&
-                            outputs.all { (file, hash) ->
-                                Path.of(file).exists() &&
-                                    hash.matches(Regex("[0-9a-fA-F]{40}")) &&
-                                    digest(Path.of(file)).equals(hash, true)
-                            }
-                    )
+                        outputs.all { (file, hash) ->
+                            Path.of(file).exists() &&
+                                hash.matches(Regex("[0-9a-fA-F]{40}")) &&
+                                digest(Path.of(file)).equals(hash, true)
+                        }
+                    ) {
                         continue
+                    }
                     val artifact =
                         safePath(
                             root.resolve("libraries"),
@@ -1103,17 +1238,18 @@ class MinecraftInstaller(
                             it.manifest?.mainAttributes?.getValue("Main-Class")
                         } ?: error("加载器处理器没有主程序")
                     val classpath =
-                        (processor.array("classpath").map {
+                        (
+                            processor.array("classpath").map {
                                 safePath(
-                                        root.resolve("libraries"),
-                                        mavenPath(it.asString),
-                                    )
-                                    .toString()
-                            } + artifact.toString())
-                            .joinToString(store.platform.classpathSeparator)
-                    val trackedOutputs = outputs.map { (file, _) ->
-                        context.trackOutput(Path.of(file))
-                    }
+                                    root.resolve("libraries"),
+                                    mavenPath(it.asString),
+                                ).toString()
+                            } + artifact.toString()
+                        ).joinToString(store.platform.classpathSeparator)
+                    val trackedOutputs =
+                        outputs.map { (file, _) ->
+                            context.trackOutput(Path.of(file))
+                        }
                     try {
                         runJavaProcess(
                             runtime.path,
@@ -1129,21 +1265,23 @@ class MinecraftInstaller(
                     outputs.forEach { (file, hash) ->
                         require(
                             Path.of(file).exists() &&
-                                (!hash.matches(Regex("[0-9a-fA-F]{40}")) ||
-                                    digest(Path.of(file)).equals(hash, true))
+                                (
+                                    !hash.matches(Regex("[0-9a-fA-F]{40}")) ||
+                                        digest(Path.of(file)).equals(hash, true)
+                                ),
                         ) {
                             "加载器处理结果校验失败"
                         }
                     }
                 }
-                context.progress(to, "${InstallPhase.Loader}：${instance.loader.title} 配置已就绪")
+                context.progress(to, "${InstallPhase.LOADER}：${instance.loader.title} 配置已就绪")
                 return versionJson
             }
         } finally {
             val cacheRoot = store.temporaryDirectory.toAbsolutePath().normalize()
             check(
                 temporaryRoot.toAbsolutePath().normalize().parent == cacheRoot &&
-                    temporaryRoot.name.startsWith("forge-")
+                    temporaryRoot.name.startsWith("forge-"),
             )
             if (temporaryRoot.exists() && !Files.isSymbolicLink(temporaryRoot)) {
                 Files.walk(temporaryRoot).use { paths ->
@@ -1159,23 +1297,26 @@ internal suspend fun runJavaProcess(
     arguments: List<String>,
     directory: Path,
     onLine: (String) -> Unit,
-): Unit = coroutineScope {
-    val process =
-        ProcessBuilder(listOf(java) + arguments)
-            .directory(directory.toFile())
-            .redirectErrorStream(true)
-            .start()
-    val output =
-        launch(Dispatchers.IO) {
-            process.inputStream.bufferedReader().useLines { lines -> lines.forEach(onLine) }
+): Unit =
+    coroutineScope {
+        val process =
+            ProcessBuilder(listOf(java) + arguments)
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .start()
+        val output =
+            launch(Dispatchers.IO) {
+                process.inputStream.bufferedReader().useLines { lines -> lines.forEach(onLine) }
+            }
+        try {
+            val code =
+                withTimeout(
+                    20 * 60 * 1000L,
+                ) { runInterruptible(Dispatchers.IO) { process.waitFor() } }
+            output.join()
+            check(code == 0) { "Java 组件处理失败，退出码 $code。详细信息请查看日志" }
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+            output.cancel()
         }
-    try {
-        val code =
-            withTimeout(20 * 60 * 1000L) { runInterruptible(Dispatchers.IO) { process.waitFor() } }
-        output.join()
-        check(code == 0) { "Java 组件处理失败，退出码 $code。详细信息请查看日志" }
-    } finally {
-        if (process.isAlive) process.destroyForcibly()
-        output.cancel()
     }
-}

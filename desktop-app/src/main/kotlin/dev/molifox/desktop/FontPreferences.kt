@@ -5,24 +5,50 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.LauncherSettings
+import dev.molifox.core.importAppearanceFont
+import dev.molifox.core.removeAppearanceFont
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import java.awt.GraphicsEnvironment
-import kotlinx.coroutines.*
 
 @Composable
-fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: AppearanceChange) {
+fun FontPreferences(
+    settings: LauncherSettings,
+    actions: UiActions,
+    apply: AppearanceChange,
+) {
     var families by remember { mutableStateOf<List<String>>(emptyList()) }
     var showPicker by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -89,7 +115,7 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
             MutedText("这是一段界面字体预览。字体缺少的字符会使用系统回退字体。")
         }
     }
-    if (settings.customFonts.isNotEmpty())
+    if (settings.customFonts.isNotEmpty()) {
         // 每个字体一行，行间用 1dp 细线分隔：N 行 → N-1 条，首末不加。
         SettingsSection(
             "已导入字体",
@@ -127,6 +153,7 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
                 }
             }
         }
+    }
     SettingsSection("显示大小", "界面缩放同时调整控件与文字，文字大小只影响字体。", contentGap = 0.dp) {
         PreferenceSlider(
             "界面缩放",
@@ -167,15 +194,17 @@ fun FontPreferences(settings: LauncherSettings, actions: UiActions, apply: Appea
                 Modifier.fillMaxWidth().height(340.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                items(choices.filter { it.second.contains(query, true) }, key = { it.first }) {
-                    (id, title) ->
+                items(
+                    choices.filter { it.second.contains(query, true) },
+                    key = { it.first },
+                ) { (id, title) ->
                     Row(
-                        Modifier.fillMaxWidth()
+                        Modifier
+                            .fillMaxWidth()
                             .clickable {
                                 apply { it.copy(fontChoice = id) }
                                 showPicker = false
-                            }
-                            .padding(12.dp),
+                            }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(settings.fontChoice == id, null)

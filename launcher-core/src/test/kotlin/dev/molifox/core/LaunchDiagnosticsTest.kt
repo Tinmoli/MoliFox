@@ -5,12 +5,18 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.util.zip.ZipFile
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.reader
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class LaunchDiagnosticsTest {
     @TempDir lateinit var temporary: Path
@@ -41,7 +47,11 @@ class LaunchDiagnosticsTest {
         game.resolve("logs").createDirectories()
         game.resolve("logs/latest.log").writeText("access_token=$secret\nplain=$secret")
         session.finish(1)
-        assertEquals("模组依赖或版本不兼容", store.state.value.launchIssue?.title)
+        assertEquals(
+            "模组依赖或版本不兼容",
+            store.state.value.launchIssue
+                ?.title,
+        )
         val destination = temporary.resolve("diagnostics.zip")
         exportDiagnosticBundle(store, destination)
         ZipFile(destination.toFile()).use { zip ->
@@ -71,16 +81,15 @@ class LaunchDiagnosticsTest {
         assertTrue(
             diagnoseGameFailure("Fabric game provider couldn't locate the game!", temporary)
                 .title
-                .contains("启动依赖")
+                .contains("启动依赖"),
         )
         assertEquals("游戏启动失败或异常退出", diagnoseGameFailure("unexplained native exit", temporary).title)
         assertEquals(
             "游戏目录或缓存无法写入",
             diagnoseGameFailure(
-                    "java.io.IOException: the jar file client-intermediary.jar.tmp can't be written",
-                    temporary,
-                )
-                .title,
+                "java.io.IOException: the jar file client-intermediary.jar.tmp can't be written",
+                temporary,
+            ).title,
         )
     }
 }

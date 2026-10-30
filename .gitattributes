@@ -1,5 +1,12 @@
 # Keep source line endings consistent across Windows and Linux checkouts.
 .gitattributes text eol=lf
+.editorconfig text eol=lf
+.gitignore text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sha256 text eol=lf
 *.kt text eol=lf
 *.kts text eol=lf
 *.java text eol=lf

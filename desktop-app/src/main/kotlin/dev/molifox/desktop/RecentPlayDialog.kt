@@ -7,16 +7,39 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.VerticalScrollbar
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -29,7 +52,10 @@ import androidx.compose.ui.window.Dialog
 import dev.molifox.core.EntryKind
 
 @Composable
-internal fun RecentKindSwitch(kind: EntryKind, onChange: (EntryKind) -> Unit) {
+internal fun RecentKindSwitch(
+    kind: EntryKind,
+    onChange: (EntryKind) -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         listOf(EntryKind.World to "存档", EntryKind.Server to "服务器").forEach { (entry, label) ->
             TextButton(
@@ -38,8 +64,11 @@ internal fun RecentKindSwitch(kind: EntryKind, onChange: (EntryKind) -> Unit) {
                 colors =
                     ButtonDefaults.textButtonColors(
                         contentColor =
-                            if (kind == entry) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant
+                            if (kind == entry) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                     ),
             ) {
                 Text(label, fontSize = 12.sp)
@@ -90,14 +119,16 @@ internal fun RecentPlayDialog(
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
     val window = LocalWindowInfo.current.containerDpSize
-    val visible = items.filter {
-        it.kind == kind &&
-            (showHidden || !it.hidden) &&
-            (it.title.contains(search, true) || it.subtitle.contains(search, true))
-    }
+    val visible =
+        items.filter {
+            it.kind == kind &&
+                (showHidden || !it.hidden) &&
+                (it.title.contains(search, true) || it.subtitle.contains(search, true))
+        }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            Modifier.semantics { contentDescription = "完整存档与服务器列表" }
+            Modifier
+                .semantics { contentDescription = "完整存档与服务器列表" }
                 .width(minOf(760.dp, (window.width - 48.dp).coerceAtLeast(420.dp)))
                 .height((window.height * .75f).coerceIn(320.dp, 700.dp)),
             shape = MaterialTheme.shapes.medium,
@@ -120,12 +151,12 @@ internal fun RecentPlayDialog(
                     RecentKindSwitch(kind) { kind = it }
                     Spacer(Modifier.weight(1f))
                     Row(
-                        Modifier.toggleable(
+                        Modifier
+                            .toggleable(
                                 showHidden,
                                 role = Role.Checkbox,
                                 onValueChange = { showHidden = it },
-                            )
-                            .semantics { contentDescription = "显示已隐藏" },
+                            ).semantics { contentDescription = "显示已隐藏" },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(showHidden, null)
@@ -138,7 +169,7 @@ internal fun RecentPlayDialog(
                     Modifier.fillMaxWidth().semantics { contentDescription = "搜索存档或服务器" },
                     "搜索名称或地址",
                 )
-                if (visible.isEmpty())
+                if (visible.isEmpty()) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text(
                             when {
@@ -149,7 +180,7 @@ internal fun RecentPlayDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                else
+                } else {
                     RecentPlayList(
                         visible,
                         busy,
@@ -157,6 +188,7 @@ internal fun RecentPlayDialog(
                         actions,
                         Modifier.weight(1f).fillMaxWidth(),
                     )
+                }
                 Text(
                     "${visible.size} 个条目",
                     fontSize = 11.sp,

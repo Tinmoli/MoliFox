@@ -8,20 +8,69 @@ package dev.molifox.desktop
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.onClick
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.SportsEsports
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Work
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,11 +82,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import kotlinx.coroutines.*
+import dev.molifox.core.InstallRequest
+import dev.molifox.core.LauncherState
+import dev.molifox.core.LoaderType
+import dev.molifox.core.LoaderVersion
+import dev.molifox.core.ReleaseVersion
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 
 /** 下载分类：左侧二级列表的条目定义与顺序。 */
-private data class DownloadKind(val id: String, val title: String, val icon: ImageVector)
+private data class DownloadKind(
+    val id: String,
+    val title: String,
+    val icon: ImageVector,
+)
 
 private val downloadKinds =
     listOf(
@@ -55,7 +115,6 @@ fun ColumnScope.DownloadCenterPage(
     actions: UiActions,
     kind: String,
     onKindChange: (String) -> Unit,
-    navigate: (Page) -> Unit,
 ) {
     // 分类竖排在左侧，页面不显示“下载中心”标题，节省纵向空间。
     // 右侧内容随分类淡入切换（150ms），避免整块内容硬切。
@@ -73,7 +132,7 @@ fun ColumnScope.DownloadCenterPage(
                 }
                 Spacer(Modifier.height(6.dp))
                 HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f),
                 )
             }
         }
@@ -83,20 +142,21 @@ fun ColumnScope.DownloadCenterPage(
             contentPadding = PaddingValues(8.dp),
         ) {
             Box(Modifier.fillMaxSize()) {
-                if (LocalAnimationsEnabled.current)
+                if (LocalAnimationsEnabled.current) {
                     Crossfade(
                         kind,
                         animationSpec = tween(150),
                         label = "download-kind",
                     ) { current ->
-                        DownloadKindContent(current, state, actions, navigate, onKindChange) {
+                        DownloadKindContent(current, state, actions) {
                             actions.taskQueued()
                         }
                     }
-                else
-                    DownloadKindContent(kind, state, actions, navigate, onKindChange) {
+                } else {
+                    DownloadKindContent(kind, state, actions) {
                         actions.taskQueued()
                     }
+                }
             }
         }
     }
@@ -113,8 +173,11 @@ private fun DownloadKindItem(
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val contentColor by
         animateColorAsState(
-            if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+            if (selected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             tween(150),
             label = "kind-color",
         )
@@ -125,7 +188,8 @@ private fun DownloadKindItem(
             label = "kind-bg",
         )
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .height(Metrics.navItemHeight)
             .clip(shape)
             .background(background)
@@ -154,13 +218,14 @@ private fun DownloadKindContent(
     current: String,
     state: LauncherState,
     actions: UiActions,
-    navigate: (Page) -> Unit,
-    onKindChange: (String) -> Unit,
     onInstalled: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (current == "minecraft") InstallGamePage(state, actions, onInstalled)
-        else ContentBrowser(state, actions, navigate, current, onKindChange)
+        if (current == "minecraft") {
+            InstallGamePage(state, actions, onInstalled)
+        } else {
+            ContentBrowser(state, actions, current)
+        }
     }
 }
 
@@ -189,8 +254,9 @@ private fun ColumnScope.InstallGamePage(
         try {
             versions =
                 withContext(Dispatchers.IO) { actions.controller.installer.versions(refresh > 0) }
-            if (selected.isBlank())
+            if (selected.isBlank()) {
                 selected = versions.firstOrNull { it.type == "release" }?.id.orEmpty()
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -282,22 +348,23 @@ private fun ColumnScope.InstallGamePage(
             )
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("release" to "正式版", "snapshot" to "快照", "all" to "全部").forEach { (id, title)
-                    ->
-                    FilterChip(
-                        channel == id,
-                        { channel = id },
-                        { Text(title, fontSize = 11.sp) },
-                        modifier = Modifier.height(28.dp),
-                    )
-                }
+                listOf("release" to "正式版", "snapshot" to "快照", "all" to "全部")
+                    .forEach { (id, title) ->
+                        FilterChip(
+                            channel == id,
+                            { channel = id },
+                            { Text(title, fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp),
+                        )
+                    }
             }
             Spacer(Modifier.height(6.dp))
-            val filtered = versions.filter {
-                it.type in listOf("release", "snapshot") &&
-                    (channel == "all" || it.type == channel) &&
-                    it.id.contains(query, true)
-            }
+            val filtered =
+                versions.filter {
+                    it.type in listOf("release", "snapshot") &&
+                        (channel == "all" || it.type == channel) &&
+                        it.id.contains(query, true)
+                }
             when {
                 loading ->
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -342,7 +409,8 @@ private fun ColumnScope.InstallGamePage(
                                     label = "version-bg",
                                 )
                             Row(
-                                Modifier.fillMaxWidth()
+                                Modifier
+                                    .fillMaxWidth()
                                     .animateItem()
                                     .height(40.dp)
                                     .clip(rowShape)
@@ -362,15 +430,21 @@ private fun ColumnScope.InstallGamePage(
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium,
                                         color =
-                                            if (active) MaterialTheme.colorScheme.onPrimaryContainer
-                                            else MaterialTheme.colorScheme.onSurface,
+                                            if (active) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
                                     )
                                     Text(
                                         version.releaseTime.take(10),
                                         fontSize = 11.sp,
                                         color =
-                                            if (active) MaterialTheme.colorScheme.onPrimaryContainer
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            if (active) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
                                     )
                                 }
                                 if (active) {
@@ -403,7 +477,7 @@ private fun ColumnScope.InstallGamePage(
                         {
                             actions.run {
                                 actions.controller.platform.openUrl(
-                                    "https://www.minecraft.net/zh-hans/updates"
+                                    "https://www.minecraft.net/zh-hans/updates",
                                 )
                             }
                         },
@@ -428,18 +502,17 @@ private fun ColumnScope.InstallGamePage(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     listOf(
-                            listOf(LoaderType.Vanilla, LoaderType.Fabric, LoaderType.Quilt),
-                            listOf(LoaderType.Forge, LoaderType.NeoForge),
-                        )
-                        .forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                row.forEach { item ->
-                                    LoaderChoice(item, loader == item, Modifier.weight(1f)) {
-                                        loader = item
-                                    }
+                        listOf(LoaderType.Vanilla, LoaderType.Fabric, LoaderType.Quilt),
+                        listOf(LoaderType.Forge, LoaderType.NeoForge),
+                    ).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            row.forEach { item ->
+                                LoaderChoice(item, loader == item, Modifier.weight(1f)) {
+                                    loader = item
                                 }
                             }
                         }
+                    }
                 }
                 when {
                     loaderLoading -> LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -508,14 +581,21 @@ private fun ColumnScope.InstallGamePage(
                 blocked ?: "安装完成后即可从「开始」启动",
                 fontSize = 11.sp,
                 color =
-                    if (blocked != null) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (blocked != null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
             )
         }
         Text(
             "安装到：" +
-                (state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }?.path
-                    ?: state.data.settings.gameRoot),
+                (
+                    state.data.gameDirectories
+                        .find { it.id == state.data.activeGameDirectoryId }
+                        ?.path
+                        ?: state.data.settings.gameRoot
+                ),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -541,7 +621,7 @@ private fun ColumnScope.InstallGamePage(
                         selected,
                         loader,
                         loaderVersion,
-                    )
+                    ),
                 )
                 withContext(Dispatchers.Main) { onInstalled() }
             }
@@ -603,16 +683,22 @@ private fun LoaderChoice(
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color =
-                if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
+                if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
             maxLines = 1,
         )
         Text(
             if (selected) "已选择" else "点选切换",
             fontSize = 10.sp,
             color =
-                if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             maxLines = 1,
         )
     }
@@ -668,7 +754,7 @@ internal fun CompactSearchField(
             interactionSource = interaction,
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
-                    if (value.isEmpty())
+                    if (value.isEmpty()) {
                         Text(
                             placeholder,
                             fontSize = 12.sp,
@@ -676,13 +762,15 @@ internal fun CompactSearchField(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
                     inner()
                 }
             },
         )
-        if (value.isNotEmpty())
+        if (value.isNotEmpty()) {
             IconButton({ onValueChange("") }, Modifier.size(20.dp)) {
                 Icon(Icons.Outlined.Close, "清除搜索", Modifier.size(13.dp), colors.onSurfaceVariant)
             }
+        }
     }
 }

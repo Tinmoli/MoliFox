@@ -5,6 +5,13 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import java.io.IOException
 import java.net.URI
 import java.nio.file.Path
@@ -12,7 +19,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.fileSize
-import kotlinx.coroutines.*
 
 /** 默认同时下载的文件数；官方源用满，镜像源另受 [DownloadThrottle] 限制。 */
 internal const val DEFAULT_FILE_CONCURRENCY = 8
@@ -26,22 +32,22 @@ internal data class FileFailure(
 ) {
     fun describe(): String =
         buildList {
-                add(target.toString())
-                add(if (host.isBlank()) "来源未知" else "来源 $host")
-                add(status?.let { "HTTP $it" } ?: reason)
-            }
-            .filter { it.isNotBlank() }
+            add(target.toString())
+            add(if (host.isBlank()) "来源未知" else "来源 $host")
+            add(status?.let { "HTTP $it" } ?: reason)
+        }.filter { it.isNotBlank() }
             .joinToString(" · ")
 }
 
 /** 一批文件下载结束后一次性报告的失败列表，不因第一个 404 丢掉其余结果。 */
-internal class DownloadBatchException(val failures: List<FileFailure>) :
-    IOException(
+internal class DownloadBatchException(
+    val failures: List<FileFailure>,
+) : IOException(
         buildString {
             append("以下 ${failures.size} 个文件下载失败：")
             failures.take(12).forEach { append('\n').append(it.describe()) }
             if (failures.size > 12) append("\n…另有 ${failures.size - 12} 个文件失败")
-        }
+        },
     )
 
 /**
@@ -52,57 +58,63 @@ internal class DownloadBatchException(val failures: List<FileFailure>) :
  * 逐文件失败只收集不抛出，由调用方按「必需 / 可选」决定是否中断；这样一批 5000
  * 个资源里少数 404 不会让其余文件白等。
  */
-internal class DownloadScheduler(private val network: NetworkClient) {
+internal class DownloadScheduler(
+    private val network: NetworkClient,
+) {
     suspend fun run(
         artifacts: List<DownloadArtifact>,
         context: JobContext,
         concurrency: Int = DEFAULT_FILE_CONCURRENCY,
         sink: DownloadProgressSink = DownloadProgressSink.None,
-    ): List<FileFailure> = coroutineScope {
-        val unique = artifacts.distinctBy { it.target }
-        if (unique.isEmpty()) return@coroutineScope emptyList()
-        sink.planned(unique.size, unique.sumOf { if (it.size > 0) it.size else 0L })
-        val limit = concurrency.coerceIn(1, MAX_FILE_CONCURRENCY)
-        val next = AtomicInteger()
-        val failures = ConcurrentLinkedQueue<FileFailure>()
-        val workers =
-            (0 until minOf(limit, unique.size)).map {
-                launch(Dispatchers.IO) {
-                    while (coroutineContext.isActive) {
-                        context.checkCancelled()
-                        val index = next.getAndIncrement()
-                        if (index >= unique.size) break
-                        val artifact = unique[index]
-                        val key = artifact.target.toString()
-                        sink.started(key, artifact)
-                        try {
-                            network.download(artifact) { done, total ->
-                                sink.bytes(key, done, total)
+    ): List<FileFailure> =
+        coroutineScope {
+            val unique = artifacts.distinctBy { it.target }
+            if (unique.isEmpty()) return@coroutineScope emptyList()
+            sink.planned(unique.size, unique.sumOf { if (it.size > 0) it.size else 0L })
+            val limit = concurrency.coerceIn(1, MAX_FILE_CONCURRENCY)
+            val next = AtomicInteger()
+            val failures = ConcurrentLinkedQueue<FileFailure>()
+            val workers =
+                (0 until minOf(limit, unique.size)).map {
+                    launch(Dispatchers.IO) {
+                        while (coroutineContext.isActive) {
+                            context.checkCancelled()
+                            val index = next.getAndIncrement()
+                            if (index >= unique.size) break
+                            val artifact = unique[index]
+                            val key = artifact.target.toString()
+                            sink.started(key, artifact)
+                            try {
+                                network.download(artifact) { done, total ->
+                                    sink.bytes(key, done, total)
+                                }
+                                sink.finished(key, artifact)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                failures += failureOf(artifact, error)
+                                sink.failed(key, artifact)
                             }
-                            sink.finished(key, artifact)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: Exception) {
-                            failures += failureOf(artifact, error)
-                            sink.failed(key, artifact)
                         }
                     }
                 }
-            }
-        try {
-            workers.joinAll()
-        } finally {
-            if (!coroutineContext.isActive) {
-                // 取消后不再派发；本批可能还有半截缓存，逐个清掉，别把 .part 留给用户。
-                unique.forEach { artifact ->
-                    runCatching { network.discardPartial(artifact.target) }
+            try {
+                workers.joinAll()
+            } finally {
+                if (!coroutineContext.isActive) {
+                    // 取消后不再派发；本批可能还有半截缓存，逐个清掉，别把 .part 留给用户。
+                    unique.forEach { artifact ->
+                        runCatching { network.discardPartial(artifact.target) }
+                    }
                 }
             }
+            failures.toList()
         }
-        failures.toList()
-    }
 
-    private fun failureOf(artifact: DownloadArtifact, error: Throwable): FileFailure {
+    private fun failureOf(
+        artifact: DownloadArtifact,
+        error: Throwable,
+    ): FileFailure {
         val http =
             generateSequence<Throwable>(error) { it.cause }
                 .take(16)
@@ -133,21 +145,35 @@ internal class BatchRangeProgress(
     private val to: Float,
 ) : DownloadProgressSink {
     private val finished = AtomicInteger()
+
     @Volatile private var total = 1
 
-    override fun planned(files: Int, bytes: Long) {
+    override fun planned(
+        files: Int,
+        bytes: Long,
+    ) {
         total = maxOf(files, 1)
         context.beginTransfers(files)
     }
 
-    override fun bytes(key: String, done: Long, total: Long) {
+    override fun bytes(
+        key: String,
+        done: Long,
+        total: Long,
+    ) {
         context.transfer(key, done, total)
     }
 
-    override fun finished(key: String, artifact: DownloadArtifact) {
+    override fun finished(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {
         val size =
-            if (artifact.size > 0) artifact.size
-            else runCatching { artifact.target.fileSize() }.getOrDefault(0L)
+            if (artifact.size > 0) {
+                artifact.size
+            } else {
+                runCatching { artifact.target.fileSize() }.getOrDefault(0L)
+            }
         context.transfer(key, size, size, completed = true)
         val count = finished.incrementAndGet()
         context.progress(from + (to - from) * count / total, "$label $count/$total")

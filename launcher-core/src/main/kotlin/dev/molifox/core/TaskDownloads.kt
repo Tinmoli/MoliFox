@@ -13,11 +13,15 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-internal class TaskDownloadContext(val task: JobContext) : AbstractCoroutineContextElement(Key) {
+internal class TaskDownloadContext(
+    val task: JobContext,
+) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<TaskDownloadContext>
 }
 
-internal class TaskDownloadJournal(val task: JobContext) {
+internal class TaskDownloadJournal(
+    val task: JobContext,
+) {
     private data class OwnedFile(
         val size: Long,
         val modified: java.nio.file.attribute.FileTime,
@@ -33,26 +37,31 @@ internal class TaskDownloadJournal(val task: JobContext) {
 
     fun completed(path: Path) {
         val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-        if (attributes.isRegularFile)
+        if (attributes.isRegularFile) {
             files[path] =
                 OwnedFile(attributes.size(), attributes.lastModifiedTime(), attributes.fileKey())
+        }
     }
 
     suspend fun clean(withLock: suspend (Path, suspend () -> Unit) -> Unit) {
         for ((path, owned) in files) {
             withLock(path) {
                 if (path !in borrowed && task.canRemoveDownload(path)) {
-                    val current = runCatching {
-                        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-                    }
-                        .getOrNull()
+                    val current =
+                        runCatching {
+                            Files.readAttributes(
+                                path,
+                                BasicFileAttributes::class.java,
+                                NOFOLLOW_LINKS,
+                            )
+                        }.getOrNull()
                     if (
                         current != null &&
-                            current.isRegularFile &&
-                            path.toRealPath() == path.toAbsolutePath().normalize() &&
-                            current.size() == owned.size &&
-                            current.lastModifiedTime() == owned.modified &&
-                            current.fileKey() == owned.key
+                        current.isRegularFile &&
+                        path.toRealPath() == path.toAbsolutePath().normalize() &&
+                        current.size() == owned.size &&
+                        current.lastModifiedTime() == owned.modified &&
+                        current.fileKey() == owned.key
                     ) {
                         Files.deleteIfExists(path)
                     }

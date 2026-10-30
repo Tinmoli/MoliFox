@@ -13,7 +13,14 @@ import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.absolute
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.writeText
 
 /** 每个实例一份的文件归属账本；以 .molifox- 开头，packPath 已禁止整合包覆盖该前缀。 */
 internal const val PACK_OWNERSHIP_FILE = ".molifox-pack-ownership.json"
@@ -58,7 +65,10 @@ private val packSha1Pattern = Regex("[a-fA-F0-9]{40}")
 internal object PackOwnershipStore {
     const val FORMAT_VERSION = 1
 
-    fun write(root: Path, ownership: PackOwnership) {
+    fun write(
+        root: Path,
+        ownership: PackOwnership,
+    ) {
         require(ownership.formatVersion == FORMAT_VERSION) { "文件归属账本版本无效" }
         ownership.files.forEach { require(it.path.isNotBlank()) { "文件归属账本包含空路径" } }
         root.createDirectories()
@@ -81,7 +91,10 @@ internal object PackOwnershipStore {
         }
     }
 
-    fun read(root: Path, store: LauncherStore? = null): PackOwnership? {
+    fun read(
+        root: Path,
+        store: LauncherStore? = null,
+    ): PackOwnership? {
         val file =
             try {
                 safePath(root, PACK_OWNERSHIP_FILE)
@@ -145,7 +158,10 @@ internal object PackOwnershipStore {
         root: Path,
     ): PackOwnership {
         val entries = linkedMapOf<String, PackOwnedFile>()
-        for (file in manifest.index?.array("files")?.map { it.asJsonObject }.orEmpty()) {
+        for (file in manifest.index
+            ?.array("files")
+            ?.map { it.asJsonObject }
+            .orEmpty()) {
             val client = file.obj("env").string("client", "required")
             if (client == "unsupported") continue
             val optional = client == "optional"
@@ -225,7 +241,10 @@ internal object PackOwnershipStore {
 }
 
 /** 把清单里的相对路径规范化到 root 之下，同时拒绝越界、符号链接和 .molifox- 前缀。 */
-private fun ownedPath(root: Path, path: String): String {
+private fun ownedPath(
+    root: Path,
+    path: String,
+): String {
     val absolute = root.toAbsolutePath().normalize()
     val target = packPath(root, path).toAbsolutePath().normalize()
     return absolute.relativize(target).joinToString("/")

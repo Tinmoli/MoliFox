@@ -41,7 +41,13 @@ class SourceHealth(
     @Synchronized
     fun recordSuccess(key: String) {
         val current = state(key)
-        states[key] = current.copy(successes = current.successes + 1, consecutiveFailures = 0, rateLimitStep = 0, rateLimitedUntil = 0L)
+        states[key] =
+            current.copy(
+                successes = current.successes + 1,
+                consecutiveFailures = 0,
+                rateLimitStep = 0,
+                rateLimitedUntil = 0L,
+            )
     }
 
     /** 记录一次真实失败；返回是否刚好在这次触发禁用（调用方只记一次日志）。 */

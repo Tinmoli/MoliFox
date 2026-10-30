@@ -5,15 +5,21 @@
 
 package dev.molifox.core
 
-import java.io.IOException
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.IOException
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.notExists
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * 回归：piston-data 只服务版本 JSON 明确列出的文件；依赖库必须按 Maven 坐标解析，
@@ -22,8 +28,10 @@ import org.junit.jupiter.api.io.TempDir
 class MissingDownloadResolutionTest {
     @TempDir lateinit var temporary: Path
 
-    private fun library(name: String, extra: Map<String, Any> = emptyMap()): Map<String, Any> =
-        mapOf("name" to name) + extra
+    private fun library(
+        name: String,
+        extra: Map<String, Any> = emptyMap(),
+    ): Map<String, Any> = mapOf("name" to name) + extra
 
     @Test
     fun `version json without downloads resolves libraries through maven and never piston-data`() {
@@ -46,9 +54,9 @@ class MissingDownloadResolutionTest {
                                         "artifact" to
                                             mapOf(
                                                 "path" to
-                                                    "org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar"
-                                            )
-                                    )
+                                                    "org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar",
+                                            ),
+                                    ),
                             ),
                         ),
                         // 错误地指向对象存储的库地址：改回该库声明的 Maven 仓库，不能请求 piston-data。
@@ -62,8 +70,8 @@ class MissingDownloadResolutionTest {
                                                 "url" to
                                                     "https://piston-data.mojang.com/v1/objects/deadbeef/mapped-1.0.jar",
                                                 "path" to "com/example/mapped/1.0/mapped-1.0.jar",
-                                            )
-                                    )
+                                            ),
+                                    ),
                             ),
                         ),
                         // 加载器库只声明了自己的 Maven 仓库。
@@ -97,7 +105,10 @@ class MissingDownloadResolutionTest {
                 "mapped-1.0.jar",
                 "fabric-loader-0.20.1.jar",
             ),
-            artifacts.map { it.first.target.fileName.toString() },
+            artifacts.map {
+                it.first.target.fileName
+                    .toString()
+            },
         )
         artifacts.forEach { assertTrue(it.first.target.startsWith(root.resolve("libraries"))) }
     }
@@ -139,11 +150,11 @@ class MissingDownloadResolutionTest {
                                                 "type" to "release",
                                                 "url" to versionUrl.toString(),
                                                 "releaseTime" to "2026-09-15T11:23:02+00:00",
-                                            )
+                                            ),
                                         ),
-                                )
-                            )
-                        )
+                                ),
+                            ),
+                        ),
                 )
                 server.enqueue(
                     MockResponse()
@@ -159,11 +170,11 @@ class MissingDownloadResolutionTest {
                                                         "https://cdn.example.invalid/real-26.3-client.jar",
                                                     "sha1" to "a".repeat(40),
                                                     "size" to 123L,
-                                                )
+                                                ),
                                         ),
-                                )
-                            )
-                        )
+                                ),
+                            ),
+                        ),
                 )
                 NetworkClient(source = { "official" }).use { network ->
                     val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
@@ -206,10 +217,13 @@ class MissingDownloadResolutionTest {
                     verifier.ensure(
                         listOf(DownloadArtifact("https://cdn.example.invalid/kept.jar", required)),
                         context,
-                        InstallPhase.Libraries,
+                        InstallPhase.LIBRARIES,
                         optional =
                             listOf(
-                                DownloadArtifact(server.loopbackUrl("/client-1.21.2.xml").toString(), optional)
+                                DownloadArtifact(
+                                    server.loopbackUrl("/client-1.21.2.xml").toString(),
+                                    optional,
+                                ),
                             ),
                         warn = { warnings += it },
                     )
@@ -226,10 +240,10 @@ class MissingDownloadResolutionTest {
                                     DownloadArtifact(
                                         server.loopbackUrl("/missing-required.jar").toString(),
                                         temporary.resolve("libraries/missing.jar"),
-                                    )
+                                    ),
                                 ),
                                 context,
-                                InstallPhase.Libraries,
+                                InstallPhase.LIBRARIES,
                             )
                         }
                     assertTrue("游戏文件自动补全失败" in (failure.message ?: ""))

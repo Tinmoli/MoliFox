@@ -6,6 +6,23 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -18,13 +35,19 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import javax.tools.ToolProvider
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.*
-import okio.Buffer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PackFormatTest {
     @TempDir lateinit var temporary: Path
@@ -32,42 +55,49 @@ class PackFormatTest {
     private fun hash(bytes: ByteArray) =
         MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun addon(path: String = "config/test.txt", content: String = "setting") =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "type" to "addon",
-                    "path" to path,
-                    "hash" to hash(content.toByteArray()),
-                    "force" to true,
-                )
-            )
-            .asJsonObject
+    private fun addon(
+        path: String = "config/test.txt",
+        content: String = "setting",
+    ) = gson
+        .toJsonTree(
+            mapOf(
+                "type" to "addon",
+                "path" to path,
+                "hash" to hash(content.toByteArray()),
+                "force" to true,
+            ),
+        ).asJsonObject
 
-    private fun mcbbs(loader: String = "", loaderVersion: String = "") =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "manifestType" to "minecraftModpack",
-                    "manifestVersion" to 2,
-                    "name" to "茉狐测试包",
-                    "version" to "1.0",
-                    "description" to "test description",
-                    "addons" to
-                        (listOf(mapOf("id" to "game", "version" to "1.20.1")) +
-                            if (loader.isBlank()) emptyList()
-                            else listOf(mapOf("id" to loader, "version" to loaderVersion))),
-                    "files" to listOf(addon()),
-                    "libraries" to emptyList<String>(),
-                    "launchInfo" to
-                        mapOf(
-                            "javaArgument" to emptyList<String>(),
-                            "launchArgument" to emptyList<String>(),
-                            "minMemory" to 2048,
-                        ),
-                )
-            )
-            .asJsonObject
+    private fun mcbbs(
+        loader: String = "",
+        loaderVersion: String = "",
+    ) = gson
+        .toJsonTree(
+            mapOf(
+                "manifestType" to "minecraftModpack",
+                "manifestVersion" to 2,
+                "name" to "茉狐测试包",
+                "version" to "1.0",
+                "description" to "test description",
+                "addons" to
+                    (
+                        listOf(mapOf("id" to "game", "version" to "1.20.1")) +
+                            if (loader.isBlank()) {
+                                emptyList()
+                            } else {
+                                listOf(mapOf("id" to loader, "version" to loaderVersion))
+                            }
+                    ),
+                "files" to listOf(addon()),
+                "libraries" to emptyList<String>(),
+                "launchInfo" to
+                    mapOf(
+                        "javaArgument" to emptyList<String>(),
+                        "launchArgument" to emptyList<String>(),
+                        "minMemory" to 2048,
+                    ),
+            ),
+        ).asJsonObject
 
     /** 旧版纯归档的清单：只有名字、游戏版本和包版本。 */
     private fun legacyManifest() =
@@ -75,25 +105,31 @@ class PackFormatTest {
             .toJsonTree(mapOf("name" to "Old pack", "gameVersion" to "1.20.1", "version" to "1.0"))
             .asJsonObject
 
-    private fun companion(version: String = "1.20.1", loader: String = "") =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "manifestType" to "minecraftModpack",
-                    "manifestVersion" to 1,
-                    "name" to "Companion",
-                    "overrides" to "overrides",
-                    "minecraft" to
-                        mapOf<String, Any>(
-                            "version" to version,
-                            "modLoaders" to
-                                (if (loader.isBlank()) emptyList<Map<String, Any>>()
-                                else listOf(mapOf<String, Any>("id" to loader, "primary" to true))),
-                        ),
-                    "files" to emptyList<String>(),
-                )
-            )
-            .asJsonObject
+    private fun companion(
+        version: String = "1.20.1",
+        loader: String = "",
+    ) = gson
+        .toJsonTree(
+            mapOf(
+                "manifestType" to "minecraftModpack",
+                "manifestVersion" to 1,
+                "name" to "Companion",
+                "overrides" to "overrides",
+                "minecraft" to
+                    mapOf<String, Any>(
+                        "version" to version,
+                        "modLoaders" to
+                            (
+                                if (loader.isBlank()) {
+                                    emptyList<Map<String, Any>>()
+                                } else {
+                                    listOf(mapOf<String, Any>("id" to loader, "primary" to true))
+                                }
+                            ),
+                    ),
+                "files" to emptyList<String>(),
+            ),
+        ).asJsonObject
 
     private fun zipBytes(entries: Map<String, String>): ByteArray =
         ByteArrayOutputStream().use { output ->
@@ -120,8 +156,8 @@ class PackFormatTest {
                 zipBytes(
                     mapOf("$prefix$filename" to gson.toJson(info)) +
                         files.mapKeys { "$prefix$content${it.key}" } +
-                        extra
-                )
+                        extra,
+                ),
             )
         }
 
@@ -137,49 +173,63 @@ class PackFormatTest {
             temporary.resolve("profile"),
         )
 
-    private fun service(store: LauncherStore, network: NetworkClient) =
-        ContentService(
-            store,
-            network,
-            MinecraftInstaller(store, network, JavaService(store, network)),
-        )
+    private fun service(
+        store: LauncherStore,
+        network: NetworkClient,
+    ) = ContentService(
+        store,
+        network,
+        MinecraftInstaller(store, network, JavaService(store, network)),
+    )
 
-    private fun parsed(source: Path, action: (PackManifest) -> Unit) =
-        ZipFile(source.toFile()).use {
-            action(readPackManifest(it, temporary.resolve("validation"), "windows"))
-        }
-
-    @Test
-    fun `MCBBS preview supports canonical alternate and wrapped manifests offline`() = runBlocking {
-        val store = store()
-        NetworkClient().use { network ->
-            val service = service(store, network)
-            for (filename in listOf("mcbbs.packmeta", "manifest.json")) for (prefix in
-                listOf("", "Pack/")) {
-                val preview = service.previewPack(pack(filename = filename, prefix = prefix))
-                assertEquals("茉狐测试包", preview.title)
-                assertEquals("1.20.1", preview.gameVersion)
-                assertEquals("1.0", preview.version)
-                assertEquals(1, preview.requiredFiles)
-                assertTrue(preview.summary.contains("test description"))
-                assertTrue(preview.summary.contains("2048 MB"))
-            }
-            val oldVersion = mcbbs().apply { addProperty("manifestVersion", 1) }
-            assertEquals("1.20.1", service.previewPack(pack(oldVersion)).gameVersion)
-            assertTrue(store.data.instances.isEmpty())
-            assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
-        }
+    private fun parsed(
+        source: Path,
+        action: (PackManifest) -> Unit,
+    ) = ZipFile(source.toFile()).use {
+        action(readPackManifest(it, temporary.resolve("validation"), "windows"))
     }
 
     @Test
+    fun `MCBBS preview supports canonical alternate and wrapped manifests offline`() =
+        runBlocking {
+            val store = store()
+            NetworkClient().use { network ->
+                val service = service(store, network)
+                for (filename in listOf("mcbbs.packmeta", "manifest.json")) {
+                    for (
+                    prefix in
+                    listOf("", "Pack/")
+                    ) {
+                        val preview =
+                            service.previewPack(
+                                pack(filename = filename, prefix = prefix),
+                            )
+                        assertEquals("茉狐测试包", preview.title)
+                        assertEquals("1.20.1", preview.gameVersion)
+                        assertEquals("1.0", preview.version)
+                        assertEquals(1, preview.requiredFiles)
+                        assertTrue(preview.summary.contains("test description"))
+                        assertTrue(preview.summary.contains("2048 MB"))
+                    }
+                }
+                val oldVersion = mcbbs().apply { addProperty("manifestVersion", 1) }
+                assertEquals("1.20.1", service.previewPack(pack(oldVersion)).gameVersion)
+                assertTrue(store.data.instances.isEmpty())
+                assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
+            }
+        }
+
+    @Test
     fun `canonical MCBBS has priority over compatible CurseForge companion`() {
-        for ((id, type) in
-            mapOf(
-                "fabric" to LoaderType.Fabric,
-                "quilt" to LoaderType.Quilt,
-                "forge" to LoaderType.Forge,
-                "neoforge" to LoaderType.NeoForge,
-            )) {
+        for (
+        (id, type) in
+        mapOf(
+            "fabric" to LoaderType.Fabric,
+            "quilt" to LoaderType.Quilt,
+            "forge" to LoaderType.Forge,
+            "neoforge" to LoaderType.NeoForge,
+        )
+        ) {
             val other = companion(loader = if (id == "quilt") "" else "$id-1.2.3")
             parsed(pack(mcbbs(id, "1.2.3"), extra = mapOf("manifest.json" to gson.toJson(other)))) {
                 assertEquals(type, it.request.loader)
@@ -194,7 +244,10 @@ class PackFormatTest {
         for (other in listOf(companion("1.21"), companion(loader = "forge-2"))) {
             assertFails {
                 parsed(
-                    pack(mcbbs("fabric", "1"), extra = mapOf("manifest.json" to gson.toJson(other)))
+                    pack(
+                        mcbbs("fabric", "1"),
+                        extra = mapOf("manifest.json" to gson.toJson(other)),
+                    ),
                 ) {}
             }
         }
@@ -204,17 +257,19 @@ class PackFormatTest {
                 pack(
                     mcbbs("fabric", "1"),
                     extra = mapOf("manifest.json" to gson.toJson(otherMcbbs)),
-                )
+                ),
             ) {}
         }
     }
 
     @Test
-    fun `addon hashes are checked before creating instances`() = runBlocking {
-        val store = store()
-        NetworkClient().use { network ->
-            val service = service(store, network)
-            for (info in
+    fun `addon hashes are checked before creating instances`() =
+        runBlocking {
+            val store = store()
+            NetworkClient().use { network ->
+                val service = service(store, network)
+                for (
+                info in
                 listOf(
                     mcbbs().apply {
                         array("files").first().asJsonObject.addProperty("hash", "invalid")
@@ -222,28 +277,33 @@ class PackFormatTest {
                     mcbbs().apply {
                         array("files").first().asJsonObject.addProperty("hash", "0".repeat(40))
                     },
-                )) {
-                val source = pack(info)
-                assertFails { service.previewPack(source) }
-                assertFails { service.importPack(source, JobContext(store, "test")) }
+                )
+                ) {
+                    val source = pack(info)
+                    assertFails { service.previewPack(source) }
+                    assertFails { service.importPack(source, JobContext(store, "test")) }
+                }
+                assertTrue(store.data.instances.isEmpty())
+                assertFalse(store.dataDirectory.resolve("packs").exists())
             }
-            assertTrue(store.data.instances.isEmpty())
-            assertFalse(store.dataDirectory.resolve("packs").exists())
         }
-    }
 
     @Test
     fun `missing addon requires an allowed download source and a valid hash`() {
         val files = mapOf("config/other.txt" to "present")
         assertTrue(
-            assertFails { parsed(pack(files = files)) {} }.message!!.contains("config/test.txt")
+            checkNotNull(
+                assertFails { parsed(pack(files = files)) {} }.message,
+            ).contains("config/test.txt"),
         )
-        for (url in
-            listOf(
-                "http://example.com",
-                "https://example.com",
-                "https://raw.githubusercontent.com/a?token=secret",
-            )) {
+        for (
+        url in
+        listOf(
+            "http://example.com",
+            "https://example.com",
+            "https://raw.githubusercontent.com/a?token=secret",
+        )
+        ) {
             assertFails {
                 parsed(pack(mcbbs().apply { addProperty("fileApi", url) }, files = files)) {}
             }
@@ -254,7 +314,7 @@ class PackFormatTest {
                     addProperty("fileApi", "https://raw.githubusercontent.com/team/pack/main")
                 },
                 files = files,
-            )
+            ),
         ) {
             assertEquals(
                 "https://raw.githubusercontent.com/team/pack/main/overrides/config/test.txt",
@@ -264,48 +324,50 @@ class PackFormatTest {
     }
 
     @Test
-    fun `remote addons stage transactionally and verify sha1`() = runBlocking {
-        val store = store()
-        val root = temporary.resolve("remote-game").apply { createDirectories() }
-        val source =
-            pack(
-                mcbbs().apply {
-                    addProperty("fileApi", "https://raw.githubusercontent.com/team/pack/main")
-                },
-                files = mapOf("config/other.txt" to "present"),
-            )
-        for (corrupt in listOf(true, false)) {
-            val transaction = PackFileTransaction(store, root)
-            try {
-                ZipFile(source.toFile()).use { zip ->
-                    val manifest = readPackManifest(zip, root, "windows")
-                    suspend fun stage() =
-                        stagePackFiles(
-                            manifest,
-                            zip,
-                            transaction,
-                            root,
-                            null,
-                            false,
-                            JobContext(store, "test"),
-                        ) {
-                            it.target.parent.createDirectories()
-                            it.target.writeText(if (corrupt) "wrong" else "setting")
+    fun `remote addons stage transactionally and verify sha1`() =
+        runBlocking {
+            val store = store()
+            val root = temporary.resolve("remote-game").apply { createDirectories() }
+            val source =
+                pack(
+                    mcbbs().apply {
+                        addProperty("fileApi", "https://raw.githubusercontent.com/team/pack/main")
+                    },
+                    files = mapOf("config/other.txt" to "present"),
+                )
+            for (corrupt in listOf(true, false)) {
+                val transaction = PackFileTransaction(store, root)
+                try {
+                    ZipFile(source.toFile()).use { zip ->
+                        val manifest = readPackManifest(zip, root, "windows")
+
+                        suspend fun stage() =
+                            stagePackFiles(
+                                manifest,
+                                zip,
+                                transaction,
+                                root,
+                                null,
+                                false,
+                                JobContext(store, "test"),
+                            ) {
+                                it.target.parent.createDirectories()
+                                it.target.writeText(if (corrupt) "wrong" else "setting")
+                            }
+                        if (corrupt) {
+                            assertFails { stage() }
+                            assertFalse(root.resolve("config/test.txt").exists())
+                        } else {
+                            stage()
+                            transaction.commit(JobContext(store, "test"))
+                            assertEquals("setting", root.resolve("config/test.txt").readText())
                         }
-                    if (corrupt) {
-                        assertFails { stage() }
-                        assertFalse(root.resolve("config/test.txt").exists())
-                    } else {
-                        stage()
-                        transaction.commit(JobContext(store, "test"))
-                        assertEquals("setting", root.resolve("config/test.txt").readText())
                     }
+                } finally {
+                    transaction.cleanup()
                 }
-            } finally {
-                transaction.cleanup()
             }
         }
-    }
 
     @Test
     fun `unsafe duplicate and conflicting paths are rejected before extraction`() {
@@ -323,14 +385,25 @@ class PackFormatTest {
                 },
             )
         for (info in metadata) assertFails { parsed(pack(info)) {} }
-        for (files in
-            listOf(
-                mapOf("config/test.txt" to "setting", "config" to "file"),
-                mapOf("config/test.txt" to "setting", "config/Test.txt" to "other"),
-                mapOf("../escape" to "bad"),
-            )) assertFails { parsed(pack(files = files)) {} }
+        for (
+        files in
+        listOf(
+            mapOf("config/test.txt" to "setting", "config" to "file"),
+            mapOf("config/test.txt" to "setting", "config/Test.txt" to "other"),
+            mapOf("../escape" to "bad"),
+        )
+        ) {
+            assertFails { parsed(pack(files = files)) {} }
+        }
         assertFails { parsed(pack(prefix = "../")) {} }
-        assertFails { parsed(pack(extra = mapOf("Other/modpack.json" to gson.toJson(legacyManifest())))) {} }
+        assertFails {
+            parsed(
+                pack(
+                    extra =
+                        mapOf("Other/modpack.json" to gson.toJson(legacyManifest())),
+                ),
+            ) {}
+        }
     }
 
     @Test
@@ -365,7 +438,7 @@ class PackFormatTest {
                     mapOf(
                         "overrides/manifest.json" to "not metadata",
                         "overrides/mmc-pack.json" to "not metadata",
-                    )
+                    ),
             )
         parsed(source) { assertEquals(3, it.requiredFiles) }
         val own =
@@ -378,11 +451,11 @@ class PackFormatTest {
                                     mapOf(
                                         "formatVersion" to 1,
                                         "instance" to InstallRequest("Own", "1.20.1"),
-                                    )
+                                    ),
                                 ),
                             "files/modpack.json" to "not metadata",
-                        )
-                    )
+                        ),
+                    ),
                 )
             }
         parsed(own) { assertEquals("Own", it.request.name) }
@@ -397,47 +470,58 @@ class PackFormatTest {
     }
 
     @Test
-    fun `old plain archives support offline preview and game content staging`() = runBlocking {
-        val store = store()
-        for (prefix in listOf("", "Old pack/")) {
-            val source =
-                pack(
-                    legacyManifest(),
-                    "modpack.json",
-                    prefix,
-                    files = mapOf("options.txt" to "options", "saves/world/level.dat" to "world"),
-                )
-            val root = temporary.resolve(UUID.randomUUID().toString()).apply { createDirectories() }
-            val transaction = PackFileTransaction(store, root)
-            try {
-                ZipFile(source.toFile()).use { zip ->
-                    val manifest = readPackManifest(zip, root, "windows")
-                    assertEquals("Old pack", manifest.request.name)
-                    assertEquals(LoaderType.Vanilla, manifest.request.loader)
-                    stagePackFiles(
-                        manifest,
-                        zip,
-                        transaction,
-                        root,
-                        null,
-                        false,
-                        JobContext(store, "test"),
-                    ) {
-                        error("No download expected")
+    fun `old plain archives support offline preview and game content staging`() =
+        runBlocking {
+            val store = store()
+            for (prefix in listOf("", "Old pack/")) {
+                val source =
+                    pack(
+                        legacyManifest(),
+                        "modpack.json",
+                        prefix,
+                        files =
+                            mapOf(
+                                "options.txt" to "options",
+                                "saves/world/level.dat" to "world",
+                            ),
+                    )
+                val root =
+                    temporary
+                        .resolve(
+                            UUID.randomUUID().toString(),
+                        ).apply { createDirectories() }
+                val transaction = PackFileTransaction(store, root)
+                try {
+                    ZipFile(source.toFile()).use { zip ->
+                        val manifest = readPackManifest(zip, root, "windows")
+                        assertEquals("Old pack", manifest.request.name)
+                        assertEquals(LoaderType.Vanilla, manifest.request.loader)
+                        stagePackFiles(
+                            manifest,
+                            zip,
+                            transaction,
+                            root,
+                            null,
+                            false,
+                            JobContext(store, "test"),
+                        ) {
+                            error("No download expected")
+                        }
                     }
+                    transaction.commit(JobContext(store, "test"))
+                    assertEquals("world", root.resolve("saves/world/level.dat").readText())
+                } finally {
+                    transaction.cleanup()
                 }
-                transaction.commit(JobContext(store, "test"))
-                assertEquals("world", root.resolve("saves/world/level.dat").readText())
-            } finally {
-                transaction.cleanup()
             }
         }
-    }
 
     @Test
     fun `old custom launch profiles cannot silently become vanilla`() {
-        for (path in
-            listOf("pack.json", "custom.json", "versions/custom/custom.json", "custom.jar")) {
+        for (
+        path in
+        listOf("pack.json", "custom.json", "versions/custom/custom.json", "custom.jar")
+        ) {
             assertFails {
                 parsed(
                     pack(
@@ -446,21 +530,24 @@ class PackFormatTest {
                         files =
                             mapOf(
                                 path to
-                                    "{\"mainClass\":\"net.fabricmc.loader.impl.launch.knot.KnotClient\"}"
+                                    "{\"mainClass\":\"net.fabricmc.loader.impl.launch.knot.KnotClient\"}",
                             ),
-                    )
+                    ),
                 ) {}
             }
         }
         assertFails {
             parsed(
-                pack(legacyManifest().apply { addProperty("mainClass", "custom.Main") }, "modpack.json")
+                pack(
+                    legacyManifest().apply { addProperty("mainClass", "custom.Main") },
+                    "modpack.json",
+                ),
             ) {}
         }
     }
 
     @Test
-    fun `MCBBS staging excludes private launcher files and preserves user settings during repair`() =
+    fun `MCBBS staging excludes private files and preserves settings during repair`() =
         runBlocking {
             val store = store()
             val root =
@@ -473,7 +560,7 @@ class PackFormatTest {
                             "overrides/accounts.json" to "private",
                             "overrides/hmclversion.cfg" to "commands",
                             "overrides/logs/latest.log" to "log",
-                        )
+                        ),
                 )
             val transaction = PackFileTransaction(store, root)
             try {
@@ -501,7 +588,7 @@ class PackFormatTest {
         }
 
     @Test
-    fun `MCBBS full install with CurseForge files supports failure and repair without credentials`() =
+    fun `MCBBS CurseForge install supports failure and repair without credentials`() =
         runBlocking {
             val store = store()
             store.mutate {
@@ -512,15 +599,15 @@ class PackFormatTest {
                             memoryMb = 512,
                             initialMemoryMb = 128,
                             javaPath =
-                                Path.of(
+                                Path
+                                    .of(
                                         System.getProperty("java.home"),
                                         "bin",
                                         store.platform.javaExecutable,
-                                    )
-                                    .toString(),
+                                    ).toString(),
                             extraJvmArgs = "-Dglobal.message=global",
                             advancedLaunch = AdvancedLaunchSettings("--demo"),
-                        )
+                        ),
                 )
             }
             MockWebServer().use { server ->
@@ -546,17 +633,17 @@ class PackFormatTest {
                                             "url" to "$base/client.jar",
                                             "sha1" to hash(client),
                                             "size" to client.size,
-                                        )
+                                        ),
                                 ),
                             "assetIndex" to mapOf("id" to "fixture", "url" to "$base/assets.json"),
-                        )
+                        ),
                     )
                 var failDownload = true
                 server.dispatcher =
                     object : Dispatcher() {
                         override fun dispatch(request: RecordedRequest): MockResponse {
                             requests += request
-                            val path = request.requestUrl!!.encodedPath
+                            val path = checkNotNull(request.requestUrl).encodedPath
                             val body: Any =
                                 when (path) {
                                     "/v1/mods" ->
@@ -567,7 +654,7 @@ class PackFormatTest {
                                                 "classId" to 12,
                                                 "slug" to "fixture",
                                                 "allowModDistribution" to true,
-                                            )
+                                            ),
                                         )
                                     "/v1/mods/files" ->
                                         listOf(
@@ -587,12 +674,12 @@ class PackFormatTest {
                                                         mapOf(
                                                             "algo" to 1,
                                                             "value" to hash(resource),
-                                                        )
+                                                        ),
                                                     ),
                                                 "downloadUrl" to "$base/resource.zip",
                                                 "gameVersions" to listOf("1.20.1"),
                                                 "dependencies" to emptyList<String>(),
-                                            )
+                                            ),
                                         )
                                     "/v1/categories" ->
                                         listOf(
@@ -601,7 +688,7 @@ class PackFormatTest {
                                                 "gameId" to 432,
                                                 "isClass" to true,
                                                 "slug" to "texture-packs",
-                                            )
+                                            ),
                                         )
                                     "/manifest.json" ->
                                         return MockResponse()
@@ -616,17 +703,20 @@ class PackFormatTest {
                                                                     "url" to "$base/profile.json",
                                                                     "sha1" to
                                                                         hash(profile.toByteArray()),
-                                                                )
-                                                            )
-                                                    )
-                                                )
+                                                                ),
+                                                            ),
+                                                    ),
+                                                ),
                                             )
                                     "/profile.json" -> return MockResponse().setBody(profile)
                                     "/assets.json" ->
                                         return MockResponse().setBody("{\"objects\":{}}")
                                     "/client.jar" ->
-                                        return if (failDownload) MockResponse().setResponseCode(404)
-                                        else MockResponse().setBody(Buffer().write(client))
+                                        return if (failDownload) {
+                                            MockResponse().setResponseCode(404)
+                                        } else {
+                                            MockResponse().setBody(Buffer().write(client))
+                                        }
                                     "/resource.zip" ->
                                         return MockResponse().setBody(Buffer().write(resource))
                                     else -> return MockResponse().setResponseCode(404)
@@ -656,7 +746,7 @@ class PackFormatTest {
                                     .add(
                                         "launchArgument",
                                         gson.toJsonTree(
-                                            listOf("--server", "茉狐 server", "--port", "25565")
+                                            listOf("--server", "茉狐 server", "--port", "25565"),
                                         ),
                                     )
                                 array("files")
@@ -667,10 +757,10 @@ class PackFormatTest {
                                                 "projectID" to 100,
                                                 "fileID" to 200,
                                                 "url" to "https://invalid.example/not-used",
-                                            )
-                                        )
+                                            ),
+                                        ),
                                     )
-                            }
+                            },
                         )
                     assertEquals(2, service.previewPack(source).requiredFiles)
                     assertFails { service.importPack(source, JobContext(store, "test")) }
@@ -704,7 +794,7 @@ class PackFormatTest {
                                 requireNotNull(it.advancedLaunch)
                                     .copy(
                                         extraGameArgs =
-                                            it.advancedLaunch.extraGameArgs + " --user-value kept"
+                                            it.advancedLaunch.extraGameArgs + " --user-value kept",
                                     ),
                         )
                     }
@@ -723,7 +813,7 @@ class PackFormatTest {
                         pack(
                             mcbbs().apply {
                                 array("addons").first().asJsonObject.addProperty("version", "1.21")
-                            }
+                            },
                         )
                     assertFails {
                         service.importPack(wrongPack, JobContext(store, "test"), instance.id)
@@ -742,11 +832,12 @@ class PackFormatTest {
     ) {
         val source = temporary.resolve("PackArgumentsFixture.java")
         source.writeText(
-            """public class PackArgumentsFixture { public static void main(String[] args) { System.out.println("PACK_JVM=" + System.getProperty("pack.message")); System.out.println("PACK_GLOBAL=" + System.getProperty("global.message")); System.out.println("PACK_ARGS=" + String.join("|", args)); System.out.println("PACK_CWD=" + java.nio.file.Path.of("").toAbsolutePath().normalize()); } }"""
+            """public class PackArgumentsFixture { public static void main(String[] args) { System.out.println("PACK_JVM=" + System.getProperty("pack.message")); System.out.println("PACK_GLOBAL=" + System.getProperty("global.message")); System.out.println("PACK_ARGS=" + String.join("|", args)); System.out.println("PACK_CWD=" + java.nio.file.Path.of("").toAbsolutePath().normalize()); } }""",
         )
         assertEquals(
             0,
-            ToolProvider.getSystemJavaCompiler()
+            ToolProvider
+                .getSystemJavaCompiler()
                 .run(
                     null,
                     null,
@@ -794,16 +885,24 @@ class PackFormatTest {
                 jobs.awaitIdle()
                 while (store.state.value.runningInstanceId != null) delay(25)
             }
-            val job = store.state.value.jobs.first { it.id == jobId }
+            val job =
+                store.state.value.jobs
+                    .first { it.id == jobId }
             assertEquals(JobStatus.Completed, job.status, job.error)
-            val logs = store.state.value.logs.map { it.message }
-            for (line in
-                listOf(
-                    "PACK_JVM=茉狐 value with spaces",
-                    "PACK_GLOBAL=global",
-                    "PACK_ARGS=--width|${store.data.settings.width}|--height|${store.data.settings.height}|--demo|--server|茉狐 server|--port|25565|--user-value|kept",
-                    "PACK_CWD=${store.instancePath(instanceId).toAbsolutePath().normalize()}",
-                )) assertTrue(line in logs, logs.joinToString("\n"))
+            val logs =
+                store.state.value.logs
+                    .map { it.message }
+            for (
+            line in
+            listOf(
+                "PACK_JVM=茉狐 value with spaces",
+                "PACK_GLOBAL=global",
+                "PACK_ARGS=--width|${store.data.settings.width}|--height|${store.data.settings.height}|--demo|--server|茉狐 server|--port|25565|--user-value|kept",
+                "PACK_CWD=${store.instancePath(instanceId).toAbsolutePath().normalize()}",
+            )
+            ) {
+                assertTrue(line in logs, logs.joinToString("\n"))
+            }
         } finally {
             launcher.stop()
             scope.cancel()
@@ -814,16 +913,24 @@ class PackFormatTest {
     fun `pack argument conversion preserves literal tokens and rejects managed flags`() {
         val values = listOf("-Dpath=C:\\folder with spaces", "value'quote", "value\"quote", "中文")
         assertEquals(values, splitArguments(packArgumentsText(values)))
-        for (values in
-            listOf(listOf(""), listOf("both'and\"quotes"), listOf("line\nbreak"))) assertFails {
-            packArgumentsText(values)
+        for (
+        values in
+        listOf(listOf(""), listOf("both'and\"quotes"), listOf("line\nbreak"))
+        ) {
+            assertFails {
+                packArgumentsText(values)
+            }
         }
-        for (flag in listOf("-cp", "-jar", "-Xmx2G", "@args.txt")) assertFails {
-            PackLaunchOptions(listOf(flag), emptyList()).resolve(LauncherSettings(), "windows")
+        for (flag in listOf("-cp", "-jar", "-Xmx2G", "@args.txt")) {
+            assertFails {
+                PackLaunchOptions(listOf(flag), emptyList()).resolve(LauncherSettings(), "windows")
+            }
         }
-        for (flag in listOf("--accessToken", "--gameDir", "--width")) assertFails {
-            PackLaunchOptions(emptyList(), listOf(flag, "other"))
-                .resolve(LauncherSettings(), "windows")
+        for (flag in listOf("--accessToken", "--gameDir", "--width")) {
+            assertFails {
+                PackLaunchOptions(emptyList(), listOf(flag, "other"))
+                    .resolve(LauncherSettings(), "windows")
+            }
         }
     }
 
@@ -832,12 +939,14 @@ class PackFormatTest {
         parsed(
             pack(
                 mcbbs().apply {
-                    for (field in listOf("libraries", "launchInfo", "settings", "serverInfo")) add(
-                        field,
-                        null,
-                    )
-                }
-            )
+                    for (field in listOf("libraries", "launchInfo", "settings", "serverInfo")) {
+                        add(
+                            field,
+                            null,
+                        )
+                    }
+                },
+            ),
         ) {
             assertEquals("1.20.1", it.request.gameVersion)
             assertNull(it.launchOptions)

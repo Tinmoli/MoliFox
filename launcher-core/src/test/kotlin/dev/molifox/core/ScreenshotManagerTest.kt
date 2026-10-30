@@ -5,16 +5,31 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.inputStream
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ScreenshotManagerTest {
     @TempDir lateinit var temporary: Path
@@ -44,10 +59,15 @@ class ScreenshotManagerTest {
         )
     }
 
-    private fun image(path: Path, width: Int = 320, height: Int = 180): Path = path.apply {
-        parent.createDirectories()
-        ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", toFile())
-    }
+    private fun image(
+        path: Path,
+        width: Int = 320,
+        height: Int = 180,
+    ): Path =
+        path.apply {
+            parent.createDirectories()
+            ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", toFile())
+        }
 
     @Test
     fun `empty gallery does not create a screenshot folder and lists only direct images`(): Unit =
@@ -82,40 +102,42 @@ class ScreenshotManagerTest {
         }
 
     @Test
-    fun `exports keep existing files and automatically number conflicts`(): Unit = runBlocking {
-        val (store, instance, root) = fixture()
-        val original = image(root.resolve("screenshots/shot.png"))
-        val manager = ScreenshotManager(store)
-        val destination = temporary.resolve("exported").apply { createDirectories() }
-        destination.resolve("shot.png").writeText("existing")
-        val written = manager.export(manager.list(instance.id), destination)
-        assertEquals("shot (2).png", written.single().name)
-        assertEquals("existing", destination.resolve("shot.png").readText())
-        assertContentEquals(original.readBytes(), written.single().readBytes())
-        assertTrue(destination.listDirectoryEntries("*.tmp").isEmpty())
-    }
+    fun `exports keep existing files and automatically number conflicts`(): Unit =
+        runBlocking {
+            val (store, instance, root) = fixture()
+            val original = image(root.resolve("screenshots/shot.png"))
+            val manager = ScreenshotManager(store)
+            val destination = temporary.resolve("exported").apply { createDirectories() }
+            destination.resolve("shot.png").writeText("existing")
+            val written = manager.export(manager.list(instance.id), destination)
+            assertEquals("shot (2).png", written.single().name)
+            assertEquals("existing", destination.resolve("shot.png").readText())
+            assertContentEquals(original.readBytes(), written.single().readBytes())
+            assertTrue(destination.listDirectoryEntries("*.tmp").isEmpty())
+        }
 
     @Test
-    fun `changed files and migrated directories invalidate old selections`(): Unit = runBlocking {
-        val (store, instance, root) = fixture()
-        val original = image(root.resolve("screenshots/shot.png"))
-        val manager = ScreenshotManager(store)
-        val shot = manager.list(instance.id).single()
-        original.writeText("changed")
-        assertFailsWith<IllegalArgumentException> { manager.resolve(shot) }
-        assertFailsWith<IllegalArgumentException> {
-            manager.export(listOf(shot), temporary.resolve("out"))
+    fun `changed files and migrated directories invalidate old selections`(): Unit =
+        runBlocking {
+            val (store, instance, root) = fixture()
+            val original = image(root.resolve("screenshots/shot.png"))
+            val manager = ScreenshotManager(store)
+            val shot = manager.list(instance.id).single()
+            original.writeText("changed")
+            assertFailsWith<IllegalArgumentException> { manager.resolve(shot) }
+            assertFailsWith<IllegalArgumentException> {
+                manager.export(listOf(shot), temporary.resolve("out"))
+            }
+            assertFailsWith<IllegalArgumentException> { manager.remove(listOf(shot)) }
+            assertEquals("changed", original.readText())
+            val refreshed = manager.list(instance.id).single()
+            // 全局默认值不再覆盖实例自己的隔离设置：只改全局不会让旧截图失效。
+            store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
+            assertEquals(original.toRealPath(), manager.resolve(refreshed).toRealPath())
+            // 实例自己改成共用目录后目录确实换了，旧选择必须失效。
+            store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
+            assertFailsWith<IllegalArgumentException> { manager.resolve(refreshed) }
         }
-        assertFailsWith<IllegalArgumentException> { manager.remove(listOf(shot)) }
-        assertEquals("changed", original.readText())
-        val refreshed = manager.list(instance.id).single()
-        // 全局默认值不再覆盖实例自己的隔离设置：只改全局不会让旧截图失效。
-        store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
-        assertEquals(original.toRealPath(), manager.resolve(refreshed).toRealPath())
-        // 实例自己改成共用目录后目录确实换了，旧选择必须失效。
-        store.updateInstance(instance.id) { it.copy(isolation = VersionIsolation.Disabled) }
-        assertFailsWith<IllegalArgumentException> { manager.resolve(refreshed) }
-    }
 
     @Test
     fun `selected deletion moves only current screenshots to the recovery sink`(): Unit =

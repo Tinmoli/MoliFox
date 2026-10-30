@@ -5,6 +5,12 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
@@ -13,13 +19,24 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import javax.imageio.ImageIO
 import javax.tools.ToolProvider
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.bufferedReader
+import kotlin.io.path.createDirectories
+import kotlin.io.path.inputStream
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.fail
 
 class ReportedIssuesTest {
     @TempDir lateinit var temporary: Path
@@ -46,7 +63,7 @@ class ReportedIssuesTest {
     }
 
     @Test
-    fun `custom profiles use clientVersion game patches inheritance and embedded version rather than pack names`() {
+    fun `custom profiles resolve game versions from metadata rather than pack names`() {
         val root = temporary.resolve("games")
         val variants =
             mapOf(
@@ -104,12 +121,15 @@ class ReportedIssuesTest {
                         )
                     service.search("中文 Sodium & +", "mod", instance.id)
                     val request = server.takeRequest()
-                    assertEquals("中文 Sodium & +", request.requestUrl!!.queryParameter("query"))
+                    assertEquals(
+                        "中文 Sodium & +",
+                        checkNotNull(request.requestUrl).queryParameter("query"),
+                    )
                     val facets =
-                        com.google.gson.JsonParser.parseString(
-                                request.requestUrl!!.queryParameter("facets")
-                            )
-                            .asJsonArray
+                        com.google.gson.JsonParser
+                            .parseString(
+                                checkNotNull(request.requestUrl).queryParameter("facets"),
+                            ).asJsonArray
                     assertEquals("versions:\"26.3\"", facets[1].asJsonArray[0].asString)
                     assertEquals("categories:fabric", facets[2].asJsonArray[0].asString)
                 }
@@ -123,14 +143,16 @@ class ReportedIssuesTest {
             "https://textures.minecraft.net/texture/$hash",
             normalizeSkinTextureUrl("http://textures.minecraft.net/texture/$hash"),
         )
-        for (url in
-            listOf(
-                "http://textures.minecraft.net.evil/texture/$hash",
-                "https://user@textures.minecraft.net/texture/$hash",
-                "https://textures.minecraft.net:8443/texture/$hash",
-                "https://textures.minecraft.net/texture/$hash?secret=x",
-                "file:///texture/$hash",
-            )) {
+        for (
+        url in
+        listOf(
+            "http://textures.minecraft.net.evil/texture/$hash",
+            "https://user@textures.minecraft.net/texture/$hash",
+            "https://textures.minecraft.net:8443/texture/$hash",
+            "https://textures.minecraft.net/texture/$hash?secret=x",
+            "file:///texture/$hash",
+        )
+        ) {
             assertFailsWith<IllegalArgumentException> { normalizeSkinTextureUrl(url) }
         }
     }
@@ -144,72 +166,79 @@ class ReportedIssuesTest {
         }
 
     @Test
-    fun `skin cache keys include URL refresh overwrites and corrupt files retry`() = runBlocking {
-        val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
-        NetworkClient().use { network ->
-            var requests = 0
-            var bytes = skinBytes(0xFF112233.toInt())
-            val cache =
-                AccountSkinCache(store, network) {
-                    requests++
-                    bytes
-                }
+    fun `skin cache keys include URL refresh overwrites and corrupt files retry`() =
+        runBlocking {
+            val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
+            NetworkClient().use { network ->
+                var requests = 0
+                var bytes = skinBytes(0xFF112233.toInt())
+                val cache =
+                    AccountSkinCache(store, network) {
+                        requests++
+                        bytes
+                    }
+                val account =
+                    Account(
+                        type = AccountType.Microsoft,
+                        uuid = "fixture",
+                        skinUrl = "http://textures.minecraft.net/texture/${"a".repeat(64)}",
+                    )
+                val first = requireNotNull(cache.load(account, false))
+                assertTrue(validSkinTexture(first))
+                assertEquals(first, cache.load(account, false))
+                assertEquals(1, requests)
+                bytes = skinBytes(0xFF332211.toInt())
+                cache.load(account, true)
+                assertContentEquals(bytes, first.readBytes())
+                first.writeText("bad partial download")
+                assertNotNull(cache.load(account, false))
+                assertTrue(validSkinTexture(first))
+                val other =
+                    requireNotNull(
+                        cache.load(
+                            account.copy(
+                                skinUrl = "https://textures.minecraft.net/texture/${"b".repeat(
+                                    64,
+                                )}",
+                            ),
+                            false,
+                        ),
+                    )
+                assertNotEquals(first, other)
+                assertEquals(4, requests)
+            }
+        }
+
+    @Test
+    fun `skin errors keep a verified cache and cancellation propagates`() =
+        runBlocking {
+            val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
             val account =
                 Account(
                     type = AccountType.Microsoft,
-                    uuid = "fixture",
                     skinUrl = "http://textures.minecraft.net/texture/${"a".repeat(64)}",
                 )
-            val first = requireNotNull(cache.load(account, false))
-            assertTrue(validSkinTexture(first))
-            assertEquals(first, cache.load(account, false))
-            assertEquals(1, requests)
-            bytes = skinBytes(0xFF332211.toInt())
-            cache.load(account, true)
-            assertContentEquals(bytes, first.readBytes())
-            first.writeText("bad partial download")
-            assertNotNull(cache.load(account, false))
-            assertTrue(validSkinTexture(first))
-            val other =
-                requireNotNull(
-                    cache.load(
-                        account.copy(
-                            skinUrl = "https://textures.minecraft.net/texture/${"b".repeat(64)}"
-                        ),
-                        false,
-                    )
-                )
-            assertNotEquals(first, other)
-            assertEquals(4, requests)
-        }
-    }
-
-    @Test
-    fun `skin errors keep a verified cache and cancellation propagates`() = runBlocking {
-        val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
-        val account =
-            Account(
-                type = AccountType.Microsoft,
-                skinUrl = "http://textures.minecraft.net/texture/${"a".repeat(64)}",
-            )
-        NetworkClient().use { network ->
-            var fail = false
-            val cache =
-                AccountSkinCache(store, network) {
-                    if (fail) error("offline") else skinBytes(0xFF123456.toInt())
+            NetworkClient().use { network ->
+                var fail = false
+                val cache =
+                    AccountSkinCache(store, network) {
+                        if (fail) error("offline") else skinBytes(0xFF123456.toInt())
+                    }
+                val original = cache.load(account, false)
+                fail = true
+                assertEquals(original, cache.load(account, true))
+                assertFailsWith<CancellationException> {
+                    AccountSkinCache(store, network) { throw CancellationException("cancel") }
+                        .load(account, true)
                 }
-            val original = cache.load(account, false)
-            fail = true
-            assertEquals(original, cache.load(account, true))
-            assertFailsWith<CancellationException> {
-                AccountSkinCache(store, network) { throw CancellationException("cancel") }
-                    .load(account, true)
+                assertTrue(
+                    store.cacheDirectory
+                        .resolve("skins")
+                        .listDirectoryEntries("*.tmp")
+                        .isEmpty(),
+                )
             }
-            assertTrue(
-                store.cacheDirectory.resolve("skins").listDirectoryEntries("*.tmp").isEmpty()
-            )
         }
-    }
 
     @Test
     fun `automatic allocation respects pressure limits architecture and manual overrides`() {
@@ -235,24 +264,22 @@ class ReportedIssuesTest {
         assertEquals(
             3072,
             effectiveGameMemory(
-                    settings.copy(memoryMb = 3072),
-                    instance.copy(autoMemory = false),
-                    platform,
-                )
-                .maximumMb,
+                settings.copy(memoryMb = 3072),
+                instance.copy(autoMemory = false),
+                platform,
+            ).maximumMb,
         )
         assertTrue(
             effectiveGameMemory(
-                    settings.copy(autoMemory = false),
-                    instance.copy(autoMemory = true),
-                    platform,
-                )
-                .automatic
+                settings.copy(autoMemory = false),
+                instance.copy(autoMemory = true),
+                platform,
+            ).automatic,
         )
     }
 
     @Test
-    fun `old settings retain manual allocation and optional per instance automatic mode persists`() {
+    fun `manual allocation and instance automatic memory preference persist`() {
         val old =
             gson.toJsonTree(LauncherSettings(memoryMb = 2048)).asJsonObject.apply {
                 remove("autoMemory")
@@ -301,12 +328,13 @@ class ReportedIssuesTest {
             val source =
                 temporary.resolve("MemoryProbe.java").apply {
                     writeText(
-                        "public class MemoryProbe { public static void main(String[] args) { System.out.println(Runtime.getRuntime().maxMemory()/1048576); System.out.println(System.getProperty(\"user.dir\")); } }"
+                        "public class MemoryProbe { public static void main(String[] args) { System.out.println(Runtime.getRuntime().maxMemory()/1048576); System.out.println(System.getProperty(\"user.dir\")); } }",
                     )
                 }
             assertEquals(
                 0,
-                ToolProvider.getSystemJavaCompiler()
+                ToolProvider
+                    .getSystemJavaCompiler()
                     .run(
                         null,
                         null,
@@ -331,13 +359,13 @@ class ReportedIssuesTest {
                     "fixture",
                     gson
                         .toJsonTree(
-                            mapOf("mainClass" to "MemoryProbe", "libraries" to emptyList<String>())
-                        )
-                        .asJsonObject,
+                            mapOf("mainClass" to "MemoryProbe", "libraries" to emptyList<String>()),
+                        ).asJsonObject,
                 )
             val runtime =
                 JavaRuntime(
-                    Path.of(System.getProperty("java.home"), "bin", platform.javaExecutable)
+                    Path
+                        .of(System.getProperty("java.home"), "bin", platform.javaExecutable)
                         .toString(),
                     Runtime.version().feature(),
                     "fixture",

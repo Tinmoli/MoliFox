@@ -5,20 +5,39 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.molifox.core.*
+import dev.molifox.core.LAUNCHER_VERSION
+import dev.molifox.core.LauncherUpdateState
+import dev.molifox.core.MoliFoxIdentity
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Path
 
 @Composable
-fun LauncherUpdatePanel(update: LauncherUpdateState, actions: UiActions) {
+fun LauncherUpdatePanel(
+    update: LauncherUpdateState,
+    actions: UiActions,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SettingRow("当前版本", "MoliFox $LAUNCHER_VERSION · 正式版本通道") {
             SecondaryButton(
@@ -74,13 +93,16 @@ fun LauncherUpdatePanel(update: LauncherUpdateState, actions: UiActions) {
                     }
                 }
                 MutedText(
-                    if (hasPackage) "下载后验证 SHA-256；退出启动器再替换原文件，保留 MoliFox 文件夹。"
-                    else "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
+                    if (hasPackage) {
+                        "下载后验证 SHA-256；退出启动器再替换原文件，保留 MoliFox 文件夹。"
+                    } else {
+                        "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
+                    },
                 )
             }
         }
         TextButton({
-            actions.run { actions.controller.platform.openUrl(MoliFoxIdentity.releases) }
+            actions.run { actions.controller.platform.openUrl(MoliFoxIdentity.RELEASES) }
         }) {
             Text("查看 GitHub 发布页")
         }
@@ -102,19 +124,20 @@ fun LauncherAboutPanel(actions: UiActions) {
         }
         MutedText("Kotlin · Compose Multiplatform · Windows / Linux")
         MutedText(
-            "${actions.controller.platform.osName} ${actions.controller.platform.architecture} · Java ${System.getProperty("java.version")}"
+            "${actions.controller.platform.osName} " +
+                "${actions.controller.platform.architecture} · " +
+                "Java ${System.getProperty("java.version")}",
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
-                    "项目源码" to MoliFoxIdentity.repository,
-                    "发布记录" to MoliFoxIdentity.releases,
-                    "问题反馈" to MoliFoxIdentity.issues,
-                )
-                .forEach { (label, url) ->
-                    SecondaryButton({ actions.run { actions.controller.platform.openUrl(url) } }) {
-                        Text(label)
-                    }
+                "项目源码" to MoliFoxIdentity.REPOSITORY,
+                "发布记录" to MoliFoxIdentity.RELEASES,
+                "问题反馈" to MoliFoxIdentity.ISSUES,
+            ).forEach { (label, url) ->
+                SecondaryButton({ actions.run { actions.controller.platform.openUrl(url) } }) {
+                    Text(label)
                 }
+            }
         }
         MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors · GPL-3.0-only")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -126,7 +149,11 @@ fun LauncherAboutPanel(actions: UiActions) {
         }
         SecondaryButton({
             val summary =
-                "MoliFox $LAUNCHER_VERSION\n${System.getProperty("os.name")} ${actions.controller.platform.architecture}\nJava ${System.getProperty("java.version")}\n${MoliFoxIdentity.repository}"
+                "MoliFox $LAUNCHER_VERSION\n${System.getProperty(
+                    "os.name",
+                )} ${actions.controller.platform.architecture}\nJava ${System.getProperty(
+                    "java.version",
+                )}\n${MoliFoxIdentity.REPOSITORY}"
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(summary), null)
             actions.controller.store.notify("版本与运行信息已复制")
         }) {
@@ -145,8 +172,11 @@ fun LauncherAboutPanel(actions: UiActions) {
                 )
                 MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors")
                 MutedText(
-                    if (name == "LICENSE") "本程序以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布；以下为许可全文。"
-                    else "以下为本项目附加条款原文。",
+                    if (name == "LICENSE") {
+                        "本程序以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布；以下为许可全文。"
+                    } else {
+                        "以下为本项目附加条款原文。"
+                    },
                 )
                 Text("", style = MaterialTheme.typography.bodySmall)
                 androidx.compose.foundation.text.selection.SelectionContainer {

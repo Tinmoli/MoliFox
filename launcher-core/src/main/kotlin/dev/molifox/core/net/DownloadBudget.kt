@@ -5,15 +5,18 @@
 
 package dev.molifox.core.net
 
+import kotlinx.coroutines.sync.Semaphore
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.sync.Semaphore
 
 /** 单任务下载预算：并发数 × 平均文件大小不超过该值。 */
 const val DOWNLOAD_BUDGET_BYTES = 256L * 1024 * 1024
 
 /** 预算换算后的有效并发：[note] 只在真的被压低时给出，供任务开始时记一行日志。 */
-data class DownloadConcurrency(val files: Int, val note: String?) {
+data class DownloadConcurrency(
+    val files: Int,
+    val note: String?,
+) {
     val clamped: Boolean get() = note != null
 }
 
@@ -43,7 +46,10 @@ private fun megabytes(bytes: Long): String =
  * 传输闸门：总许可 = 请求的并发数，每个文件按大小占用多份许可，因此
  * 「在途文件数 × 文件大小」被压在预算内。小文件各占一份，等于原来的并发上限。
  */
-internal class TransferBudget(val units: Int, private val budgetBytes: Long) {
+internal class TransferBudget(
+    val units: Int,
+    private val budgetBytes: Long,
+) {
     private val semaphore = Semaphore(units)
     private val reported = AtomicBoolean(false)
 
@@ -61,8 +67,9 @@ internal class TransferBudget(val units: Int, private val budgetBytes: Long) {
         block: suspend () -> T,
     ): T {
         val permits = permitsFor(fileBytes)
-        if (permits > 1 && reported.compareAndSet(false, true))
+        if (permits > 1 && reported.compareAndSet(false, true)) {
             onClamped(downloadConcurrency(units, fileBytes, budgetBytes))
+        }
         repeat(permits) { semaphore.acquire() }
         try {
             return block()

@@ -17,16 +17,47 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,14 +69,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import java.awt.Toolkit
-import java.awt.datatransfer.StringSelection
-import java.nio.file.Path
+import dev.molifox.core.Account
+import dev.molifox.core.AccountService
+import dev.molifox.core.AccountType
+import dev.molifox.core.DeviceCode
+import dev.molifox.core.LauncherState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
+import java.nio.file.Path
 
 /**
  * 账户列表页：左侧常驻 220dp 添加入口栏 + 右侧账户卡片栏。
@@ -159,7 +194,7 @@ fun ColumnScope.AccountListPage(
         }
         // 右栏：账户卡片列表或空态，始终占满剩余宽度，空态也在这栏里居中。
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            if (state.data.accounts.isEmpty())
+            if (state.data.accounts.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -168,7 +203,7 @@ fun ColumnScope.AccountListPage(
                         // 没有账户时 StaticSkinHead 会退回内置史蒂夫纹理。
                         StaticSkinHead(
                             null,
-                            actions.controller.store.directories,
+                            { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
                             0,
                             Modifier.size(72.dp).clip(RoundedCornerShape(Metrics.cardRadius)),
                         )
@@ -180,9 +215,10 @@ fun ColumnScope.AccountListPage(
                         )
                     }
                 }
-            else
+            } else {
                 Column(
-                    Modifier.fillMaxSize()
+                    Modifier
+                        .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .padding(end = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -194,13 +230,15 @@ fun ColumnScope.AccountListPage(
                             subtitle = accountSubtitle(account, actions),
                             actions = actions,
                             onSelect = {
-                                if (account.id != state.data.activeAccountId)
+                                if (account.id != state.data.activeAccountId) {
                                     actions.run { actions.controller.accounts.select(account.id) }
+                                }
                             },
                             onDelete = { removing = account },
                         )
                     }
                 }
+            }
         }
     }
 
@@ -289,8 +327,11 @@ fun ColumnScope.AccountListPage(
                         },
                         fontSize = 12.sp,
                         color =
-                            if (copied == false) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (copied == false) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         textAlign = TextAlign.Center,
                     )
                     Text(
@@ -342,14 +383,18 @@ private fun AddAccountRow(
     val hoverColor by
         animateColorAsState(
             if (hovered && enabled) rowHoverColor() else Color.Transparent,
-            tween(Motion.fast),
+            tween(Motion.FAST),
             label = "addAccountRowHover",
         )
     val tint =
-        if (enabled) MaterialTheme.colorScheme.onSurface
-        else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
+        if (enabled) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
+        }
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .height(addAccountRowHeight)
             .clip(shape)
             .background(hoverColor)
@@ -359,8 +404,7 @@ private fun AddAccountRow(
                 role = Role.Button,
                 onClickLabel = label,
                 onClick = onClick,
-            )
-            .padding(horizontal = 10.dp),
+            ).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(16.dp), tint)
@@ -379,7 +423,10 @@ private fun AddAccountRow(
 }
 
 /** 账户卡片副标题：外置认证账户显示服务器名（已保存的名称，否则退回主机名）。 服务器记录被移除时核心不会抛错，仍识别不出时退回账户上的原始地址，列表照常渲染。 */
-private fun accountSubtitle(account: Account, actions: UiActions): String =
+private fun accountSubtitle(
+    account: Account,
+    actions: UiActions,
+): String =
     when (account.type) {
         AccountType.Microsoft -> "微软账户"
         AccountType.Offline -> "离线模式"
@@ -406,7 +453,7 @@ private fun AccountCard(
     val hoverColor by
         animateColorAsState(
             if (hovered) rowHoverColor() else Color.Transparent,
-            tween(Motion.fast),
+            tween(Motion.FAST),
             label = "accountCardHover",
         )
     // 头像只按账户与皮肤字段解析；皮肤概览 / 刷新已回到开始页，回到本页时重新进入组合即会重读。
@@ -415,7 +462,8 @@ private fun AccountCard(
             value = actions.controller.accountSkin(account)
         }
     Box(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .background(hoverColor)
@@ -423,21 +471,19 @@ private fun AccountCard(
                 1.dp,
                 if (current) MaterialTheme.colorScheme.primary.copy(alpha = .45f) else hairline(),
                 shape,
-            )
-            .hoverable(interaction)
+            ).hoverable(interaction)
             .clickable(
                 role = Role.RadioButton,
                 onClickLabel = "切换为当前账户",
                 onClick = onSelect,
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            ).padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             RadioMark(current)
             Spacer(Modifier.width(12.dp))
             StaticSkinHead(
                 skinPath,
-                actions.controller.store.directories,
+                { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
                 0,
                 Modifier.size(40.dp).clip(RoundedCornerShape(Metrics.innerRadius)),
             )
@@ -468,11 +514,14 @@ private fun AccountCard(
 
 /** 行尾操作：悬停才淡入的「删除」，宽度固定由外层占位，不推挤名字列。 皮肤概览与刷新由开始页账户卡提供； 切换不单独放按钮：整张卡片本身就是单选行，点卡片即切换。 */
 @Composable
-private fun AccountRowActions(visible: Boolean, onDelete: () -> Unit) {
+private fun AccountRowActions(
+    visible: Boolean,
+    onDelete: () -> Unit,
+) {
     AnimatedVisibility(
         visible,
-        enter = fadeIn(tween(Motion.fast)),
-        exit = fadeOut(tween(Motion.fast)),
+        enter = fadeIn(tween(Motion.FAST)),
+        exit = fadeOut(tween(Motion.FAST)),
     ) {
         Row {
             AccountIconAction(
@@ -490,7 +539,8 @@ private fun AccountRowActions(visible: Boolean, onDelete: () -> Unit) {
 private fun RadioMark(current: Boolean) {
     val colors = MaterialTheme.colorScheme
     Box(
-        Modifier.size(16.dp)
+        Modifier
+            .size(16.dp)
             .clip(CircleShape)
             .background(if (current) colors.primary else Color.Transparent)
             .border(1.5.dp, if (current) colors.primary else colors.outline, CircleShape),
@@ -502,7 +552,10 @@ private fun RadioMark(current: Boolean) {
 
 /** 离线账户创建：校验名称为 3–16 位字母、数字或下划线校验，添加后核心自动切为当前账户。 */
 @Composable
-private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
+private fun OfflineAccountDialog(
+    actions: UiActions,
+    onDismiss: () -> Unit,
+) {
     var playerName by remember { mutableStateOf("") }
     val validName = Regex("[A-Za-z0-9_]{3,16}").matches(playerName)
     Modal("添加离线账户", "离线角色只在本机生效，不会登录微软服务。", 460.dp, onDismiss) {
@@ -515,12 +568,18 @@ private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
         )
         // 输入不合法时就地给错误色说明，而不是只把按钮置灰。
         Text(
-            if (playerName.isNotEmpty() && !validName) "只能使用 3–16 位字母、数字或下划线"
-            else "3–16 位字母、数字或下划线",
+            if (playerName.isNotEmpty() && !validName) {
+                "只能使用 3–16 位字母、数字或下划线"
+            } else {
+                "3–16 位字母、数字或下划线"
+            },
             fontSize = 11.sp,
             color =
-                if (playerName.isNotEmpty() && !validName) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                if (playerName.isNotEmpty() && !validName) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Spacer(Modifier.weight(1f))
@@ -540,18 +599,20 @@ private fun OfflineAccountDialog(actions: UiActions, onDismiss: () -> Unit) {
 }
 
 /** 复制文本到系统剪贴板。AWT 在剪贴板被占用或没有可用剪贴板时会抛异常， 这里统一折算成布尔结果，交给对话框显示「验证码复制失败，请手动复制」而不是静默失败。 */
-private fun copyToClipboard(text: String): Boolean = runCatching {
-    Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-}
-    .isSuccess
+private fun copyToClipboard(text: String): Boolean =
+    runCatching {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+    }.isSuccess
 
 /** 微软登录流程已经结束的提示：成功、验证码过期、被拒绝或失败都要收掉屏幕上的验证码。 */
 private fun loginSettled(toast: String?): Boolean =
     toast != null &&
-        (toast.startsWith("已登录：") ||
-            toast.startsWith("登录验证码已过期") ||
-            toast.startsWith("登录已过期") ||
-            toast.startsWith("微软登录失败"))
+        (
+            toast.startsWith("已登录：") ||
+                toast.startsWith("登录验证码已过期") ||
+                toast.startsWith("登录已过期") ||
+                toast.startsWith("微软登录失败")
+        )
 
 /** 验证码剩余有效期：向上取整到秒，按 mm:ss 显示；已经过期时显示 00:00。 */
 private fun remainingLabel(millis: Long): String {

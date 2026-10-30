@@ -5,6 +5,11 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -12,8 +17,18 @@ import java.nio.file.Path
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.coroutines.coroutineContext
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.nameWithoutExtension
+import kotlin.io.path.reader
 
 data class GameScreenshot(
     val instanceId: String,
@@ -31,16 +46,19 @@ data class GameScreenshot(
 /**
  * Uses the actual isolated/shared screenshot directory; selection is revalidated before mutation.
  */
-class ScreenshotManager(private val store: LauncherStore) {
+class ScreenshotManager(
+    private val store: LauncherStore,
+) {
     private val maxBytes = 64L * 1024 * 1024
 
     private fun directory(instanceId: String): Path {
         val game = store.instancePath(instanceId).toAbsolutePath().normalize()
         val root = safePath(game, "screenshots")
-        if (root.exists())
+        if (root.exists()) {
             require(root.isDirectory() && root.toRealPath().startsWith(game.toRealPath())) {
                 "截图目录不是实例内的普通目录"
             }
+        }
         return root
     }
 
@@ -54,10 +72,11 @@ class ScreenshotManager(private val store: LauncherStore) {
                         coroutineContext.ensureActive()
                         if (
                             !Files.isRegularFile(file, NOFOLLOW_LINKS) ||
-                                Files.isSymbolicLink(file) ||
-                                file.extension.lowercase() !in setOf("png", "jpg", "jpeg")
-                        )
+                            Files.isSymbolicLink(file) ||
+                            file.extension.lowercase() !in setOf("png", "jpg", "jpeg")
+                        ) {
                             return@mapNotNull null
+                        }
                         runCatching {
                             safeFilename(file.name)
                             val size = file.fileSize()
@@ -71,34 +90,35 @@ class ScreenshotManager(private val store: LauncherStore) {
                                 dimensions.second,
                                 root.toRealPath().toString(),
                             )
-                        }
-                            .getOrNull()
-                    }
-                    .sortedByDescending { it.modifiedMillis }
+                        }.getOrNull()
+                    }.sortedByDescending { it.modifiedMillis }
             }
         }
 
-    private fun dimensions(file: Path): Pair<Int, Int> = runCatching {
-        ImageIO.createImageInputStream(file.toFile()).use { input ->
-            val reader = ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: return 0 to 0
-            try {
-                reader.input = input
-                val width = reader.getWidth(0)
-                val height = reader.getHeight(0)
-                if (
-                    reader.formatName.lowercase() in setOf("png", "jpeg", "jpg") &&
+    private fun dimensions(file: Path): Pair<Int, Int> =
+        runCatching {
+            ImageIO.createImageInputStream(file.toFile()).use { input ->
+                val reader =
+                    ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: return 0 to 0
+                try {
+                    reader.input = input
+                    val width = reader.getWidth(0)
+                    val height = reader.getHeight(0)
+                    if (
+                        reader.formatName.lowercase() in setOf("png", "jpeg", "jpg") &&
                         width in 1..16384 &&
                         height in 1..16384 &&
                         width.toLong() * height <= 40_000_000
-                )
-                    width to height
-                else 0 to 0
-            } finally {
-                reader.dispose()
+                    ) {
+                        width to height
+                    } else {
+                        0 to 0
+                    }
+                } finally {
+                    reader.dispose()
+                }
             }
-        }
-    }
-        .getOrDefault(0 to 0)
+        }.getOrDefault(0 to 0)
 
     suspend fun resolve(screenshot: GameScreenshot): Path =
         withContext(Dispatchers.IO) {
@@ -110,7 +130,7 @@ class ScreenshotManager(private val store: LauncherStore) {
             require(
                 Files.isRegularFile(file, NOFOLLOW_LINKS) &&
                     file.fileSize() == screenshot.size &&
-                    file.getLastModifiedTime().toMillis() == screenshot.modifiedMillis
+                    file.getLastModifiedTime().toMillis() == screenshot.modifiedMillis,
             ) {
                 "截图已改变或被移除，请刷新"
             }
@@ -118,7 +138,10 @@ class ScreenshotManager(private val store: LauncherStore) {
             file
         }
 
-    suspend fun thumbnail(screenshot: GameScreenshot, maximum: Int = 480): ByteArray =
+    suspend fun thumbnail(
+        screenshot: GameScreenshot,
+        maximum: Int = 480,
+    ): ByteArray =
         withContext(Dispatchers.IO) {
             require(maximum in 64..1024 && screenshot.previewable && screenshot.size <= maxBytes) {
                 "此截图暂不支持预览"
@@ -147,7 +170,10 @@ class ScreenshotManager(private val store: LauncherStore) {
         }
 
     /** Never overwrite an existing export, and clean only files created by this call on failure. */
-    suspend fun export(screenshots: List<GameScreenshot>, targetDirectory: Path): List<Path> =
+    suspend fun export(
+        screenshots: List<GameScreenshot>,
+        targetDirectory: Path,
+    ): List<Path> =
         withContext(Dispatchers.IO) {
             require(
                 screenshots.isNotEmpty() &&
@@ -155,7 +181,7 @@ class ScreenshotManager(private val store: LauncherStore) {
                     screenshots
                         .map { Triple(it.instanceId, it.directory, it.name) }
                         .distinct()
-                        .size == screenshots.size
+                        .size == screenshots.size,
             ) {
                 "请选择 1–1000 张不同的截图"
             }
@@ -207,7 +233,7 @@ class ScreenshotManager(private val store: LauncherStore) {
                     screenshots
                         .map { Triple(it.instanceId, it.directory, it.name) }
                         .distinct()
-                        .size == screenshots.size
+                        .size == screenshots.size,
             ) {
                 "请选择要移入回收站的截图"
             }

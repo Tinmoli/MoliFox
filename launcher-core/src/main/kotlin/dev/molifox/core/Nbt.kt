@@ -13,34 +13,57 @@ import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.GZIPInputStream
-import kotlin.io.path.*
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
 
 /** Minecraft 的二进制数据标签，覆盖 1–12 号类型；标签值不可变，写回由 NbtWriter 负责。 */
 sealed interface NbtTag
 
-data class NbtByte(val value: Byte) : NbtTag
+data class NbtByte(
+    val value: Byte,
+) : NbtTag
 
-data class NbtShort(val value: Short) : NbtTag
+data class NbtShort(
+    val value: Short,
+) : NbtTag
 
-data class NbtInt(val value: Int) : NbtTag
+data class NbtInt(
+    val value: Int,
+) : NbtTag
 
-data class NbtLong(val value: Long) : NbtTag
+data class NbtLong(
+    val value: Long,
+) : NbtTag
 
-data class NbtFloat(val value: Float) : NbtTag
+data class NbtFloat(
+    val value: Float,
+) : NbtTag
 
-data class NbtDouble(val value: Double) : NbtTag
+data class NbtDouble(
+    val value: Double,
+) : NbtTag
 
-data class NbtByteArray(val value: ByteArray) : NbtTag
+data class NbtByteArray(
+    val value: ByteArray,
+) : NbtTag
 
-data class NbtString(val value: String) : NbtTag
+data class NbtString(
+    val value: String,
+) : NbtTag
 
 /** [elementType] 是元素的 NBT 标签号；空列表也保留原始类型，避免丢信息。 */
-data class NbtList(val elements: List<NbtTag>, val elementType: Int) : NbtTag {
+data class NbtList(
+    val elements: List<NbtTag>,
+    val elementType: Int,
+) : NbtTag {
     /** 只保留列表里的复合标签，用于「服务器列表」这类同构列表。 */
     fun compounds(): List<NbtCompound> = elements.filterIsInstance<NbtCompound>()
 }
 
-data class NbtCompound(val entries: Map<String, NbtTag>) : NbtTag {
+data class NbtCompound(
+    val entries: Map<String, NbtTag>,
+) : NbtTag {
     operator fun get(key: String): NbtTag? = entries[key]
 
     fun string(key: String): String? = (entries[key] as? NbtString)?.value
@@ -50,11 +73,19 @@ data class NbtCompound(val entries: Map<String, NbtTag>) : NbtTag {
     fun list(key: String): NbtList? = entries[key] as? NbtList
 }
 
-data class NbtIntArray(val value: IntArray) : NbtTag
+data class NbtIntArray(
+    val value: IntArray,
+) : NbtTag
 
-data class NbtLongArray(val value: LongArray) : NbtTag
+data class NbtLongArray(
+    val value: LongArray,
+) : NbtTag
 
-data class NbtDocument(val rootName: String, val root: NbtCompound, val compressed: Boolean)
+data class NbtDocument(
+    val rootName: String,
+    val root: NbtCompound,
+    val compressed: Boolean,
+)
 
 internal fun readNbtDocument(path: Path): NbtDocument {
     require(path.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" }
@@ -96,12 +127,12 @@ private const val MAX_NBT_LIST = 1_000_000
  *
  * 文件缺失、格式错误、根标签不是复合标签、解压后超过 8 MB 时返回 null，从不抛异常； 根标签名按惯例为空串，这里不校验。文件只读，不修改。
  */
-fun readCompound(path: Path): NbtCompound? = runCatching {
-    if (!path.isRegularFile()) return@runCatching null
-    val bytes = readNbtBytes(path) ?: return@runCatching null
-    parseNbtRoot(bytes)
-}
-    .getOrNull()
+fun readCompound(path: Path): NbtCompound? =
+    runCatching {
+        if (!path.isRegularFile()) return@runCatching null
+        val bytes = readNbtBytes(path) ?: return@runCatching null
+        parseNbtRoot(bytes)
+    }.getOrNull()
 
 /** 打开文件并嗅探 gzip 魔数；无论压缩与否都只读入最多 8 MB。 */
 private fun readNbtBytes(path: Path): ByteArray? =
@@ -134,7 +165,10 @@ private fun parseNbtRoot(bytes: ByteArray): NbtCompound {
 }
 
 /** 复合标签一直读到 TAG_End；重复的名字按后写入者覆盖，与实际游戏行为一致。 */
-private fun readCompoundBody(cursor: Cursor, depth: Int): NbtCompound {
+private fun readCompoundBody(
+    cursor: Cursor,
+    depth: Int,
+): NbtCompound {
     if (depth > MAX_NBT_DEPTH) cursor.fail()
     val entries = LinkedHashMap<String, NbtTag>()
     while (true) {
@@ -146,7 +180,11 @@ private fun readCompoundBody(cursor: Cursor, depth: Int): NbtCompound {
     return NbtCompound(entries)
 }
 
-private fun readTag(cursor: Cursor, type: Int, depth: Int): NbtTag {
+private fun readTag(
+    cursor: Cursor,
+    type: Int,
+    depth: Int,
+): NbtTag {
     if (depth > MAX_NBT_DEPTH) cursor.fail()
     return when (type) {
         TAG_BYTE -> NbtByte(cursor.i8())
@@ -178,7 +216,9 @@ private fun readTag(cursor: Cursor, type: Int, depth: Int): NbtTag {
 private class NbtFormatException : Exception()
 
 /** 大端字节游标；任何越界、负长度或非法标签都改抛 [NbtFormatException]。 */
-private class Cursor(private val bytes: ByteArray) {
+private class Cursor(
+    private val bytes: ByteArray,
+) {
     private var position = 0
 
     fun fail(): Nothing = throw NbtFormatException()

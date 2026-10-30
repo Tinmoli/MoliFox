@@ -7,10 +7,15 @@ package dev.molifox.core
 
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.exists
 
-internal class VersionGameDirectories(private val store: LauncherStore) {
-    fun availableName(root: Path, preferred: String): String {
+internal class VersionGameDirectories(
+    private val store: LauncherStore,
+) {
+    fun availableName(
+        root: Path,
+        preferred: String,
+    ): String {
         val base =
             preferred
                 .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "-")
@@ -22,13 +27,15 @@ internal class VersionGameDirectories(private val store: LauncherStore) {
         var index = 2
         while (
             root.resolve("versions").resolve(candidate).exists(NOFOLLOW_LINKS) ||
-                store.data.instances.any {
-                    taskPathKey(store.minecraftRoot(it)) == taskPathKey(root) &&
-                        it.gameDirectoryName
-                            .ifBlank { it.versionId }
-                            .equals(candidate, store.platform.osName == "windows")
-                }
-        ) candidate = "$base-${index++}"
+            store.data.instances.any {
+                taskPathKey(store.minecraftRoot(it)) == taskPathKey(root) &&
+                    it.gameDirectoryName
+                        .ifBlank { it.versionId }
+                        .equals(candidate, store.platform.osName == "windows")
+            }
+        ) {
+            candidate = "$base-${index++}"
+        }
         safeFilename(candidate)
         return candidate
     }

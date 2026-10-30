@@ -6,24 +6,47 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.dp
-import dev.molifox.core.*
+import dev.molifox.core.GameInstance
+import dev.molifox.core.InstanceIconStyle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
-import kotlinx.coroutines.*
 import org.jetbrains.skia.Image as SkiaImage
 
 @Composable
-fun InstanceArtwork(instance: GameInstance, actions: UiActions, modifier: Modifier = Modifier) {
+fun InstanceArtwork(
+    instance: GameInstance,
+    actions: UiActions,
+    modifier: Modifier = Modifier,
+) {
     val image by
         produceState<ImageBitmap?>(
             null,
@@ -36,7 +59,8 @@ fun InstanceArtwork(instance: GameInstance, actions: UiActions, modifier: Modifi
                 try {
                     actions.controller.icons.texture(instance)?.let { file ->
                         withContext(Dispatchers.IO) {
-                            SkiaImage.makeFromEncoded(Files.readAllBytes(file))
+                            SkiaImage
+                                .makeFromEncoded(Files.readAllBytes(file))
                                 .toComposeImageBitmap()
                         }
                     }
@@ -46,19 +70,25 @@ fun InstanceArtwork(instance: GameInstance, actions: UiActions, modifier: Modifi
                     null
                 }
         }
-    if (image != null)
+    if (image != null) {
         Image(
             requireNotNull(image),
             "${instance.name} 图标",
             modifier,
             filterQuality = FilterQuality.None,
         )
-    else LoaderMark(instance.iconStyle.loader ?: instance.loader, modifier)
+    } else {
+        LoaderMark(instance.iconStyle.loader ?: instance.loader, modifier)
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun InstanceIconDialog(instance: GameInstance, actions: UiActions, onDismiss: () -> Unit) {
+fun InstanceIconDialog(
+    instance: GameInstance,
+    actions: UiActions,
+    onDismiss: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val existing by
         produceState<java.nio.file.Path?>(null, instance.id) {
@@ -66,6 +96,7 @@ fun InstanceIconDialog(instance: GameInstance, actions: UiActions, onDismiss: ()
         }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
     fun apply(action: suspend () -> Unit) {
         if (busy) return
         scope.launch {

@@ -10,19 +10,32 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.readAttributes
 
-data class ServerDeletion(val removed: Int, val backup: Path?)
+data class ServerDeletion(
+    val removed: Int,
+    val backup: Path?,
+)
 
-internal class ServerListEditor(private val store: LauncherStore) {
+internal class ServerListEditor(
+    private val store: LauncherStore,
+) {
     @Synchronized
-    fun delete(instanceId: String, address: String): ServerDeletion {
+    fun delete(
+        instanceId: String,
+        address: String,
+    ): ServerDeletion {
         val instance = store.instance(instanceId)
         val directory = store.gamePath(instance).toAbsolutePath().normalize()
         require(
             store.state.value.runningGames.none {
                 taskPathKey(store.instancePath(it.instanceId)) == taskPathKey(directory)
-            }
+            },
         ) {
             "游戏正在使用此服务器列表，请先退出使用该目录的游戏"
         }
@@ -35,7 +48,7 @@ internal class ServerListEditor(private val store: LauncherStore) {
         requireSafeServerPath(file)
         val before =
             Files.readAllBytes(
-                file.also { require(it.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" } }
+                file.also { require(it.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" } },
             )
         val document = readNbtDocument(file)
         val servers = requireNotNull(document.root.list("servers")) { "服务器列表格式无效，未修改文件" }
@@ -55,8 +68,8 @@ internal class ServerListEditor(private val store: LauncherStore) {
                 root =
                     NbtCompound(
                         document.root.entries +
-                            ("servers" to NbtList(remaining, servers.elementType))
-                    )
+                            ("servers" to NbtList(remaining, servers.elementType)),
+                    ),
             )
         val bytes = encodeNbt(replacement)
         val backup =
@@ -85,7 +98,11 @@ internal class ServerListEditor(private val store: LauncherStore) {
         return ServerDeletion(removed, backup)
     }
 
-    private fun forgetShared(directory: Path, instanceId: String, address: String) {
+    private fun forgetShared(
+        directory: Path,
+        instanceId: String,
+        address: String,
+    ) {
         val ids =
             store.data.instances
                 .filter { taskPathKey(store.gamePath(it)) == taskPathKey(directory) }

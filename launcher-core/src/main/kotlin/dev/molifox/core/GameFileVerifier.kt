@@ -7,28 +7,39 @@ package dev.molifox.core
 
 import java.io.IOException
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.CancellationException
+import kotlin.io.path.extension
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
 
 /** Shared by installation and launch: never remove an old file before a replacement is verified. */
-internal fun artifactProblem(artifact: DownloadArtifact): String? = runCatching {
-    val file = artifact.target
-    when {
-        !file.isRegularFile() -> "文件缺失"
-        artifact.size > 0 && file.fileSize() != artifact.size -> "文件大小不符"
-        artifact.sha1.isNotBlank() ->
-            if (digest(file, artifact.hashAlgorithm).equals(artifact.sha1, true)) null else "文件校验失败"
-        file.fileSize() == 0L -> "文件为空"
-        file.extension.equals("jar", true) ->
-            ZipFile(file.toFile()).use { if (it.entries().hasMoreElements()) null else "JAR 内容为空" }
-        file.extension.equals("json", true) -> {
-            readObject(file)
-            null
+internal fun artifactProblem(artifact: DownloadArtifact): String? =
+    runCatching {
+        val file = artifact.target
+        when {
+            !file.isRegularFile() -> "文件缺失"
+            artifact.size > 0 && file.fileSize() != artifact.size -> "文件大小不符"
+            artifact.sha1.isNotBlank() ->
+                if (digest(
+                        file,
+                        artifact.hashAlgorithm,
+                    ).equals(artifact.sha1, true)
+                ) {
+                    null
+                } else {
+                    "文件校验失败"
+                }
+            file.fileSize() == 0L -> "文件为空"
+            file.extension.equals("jar", true) ->
+                ZipFile(
+                    file.toFile(),
+                ).use { if (it.entries().hasMoreElements()) null else "JAR 内容为空" }
+            file.extension.equals("json", true) -> {
+                readObject(file)
+                null
+            }
+            else -> null
         }
-        else -> null
-    }
-}
-    .getOrElse { "文件无法读取：${it.message}" }
+    }.getOrElse { "文件无法读取：${it.message}" }
 
 internal class GameFileVerifier(
     private val network: NetworkClient,
@@ -42,11 +53,14 @@ internal class GameFileVerifier(
      * 下载前先按「全部缺失」登记校验与下载的工作量：进度分母一次算清，阶段之间不会
      * 出现「做完库已经 100%」的假收尾。校验后完好的文件再从下载份额里释放。
      */
-    fun reserve(label: String, artifacts: List<DownloadArtifact>) {
+    fun reserve(
+        label: String,
+        artifacts: List<DownloadArtifact>,
+    ) {
         val unique = artifacts.distinctBy { it.target }
         if (unique.isEmpty()) return
         val bytes = unique.sumOf { it.size.coerceAtLeast(0) }
-        progress?.plan(InstallPhase.Verify, unique.size, bytes, PROGRESS_VERIFY_BYTES_PER_UNIT)
+        progress?.plan(InstallPhase.VERIFY, unique.size, bytes, PROGRESS_VERIFY_BYTES_PER_UNIT)
         progress?.plan(label, unique.size, bytes)
     }
 
@@ -71,12 +85,12 @@ internal class GameFileVerifier(
         val unique = artifacts.distinctBy { it.target }
         ensureOptional(optional.distinctBy { it.target }, context, warn)
         if (unique.isEmpty()) return
-        progress?.begin(InstallPhase.Verify)
+        progress?.begin(InstallPhase.VERIFY)
         val broken = mutableListOf<DownloadArtifact>()
         for (artifact in unique) {
             context.checkCancelled()
             val problem = artifactProblem(if (verifyHashes) artifact else artifact.copy(sha1 = ""))
-            progress?.verified(InstallPhase.Verify, artifact)
+            progress?.verified(InstallPhase.VERIFY, artifact)
             if (problem != null) broken += artifact
         }
         // 已经完好的文件不需要下载，把预留给它们的下载份额还回去。
@@ -90,7 +104,13 @@ internal class GameFileVerifier(
                 unavailable.joinToString("\n") { it.target.toString() }
         }
         progress?.begin(label)
-        val failures = scheduler.run(broken, context, concurrency, progress ?: DownloadProgressSink.None)
+        val failures =
+            scheduler.run(
+                broken,
+                context,
+                concurrency,
+                progress ?: DownloadProgressSink.None,
+            )
         context.checkCancelled()
         // 下载完成后逐个复核：既确认内容有效，也让可选的「补全后仍无效」进入同一份报告。
         val remaining =
@@ -100,8 +120,11 @@ internal class GameFileVerifier(
             }
         if (failures.isEmpty() && remaining.isEmpty()) return
         val details =
-            if (failures.isNotEmpty()) failures.joinToString("\n") { it.describe() }
-            else remaining.take(8).joinToString("\n") { it.target.toString() }
+            if (failures.isNotEmpty()) {
+                failures.joinToString("\n") { it.describe() }
+            } else {
+                remaining.take(8).joinToString("\n") { it.target.toString() }
+            }
         throw IOException("游戏文件自动补全失败，请检查网络或使用修复功能。\n$details")
     }
 

@@ -5,11 +5,18 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class CurrentConfigurationTest {
     @TempDir lateinit var directory: Path
@@ -25,7 +32,7 @@ class CurrentConfigurationTest {
                         gameRoot = gameRoot,
                         themeMode = "dark",
                         advancedLaunch = AdvancedLaunchSettings(launcherVisibility = "minimize"),
-                    )
+                    ),
             )
         }
         val loaded = LauncherStore(DesktopPlatform(), directory)
@@ -34,13 +41,17 @@ class CurrentConfigurationTest {
         assertEquals("minimize", loaded.data.settings.advancedLaunch.launcherVisibility)
         assertEquals(2, loaded.data.schemaVersion)
         val json = readObject(loaded.directories.configuration).obj("settings")
-        for (key in
-            listOf(
-                "darkTheme",
-                "minimizeOnLaunch",
-                "gameRootSemantics",
-                "updateManifestUrl",
-            )) assertFalse(json.has(key))
+        for (
+        key in
+        listOf(
+            "darkTheme",
+            "minimizeOnLaunch",
+            "gameRootSemantics",
+            "updateManifestUrl",
+        )
+        ) {
+            assertFalse(json.has(key))
+        }
         assertFalse(directory.resolve("config/storage-layout.json").exists())
     }
 
@@ -60,7 +71,7 @@ class CurrentConfigurationTest {
     }
 
     @Test
-    fun `damaged current configuration recovers previous current version and preserves damaged bytes`() {
+    fun `damaged config restores the previous version and preserves damaged bytes`() {
         val store = LauncherStore(DesktopPlatform(), directory)
         store.mutate { it.copy(settings = it.settings.copy(themeMode = "dark")) }
         LauncherStore(DesktopPlatform(), directory)
@@ -70,7 +81,7 @@ class CurrentConfigurationTest {
         assertTrue(
             restored.directories.configurationBackups
                 .listDirectoryEntries("launcher.damaged-*.json")
-                .any { it.readText() == "BROKEN_CURRENT_CONFIGURATION" }
+                .any { it.readText() == "BROKEN_CURRENT_CONFIGURATION" },
         )
     }
 

@@ -18,13 +18,13 @@ internal fun windowsTlsConfiguration(): Pair<SSLSocketFactory, X509TrustManager>
     // roots.
     if (
         listOf(
-                "javax.net.ssl.trustStore",
-                "javax.net.ssl.trustStoreType",
-                "javax.net.ssl.trustStoreProvider",
-            )
-            .any { System.getProperty(it) != null }
-    )
+            "javax.net.ssl.trustStore",
+            "javax.net.ssl.trustStoreType",
+            "javax.net.ssl.trustStoreProvider",
+        ).any { System.getProperty(it) != null }
+    ) {
         return null
+    }
     val defaults =
         TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
             init(null as KeyStore?)
@@ -37,8 +37,7 @@ internal fun windowsTlsConfiguration(): Pair<SSLSocketFactory, X509TrustManager>
     val systemRoots =
         runCatching {
             KeyStore.getInstance("Windows-ROOT").apply { load(null, null) }
-        }
-            .getOrNull() ?: return null
+        }.getOrNull() ?: return null
     val aliases = systemRoots.aliases()
     while (aliases.hasMoreElements()) {
         (systemRoots.getCertificate(aliases.nextElement()) as? X509Certificate)?.let(roots::add)

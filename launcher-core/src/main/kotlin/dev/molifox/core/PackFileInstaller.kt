@@ -5,12 +5,15 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.CancellationException
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
 
 /** All downloads and override layers stay in staging until the whole pack is ready. */
 internal suspend fun stagePackFiles(
@@ -29,11 +32,12 @@ internal suspend fun stagePackFiles(
             ?.map { it.asJsonObject }
             ?.filter {
                 it.obj("env").string("client") != "unsupported" &&
-                    (it.obj("env").string("client") != "optional" ||
-                        optionalFiles == null ||
-                        it.string("path") in optionalFiles)
-            }
-            .orEmpty()
+                    (
+                        it.obj("env").string("client") != "optional" ||
+                            optionalFiles == null ||
+                            it.string("path") in optionalFiles
+                    )
+            }.orEmpty()
     for ((position, file) in files.withIndex()) {
         context.checkCancelled()
         context.progress(
@@ -51,7 +55,7 @@ internal suspend fun stagePackFiles(
                         target.fileSize() == artifact.size &&
                         digest(target, "SHA-512")
                             .equals(file.obj("hashes").string("sha512"), true) &&
-                        digest(target, "SHA-1").equals(file.obj("hashes").string("sha1"), true)
+                        digest(target, "SHA-1").equals(file.obj("hashes").string("sha1"), true),
                 ) {
                     "整合包文件大小或双哈希校验失败：${file.string("path")}"
                 }
@@ -77,19 +81,23 @@ internal suspend fun stagePackFiles(
         }
     }
     val checks = manifest.checkedFiles.associateBy { it.path }
-    for (prefix in prefixes) for ((entry, target) in
-        validateArchive(zip, prefix, transaction.content)) {
-        context.checkCancelled()
-        val relative = transaction.content.relativize(target).joinToString("/")
-        if (relative.substringBefore('/').lowercase() in manifest.excludedRoots) continue
-        val actual = packPath(game, relative)
-        if (repairing && actual.exists()) continue
-        target.parent.createDirectories()
-        zip.getInputStream(entry).use {
-            Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
-        }
-        checks[relative]?.let { file ->
-            require(digest(target).equals(file.hash, true)) { "整合包文件校验失败：$relative" }
+    for (prefix in prefixes) {
+        for (
+        (entry, target) in
+        validateArchive(zip, prefix, transaction.content)
+        ) {
+            context.checkCancelled()
+            val relative = transaction.content.relativize(target).joinToString("/")
+            if (relative.substringBefore('/').lowercase() in manifest.excludedRoots) continue
+            val actual = packPath(game, relative)
+            if (repairing && actual.exists()) continue
+            target.parent.createDirectories()
+            zip.getInputStream(entry).use {
+                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+            checks[relative]?.let { file ->
+                require(digest(target).equals(file.hash, true)) { "整合包文件校验失败：$relative" }
+            }
         }
     }
 }

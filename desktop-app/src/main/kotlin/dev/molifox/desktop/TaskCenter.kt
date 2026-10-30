@@ -5,15 +5,50 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -25,24 +60,37 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import dev.molifox.core.*
-import java.util.Locale
+import dev.molifox.core.DownloadJob
+import dev.molifox.core.JobStatus
+import dev.molifox.core.LauncherState
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 private const val COMPLETED_TASK_HIDE_DELAY_MILLIS = 5_000L
 
 private fun DownloadJob.active() = status == JobStatus.Running || status == JobStatus.Queued
 
 private fun taskPercent(jobs: List<DownloadJob>): Float =
-    if (jobs.isEmpty()) 0f
-    else jobs.map { it.progress.coerceIn(0f, 1f).toDouble() }.average().toFloat()
+    if (jobs.isEmpty()) {
+        0f
+    } else {
+        jobs.map { it.progress.coerceIn(0f, 1f).toDouble() }.average().toFloat()
+    }
 
 @Composable
-fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modifier = Modifier) {
+fun TaskProgressButton(
+    state: LauncherState,
+    actions: UiActions,
+    modifier: Modifier = Modifier,
+) {
     val active = state.jobs.filter { it.active() }
     val progress = if (active.isEmpty()) 1f else taskPercent(active)
     val failed = state.jobs.any { it.status == JobStatus.Failed }
-    val finishedIds = state.jobs.filterNot { it.active() }.map { it.id }.toSet()
+    val finishedIds =
+        state.jobs
+            .filterNot { it.active() }
+            .map { it.id }
+            .toSet()
     LaunchedEffect(finishedIds) {
         if (finishedIds.isNotEmpty()) {
             delay(COMPLETED_TASK_HIDE_DELAY_MILLIS)
@@ -65,21 +113,25 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (active.isNotEmpty())
+            if (active.isNotEmpty()) {
                 CircularProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.size(26.dp),
                     strokeWidth = 3.dp,
                 )
-            else
+            } else {
                 Icon(
                     if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.CheckCircle,
                     null,
                     tint =
-                        if (failed) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary,
+                        if (failed) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
                     modifier = Modifier.size(24.dp),
                 )
+            }
             Column {
                 Text(
                     if (active.isNotEmpty()) "${active.size} 个任务进行中" else "任务已结束",
@@ -87,10 +139,12 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    if (active.isNotEmpty())
+                    if (active.isNotEmpty()) {
                         // 长阶段（数千个资源文件）必须露出阶段名，否则看起来像卡死。
                         "${(progress * 100).toInt()}% · ${active.first().detail}"
-                    else "即将自动收起",
+                    } else {
+                        "即将自动收起"
+                    },
                     fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -102,7 +156,10 @@ fun TaskProgressButton(state: LauncherState, actions: UiActions, modifier: Modif
 }
 
 @Composable
-fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
+fun TaskCenterDialog(
+    state: LauncherState,
+    actions: UiActions,
+) {
     val active = state.jobs.filter { it.active() }
     var cancelling by remember { mutableStateOf<DownloadJob?>(null) }
     Dialog(
@@ -138,7 +195,8 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                 HorizontalDivider(color = hairline())
                 Row(Modifier.height(500.dp)) {
                     Column(
-                        Modifier.width(184.dp)
+                        Modifier
+                            .width(184.dp)
                             .fillMaxHeight()
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = .035f))
                             .padding(20.dp),
@@ -146,22 +204,29 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                     ) {
                         TaskStatistic(
                             "当前进度",
-                            if (active.isEmpty()) "—"
-                            else "${(taskPercent(active) * 100).toInt()}%",
+                            if (active.isEmpty()) {
+                                "—"
+                            } else {
+                                "${(taskPercent(active) * 100).toInt()}%"
+                            },
                         )
                         TaskStatistic(
                             "下载速度",
-                            if (active.any { it.totalFiles > 0 })
+                            if (active.any { it.totalFiles > 0 }) {
                                 transferSize(active.sumOf { it.bytesPerSecond }) + "/s"
-                            else "—",
+                            } else {
+                                "—"
+                            },
                         )
                         TaskStatistic(
                             "剩余文件",
-                            if (active.any { it.totalFiles > 0 })
+                            if (active.any { it.totalFiles > 0 }) {
                                 active
                                     .sumOf { (it.totalFiles - it.completedFiles).coerceAtLeast(0) }
                                     .toString()
-                            else "—",
+                            } else {
+                                "—"
+                            },
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
@@ -196,7 +261,7 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                                     )
                                 }
                             }
-                        } else
+                        } else {
                             LazyColumn(
                                 Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -208,6 +273,7 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
                                     )
                                 }
                             }
+                        }
                     }
                 }
             }
@@ -232,7 +298,10 @@ fun TaskCenterDialog(state: LauncherState, actions: UiActions) {
 }
 
 @Composable
-private fun TaskStatistic(label: String, value: String) {
+private fun TaskStatistic(
+    label: String,
+    value: String,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
@@ -245,7 +314,10 @@ private fun TaskStatistic(label: String, value: String) {
 }
 
 @Composable
-private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit) {
+private fun TaskDetailCard(
+    job: DownloadJob,
+    onCancel: () -> Unit,
+) {
     Surface(
         shape = RoundedCornerShape(Metrics.cardRadius),
         border = BorderStroke(1.dp, hairline()),
@@ -261,8 +333,9 @@ private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (job.active())
+                if (job.active()) {
                     SmallIconButton(Icons.Outlined.Close, "取消任务 ${job.title}", onClick = onCancel)
+                }
             }
             Text(
                 job.detail,
@@ -270,8 +343,11 @@ private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit) {
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 color =
-                    if (job.status == JobStatus.Failed) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (job.status == JobStatus.Failed) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
             )
             LinearProgressIndicator(
                 progress = { job.progress.coerceIn(0f, 1f) },
@@ -295,14 +371,16 @@ private fun TaskDetailCard(job: DownloadJob, onCancel: () -> Unit) {
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (job.totalFiles > 0)
+                if (job.totalFiles > 0) {
                     Text("文件 ${job.completedFiles}/${job.totalFiles}", fontSize = 11.sp)
+                }
                 Spacer(Modifier.weight(1f))
-                if (job.totalBytes > 0)
+                if (job.totalBytes > 0) {
                     Text(
                         "${transferSize(job.downloadedBytes)} / ${transferSize(job.totalBytes)}",
                         fontSize = 11.sp,
                     )
+                }
             }
         }
     }

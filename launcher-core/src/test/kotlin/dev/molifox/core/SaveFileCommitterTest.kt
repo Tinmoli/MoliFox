@@ -5,15 +5,22 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectory
+import kotlin.io.path.exists
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertSame
+import kotlin.test.fail
 
 class SaveFileCommitterTest {
     @TempDir lateinit var temporary: Path
@@ -98,8 +105,9 @@ class SaveFileCommitterTest {
             target,
             move = { from, to, atomic ->
                 modes.add(atomic)
-                if (atomic)
+                if (atomic) {
                     throw AtomicMoveNotSupportedException(from.toString(), to.toString(), "fixture")
+                }
                 Files.move(from, to)
             },
         )

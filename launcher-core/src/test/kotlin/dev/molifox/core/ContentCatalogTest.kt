@@ -6,15 +6,31 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import okhttp3.mockwebserver.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ContentCatalogTest {
     @TempDir lateinit var temporary: Path
@@ -53,10 +69,13 @@ class ContentCatalogTest {
             root.resolve("mods/b-old.jar").writeText("b1")
             root.resolve("mods/unknown.jar").writeText("unknown")
             root.resolve("resourcepacks/r-old.zip").writeText("r1")
+
             fun hash(value: String) =
-                java.security.MessageDigest.getInstance("SHA-512")
+                java.security.MessageDigest
+                    .getInstance("SHA-512")
                     .digest(value.toByteArray())
                     .joinToString("") { "%02x".format(it) }
+
             fun version(id: String): Map<String, Any> {
                 val project = id.take(1)
                 return mapOf(
@@ -70,19 +89,21 @@ class ContentCatalogTest {
                     "changelog" to "Changes $id",
                     "game_versions" to
                         listOf(
-                            if (mode == "incompatible" && id.endsWith("2")) "1.21" else "1.20.1"
+                            if (mode == "incompatible" && id.endsWith("2")) "1.21" else "1.20.1",
                         ),
                     "loaders" to listOf(if (project == "r") "minecraft" else "fabric"),
                     "dependencies" to
-                        if (project == "a" && id == "a2")
+                        if (project == "a" && id == "a2") {
                             listOf(
                                 mapOf(
                                     "project_id" to "b",
                                     "version_id" to if (mode == "conflict") "b1" else "b2",
                                     "dependency_type" to "required",
-                                )
+                                ),
                             )
-                        else emptyList<Map<String, String>>(),
+                        } else {
+                            emptyList<Map<String, String>>()
+                        },
                     "files" to
                         listOf(
                             mapOf(
@@ -91,16 +112,17 @@ class ContentCatalogTest {
                                 "url" to server.loopbackUrl("/files/$id").toString(),
                                 "size" to id.length,
                                 "hashes" to mapOf("sha512" to hash(id)),
-                            )
+                            ),
                         ),
                 )
             }
             server.dispatcher =
                 object : Dispatcher() {
                     override fun dispatch(request: RecordedRequest): MockResponse {
-                        val path = request.requestUrl!!.encodedPath
-                        if (mode == "network-fail" && path == "/v2/version_files/update")
+                        val path = checkNotNull(request.requestUrl).encodedPath
+                        if (mode == "network-fail" && path == "/v2/version_files/update") {
                             return MockResponse().setResponseCode(503)
+                        }
                         val body: Any =
                             when {
                                 path == "/v2/version_files" ||
@@ -113,7 +135,14 @@ class ContentCatalogTest {
                                         .associate { project ->
                                             hash("${project}1") to
                                                 version(
-                                                    "$project${if (path.endsWith("update")) "2" else "1"}"
+                                                    "$project${if (path.endsWith(
+                                                            "update",
+                                                        )
+                                                    ) {
+                                                        "2"
+                                                    } else {
+                                                        "1"
+                                                    }}",
                                                 )
                                         }
                                 }
@@ -136,9 +165,11 @@ class ContentCatalogTest {
                                     )
                                 }
                                 path.startsWith("/files/") ->
-                                    return if (mode == "download-fail" && path.endsWith("b2"))
+                                    return if (mode == "download-fail" && path.endsWith("b2")) {
                                         MockResponse().setResponseCode(404)
-                                    else MockResponse().setBody(path.substringAfterLast('/'))
+                                    } else {
+                                        MockResponse().setBody(path.substringAfterLast('/'))
+                                    }
                                 else -> return MockResponse().setResponseCode(404)
                             }
                         return MockResponse().setBody(gson.toJson(body))
@@ -165,12 +196,15 @@ class ContentCatalogTest {
         fixture { service, store, instance, root ->
             val report = service.catalog.checkUpdates(instance.id)
             assertEquals(4, report.items.size)
-            assertNull(report.items.find { it.filename == "unknown.jar" }!!.source)
+            assertNull(checkNotNull(report.items.find { it.filename == "unknown.jar" }).source)
             assertFalse(root.resolve(".molifox-content.json").exists())
             val plan =
                 service.planUpdates(
                     report,
-                    report.items.filter { it.update != null }.map { it.key }.toSet(),
+                    report.items
+                        .filter { it.update != null }
+                        .map { it.key }
+                        .toSet(),
                 )
             assertEquals(3, plan.files.size)
             service.installPlan(plan, JobContext(store, "test"))
@@ -185,21 +219,29 @@ class ContentCatalogTest {
     fun `version lock excludes updates and rejects dependency replacement`() =
         fixture { service, _, instance, root ->
             val source =
-                service.catalog
-                    .checkUpdates(instance.id)
-                    .items
-                    .first { it.filename == "b-old.jar" }
-                    .source!!
+                checkNotNull(
+                    service.catalog
+                        .checkUpdates(instance.id)
+                        .items
+                        .first { it.filename == "b-old.jar" }
+                        .source,
+                )
             service.catalog.setLocked(instance.id, source, true)
             val report = service.catalog.checkUpdates(instance.id)
-            assertTrue(report.items.first { it.filename == "b-old.jar" }.source!!.locked)
+            assertTrue(
+                checkNotNull(
+                    report.items
+                        .first { it.filename == "b-old.jar" }
+                        .source,
+                ).locked,
+            )
             assertNull(report.items.first { it.filename == "b-old.jar" }.update)
             assertFailsWith<IllegalArgumentException> {
                 service.planUpdates(report, setOf("mods/a-old.jar.disabled"))
             }
             service.catalog.setLocked(instance.id, source, false)
             assertFalse(
-                readObject(root.resolve(".molifox-content.json")).obj("b").boolean("locked")
+                readObject(root.resolve(".molifox-content.json")).obj("b").boolean("locked"),
             )
         }
 
@@ -222,20 +264,36 @@ class ContentCatalogTest {
     @Test
     fun `incompatible update is not offered`() =
         fixture("incompatible") { service, _, instance, _ ->
-            assertTrue(service.catalog.checkUpdates(instance.id).items.all { it.update == null })
+            assertTrue(
+                service.catalog
+                    .checkUpdates(instance.id)
+                    .items
+                    .all { it.update == null },
+            )
             assertEquals(
                 listOf("a1"),
-                service.catalog.details("a", instance.id).versions.map { it.id },
+                service.catalog
+                    .details("a", instance.id)
+                    .versions
+                    .map { it.id },
             )
         }
 
     @Test
     fun `prerelease requires explicit opt in`() =
         fixture("beta") { service, _, instance, _ ->
-            assertTrue(service.catalog.checkUpdates(instance.id).items.all { it.update == null })
+            assertTrue(
+                service.catalog
+                    .checkUpdates(instance.id)
+                    .items
+                    .all { it.update == null },
+            )
             assertEquals(
                 3,
-                service.catalog.checkUpdates(instance.id, true).items.count { it.update != null },
+                service.catalog
+                    .checkUpdates(instance.id, true)
+                    .items
+                    .count { it.update != null },
             )
         }
 
@@ -263,7 +321,7 @@ class ContentCatalogTest {
             assertFails {
                 service.catalog.setLocked(
                     instance.id,
-                    report.items.first { it.filename == "a-old.jar.disabled" }.source!!,
+                    checkNotNull(report.items.first { it.filename == "a-old.jar.disabled" }.source),
                     true,
                 )
             }

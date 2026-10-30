@@ -13,7 +13,19 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.walk
+import kotlin.io.path.writeText
 
 data class LaunchIssue(
     val title: String,
@@ -24,11 +36,13 @@ data class LaunchIssue(
 
 internal fun isGameError(line: String): Boolean =
     Regex(
-            "(?i)(?:\\bERROR\\b|\\bFATAL\\b|Exception in thread|Caused by:|\\b[\\w.]+(?:Exception|Error)(?::|$)|^\\s+at [\\w.$]+\\()"
-        )
-        .containsMatchIn(line)
+        "(?i)(?:\\bERROR\\b|\\bFATAL\\b|Exception in thread|Caused by:|\\b[\\w.]+(?:Exception|Error)(?::|$)|^\\s+at [\\w.$]+\\()",
+    ).containsMatchIn(line)
 
-internal fun diagnoseGameFailure(text: String, directory: Path): LaunchIssue {
+internal fun diagnoseGameFailure(
+    text: String,
+    directory: Path,
+): LaunchIssue {
     val patterns =
         listOf(
             Triple(
@@ -96,17 +110,25 @@ internal fun diagnoseGameFailure(text: String, directory: Path): LaunchIssue {
     return LaunchIssue(
         "游戏启动失败或异常退出",
         "尚未确定原因，可导出诊断包查看完整日志。",
-        redactSecrets(text.lineSequence().filter { it.isNotBlank() }.lastOrNull().orEmpty())
-            .take(1000),
+        redactSecrets(
+            text
+                .lineSequence()
+                .filter { it.isNotBlank() }
+                .lastOrNull()
+                .orEmpty(),
+        ).take(1000),
         directory.toString(),
     )
 }
 
-internal class LaunchSession(private val store: LauncherStore, private val instance: GameInstance) {
+internal class LaunchSession(
+    private val store: LauncherStore,
+    private val instance: GameInstance,
+) {
     private val started = System.currentTimeMillis()
     val directory: Path =
         store.dataDirectory
-            .resolve("logs/games/${started}-${UUID.randomUUID().toString().take(8)}")
+            .resolve("logs/games/$started-${UUID.randomUUID().toString().take(8)}")
             .apply { createDirectories() }
     private val output = directory.resolve("output.log")
     private val metadata =
@@ -134,7 +156,7 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
             (extraSecrets + secret)
                 .filter { it.length > 5 }
                 .sortedByDescending { it.length }
-                .fold(text) { current, value -> current.replace(value, "[已隐藏]") }
+                .fold(text) { current, value -> current.replace(value, "[已隐藏]") },
         )
 
     init {
@@ -146,8 +168,7 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
                     it.isDirectory(LinkOption.NOFOLLOW_LINKS) &&
                         !Files.isSymbolicLink(it) &&
                         it.name.matches(Regex("\\d+-[a-f0-9]{8}"))
-                }
-                .sorted(Comparator.reverseOrder())
+                }.sorted(Comparator.reverseOrder())
                 .skip(10)
                 .forEach { old ->
                     runCatching {
@@ -161,7 +182,10 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
         }
     }
 
-    fun prepared(plan: LaunchPlan, credentials: GameCredentials) {
+    fun prepared(
+        plan: LaunchPlan,
+        credentials: GameCredentials,
+    ) {
         secret = credentials.accessToken
         extraSecrets = environmentSecrets(plan.environment)
         metadata["java"] = plan.executable
@@ -169,7 +193,10 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
         writeJson(directory.resolve("session.json"), metadata)
     }
 
-    fun commandResult(phase: String, result: String) {
+    fun commandResult(
+        phase: String,
+        result: String,
+    ) {
         metadata["command$phase"] = result
         writeJson(directory.resolve("session.json"), metadata)
     }
@@ -190,7 +217,10 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
         }
     }
 
-    fun finish(exit: Int? = null, failure: Throwable? = null) {
+    fun finish(
+        exit: Int? = null,
+        failure: Throwable? = null,
+    ) {
         if (failure != null) append(failure.stackTraceToString())
         metadata["finishedAt"] = Instant.now().toString()
         metadata["result"] = if (failure == null && exit == 0) "completed" else "failed"
@@ -198,38 +228,43 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
         val game = store.instancePath(instance.id)
         val candidates = mutableListOf(game.resolve("logs/latest.log"))
         for (folder in listOf(game, game.resolve("crash-reports"))) {
-            if (folder.isDirectory() && !Files.isSymbolicLink(folder))
+            if (folder.isDirectory() && !Files.isSymbolicLink(folder)) {
                 Files.list(folder).use { entries ->
                     entries
                         .filter {
                             it.name.startsWith("hs_err_pid") ||
                                 (folder.name == "crash-reports" && it.extension == "txt")
-                        }
-                        .limit(20)
+                        }.limit(20)
                         .forEach { candidates.add(it) }
                 }
+            }
         }
-        for (file in candidates) runCatching {
-            if (
-                file.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
+        for (file in candidates) {
+            runCatching {
+                if (
+                    file.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
                     file.getLastModifiedTime().toMillis() >= started - 2000 &&
                     file.fileSize() <= 8L * 1024 * 1024
-            ) {
-                directory.resolve(file.name).writeText(clean(file.readText()))
+                ) {
+                    directory.resolve(file.name).writeText(clean(file.readText()))
+                }
             }
         }
         if (failure != null || exit != 0) {
-            val text = buildString {
-                for (file in
+            val text =
+                buildString {
+                    for (
+                    file in
                     listOf(
                         directory.resolve("output.previous.log"),
                         output,
                         directory.resolve("latest.log"),
-                    )) {
-                    if (file.isRegularFile()) append(file.readText())
+                    )
+                    ) {
+                        if (file.isRegularFile()) append(file.readText())
+                    }
+                    failure?.let { append(clean(it.stackTraceToString())) }
                 }
-                failure?.let { append(clean(it.stackTraceToString())) }
-            }
             val issue = diagnoseGameFailure(text, directory)
             metadata["issue"] = issue
             store.updateState { it.copy(launchIssue = issue) }
@@ -240,13 +275,16 @@ internal class LaunchSession(private val store: LauncherStore, private val insta
     }
 }
 
-internal fun exportDiagnosticBundle(store: LauncherStore, destination: Path) {
+internal fun exportDiagnosticBundle(
+    store: LauncherStore,
+    destination: Path,
+) {
     val root = store.dataDirectory.toAbsolutePath().normalize()
     val target = destination.toAbsolutePath().normalize()
     val sessions = root.resolve("logs/games")
     require(!target.startsWith(sessions)) { "请将诊断包保存到游戏日志目录外" }
     val files = mutableListOf(store.directories.launcherLog, store.directories.previousLog)
-    if (sessions.isDirectory())
+    if (sessions.isDirectory()) {
         Files.list(sessions).use { entries ->
             entries
                 .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(it) }
@@ -256,6 +294,7 @@ internal fun exportDiagnosticBundle(store: LauncherStore, destination: Path) {
                     Files.list(session).use { children -> children.forEach { files.add(it) } }
                 }
         }
+    }
     target.parent.createDirectories()
     val temporary = target.resolveSibling("${target.fileName}.${UUID.randomUUID()}.part")
     try {
@@ -263,9 +302,10 @@ internal fun exportDiagnosticBundle(store: LauncherStore, destination: Path) {
             for (file in files.distinct()) {
                 if (
                     !file.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
-                        file.fileSize() > 16L * 1024 * 1024
-                )
+                    file.fileSize() > 16L * 1024 * 1024
+                ) {
                     continue
+                }
                 zip.putNextEntry(ZipEntry(root.relativize(file).joinToString("/")))
                 zip.write(redactSecrets(file.readText()).toByteArray(Charsets.UTF_8))
                 zip.closeEntry()

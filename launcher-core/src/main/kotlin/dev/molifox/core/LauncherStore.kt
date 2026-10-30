@@ -6,15 +6,21 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
-import kotlin.io.path.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 class LauncherStore(
     val platform: PlatformServices,
@@ -36,7 +42,9 @@ class LauncherStore(
     /** 下载缓存目录：用户自定义 downloadCachePath，为空时使用数据目录下的 cache/。 */
     val cacheDirectory: Path
         get() =
-            data.settings.downloadCachePath.takeIf { it.isNotBlank() }?.let { Path.of(it) }
+            data.settings.downloadCachePath
+                .takeIf { it.isNotBlank() }
+                ?.let { Path.of(it) }
                 ?: dataDirectory.resolve("cache")
 
     val downloadDirectory: Path
@@ -55,7 +63,7 @@ class LauncherStore(
         instance.gameDirectoryId?.let { directoryId ->
             Path.of(
                 data.gameDirectories.find { it.id == directoryId }?.path
-                    ?: error("此版本的游戏目录已移除，请重新选择目录")
+                    ?: error("此版本的游戏目录已移除，请重新选择目录"),
             )
         } ?: minecraftRoot
 
@@ -78,22 +86,27 @@ class LauncherStore(
     fun isolationSource(instance: GameInstance): IsolationSource =
         when (instance.isolation) {
             VersionIsolation.Enabled,
-            VersionIsolation.Disabled -> IsolationSource.Explicit
+            VersionIsolation.Disabled,
+            -> IsolationSource.Explicit
             VersionIsolation.Inherit ->
-                if (isolationEvidence(instance) != null) IsolationSource.Inferred
-                else IsolationSource.GlobalDefault
+                if (isolationEvidence(instance) != null) {
+                    IsolationSource.Inferred
+                } else {
+                    IsolationSource.GlobalDefault
+                }
         }
 
     /** 推断依据的目录条目名（saves、mods 等）；显式设置或没有证据时为 null。 */
     fun isolationEvidence(instance: GameInstance): String? =
-        if (instance.isolation != VersionIsolation.Inherit) null
-        else
+        if (instance.isolation != VersionIsolation.Inherit) {
+            null
+        } else {
             runCatching {
-                    InstanceCatalog.gameDataMarker(
-                        versionGamePath(instance)
-                    )
-                }
-                .getOrNull()
+                InstanceCatalog.gameDataMarker(
+                    versionGamePath(instance),
+                )
+            }.getOrNull()
+        }
 
     /** 界面展示用：推断值明确标注为「自动推断」，不冒充用户选择。 */
     fun isolationTitle(instance: GameInstance): String =
@@ -126,7 +139,11 @@ class LauncherStore(
     private val instanceIdAliases = mutableMapOf<String, String>()
 
     @Synchronized
-    fun beginPendingInstall(name: String, gameVersion: String, loaderId: String = "") {
+    fun beginPendingInstall(
+        name: String,
+        gameVersion: String,
+        loaderId: String = "",
+    ) {
         if (name.isBlank()) return
         pendingInstalls[name] = PendingInstall(name, gameVersion, loaderId)
     }
@@ -140,8 +157,10 @@ class LauncherStore(
     fun pendingInstall(name: String): PendingInstall? = pendingInstalls[name]
 
     /** 安装器可提前算出的稳定实例 id；与扫描使用的是同一个函数。 */
-    fun instanceIdFor(folder: String, gameDirectoryId: String?): String =
-        InstanceCatalog.instanceId(gameDirectoryId, folder)
+    fun instanceIdFor(
+        folder: String,
+        gameDirectoryId: String?,
+    ): String = InstanceCatalog.instanceId(gameDirectoryId, folder)
 
     init {
         directories.initialize()
@@ -157,10 +176,10 @@ class LauncherStore(
                         proxyMode = "system",
                         memoryMb = minOf(4096, maxOf(1024, platform.totalMemoryMb / 4 / 256 * 256)),
                         autoMemory = true,
-                    )
+                    ),
             )
         val loaded =
-            if (config.exists())
+            if (config.exists()) {
                 try {
                     readData(config)
                 } catch (denied: java.nio.file.AccessDeniedException) {
@@ -171,7 +190,7 @@ class LauncherStore(
                     Files.copy(
                         config,
                         directories.configurationBackups.resolve(
-                            "launcher.damaged-${System.currentTimeMillis()}-${UUID.randomUUID()}.json"
+                            "launcher.damaged-${System.currentTimeMillis()}-${UUID.randomUUID()}.json",
                         ),
                     )
                     pruneDamagedConfigurations()
@@ -179,19 +198,25 @@ class LauncherStore(
                         .getOrElse { defaults }
                         .also { recoveryMessage = "原配置已保留，已恢复备份或默认配置。" }
                 }
-            else defaults
-        if (config.exists() && recoveryMessage == null)
+            } else {
+                defaults
+            }
+        if (config.exists() && recoveryMessage == null) {
             Files.copy(config, backup, StandardCopyOption.REPLACE_EXISTING)
+        }
         directories.cache().initialize()
-        if (loaded.settings.downloadCachePath.isNotBlank())
+        if (loaded.settings.downloadCachePath.isNotBlank()) {
             directories.cache(loaded.settings.downloadCachePath).initialize()
+        }
         val legacy = if (config.exists()) legacyInstances(config) else emptyList()
         val migrated = migrateLegacyInstances(loaded, legacy)
-        if (!config.exists() || recoveryMessage != null || legacy.isNotEmpty())
+        if (!config.exists() || recoveryMessage != null || legacy.isNotEmpty()) {
             writeJson(config, migrated) // 迁移后立刻写回：配置里不再有实例列表。
+        }
         mutableState = MutableStateFlow(LauncherState(migrated))
-        if (curseForgeBaseFallback)
+        if (curseForgeBaseFallback) {
             log("CurseForge 服务地址无效，已使用默认镜像：$DEFAULT_CURSE_FORGE_BASE_URL", true)
+        }
         refreshInstances()
         // 已删目录留下的设置键保持惰性，不因一次启动就删掉；下一次保存时由 mutate 统一清理。
         recoveryMessage?.let { log(it, true) }
@@ -204,7 +229,7 @@ class LauncherStore(
                 legacyKeys.filter { key -> current.instanceSettings.containsKey(key) }
             log(
                 "实例列表迁移：保留 ${keptKeys.size} 个实例设置，跳过 ${legacyKeys.size - keptKeys.size} 个已不存在的目录；" +
-                    "此后以 versions/ 扫描为准"
+                    "此后以 versions/ 扫描为准",
             )
         }
     }
@@ -213,7 +238,7 @@ class LauncherStore(
         val json = readObject(path)
         // schemaVersion 2 保持不变：旧配置的 instances 会被迁移，新配置不再写这个字段。
         require(
-            json.int("schemaVersion") == 2 && json.has("accounts") && json.has("settings")
+            json.int("schemaVersion") == 2 && json.has("accounts") && json.has("settings"),
         ) {
             "配置格式无效"
         }
@@ -224,8 +249,11 @@ class LauncherStore(
         val raw = runCatching { json.getAsJsonObject("settings") }.getOrNull() ?: JsonObject()
         val legacyFileSource = normalizedDownloadSource(raw.string("downloadSource"))
         val versionListSource =
-            if (raw.has("versionListSource")) normalizedDownloadSource(raw.string("versionListSource"))
-            else legacyFileSource
+            if (raw.has("versionListSource")) {
+                normalizedDownloadSource(raw.string("versionListSource"))
+            } else {
+                legacyFileSource
+            }
         // 版本隔离默认开启：旧配置里没有这个键表示用户从未选择，按开启读入；显式保存的 false 原样保留。
         val isolateVersions =
             if (raw.has("isolateVersions")) value.settings.isolateVersions else true
@@ -244,7 +272,7 @@ class LauncherStore(
                         normalizedMirrorConcurrency(value.settings.mirrorConcurrency),
                     // 旧配置没有这个字段（或手改成了非法值）时直接显示默认镜像。
                     curseForgeBaseUrl = curseForgeBase,
-                )
+                ),
         )
     }
 
@@ -253,15 +281,20 @@ class LauncherStore(
         val current = data
         val requested = block(current)
         // 唯一的持久实例数据是这张按目录名索引的设置表；任何一次保存都顺手同步并清掉已不存在的键。
-        val keys = requested.instances.map { it.instanceSettingsKey() }.filter { it.isNotBlank() }.toSet()
+        val keys =
+            requested.instances
+                .map { it.instanceSettingsKey() }
+                .filter { it.isNotBlank() }
+                .toSet()
         val next =
             requested.copy(
                 instanceSettings =
-                    (requested.instanceSettings +
+                    (
+                        requested.instanceSettings +
                             requested.instances.associate {
                                 it.instanceSettingsKey() to InstanceSettings.of(it)
-                            })
-                        .filterKeys { it in keys }
+                            }
+                    ).filterKeys { it in keys },
             )
         if (config.isRegularFile()) Files.copy(config, backup, StandardCopyOption.REPLACE_EXISTING)
         writeJson(config, next)
@@ -273,16 +306,33 @@ class LauncherStore(
         mutableState.value = block(mutableState.value)
     }
 
-    fun updateInstance(id: String, block: (GameInstance) -> GameInstance) = mutate { current ->
+    fun updateInstance(
+        id: String,
+        block: (GameInstance) -> GameInstance,
+    ) = mutate { current ->
         val target =
             resolveInstance(current, id) ?: error("找不到游戏实例")
-        current.copy(instances = current.instances.map { if (it.id == target.id) block(it) else it })
+        current.copy(
+            instances =
+                current.instances.map {
+                    if (it.id ==
+                        target.id
+                    ) {
+                        block(it)
+                    } else {
+                        it
+                    }
+                },
+        )
     }
 
     /** 按 id 查；也接受目录名/显示名和本会话已知的旧 id，方便扫描结果和旧调用方混用。 */
     fun instance(id: String): GameInstance = resolveInstance(data, id) ?: error("找不到游戏实例")
 
-    private fun resolveInstance(source: LauncherData, id: String): GameInstance? =
+    private fun resolveInstance(
+        source: LauncherData,
+        id: String,
+    ): GameInstance? =
         source.instances.find { it.id == id }
             ?: instanceIdAliases[id]?.let { alias -> source.instances.find { it.id == alias } }
             ?: source.instances.find { it.instanceSettingsKey() == id }
@@ -292,26 +342,38 @@ class LauncherStore(
 
     /** 重命名后把设置键从旧目录名搬到新目录名；实例 id 与选中项不变。 */
     @Synchronized
-    fun renameInstanceSettings(oldName: String, newName: String) {
+    fun renameInstanceSettings(
+        oldName: String,
+        newName: String,
+    ) {
         if (oldName == newName) return
         mutate { current ->
             val moved = (current.instanceSettings[oldName] ?: current.instanceSettings[newName])
             current.copy(
                 instances =
                     current.instances.map { instance ->
-                        if (instance.instanceSettingsKey() == oldName)
+                        if (instance.instanceSettingsKey() == oldName) {
                             instance.copy(
                                 name = newName,
                                 gameDirectoryName = newName,
                                 versionId =
-                                    if (instance.versionId == oldName) newName
-                                    else instance.versionId,
+                                    if (instance.versionId == oldName) {
+                                        newName
+                                    } else {
+                                        instance.versionId
+                                    },
                             )
-                        else instance
+                        } else {
+                            instance
+                        }
                     },
                 instanceSettings =
-                    if (moved == null) current.instanceSettings
-                    else current.instanceSettings - oldName + (newName to moved.copy(displayName = newName)),
+                    if (moved == null) {
+                        current.instanceSettings
+                    } else {
+                        current.instanceSettings - oldName +
+                            (newName to moved.copy(displayName = newName))
+                    },
             )
         }
     }
@@ -340,7 +402,11 @@ class LauncherStore(
     fun refreshInstances(): Int {
         val current = data
         val roots = InstanceCatalog.roots(current)
-        val previous = current.instances.associateBy { it.gameDirectoryId to it.instanceSettingsKey() }
+        val previous =
+            current.instances.associateBy {
+                it.gameDirectoryId to
+                    it.instanceSettingsKey()
+            }
         var normalizedIds = 0
         val instances =
             InstanceCatalog.scan(current).mapNotNull { scanned ->
@@ -370,8 +436,7 @@ class LauncherStore(
                             .find {
                                 it.gameDirectoryId == old.gameDirectoryId &&
                                     it.instanceSettingsKey() == old.instanceSettingsKey()
-                            }
-                            ?.id
+                            }?.id
                     }
                 ?: migrationSelectedFolder?.let { folder ->
                     instances.find { it.instanceSettingsKey() == folder }?.id
@@ -387,14 +452,16 @@ class LauncherStore(
         if (next != current) updateState { it.copy(data = next) }
         // 选中项从旧随机 id / 已删除 id 收敛到扫描结果时写回，下一次启动不会再退回第一个目录。
         if (next.selectedInstanceId != current.selectedInstanceId) writeJson(config, next)
-        if (normalizedIds > 0)
+        if (normalizedIds > 0) {
             log("实例 id 已规范化为目录稳定值：$normalizedIds 个（目录名仍是唯一身份）")
+        }
         // 外部启动器的配置读不到，只按目录证据推断；每个实例每个会话只记一行。
         for (instance in instances) {
             val evidence = isolationEvidence(instance) ?: continue
             val key = "${instance.gameDirectoryId.orEmpty()}/${instance.instanceSettingsKey()}"
-            if (inferenceLogged.add(key))
+            if (inferenceLogged.add(key)) {
                 log("推断版本隔离：${instance.name}（目录内有 $evidence）")
+            }
         }
         return instances.count { !it.broken }
     }
@@ -412,11 +479,10 @@ class LauncherStore(
     /** 旧配置里的实例数组；只用于一次性迁移，之后配置不再写这个字段。 */
     private fun legacyInstances(path: Path): List<GameInstance> =
         runCatching {
-                readObject(path).getAsJsonArray("instances")?.mapNotNull { element ->
-                    runCatching { gson.fromJson(element, GameInstance::class.java) }.getOrNull()
-                } ?: emptyList()
-            }
-            .getOrDefault(emptyList())
+            readObject(path).getAsJsonArray("instances")?.mapNotNull { element ->
+                runCatching { gson.fromJson(element, GameInstance::class.java) }.getOrNull()
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
 
     /**
      * 迁移旧 `LauncherData.instances`：只为磁盘上仍存在的目录保留设置，随后丢弃列表。
@@ -454,10 +520,15 @@ class LauncherStore(
     fun pruneMissingInstanceRecords(): Int {
         val current = data
         val roots = InstanceCatalog.roots(current)
+
         fun directoryExists(key: String): Boolean =
             roots.any { root ->
-                runCatching { root.path.resolve("versions").resolve(key).isDirectory() }
-                    .getOrDefault(false)
+                runCatching {
+                    root.path
+                        .resolve("versions")
+                        .resolve(key)
+                        .isDirectory()
+                }.getOrDefault(false)
             }
         val missing = current.instanceSettings.filterKeys { !directoryExists(it) }
         if (missing.isEmpty()) return 0
@@ -504,12 +575,13 @@ class LauncherStore(
             mutableState.value.copy(logs = (mutableState.value.logs + line).takeLast(600))
         runCatching {
             val file = directories.launcherLog
-            if (file.exists() && file.fileSize() > 8 * 1024 * 1024)
+            if (file.exists() && file.fileSize() > 8 * 1024 * 1024) {
                 Files.move(
                     file,
                     directories.previousLog,
                     StandardCopyOption.REPLACE_EXISTING,
                 )
+            }
             Files.writeString(
                 file,
                 "${line.time} [${line.level.label}] ${line.message}\n",

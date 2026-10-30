@@ -18,7 +18,22 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -29,8 +44,22 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toLong
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,13 +87,13 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.JavaRuntimeSource
-import java.nio.file.Path
-import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
+import kotlin.math.max
 
 /** 自动项的固定文案：设置页与实例页共用，避免出现两种说法。 */
 internal const val AUTO_JAVA_LABEL = "自动选择合适的 Java"
@@ -95,23 +124,29 @@ internal fun JavaPicker(
     val canManage = onAddCustom != null
     var error by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
-    fun matches(left: String, right: String) = sameJavaPath(left, right, windows)
+
+    fun matches(
+        left: String,
+        right: String,
+    ) = sameJavaPath(left, right, windows)
+
     // 启动器安装的与用户添加的可以删（自定义只删记录）；系统 Java 只读。
     fun removable(runtime: JavaRuntime) =
         runtime.managed ||
-            (runtime.source == JavaRuntimeSource.Custom &&
-                knownCustomPaths.any { matches(it, runtime.path) })
+            (
+                runtime.source == JavaRuntimeSource.Custom &&
+                    knownCustomPaths.any { matches(it, runtime.path) }
+            )
     // 用户添加的路径才进列表；当前临时指定的自定义路径由下方「自定义」一行承载。
     val listed =
         runtimes
             .filter {
                 it.source != JavaRuntimeSource.Custom ||
                     knownCustomPaths.any { path -> matches(path, it.path) }
-            }
-            .sortedWith(
+            }.sortedWith(
                 compareByDescending<JavaRuntime> { it.usable }
                     .thenByDescending { it.majorVersion }
-                    .thenBy { it.source.ordinal }
+                    .thenBy { it.source.ordinal },
             )
     val effectivePath = value.ifBlank { inheritedPath }
     val effectiveRuntime = runtimes.firstOrNull { matches(it.path, effectivePath) }
@@ -124,8 +159,12 @@ internal fun JavaPicker(
             else -> "自定义"
         }
     val autoDetail =
-        if (inheritedPath.isBlank()) "按游戏版本自动匹配"
-        else "跟随全局设置：" + javaChoiceName(inheritedPath, runtimes, windows)
+        if (inheritedPath.isBlank()) {
+            "按游戏版本自动匹配"
+        } else {
+            "跟随全局设置：" + javaChoiceName(inheritedPath, runtimes, windows)
+        }
+
     // 所有路径统一交给 JavaService 探测；探测失败只提示，不写回、不清空已保存的选择。
     fun browseJava(add: Boolean) {
         if (picking) return
@@ -138,8 +177,7 @@ internal fun JavaPicker(
                         .choose(
                             if (add) "添加 Java 可执行文件" else "选择 Java 可执行文件",
                             extensions = if (windows) listOf("exe") else emptyList(),
-                        )
-                        .firstOrNull()
+                        ).firstOrNull()
                 if (chosen != null) {
                     val runtime =
                         withContext(Dispatchers.IO) {
@@ -164,6 +202,7 @@ internal fun JavaPicker(
             }
         }
     }
+
     fun removeJava(runtime: JavaRuntime) {
         val job = actions.controller.removeJavaRuntime(runtime)
         // 当前选择指向被删的运行时：回到自动，避免留下失效路径。
@@ -196,7 +235,7 @@ internal fun JavaPicker(
         ) {
             Text("当前使用", fontSize = 12.sp, color = colors.onSurfaceVariant)
             Text(headerLabel, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-            if (headerMeta.isNotBlank())
+            if (headerMeta.isNotBlank()) {
                 Text(
                     "（" + headerMeta + "）",
                     fontSize = 12.sp,
@@ -204,14 +243,16 @@ internal fun JavaPicker(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
             Spacer(Modifier.weight(1f))
-            if (canManage && effectiveRuntime != null && removable(effectiveRuntime))
+            if (canManage && effectiveRuntime != null && removable(effectiveRuntime)) {
                 TextButton(
                     { removeJava(effectiveRuntime) },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 ) {
                     Text("移除", fontSize = 12.sp)
                 }
+            }
         }
         JavaChoiceRow(
             selected = value.isBlank(),
@@ -249,7 +290,9 @@ internal fun JavaPicker(
                                 Text("移除", fontSize = 11.sp)
                             }
                         }
-                    } else null,
+                    } else {
+                        null
+                    },
             )
         }
         JavaChoiceRow(
@@ -261,7 +304,9 @@ internal fun JavaPicker(
                 if (customPath.isNotBlank()) {
                     error = null
                     onSelect(customPath)
-                } else browseJava(add = false)
+                } else {
+                    browseJava(add = false)
+                }
             },
             trailing = {
                 SecondaryButton(
@@ -275,14 +320,15 @@ internal fun JavaPicker(
                 }
             },
         )
-        if (canManage)
+        if (canManage) {
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 40.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
-                    Modifier.clip(RoundedCornerShape(Metrics.innerRadius))
+                    Modifier
+                        .clip(RoundedCornerShape(Metrics.innerRadius))
                         .hoverHighlight()
                         .clickable(role = Role.Button) { browseJava(add = true) }
                         .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -309,7 +355,7 @@ internal fun JavaPicker(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (onRefresh != null)
+                if (onRefresh != null) {
                     SecondaryButton(
                         { onRefresh() },
                         enabled = !detecting,
@@ -317,7 +363,9 @@ internal fun JavaPicker(
                     ) {
                         Text(if (detecting) "检测中…" else "检测 Java", fontSize = 12.sp)
                     }
+                }
             }
+        }
         error?.let {
             Text(
                 it,
@@ -355,7 +403,8 @@ internal fun JavaPickerRow(
             else -> "自定义 Java"
         }
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .heightIn(min = 40.dp)
             .clip(shape)
             .hoverHighlight(shape)
@@ -407,12 +456,14 @@ internal fun JavaPickerSheet(
         if (!closing) {
             closing = true
             visible = false
-            if (duration == 0) onDismiss()
-            else
+            if (duration == 0) {
+                onDismiss()
+            } else {
                 scope.launch {
                     delay(duration.toLong())
                     onDismiss()
                 }
+            }
         }
     }
     LaunchedEffect(Unit) {
@@ -427,7 +478,7 @@ internal fun JavaPickerSheet(
             .sortedWith(
                 compareByDescending<JavaRuntime> { it.majorVersion }
                     .thenByDescending { it.bits }
-                    .thenBy { it.source.ordinal }
+                    .thenBy { it.source.ordinal },
             )
     val currentInvalid =
         runtimes.firstOrNull { !it.usable && sameJavaPath(it.path, value, ignoreCase) }
@@ -442,15 +493,17 @@ internal fun JavaPickerSheet(
             ),
     ) {
         Box(
-            Modifier.size(window)
+            Modifier
+                .size(window)
                 .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                         dismiss()
                         true
-                    } else false
-                }
-                .focusable()
+                    } else {
+                        false
+                    }
+                }.focusable(),
         ) {
             AnimatedVisibility(
                 visible,
@@ -459,20 +512,22 @@ internal fun JavaPickerSheet(
                 exit = fadeOut(tween(duration)),
             ) {
                 Box(
-                    Modifier.fillMaxSize()
+                    Modifier
+                        .fillMaxSize()
                         .background(Color.Black.copy(alpha = if (isDarkScheme()) .45f else .28f))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = dismiss,
-                        )
+                        ),
                 )
             }
             AnimatedVisibility(
                 visible,
                 Modifier.align(Alignment.BottomCenter).padding(16.dp),
                 enter =
-                    slideInVertically(tween(duration)) { height -> height } + fadeIn(tween(duration)),
+                    slideInVertically(tween(duration)) { height -> height } +
+                        fadeIn(tween(duration)),
                 exit =
                     slideOutVertically(tween(duration)) { height -> height } +
                         fadeOut(tween(duration)),
@@ -553,28 +608,29 @@ internal fun JavaSheetSlot(
                 color = hairline().copy(alpha = .6f),
                 modifier = Modifier.padding(vertical = 2.dp),
             )
-            if (currentInvalid != null)
+            if (currentInvalid != null) {
                 MutedText("当前 Java 不可用：" + currentInvalid.invalidReason + "，请重新选择。")
-            if (usable.isEmpty())
+            }
+            if (usable.isEmpty()) {
                 MutedText(
-                    if (detecting) "正在检测 Java…" else "未检测到其它 Java，可在设置页添加或安装。"
+                    if (detecting) "正在检测 Java…" else "未检测到其它 Java，可在设置页添加或安装。",
                 )
-            else
+            } else {
                 usable.forEach { runtime ->
                     JavaSheetOption(
                         selected = sameJavaPath(runtime.path, value, ignoreCase),
                         title = javaRuntimeHeading(runtime),
                         detail =
                             listOf(
-                                    runtime.vendor,
-                                    runtime.architecture,
-                                    javaSourceTitle(runtime.source),
-                                )
-                                .filter { it.isNotBlank() }
+                                runtime.vendor,
+                                runtime.architecture,
+                                javaSourceTitle(runtime.source),
+                            ).filter { it.isNotBlank() }
                                 .joinToString(" · "),
                         onClick = { onPick(runtime.path) },
                     )
                 }
+            }
         }
     }
 }
@@ -590,7 +646,8 @@ private fun JavaSheetOption(
     val shape = RoundedCornerShape(Metrics.innerRadius)
     val interaction = remember { MutableInteractionSource() }
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clip(shape)
             .background(if (selected) selectedRowBackground() else Color.Transparent)
@@ -601,8 +658,7 @@ private fun JavaSheetOption(
                 indication = LocalIndication.current,
                 role = Role.RadioButton,
                 onClick = onClick,
-            )
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            ).padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -613,12 +669,15 @@ private fun JavaSheetOption(
                 fontSize = 13.sp,
                 fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                 color =
-                    if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface,
+                    if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (detail.isNotBlank())
+            if (detail.isNotBlank()) {
                 Text(
                     detail,
                     fontSize = 11.sp,
@@ -626,6 +685,7 @@ private fun JavaSheetOption(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
         }
     }
 }
@@ -646,7 +706,8 @@ private fun JavaChoiceRow(
     val shape = RoundedCornerShape(Metrics.innerRadius)
     val interaction = remember { MutableInteractionSource() }
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .heightIn(min = 40.dp)
             .clip(shape)
             .background(if (selected) selectedRowBackground() else Color.Transparent)
@@ -657,8 +718,7 @@ private fun JavaChoiceRow(
                 indication = LocalIndication.current,
                 role = Role.RadioButton,
                 onClick = onClick,
-            )
-            .padding(start = 8.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+            ).padding(start = 8.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -676,7 +736,7 @@ private fun JavaChoiceRow(
             )
             if (tag != null) Tag(tag, tagColor)
         }
-        if (detail != null)
+        if (detail != null) {
             Text(
                 detail,
                 fontSize = 11.sp,
@@ -684,10 +744,13 @@ private fun JavaChoiceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
         if (path != null) {
             Spacer(Modifier.weight(1f))
             PathLabel(path, Modifier.weight(2f))
-        } else Spacer(Modifier.weight(1f))
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         trailing?.invoke()
     }
 }
@@ -697,7 +760,8 @@ private fun JavaChoiceRow(
 private fun JavaRadioMark(selected: Boolean) {
     val colors = MaterialTheme.colorScheme
     Box(
-        Modifier.size(16.dp)
+        Modifier
+            .size(16.dp)
             .clip(CircleShape)
             .background(if (selected) colors.primary else Color.Transparent)
             .border(1.5.dp, if (selected) colors.primary else colors.outline, CircleShape),
@@ -709,7 +773,10 @@ private fun JavaRadioMark(selected: Boolean) {
 
 /** 路径行：右侧对齐、11sp 次级色；放不下时从左侧省略，只保留目录尾部与文件名。 */
 @Composable
-private fun PathLabel(path: String, modifier: Modifier) {
+private fun PathLabel(
+    path: String,
+    modifier: Modifier,
+) {
     val style =
         MaterialTheme.typography.bodySmall.copy(
             fontSize = 11.sp,
@@ -738,13 +805,19 @@ private fun PathLabel(path: String, modifier: Modifier) {
 internal fun javaRuntimeLabel(runtime: JavaRuntime): String = javaRuntimeLabel(runtime, "x64")
 
 /** 兼容调用方显式传入本机架构：探测结果里没有位数时用它兜底。 */
-internal fun javaRuntimeLabel(runtime: JavaRuntime, fallbackArchitecture: String): String {
+internal fun javaRuntimeLabel(
+    runtime: JavaRuntime,
+    fallbackArchitecture: String,
+): String {
     if (runtime.majorVersion <= 0) return "未知版本"
     val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
     return version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
 }
 
-internal fun javaBits(runtime: JavaRuntime, fallbackArchitecture: String): String {
+internal fun javaBits(
+    runtime: JavaRuntime,
+    fallbackArchitecture: String,
+): String {
     if (runtime.bits == 32 || runtime.bits == 64) return runtime.bits.toString()
     return when (runtime.architecture.lowercase()) {
         "amd64",
@@ -753,14 +826,16 @@ internal fun javaBits(runtime: JavaRuntime, fallbackArchitecture: String): Strin
         "aarch64",
         "arm64",
         "ppc64le",
-        "s390x" -> "64"
+        "s390x",
+        -> "64"
         "x86",
         "i386",
         "i486",
         "i586",
         "i686",
         "arm",
-        "arm32" -> "32"
+        "arm32",
+        -> "32"
         else ->
             when (fallbackArchitecture.lowercase()) {
                 "x86" -> "32"
@@ -787,11 +862,17 @@ internal fun readableJavaSize(bytes: Long): String =
 
 @Composable
 private fun sourceColor(source: JavaRuntimeSource): Color =
-    if (source == JavaRuntimeSource.Bundled) MaterialTheme.colorScheme.primary
-    else MaterialTheme.colorScheme.onSurfaceVariant
+    if (source == JavaRuntimeSource.Bundled) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
 /** 运行时标题：`Java 21.0.5（64 位）`；不可用条目直接给出原因。 */
-internal fun javaRuntimeHeading(runtime: JavaRuntime, fallbackArchitecture: String = "x64"): String {
+internal fun javaRuntimeHeading(
+    runtime: JavaRuntime,
+    fallbackArchitecture: String = "x64",
+): String {
     if (!runtime.usable) return "不可用的 Java（" + runtime.invalidReason + "）"
     val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
     return "Java " + version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
@@ -810,15 +891,18 @@ internal fun javaChoiceName(
 }
 
 /** 路径比较：Windows 忽略大小写；解析失败时只比较原文。 */
-internal fun sameJavaPath(left: String, right: String, ignoreCase: Boolean): Boolean {
+internal fun sameJavaPath(
+    left: String,
+    right: String,
+    ignoreCase: Boolean,
+): Boolean {
     if (left.isBlank() || right.isBlank()) return false
     if (left.equals(right, ignoreCase)) return true
     return runCatching {
-            val a = Path.of(left).toAbsolutePath().normalize()
-            val b = Path.of(right).toAbsolutePath().normalize()
-            a.toString().equals(b.toString(), ignoreCase)
-        }
-        .getOrDefault(false)
+        val a = Path.of(left).toAbsolutePath().normalize()
+        val b = Path.of(right).toAbsolutePath().normalize()
+        a.toString().equals(b.toString(), ignoreCase)
+    }.getOrDefault(false)
 }
 
 /** 从左侧省略路径，保留最后的目录段与文件名；文件名本身放不下时按可用宽度截断。 */
@@ -829,6 +913,7 @@ internal fun leftEllipsizedPath(
     style: TextStyle,
 ): String {
     if (path.isEmpty() || maxWidthPx <= 0) return path
+
     fun fits(text: String): Boolean =
         measurer.measure(AnnotatedString(text), style, maxLines = 1, softWrap = false).size.width <=
             maxWidthPx
@@ -842,7 +927,9 @@ internal fun leftEllipsizedPath(
         if (fits("…" + path.substring(mid))) {
             best = mid
             low = mid + 1
-        } else high = mid - 1
+        } else {
+            high = mid - 1
+        }
     }
     return "…" + path.substring(best)
 }

@@ -6,11 +6,13 @@
 // Verifies that modular loader exclusions refer to the actual game JAR after profile renaming.
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.test.assertContains
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ModularLaunchTest {
     @TempDir lateinit var temporary: Path
@@ -27,10 +29,10 @@ class ModularLaunchTest {
                 )
             store.mutate { it.copy(instances = listOf(instance)) }
             val json =
-                com.google.gson.JsonParser.parseString(
-                        """{"mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","arguments":{"jvm":["-cp","${'$'}{classpath}","-DignoreList=client-extra,${'$'}{version_name}.jar"],"game":["--version","${'$'}{version_name}"]}}"""
-                    )
-                    .asJsonObject
+                com.google.gson.JsonParser
+                    .parseString(
+                        """{"mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","arguments":{"jvm":["-cp","${'$'}{classpath}","-DignoreList=client-extra,${'$'}{version_name}.jar"],"game":["--version","${'$'}{version_name}"]}}""",
+                    ).asJsonObject
             val plan =
                 LaunchPlanner(store)
                     .plan(
@@ -56,10 +58,10 @@ class ModularLaunchTest {
                 GameInstance(name = "Explicit", gameVersion = "1.21.1", versionId = "custom")
             store.mutate { it.copy(instances = listOf(instance)) }
             val json =
-                com.google.gson.JsonParser.parseString(
-                        """{"mainClass":"Fixture","arguments":{"jvm":["-DignoreList=client-extra,explicit.jar,custom.jar-suffix"],"game":[]}}"""
-                    )
-                    .asJsonObject
+                com.google.gson.JsonParser
+                    .parseString(
+                        """{"mainClass":"Fixture","arguments":{"jvm":["-DignoreList=client-extra,explicit.jar,custom.jar-suffix"],"game":[]}}""",
+                    ).asJsonObject
             val plan =
                 LaunchPlanner(store)
                     .plan(

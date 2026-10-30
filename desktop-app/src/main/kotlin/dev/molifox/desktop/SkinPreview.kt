@@ -13,7 +13,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.FilterQuality
@@ -25,13 +30,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import dev.molifox.core.LauncherDirectories
 import dev.molifox.core.SkinModelRenderer
 import dev.molifox.core.SkinVariant
-import java.nio.file.Files
-import java.nio.file.Path
+import dev.molifox.core.domain.skin.PlayerHeadReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
 
 /** 内置占位皮肤的原始字节；3D 回退与静态头像回退共用同一份，避免重复读资源。 */
@@ -68,7 +72,8 @@ internal fun SkinModelImage(
         produceState<ImageBitmap?>(null, texture, variant, overlays, yaw, pitch, headOnly) {
             value =
                 withContext(Dispatchers.Default) {
-                    SkinModelRenderer.render(
+                    SkinModelRenderer
+                        .render(
                             texture.width,
                             texture.height,
                             pixels,
@@ -79,8 +84,7 @@ internal fun SkinModelImage(
                             headOnly,
                             if (headOnly) 128 else 240,
                             if (headOnly) 128 else 320,
-                        )
-                        .toComposeImageBitmap()
+                        ).toComposeImageBitmap()
                 }
         }
     Box(modifier, contentAlignment = Alignment.Center) {
@@ -126,37 +130,29 @@ fun SkinPreview(
 }
 
 /**
- * 开始页账户头像：一张静态正面图，皮肤正面 + 帽子/外层叠加，缓存于 `<数据目录>/icons/heads/`。 不做 3D
- * 旋转、不响应拖动，绘制时用最近邻放大保持像素直角；离线或皮肤不可用时回退到内置占位头像。 [revision] 是手动刷新计数：皮肤内容更新但地址不变时，靠它触发重新合成。
+ * 显示皮肤正面与帽子叠加的头像；原图不可用时回退内置皮肤，不生成派生文件。
+ * [revision] 让内容变更但路径不变的皮肤重新读取。
  */
 @Composable
 fun StaticSkinHead(
     skinFile: Path?,
-    directories: LauncherDirectories,
+    onFailure: (Throwable) -> Unit,
     revision: Int = 0,
     modifier: Modifier = Modifier,
 ) {
+    val reader = remember { PlayerHeadReader() }
     val head by
-        produceState<ImageBitmap?>(null, skinFile, directories.root, revision) {
+        produceState<ImageBitmap?>(null, skinFile, revision) {
+            val png = skinFile?.let { reader.front(it, 128).onFailure(onFailure).getOrNull() }
             value =
-                withContext(Dispatchers.IO) {
+                withContext(Dispatchers.Default) {
                     runCatching {
-                        // 先试账户皮肤，失败或没有皮肤时退回内置占位皮肤。
-                        val cached =
-                            skinFile?.let { file ->
-                                SkinModelRenderer.cachedHeadFront(file, directories, 128)
-                            }
-                                ?: SkinModelRenderer.cachedHeadFront(
-                                    defaultPlayerSkinBytes,
-                                    directories,
-                                    128,
-                                )
-                        cached?.let { head ->
-                            SkiaImage.makeFromEncoded(Files.readAllBytes(head))
-                                .toComposeImageBitmap()
+                        val encoded =
+                            png ?: SkinModelRenderer.renderHeadFront(defaultPlayerSkinBytes, 128)
+                        encoded?.let { bytes ->
+                            SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
                         }
-                    }
-                        .getOrNull()
+                    }.onFailure(onFailure).getOrNull()
                 }
         }
     Box(modifier, contentAlignment = Alignment.Center) {

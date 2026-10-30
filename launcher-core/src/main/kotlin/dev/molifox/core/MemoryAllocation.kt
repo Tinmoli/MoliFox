@@ -5,10 +5,12 @@
 
 package dev.molifox.core
 
-data class GameMemoryAllocation(val maximumMb: Int, val initialMb: Int, val automatic: Boolean)
-
-/** Recomputed at launch; leave room for the OS, launcher and native/off-heap allocations. */
-fun automaticMemoryMb(totalMb: Int, availableMb: Int, architecture: String = "x64"): Int {
+/** 每次启动重新计算，给系统、启动器与堆外分配留出余量。 */
+fun automaticMemoryMb(
+    totalMb: Int,
+    availableMb: Int,
+    architecture: String = "x64",
+): Int {
     val total = totalMb.coerceAtLeast(1024)
     val available = availableMb.coerceIn(0, total)
     val systemReserve = maxOf(1024, total / 8)
@@ -42,11 +44,14 @@ fun effectiveGameMemory(
     availableMemoryMb: Int,
     architecture: String = "x64",
 ): GameMemoryAllocation {
-    // Existing explicit per-instance allocations remain manual unless the user opts in.
+    // 实例已有明确分配值时保持手动模式，只有用户选择后才采用自动分配。
     val automatic = instance.autoMemory ?: (instance.memoryMb <= 0 && settings.autoMemory)
     val maximum =
-        if (automatic) automaticMemoryMb(totalMemoryMb, availableMemoryMb, architecture)
-        else instance.memoryMb.takeIf { it > 0 } ?: settings.memoryMb
+        if (automatic) {
+            automaticMemoryMb(totalMemoryMb, availableMemoryMb, architecture)
+        } else {
+            instance.memoryMb.takeIf { it > 0 } ?: settings.memoryMb
+        }
     val initial =
         (instance.initialMemoryMb.takeIf { it > 0 } ?: settings.initialMemoryMb).coerceIn(
             128,

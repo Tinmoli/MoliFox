@@ -10,10 +10,20 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.reader
 
 /** Keep a single validated background copy in portable launcher storage. */
-fun importAppearanceBackground(dataDirectory: Path, source: Path): Path {
+fun importAppearanceBackground(
+    dataDirectory: Path,
+    source: Path,
+): Path {
     require(source.isRegularFile() && source.fileSize() in 1..12L * 1024 * 1024) { "背景图片最大 12 MB" }
     ImageIO.createImageInputStream(source.toFile()).use { input ->
         require(input != null) { "无法读取背景图片" }
@@ -59,7 +69,10 @@ fun importAppearanceBackground(dataDirectory: Path, source: Path): Path {
 }
 
 /** Import a font by content hash, retaining the user's original file. */
-fun importAppearanceFont(dataDirectory: Path, source: Path): LauncherFont {
+fun importAppearanceFont(
+    dataDirectory: Path,
+    source: Path,
+): LauncherFont {
     require(source.isRegularFile() && source.fileSize() in 1..32L * 1024 * 1024) { "字体文件最大 32 MB" }
     val font =
         try {
@@ -74,10 +87,14 @@ fun importAppearanceFont(dataDirectory: Path, source: Path): LauncherFont {
     return LauncherFont(font.getFamily(java.util.Locale.getDefault()), target.toString())
 }
 
-fun removeAppearanceFont(dataDirectory: Path, font: LauncherFont) {
+fun removeAppearanceFont(
+    dataDirectory: Path,
+    font: LauncherFont,
+) {
     val directory = dataDirectory.resolve("appearance/fonts").toAbsolutePath().normalize()
     val file = Path.of(font.path).toAbsolutePath().normalize()
     // A manually edited record never authorizes removal of a font outside our storage.
-    if (file.parent == directory && file.name.matches(Regex("[a-f0-9]{24}\\.font")))
+    if (file.parent == directory && file.name.matches(Regex("[a-f0-9]{24}\\.font"))) {
         Files.deleteIfExists(file)
+    }
 }

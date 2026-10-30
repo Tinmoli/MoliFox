@@ -9,14 +9,42 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -33,11 +61,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.LauncherSettings
+import dev.molifox.core.LauncherState
+import dev.molifox.core.importAppearanceBackground
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlinx.coroutines.*
-import kotlinx.coroutines.swing.Swing
 import org.jetbrains.skia.Image as SkiaImage
 
 typealias AppearanceChange = ((LauncherSettings) -> LauncherSettings) -> Unit
@@ -55,23 +87,25 @@ fun LauncherBackdrop(settings: LauncherSettings) {
     val base = MaterialTheme.colorScheme.background
     LaunchedEffect(settings.backgroundPath, settings.backgroundRevision) {
         bitmap =
-            if (settings.backgroundPath.isBlank()) null
-            else
+            if (settings.backgroundPath.isBlank()) {
+                null
+            } else {
                 withContext(Dispatchers.IO) {
                     runCatching {
                         val file = Path.of(settings.backgroundPath)
                         require(Files.size(file) <= 12L * 1024 * 1024)
                         SkiaImage.makeFromEncoded(Files.readAllBytes(file)).toComposeImageBitmap()
-                    }
-                        .getOrNull()
+                    }.getOrNull()
                 }
+            }
     }
     Box(
-        Modifier.fillMaxSize()
+        Modifier
+            .fillMaxSize()
             .blur(
                 if (settings.glassEnabled) settings.backgroundBlur.dp else 0.dp,
                 edgeTreatment = BlurredEdgeTreatment.Unbounded,
-            )
+            ),
     ) {
         Box(Modifier.fillMaxSize().background(base))
         bitmap?.let {
@@ -164,28 +198,32 @@ private fun AppearanceLivePreview() {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Box(
-                    Modifier.size(14.dp)
+                    Modifier
+                        .size(14.dp)
                         .clip(RoundedCornerShape(Metrics.innerRadius))
-                        .background(colors.primary.copy(alpha = .12f))
+                        .background(colors.primary.copy(alpha = .12f)),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Box(
-                        Modifier.height(4.dp)
+                        Modifier
+                            .height(4.dp)
                             .fillMaxWidth(.62f)
                             .clip(RoundedCornerShape(2.dp))
-                            .background(colors.onSurface.copy(alpha = .55f))
+                            .background(colors.onSurface.copy(alpha = .55f)),
                     )
                     Box(
-                        Modifier.height(3.dp)
+                        Modifier
+                            .height(3.dp)
                             .fillMaxWidth(.42f)
                             .clip(RoundedCornerShape(2.dp))
-                            .background(colors.onSurfaceVariant.copy(alpha = .5f))
+                            .background(colors.onSurfaceVariant.copy(alpha = .5f)),
                     )
                 }
             }
             HorizontalDivider(color = hairline())
             Box(
-                Modifier.fillMaxWidth()
+                Modifier
+                    .fillMaxWidth()
                     .height(20.dp)
                     .clip(RoundedCornerShape(Metrics.innerRadius))
                     .background(colors.primary),
@@ -205,7 +243,7 @@ private fun ThemePreferences(
     onOpenFont: () -> Unit,
 ) {
     val theme = settings.themeMode
-    val duration = if (LocalReducedMotion.current) 0 else Motion.fast
+    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
     SettingsSection("界面主题", "选择界面明暗；切换后立即生效。") {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ThemeOptionCard(
@@ -262,9 +300,11 @@ private fun ThemePreferences(
         var customHex by
             remember(settings.accentColor) {
                 mutableStateOf(
-                    if (Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor))
+                    if (Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor)) {
                         settings.accentColor
-                    else ""
+                    } else {
+                        ""
+                    },
                 )
             }
         Row(
@@ -276,24 +316,26 @@ private fun ThemePreferences(
                     customHex,
                     { value ->
                         customHex = value
-                        if (Regex("^#[0-9A-Fa-f]{6}$").matches(value))
+                        if (Regex("^#[0-9A-Fa-f]{6}$").matches(value)) {
                             apply { it.copy(accentColor = value.uppercase()) }
+                        }
                     },
                     placeholder = "#RRGGBB",
                 )
             }
-            if (customHex.isNotEmpty() && !Regex("^#[0-9A-Fa-f]{6}$").matches(customHex))
+            if (customHex.isNotEmpty() && !Regex("^#[0-9A-Fa-f]{6}$").matches(customHex)) {
                 Text(
                     "格式需为 #RRGGBB",
                     color = MaterialTheme.colorScheme.error,
                     fontSize = 11.sp,
                 )
-            else
+            } else {
                 Text(
                     "输入 #RRGGBB 作为自定义强调色",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                 )
+            }
         }
     }
     // 左上角图标：只改主窗口标题栏左侧的品牌标识，标题栏图标、任务栏与准备窗口仍用内置图标。
@@ -310,7 +352,8 @@ private fun ThemePreferences(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Box(
-                Modifier.size(38.dp)
+                Modifier
+                    .size(38.dp)
                     .clip(RoundedCornerShape(Metrics.innerRadius))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = .07f))
                     .border(1.dp, hairline(), RoundedCornerShape(Metrics.innerRadius)),
@@ -332,15 +375,16 @@ private fun ThemePreferences(
                     withContext(Dispatchers.Swing) {
                         val imported = result.getOrNull()
                         brandError =
-                            if (imported == null)
+                            if (imported == null) {
                                 result.exceptionOrNull()?.message ?: "无法使用这张图片"
-                            else
+                            } else {
                                 applySetting(actions) {
                                     it.copy(
                                         brandIconPath = imported.toString(),
                                         brandIconRevision = System.currentTimeMillis(),
                                     )
                                 }
+                            }
                     }
                 }
             }) {
@@ -348,17 +392,21 @@ private fun ThemePreferences(
                 Spacer(Modifier.width(7.dp))
                 Text("选择图片")
             }
-            if (brandCustom)
+            if (brandCustom) {
                 SecondaryButton({
                     brandError = null
                     actions.run {
                         val stored = actions.controller.store.data.settings.brandIconPath
                         applySetting(actions) {
-                            it.copy(brandIconPath = "", brandIconRevision = System.currentTimeMillis())
+                            it.copy(
+                                brandIconPath = "",
+                                brandIconRevision = System.currentTimeMillis(),
+                            )
                         }
                         removeBrandIcon(actions.controller.store.dataDirectory, stored)
                     }
                 }) { Text("恢复默认") }
+            }
         }
         brandError?.let { message ->
             Spacer(Modifier.height(6.dp))
@@ -539,7 +587,7 @@ private fun ThemePreferences(
         if (settings.backgroundFit == "stretch") MutedText("拉伸铺满时没有空白或裁切区域；切换为填满或完整显示后可调整位置。")
     }
     // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行。
-    if (removing)
+    if (removing) {
         Modal(
             "移除背景？",
             "图片副本会从 MoliFox/appearance 删除，无法从启动器恢复。",
@@ -554,8 +602,8 @@ private fun ThemePreferences(
                         applySetting(actions) { it.copy(backgroundPath = "") }
                         Files.deleteIfExists(
                             actions.controller.store.directories.backgrounds.resolve(
-                                "background.img"
-                            )
+                                "background.img",
+                            ),
                         )
                     }
                     removing = false
@@ -565,16 +613,20 @@ private fun ThemePreferences(
                 danger = true,
             )
         }
+    }
 }
 
 /** 已启用 / 未启用 Tag：分组卡片标题行右侧的状态标记。 */
 @Composable
 private fun EnabledTag(enabled: Boolean) {
-    val duration = if (LocalReducedMotion.current) 0 else Motion.fast
+    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
     val color by
         animateColorAsState(
-            if (enabled) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+            if (enabled) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             tween(duration),
             label = "enabledTag",
         )
@@ -608,7 +660,8 @@ private fun RowScope.ThemeOptionCard(
             label = "themeFill",
         )
     Column(
-        Modifier.weight(1f)
+        Modifier
+            .weight(1f)
             .pressScale()
             .clip(RoundedCornerShape(Metrics.cardRadius))
             .hoverHighlight(RoundedCornerShape(Metrics.cardRadius))
@@ -618,10 +671,11 @@ private fun RowScope.ThemeOptionCard(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(64.dp)
                 .clip(RoundedCornerShape(Metrics.cardRadius))
-                .border(borderWidth.dp, border, RoundedCornerShape(Metrics.cardRadius))
+                .border(borderWidth.dp, border, RoundedCornerShape(Metrics.cardRadius)),
         ) {
             when (id) {
                 "light" ->
@@ -664,7 +718,11 @@ private fun RowScope.ThemeOptionCard(
 
 /** 主题预览里的一格：一小块卡片 + 两行文字 + 主按钮，颜色固定表示该明暗主题。 */
 @Composable
-private fun ThemeSwatchPane(dark: Boolean, accent: Color, modifier: Modifier) {
+private fun ThemeSwatchPane(
+    dark: Boolean,
+    accent: Color,
+    modifier: Modifier,
+) {
     val surface = if (dark) previewDarkSurface else previewLightSurface
     val line = if (dark) previewDarkLine else previewLightLine
     Column(
@@ -676,19 +734,33 @@ private fun ThemeSwatchPane(dark: Boolean, accent: Color, modifier: Modifier) {
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Box(
-                Modifier.size(10.dp)
+                Modifier
+                    .size(10.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(accent.copy(alpha = .9f))
+                    .background(accent.copy(alpha = .9f)),
             )
             Box(
-                Modifier.height(3.dp)
+                Modifier
+                    .height(3.dp)
                     .fillMaxWidth(.55f)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(line)
+                    .background(line),
             )
         }
-        Box(Modifier.height(3.dp).fillMaxWidth(.8f).clip(RoundedCornerShape(2.dp)).background(line))
-        Box(Modifier.width(34.dp).height(11.dp).clip(RoundedCornerShape(3.dp)).background(accent))
+        Box(
+            Modifier
+                .height(3.dp)
+                .fillMaxWidth(.8f)
+                .clip(RoundedCornerShape(2.dp))
+                .background(line),
+        )
+        Box(
+            Modifier
+                .width(34.dp)
+                .height(11.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(accent),
+        )
     }
 }
 
@@ -718,7 +790,8 @@ private fun AccentChip(
             label = "chipFill",
         )
     Row(
-        Modifier.pressScale()
+        Modifier
+            .pressScale()
             .clip(RoundedCornerShape(Metrics.innerRadius))
             .hoverHighlight(RoundedCornerShape(Metrics.innerRadius))
             .clickable(role = Role.RadioButton, onClick = onClick)
@@ -729,23 +802,25 @@ private fun AccentChip(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.size(16.dp)
+            Modifier
+                .size(16.dp)
                 .clip(CircleShape)
                 .background(resolveAccent(id, dark))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
         )
         Text(
             title,
             fontSize = 12.sp,
             color = if (selected) colors.onPrimaryContainer else colors.onSurface,
         )
-        if (selected)
+        if (selected) {
             Icon(
                 Icons.Outlined.Check,
                 null,
                 Modifier.size(13.dp),
                 colors.onPrimaryContainer,
             )
+        }
     }
 }
 

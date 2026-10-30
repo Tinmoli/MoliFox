@@ -5,18 +5,18 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
 import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.test.assertEquals
 
 /** 板块④设置接线的回归测试：版本列表源、缓存目录、代理、更新检查都必须作用于真实行为。 */
 class SettingsWiringTest {
@@ -61,7 +61,10 @@ class SettingsWiringTest {
         assertEquals(listOf(Proxy.NO_PROXY), client.proxySelector.select(uri))
     }
 
-    private suspend fun awaitToast(controller: LauncherController, contains: String) {
+    private suspend fun awaitToast(
+        controller: LauncherController,
+        contains: String,
+    ) {
         val deadline = System.currentTimeMillis() + 15_000
         while (System.currentTimeMillis() < deadline) {
             val toast = controller.state.value.toast
@@ -74,47 +77,52 @@ class SettingsWiringTest {
                 "」，当前 toast=" +
                 controller.state.value.toast +
                 "，日志末尾=" +
-                controller.state.value.logs.takeLast(4).map { it.message }
+                controller.state.value.logs
+                    .takeLast(4)
+                    .map { it.message },
         )
     }
 
     @Test
-    fun `update check reads the configured GitHub Releases endpoint`() = runBlocking {
-        MockWebServer().use { server ->
-            // 绑定字面量 127.0.0.1：本机 DNS 会把 localhost 解析成无关域名。
-            server.start(InetAddress.getByName("127.0.0.1"), 0)
-            server.enqueue(
-                MockResponse()
-                    .setBody(
-                        """[{"tag_name":"v9.9.9","name":"MoliFox 9.9.9","body":"测试更新","html_url":"https://github.com/Tinmoli/MoliFox/releases/tag/v9.9.9","draft":false,"prerelease":false,"assets":[]}]"""
-                    )
-            )
-            val api = "http://127.0.0.1:" + server.port + "/repos/Tinmoli/MoliFox"
-            LauncherController(
+    fun `update check reads the configured GitHub Releases endpoint`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                // 绑定字面量 127.0.0.1：本机 DNS 会把 localhost 解析成无关域名。
+                server.start(InetAddress.getByName("127.0.0.1"), 0)
+                server.enqueue(
+                    MockResponse()
+                        .setBody(
+                            """[{"tag_name":"v9.9.9","name":"MoliFox 9.9.9","body":"测试更新","html_url":"https://github.com/Tinmoli/MoliFox/releases/tag/v9.9.9","draft":false,"prerelease":false,"assets":[]}]""",
+                        ),
+                )
+                val api = "http://127.0.0.1:" + server.port + "/repos/Tinmoli/MoliFox"
+                LauncherController(
                     dataDirectory = directory.resolve("moli-update"),
                     updateApiBase = api,
-                )
-                .use { controller ->
+                ).use { controller ->
                     controller.checkForUpdates(true)
                     awaitToast(controller, "9.9.9")
                 }
-            assertEquals("/repos/Tinmoli/MoliFox/releases?per_page=100", server.takeRequest().path)
+                assertEquals(
+                    "/repos/Tinmoli/MoliFox/releases?per_page=100",
+                    server.takeRequest().path,
+                )
+            }
         }
-    }
 
     @Test
-    fun `empty GitHub Releases reports honestly without a custom manifest`() = runBlocking {
-        MockWebServer().use { server ->
-            server.start(InetAddress.getByName("127.0.0.1"), 0)
-            server.enqueue(MockResponse().setBody("[]"))
-            LauncherController(
+    fun `empty GitHub Releases reports honestly without a custom manifest`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.start(InetAddress.getByName("127.0.0.1"), 0)
+                server.enqueue(MockResponse().setBody("[]"))
+                LauncherController(
                     dataDirectory = directory.resolve("moli-nomanifest"),
                     updateApiBase = "http://127.0.0.1:${server.port}/repos/Tinmoli/MoliFox",
-                )
-                .use { controller ->
+                ).use { controller ->
                     controller.checkForUpdates(true)
                     awaitToast(controller, "尚未发布正式版本")
                 }
+            }
         }
-    }
 }

@@ -5,13 +5,23 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.nio.file.Path
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.copyTo
+import kotlin.io.path.createDirectories
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class LauncherPreferencesTest {
     @TempDir lateinit var directory: Path
@@ -21,7 +31,9 @@ class LauncherPreferencesTest {
         LauncherController(dataDirectory = directory).use { controller ->
             // 新架构下实例来自 versions/ 扫描；先放一个最小可识别版本。
             val folder =
-                controller.store.minecraftRoot.resolve("versions/Fixture").createDirectories()
+                controller.store.minecraftRoot
+                    .resolve("versions/Fixture")
+                    .createDirectories()
             writeJson(
                 folder.resolve("Fixture.json"),
                 mapOf(
@@ -54,7 +66,7 @@ class LauncherPreferencesTest {
                     backgroundBlur = 25f,
                     fontChoice = "system:SansSerif",
                     pages = PagePreferences(versions = VersionsPagePreferences(view = "grid")),
-                )
+                ),
             )
             val reloadedStore = LauncherStore(controller.platform, directory)
             val loaded = reloadedStore.data
@@ -77,7 +89,7 @@ class LauncherPreferencesTest {
             val before = controller.store.instance(instance.id)
             assertFailsWith<IllegalArgumentException> {
                 controller.saveInstanceConfiguration(
-                    before.copy(extraJvmArgs = "-jar unrelated.jar")
+                    before.copy(extraJvmArgs = "-jar unrelated.jar"),
                 )
             }
             assertFailsWith<IllegalArgumentException> {
@@ -87,14 +99,21 @@ class LauncherPreferencesTest {
                 controller.saveInstanceConfiguration(before.copy(initialMemoryMb = 12))
             }
             assertFailsWith<IllegalArgumentException> {
-                controller.saveSettings(controller.store.data.settings.copy(uiScale = Float.NaN))
-            }
-            assertFailsWith<IllegalArgumentException> {
-                controller.saveSettings(controller.store.data.settings.copy(surfaceOpacity = .1f))
+                controller.saveSettings(
+                    controller.store.data.settings
+                        .copy(uiScale = Float.NaN),
+                )
             }
             assertFailsWith<IllegalArgumentException> {
                 controller.saveSettings(
-                    controller.store.data.settings.copy(backgroundBlur = Float.NaN)
+                    controller.store.data.settings
+                        .copy(surfaceOpacity = .1f),
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                controller.saveSettings(
+                    controller.store.data.settings
+                        .copy(backgroundBlur = Float.NaN),
                 )
             }
             assertEquals(before, controller.store.instance(instance.id))

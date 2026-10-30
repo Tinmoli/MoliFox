@@ -5,8 +5,11 @@
 
 package dev.molifox.core
 
-import kotlin.test.*
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ProcessPriorityTest {
     @Test
@@ -29,7 +32,8 @@ class ProcessPriorityTest {
         )
         assertEquals(
             "High",
-            gson.toJsonTree(LauncherSettings(processPriority = ProcessPriority.High))
+            gson
+                .toJsonTree(LauncherSettings(processPriority = ProcessPriority.High))
                 .asJsonObject
                 .get("processPriority")
                 .asString,

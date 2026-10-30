@@ -8,7 +8,11 @@ package dev.molifox.core
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
+import kotlin.io.path.writeBytes
 
 /** Artwork is optional pack metadata, not an executable override or an arbitrary network URL. */
 internal suspend fun applyPackIcon(
@@ -33,8 +37,9 @@ internal suspend fun applyPackIcon(
                     ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
                     ?.asString
                     .orEmpty()
-            if (value.isNotBlank() && value.length <= 240 && !value.contains("://"))
+            if (value.isNotBlank() && value.length <= 240 && !value.contains("://")) {
                 candidates += prefix + value
+            }
         }
         if (path.endsWith("mmc-pack.json")) {
             val config = zip.getEntry(prefix + "instance.cfg")
@@ -65,13 +70,18 @@ internal suspend fun applyPackIcon(
         candidates += prefix + "icon.png"
         candidates += prefix + "PCL/Logo.png"
     }
-    val entries = zip.entries().asSequence().filter { !it.isDirectory }.groupBy { it.name }
+    val entries =
+        zip
+            .entries()
+            .asSequence()
+            .filter { !it.isDirectory }
+            .groupBy { it.name }
     val entry: ZipEntry =
         candidates.firstNotNullOfOrNull { candidate ->
             require(
                 !candidate.startsWith('/') &&
                     '\\' !in candidate &&
-                    candidate.split('/').none { it == ".." || it == "." }
+                    candidate.split('/').none { it == ".." || it == "." },
             ) {
                 "整合包图标路径无效"
             }

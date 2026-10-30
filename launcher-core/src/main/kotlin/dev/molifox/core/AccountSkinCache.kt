@@ -5,6 +5,10 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -12,8 +16,13 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.reader
+import kotlin.io.path.writeBytes
 
 /** Mojang profile responses can contain HTTP CDN URLs; only that exact origin is upgraded. */
 internal fun normalizeSkinTextureUrl(url: String): String {
@@ -25,50 +34,59 @@ internal fun normalizeSkinTextureUrl(url: String): String {
             uri.port == -1 &&
             uri.rawQuery == null &&
             uri.rawFragment == null &&
-            uri.path.matches(Regex("/texture/[a-fA-F0-9]{32,128}"))
+            uri.path.matches(Regex("/texture/[a-fA-F0-9]{32,128}")),
     ) {
         "不支持的皮肤纹理地址"
     }
     return "https://textures.minecraft.net${uri.rawPath}"
 }
 
-internal fun validSkinTexture(path: Path): Boolean = runCatching {
-    if (!path.isRegularFile() || Files.isSymbolicLink(path) || path.fileSize() !in 1..1024L * 1024)
-        return false
-    ImageIO.createImageInputStream(path.toFile()).use { input ->
-        val reader = ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: return false
-        try {
-            reader.input = input
-            val width = reader.getWidth(0)
-            val height = reader.getHeight(0)
-            reader.formatName.equals("png", true) &&
-                width in 64..4096 &&
-                width % 64 == 0 &&
-                (height == width || height * 2 == width) &&
-                reader.read(0) != null
-        } finally {
-            reader.dispose()
+internal fun validSkinTexture(path: Path): Boolean =
+    runCatching {
+        if (!path.isRegularFile() ||
+            Files.isSymbolicLink(
+                path,
+            ) || path.fileSize() !in 1..1024L * 1024
+        ) {
+            return false
         }
-    }
-}
-    .getOrDefault(false)
+        ImageIO.createImageInputStream(path.toFile()).use { input ->
+            val reader = ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: return false
+            try {
+                reader.input = input
+                val width = reader.getWidth(0)
+                val height = reader.getHeight(0)
+                reader.formatName.equals("png", true) &&
+                    width in 64..4096 &&
+                    width % 64 == 0 &&
+                    (height == width || height * 2 == width) &&
+                    reader.read(0) != null
+            } finally {
+                reader.dispose()
+            }
+        }
+    }.getOrDefault(false)
 
 internal class AccountSkinCache(
     private val store: LauncherStore,
     network: NetworkClient,
     private val fetchTexture: suspend (String) -> ByteArray = network::skinTexture,
 ) {
-    suspend fun load(account: Account, refresh: Boolean): Path? =
+    suspend fun load(
+        account: Account,
+        refresh: Boolean,
+    ): Path? =
         withContext(Dispatchers.IO) {
-            if (account.type != AccountType.Microsoft || account.skinUrl.isBlank())
+            if (account.type != AccountType.Microsoft || account.skinUrl.isBlank()) {
                 return@withContext null
+            }
             var temporary: Path? = null
             var cached: Path? = null
             try {
                 val url = normalizeSkinTextureUrl(account.skinUrl)
                 val key =
                     MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(
-                        ""
+                        "",
                     ) {
                         "%02x".format(it)
                     }

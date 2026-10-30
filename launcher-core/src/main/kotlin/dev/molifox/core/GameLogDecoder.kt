@@ -5,10 +5,15 @@
 
 package dev.molifox.core
 
-internal data class DecodedGameLog(val message: String, val error: Boolean)
+internal data class DecodedGameLog(
+    val message: String,
+    val error: Boolean,
+)
 
 /** Mojang's console layout emits XML fragments; keep message and severity together. */
-internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
+internal class GameLogDecoder(
+    private val output: (DecodedGameLog) -> Unit,
+) {
     private var event: StringBuilder? = null
     private val start = Regex("<log4j:event\\b", RegexOption.IGNORE_CASE)
     private val end = Regex("</log4j:event\\s*>", RegexOption.IGNORE_CASE)
@@ -45,9 +50,12 @@ internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
             output(
                 DecodedGameLog(
                     rendered,
-                    if (level.isBlank()) isGameError(rendered)
-                    else level in setOf("ERROR", "FATAL"),
-                )
+                    if (level.isBlank()) {
+                        isGameError(rendered)
+                    } else {
+                        level in setOf("ERROR", "FATAL")
+                    },
+                ),
             )
         } else if (buffer.length > 128 * 1024) {
             flush()
@@ -65,7 +73,10 @@ internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
             output(DecodedGameLog(it, isGameError(it)))
         }
 
-    private fun body(text: String, tag: String): String? {
+    private fun body(
+        text: String,
+        tag: String,
+    ): String? {
         val opening =
             Regex("<log4j:$tag(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE).find(text) ?: return null
         val closing =
@@ -74,7 +85,9 @@ internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
         val content = text.substring(opening.range.last + 1, closing.range.first).trim()
         return if (content.startsWith("<![CDATA[") && content.endsWith("]]>")) {
             content.removePrefix("<![CDATA[").removeSuffix("]]>").replace("]]]]><![CDATA[>", "]]>")
-        } else xmlText(content)
+        } else {
+            xmlText(content)
+        }
     }
 
     private fun xmlText(text: String): String =
@@ -87,12 +100,14 @@ internal class GameLogDecoder(private val output: (DecodedGameLog) -> Unit) {
                 "apos" -> "'"
                 else ->
                     runCatching {
-                            val code =
-                                if (entity.startsWith("#x")) entity.drop(2).toInt(16)
-                                else entity.drop(1).toInt()
-                            String(Character.toChars(code))
-                        }
-                        .getOrDefault(match.value)
+                        val code =
+                            if (entity.startsWith("#x")) {
+                                entity.drop(2).toInt(16)
+                            } else {
+                                entity.drop(1).toInt()
+                            }
+                        String(Character.toChars(code))
+                    }.getOrDefault(match.value)
             }
         }
 }

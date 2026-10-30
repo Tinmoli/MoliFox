@@ -10,7 +10,14 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
 /** 升级计划里单个文件的动作；desktop-app 需要据此展示预览列表。 */
 enum class PackFileAction {
@@ -44,7 +51,10 @@ data class PackUpgradePolicy(
     val removeObsoleteFiles: Boolean = true,
 )
 
-internal data class PackFileState(val present: Boolean, val sha1: String?)
+internal data class PackFileState(
+    val present: Boolean,
+    val sha1: String?,
+)
 
 /** 升级预览结果；对 desktop-app 可见，用于展示版本变化与文件明细。 */
 data class PackUpgradePlan(
@@ -123,7 +133,7 @@ internal object PackUpgradePlanner {
         val optional = newFile.optional
         if (!state.present || state.sha1 == null) {
             val deleted = oldFile != null
-            if (deleted && !policy.restoreUserDeleted)
+            if (deleted && !policy.restoreUserDeleted) {
                 return PackFileChange(
                     path,
                     PackFileAction.Keep,
@@ -131,6 +141,7 @@ internal object PackUpgradePlanner {
                     "用户删除的整合包文件保持缺失",
                     optional,
                 )
+            }
             return PackFileChange(
                 path,
                 PackFileAction.Add,
@@ -139,7 +150,7 @@ internal object PackUpgradePlanner {
                 optional,
             )
         }
-        if (state.sha1.equals(newFile.sha1, true))
+        if (state.sha1.equals(newFile.sha1, true)) {
             return PackFileChange(
                 path,
                 PackFileAction.Keep,
@@ -147,7 +158,8 @@ internal object PackUpgradePlanner {
                 "文件已是新整合包版本",
                 optional,
             )
-        if (oldFile != null && state.sha1.equals(oldFile.sha1, true))
+        }
+        if (oldFile != null && state.sha1.equals(oldFile.sha1, true)) {
             return PackFileChange(
                 path,
                 PackFileAction.Replace,
@@ -155,6 +167,7 @@ internal object PackUpgradePlanner {
                 "整合包更新文件",
                 optional,
             )
+        }
         if (policy.protectUserModified) {
             protectedPaths += path
             return PackFileChange(
@@ -181,28 +194,31 @@ internal object PackUpgradePlanner {
         policy: PackUpgradePolicy,
         protectedPaths: MutableList<String>,
     ): PackFileChange {
-        if (!state.present || state.sha1 == null)
+        if (!state.present || state.sha1 == null) {
             return PackFileChange(
                 path,
                 PackFileAction.Keep,
                 PackUserState.UserDeleted,
                 "用户已删除的旧整合包文件",
             )
-        if (state.sha1.equals(oldFile.sha1, true))
-            return if (policy.removeObsoleteFiles)
+        }
+        if (state.sha1.equals(oldFile.sha1, true)) {
+            return if (policy.removeObsoleteFiles) {
                 PackFileChange(
                     path,
                     PackFileAction.Remove,
                     PackUserState.Unchanged,
                     "新整合包已移除该文件",
                 )
-            else
+            } else {
                 PackFileChange(
                     path,
                     PackFileAction.Keep,
                     PackUserState.Unchanged,
                     "按策略保留新整合包已移除的文件",
                 )
+            }
+        }
         if (policy.protectUserModified) {
             protectedPaths += path
             return PackFileChange(
@@ -256,7 +272,12 @@ internal class PackUpgradeTransaction(
         require(archiveSource.isRegularFile() && !Files.isSymbolicLink(archiveSource)) {
             "新整合包归档不可用"
         }
-        require(plan.changes.map { packRelative(it.path) }.distinct().size == plan.changes.size) {
+        require(
+            plan.changes
+                .map { packRelative(it.path) }
+                .distinct()
+                .size == plan.changes.size,
+        ) {
             "升级计划包含重复路径"
         }
         val replacing =
@@ -349,18 +370,20 @@ internal class PackUpgradeTransaction(
             val failures = mutableListOf<Throwable>()
             runCatching {
                 installed.asReversed().forEach { Files.deleteIfExists(it) }
-                for ((target, saved) in backups.entries.toList().asReversed()) Files.move(
-                    saved,
-                    target,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
+                for ((target, saved) in backups.entries.toList().asReversed()) {
+                    Files.move(
+                        saved,
+                        target,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }
                 if (ledgerWritten) restoreOrDelete(ledger, ledgerBackup)
                 if (archiveWritten) restoreOrDelete(archive, archiveBackup)
-            }
-                .onFailure { failures += it }
-            if (instanceUpdated)
+            }.onFailure { failures += it }
+            if (instanceUpdated) {
                 runCatching { store.updateInstance(instanceId) { oldInstance } }
                     .onFailure { failures += it }
+            }
             if (failures.isNotEmpty()) {
                 retain = true
                 throw IOException("整合包升级未完成，原文件备份保留在 $directory", error).also {
@@ -382,12 +405,17 @@ internal class PackUpgradeTransaction(
             Files.walk(directory).use { paths ->
                 paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
             }
-        }
-            .onFailure { store.log("整合包升级备份清理失败：$directory", true) }
+        }.onFailure { store.log("整合包升级备份清理失败：$directory", true) }
     }
 }
 
-private fun restoreOrDelete(target: Path, backup: Path?) {
-    if (backup == null) Files.deleteIfExists(target)
-    else Files.copy(backup, target, StandardCopyOption.REPLACE_EXISTING)
+private fun restoreOrDelete(
+    target: Path,
+    backup: Path?,
+) {
+    if (backup == null) {
+        Files.deleteIfExists(target)
+    } else {
+        Files.copy(backup, target, StandardCopyOption.REPLACE_EXISTING)
+    }
 }

@@ -5,22 +5,28 @@
 
 package dev.molifox.core
 
-import java.net.URI
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import java.net.URI
 
 internal class EncyclopediaLinks(
     network: NetworkClient,
     private val fetch: suspend (String) -> String = network::encyclopediaText,
 ) {
-    private data class Entry(val expires: Long, val url: String?)
+    private data class Entry(
+        val expires: Long,
+        val url: String?,
+    )
 
     private val entries = linkedMapOf<String, Entry>()
     private val lock = Mutex()
 
-    suspend fun resolve(hit: ContentHit, declared: String = ""): String? {
+    suspend fun resolve(
+        hit: ContentHit,
+        declared: String = "",
+    ): String? {
         directEncyclopediaUrl(declared)?.let {
             return it
         }
@@ -74,14 +80,19 @@ internal class EncyclopediaLinks(
                                     .path
                                     .substringAfter("/target/")
                             require(encoded.length <= 4096)
-                            val bytes = runCatching {
-                                java.util.Base64.getDecoder().decode(encoded)
-                            }
-                                .getOrElse { java.util.Base64.getUrlDecoder().decode(encoded) }
+                            val bytes =
+                                runCatching {
+                                    java.util.Base64
+                                        .getDecoder()
+                                        .decode(encoded)
+                                }.getOrElse {
+                                    java.util.Base64
+                                        .getUrlDecoder()
+                                        .decode(encoded)
+                                }
                             require(bytes.size <= 2048)
                             bytes.toString(Charsets.UTF_8)
-                        }
-                            .getOrNull()
+                        }.getOrNull()
                     }
             if (
                 (links + redirected).any { raw ->
@@ -92,8 +103,9 @@ internal class EncyclopediaLinks(
                             .equals(project.host.removePrefix("www."), true) &&
                         actual.path.trimEnd('/') == project.path.trimEnd('/')
                 }
-            )
+            ) {
                 return url
+            }
         }
         return null
     }
@@ -103,13 +115,15 @@ internal fun directEncyclopediaUrl(value: String): String? {
     val uri = runCatching { URI(value) }.getOrNull() ?: return null
     return if (
         uri.scheme == "https" &&
-            uri.host == "www.mcmod.cn" &&
-            uri.rawUserInfo == null &&
-            uri.port == -1 &&
-            uri.rawQuery == null &&
-            uri.rawFragment == null &&
-            uri.path.matches(Regex("/(class|modpack)/[1-9][0-9]*\\.html"))
-    )
+        uri.host == "www.mcmod.cn" &&
+        uri.rawUserInfo == null &&
+        uri.port == -1 &&
+        uri.rawQuery == null &&
+        uri.rawFragment == null &&
+        uri.path.matches(Regex("/(class|modpack)/[1-9][0-9]*\\.html"))
+    ) {
         uri.toASCIIString()
-    else null
+    } else {
+        null
+    }
 }

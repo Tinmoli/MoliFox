@@ -7,10 +7,19 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import kotlin.io.path.*
+import kotlin.io.path.Path
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.walk
 
-internal class NewInstallationCleanup(private val store: LauncherStore) {
-    fun register(instance: GameInstance, context: JobContext) {
+internal class NewInstallationCleanup(
+    private val store: LauncherStore,
+) {
+    fun register(
+        instance: GameInstance,
+        context: JobContext,
+    ) {
         val root = store.minecraftRoot(instance).toAbsolutePath().normalize()
         val folder = store.versionGamePath(instance).toAbsolutePath().normalize()
         require(folder.parent == root.resolve("versions"))
@@ -29,10 +38,15 @@ internal class NewInstallationCleanup(private val store: LauncherStore) {
                 val current = store.data.instances.find { it.id == instance.id }
                 if (current?.packFile?.isNotBlank() == true) {
                     val archive =
-                        java.nio.file.Path.of(current.packFile).toAbsolutePath().normalize()
+                        java.nio.file.Path
+                            .of(current.packFile)
+                            .toAbsolutePath()
+                            .normalize()
                     require(
                         archive.parent ==
-                            store.directories.packArchives.toAbsolutePath().normalize()
+                            store.directories.packArchives
+                                .toAbsolutePath()
+                                .normalize(),
                     )
                     require(archive.fileName.toString().substringBefore('.') == instance.id)
                     Files.deleteIfExists(archive)
@@ -42,13 +56,14 @@ internal class NewInstallationCleanup(private val store: LauncherStore) {
                     data.copy(
                         instances = remaining,
                         selectedInstanceId =
-                            if (data.selectedInstanceId == instance.id)
+                            if (data.selectedInstanceId == instance.id) {
                                 remaining
                                     .firstOrNull {
                                         it.gameDirectoryId == data.activeGameDirectoryId
-                                    }
-                                    ?.id
-                            else data.selectedInstanceId,
+                                    }?.id
+                            } else {
+                                data.selectedInstanceId
+                            },
                     )
                 }
             },

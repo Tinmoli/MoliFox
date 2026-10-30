@@ -39,7 +39,7 @@ internal fun extraJvmArguments(value: String): List<String> {
                 it in listOf("-cp", "-classpath", "--class-path", "-jar") ||
                 it.startsWith("-Xmx") ||
                 it.startsWith("-Xms")
-        }
+        },
     ) {
         "内存请通过内存设置调整；附加参数不能覆盖游戏入口或 classpath"
     }
@@ -75,7 +75,7 @@ internal fun extraGameArguments(settings: AdvancedLaunchSettings): List<String> 
     require(
         arguments.none {
             it.startsWith('@') || it.substringBefore('=').lowercase() in managedGameFlags
-        }
+        },
     ) {
         "附加游戏参数不能覆盖账户、游戏目录、资源或窗口设置，请使用对应设置"
     }
@@ -83,12 +83,17 @@ internal fun extraGameArguments(settings: AdvancedLaunchSettings): List<String> 
     return arguments
 }
 
-fun validateAdvancedLaunchSettings(settings: AdvancedLaunchSettings, os: String) {
+fun validateAdvancedLaunchSettings(
+    settings: AdvancedLaunchSettings,
+    os: String,
+) {
     extraGameArguments(settings)
     require(settings.commandTimeoutSeconds in 1..3600) { "命令超时需为 1–3600 秒" }
     require(settings.launcherVisibility in setOf("", "keep", "minimize", "hide")) { "启动器显示方式无效" }
-    for ((label, command) in
-        listOf("启动前" to settings.preLaunchCommand, "退出后" to settings.postExitCommand)) {
+    for (
+    (label, command) in
+    listOf("启动前" to settings.preLaunchCommand, "退出后" to settings.postExitCommand)
+    ) {
         require('\u0000' !in command && '\r' !in command && '\n' !in command) {
             "${label}命令需为单行；复杂操作请调用脚本文件"
         }
@@ -106,7 +111,10 @@ fun validateAdvancedLaunchSettings(settings: AdvancedLaunchSettings, os: String)
     }
 }
 
-fun parseEnvironmentVariables(text: String, os: String): Map<String, String> {
+fun parseEnvironmentVariables(
+    text: String,
+    os: String,
+): Map<String, String> {
     val values = linkedMapOf<String, String>()
     text
         .lineSequence()
@@ -126,17 +134,18 @@ internal fun environmentForDiagnostics(values: Map<String, String>): Map<String,
         if (
             Regex("(?i)token|secret|password|credential|api.?key|authorization")
                 .containsMatchIn(name)
-        )
+        ) {
             "[已隐藏]"
-        else redactSecrets(value)
+        } else {
+            redactSecrets(value)
+        }
     }
 
 internal fun environmentSecrets(values: Map<String, String>): List<String> =
     values
         .filterKeys {
             Regex("(?i)token|secret|password|credential|api.?key|authorization").containsMatchIn(it)
-        }
-        .values
+        }.values
         .filter { it.length > 5 }
 
 data class GameRunEvent(
@@ -158,7 +167,10 @@ enum class LauncherWindowAction {
     Exit,
 }
 
-fun launcherWindowAction(event: GameRunEvent, traySupported: Boolean): LauncherWindowAction =
+fun launcherWindowAction(
+    event: GameRunEvent,
+    traySupported: Boolean,
+): LauncherWindowAction =
     when {
         event.finished && event.closeAfterExit && event.exitCode == 0 && !event.postCommandFailed ->
             LauncherWindowAction.Exit

@@ -9,10 +9,10 @@ import kotlin.io.path.fileSize
 
 /** 安装与维护的阶段标签：单个阶段可能要处理数千个文件，必须让用户看出还在做什么。 */
 internal object InstallPhase {
-    const val Verify = "校验文件"
-    const val Libraries = "下载库"
-    const val Assets = "下载资源"
-    const val Loader = "安装加载器"
+    const val VERIFY = "校验文件"
+    const val LIBRARIES = "下载库"
+    const val ASSETS = "下载资源"
+    const val LOADER = "安装加载器"
 }
 
 /**
@@ -31,19 +31,35 @@ private const val PROGRESS_EMIT_INTERVAL_MILLIS = 100L
 /** 下载调度向进度模型汇报的最小接口。 */
 internal interface DownloadProgressSink {
     /** 本批总工作量（文件数 + 字节数），在派发前一次性登记。 */
-    fun planned(files: Int, bytes: Long) {}
+    fun planned(
+        files: Int,
+        bytes: Long,
+    ) {}
 
     /** 开始处理某个文件（校验或下载）。 */
-    fun started(key: String, artifact: DownloadArtifact) {}
+    fun started(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {}
 
     /** 文件已传输的字节数；分段下载会多次回调，进度按比例增长。 */
-    fun bytes(key: String, done: Long, total: Long) {}
+    fun bytes(
+        key: String,
+        done: Long,
+        total: Long,
+    ) {}
 
     /** 文件完成（下载并校验通过，或本地校验通过）。 */
-    fun finished(key: String, artifact: DownloadArtifact) {}
+    fun finished(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {}
 
     /** 文件失败；进度不回退，最终由调用方汇总报错。 */
-    fun failed(key: String, artifact: DownloadArtifact) {}
+    fun failed(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {}
 
     object None : DownloadProgressSink
 }
@@ -61,7 +77,10 @@ internal class InstallProgress(
     private val to: Float = 1f,
     private val emitIntervalMillis: Long = PROGRESS_EMIT_INTERVAL_MILLIS,
 ) : DownloadProgressSink {
-    private class PhaseWork(val label: String, val bytesPerUnit: Long) {
+    private class PhaseWork(
+        val label: String,
+        val bytesPerUnit: Long,
+    ) {
         var files = 0
         var finished = 0
         var bytes = 0L
@@ -79,9 +98,12 @@ internal class InstallProgress(
     private var anchorFraction = from
     private var emitted = from
     private var lastEmitAt = 0L
-    private var currentPhase = InstallPhase.Verify
+    private var currentPhase = InstallPhase.VERIFY
 
-    private fun composite(phase: String, key: String) = "$phase\u0000$key"
+    private fun composite(
+        phase: String,
+        key: String,
+    ) = "$phase\u0000$key"
 
     /** 切换阶段：标签变化立即上报，哪怕还在节流窗口内。 */
     fun begin(label: String) {
@@ -89,12 +111,19 @@ internal class InstallProgress(
             if (currentPhase != label) {
                 currentPhase = label
                 emit(force = true)
-            } else emit(force = false)
+            } else {
+                emit(force = false)
+            }
         }
     }
 
     /** 登记某个阶段已知的工作量；验证券与下载可以分两次登记同一批文件。 */
-    fun plan(label: String, files: Int, bytes: Long, bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT) {
+    fun plan(
+        label: String,
+        files: Int,
+        bytes: Long,
+        bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT,
+    ) {
         if (files <= 0 && bytes <= 0) return
         synchronized(lock) {
             val phase = phases.getOrPut(label) { PhaseWork(label, bytesPerUnit) }
@@ -103,8 +132,9 @@ internal class InstallProgress(
             // 新增工作量后重新锚定，已完成的部分保持当前百分比。
             anchorFraction = emitted
             anchorUnits = doneUnits
-            plannedUnits += files.coerceAtLeast(0) + bytes.coerceAtLeast(0).toDouble() / bytesPerUnit
-            if (label != InstallPhase.Verify) context.expectFiles(files.coerceAtLeast(0))
+            plannedUnits +=
+                files.coerceAtLeast(0) + bytes.coerceAtLeast(0).toDouble() / bytesPerUnit
+            if (label != InstallPhase.VERIFY) context.expectFiles(files.coerceAtLeast(0))
             emit(force = false)
         }
     }
@@ -113,7 +143,12 @@ internal class InstallProgress(
      * 释放预先登记、实际不会发生的工作量（校验后发现文件本来就好好的，不需要下载）。
      * 分母变小只会让百分比向上，不会回退。
      */
-    fun release(label: String, files: Int, bytes: Long, bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT) {
+    fun release(
+        label: String,
+        files: Int,
+        bytes: Long,
+        bytesPerUnit: Long = PROGRESS_BYTES_PER_UNIT,
+    ) {
         if (files <= 0 && bytes <= 0) return
         synchronized(lock) {
             val phase = phases[label] ?: return
@@ -127,7 +162,10 @@ internal class InstallProgress(
     }
 
     /** 本地校验完一个文件：直接记满它在「校验文件」阶段的份额。 */
-    fun verified(label: String, artifact: DownloadArtifact) {
+    fun verified(
+        label: String,
+        artifact: DownloadArtifact,
+    ) {
         synchronized(lock) {
             val key = composite(label, artifact.target.toString())
             phaseOf[key] = label
@@ -138,7 +176,10 @@ internal class InstallProgress(
         }
     }
 
-    override fun started(key: String, artifact: DownloadArtifact) {
+    override fun started(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {
         synchronized(lock) {
             val composite = composite(currentPhase, key)
             phaseOf[composite] = currentPhase
@@ -149,22 +190,30 @@ internal class InstallProgress(
         }
     }
 
-    override fun bytes(key: String, done: Long, total: Long) {
+    override fun bytes(
+        key: String,
+        done: Long,
+        total: Long,
+    ) {
         synchronized(lock) {
             val composite = composite(currentPhase, key)
             val size = sizeOf[composite] ?: 0L
-            val measured = when {
-                total > 0 -> done.toDouble() / total
-                size > 0 -> done.toDouble() / size
-                else -> 0.0
-            }
+            val measured =
+                when {
+                    total > 0 -> done.toDouble() / total
+                    size > 0 -> done.toDouble() / size
+                    else -> 0.0
+                }
             setCredit(composite, fullCredit(composite) * measured.coerceIn(0.0, 1.0))
             context.transfer(key, done.coerceAtLeast(0), total.coerceAtLeast(0))
             emit(force = false)
         }
     }
 
-    override fun finished(key: String, artifact: DownloadArtifact) {
+    override fun finished(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {
         synchronized(lock) {
             val composite = composite(currentPhase, key)
             phaseOf[composite] = currentPhase
@@ -177,7 +226,10 @@ internal class InstallProgress(
         }
     }
 
-    override fun failed(key: String, artifact: DownloadArtifact) {
+    override fun failed(
+        key: String,
+        artifact: DownloadArtifact,
+    ) {
         synchronized(lock) {
             // 失败的文件也算「处理完」，否则任务中心会一直显示还有剩余文件。
             val size = transferredSize(artifact)
@@ -187,8 +239,11 @@ internal class InstallProgress(
     }
 
     private fun transferredSize(artifact: DownloadArtifact): Long =
-        if (artifact.size > 0) artifact.size
-        else runCatching { artifact.target.fileSize() }.getOrDefault(0L)
+        if (artifact.size > 0) {
+            artifact.size
+        } else {
+            runCatching { artifact.target.fileSize() }.getOrDefault(0L)
+        }
 
     /** 这段工作全部结束：精确落到 [to]，再由上层任务收尾。 */
     fun finish() {
@@ -205,25 +260,33 @@ internal class InstallProgress(
         return 1.0 + if (size > 0) size.toDouble() / perUnit else 0.0
     }
 
-    private fun setCredit(key: String, value: Double) {
+    private fun setCredit(
+        key: String,
+        value: Double,
+    ) {
         val previous = credit[key] ?: 0.0
         credit[key] = value
         doneUnits += value - previous
     }
 
     /** 每个文件在它所属阶段只计一次完成，用于「阶段 已完成/计划」的明细。 */
-    private fun markCompleted(label: String, key: String) {
+    private fun markCompleted(
+        label: String,
+        key: String,
+    ) {
         if (completedFiles.add(key)) phases[label]?.let { it.finished += 1 }
     }
 
     private fun fraction(): Float {
         val remaining = plannedUnits - anchorUnits
         val raw =
-            if (remaining <= 1e-6) anchorFraction.toDouble()
-            else
+            if (remaining <= 1e-6) {
+                anchorFraction.toDouble()
+            } else {
                 anchorFraction.toDouble() +
                     (doneUnits - anchorUnits) / remaining *
-                        (to.toDouble() - anchorFraction.toDouble())
+                    (to.toDouble() - anchorFraction.toDouble())
+            }
         return raw.coerceIn(from.toDouble(), to.toDouble()).toFloat()
     }
 
@@ -239,7 +302,10 @@ internal class InstallProgress(
         lastEmitAt = now
         val value = fraction()
         if (value > emitted) emitted = value
-        if (force) context.progressImmediate(emitted, detail())
-        else context.progress(emitted, detail())
+        if (force) {
+            context.progressImmediate(emitted, detail())
+        } else {
+            context.progress(emitted, detail())
+        }
     }
 }

@@ -7,11 +7,30 @@ package dev.molifox.desktop
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -19,9 +38,17 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.EntryKind
+import dev.molifox.core.GameInstance
+import dev.molifox.core.GameLaunchTarget
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.io.path.isDirectory
-import kotlinx.coroutines.*
 
 @Composable
 fun RecentPlayPanel(
@@ -70,6 +97,7 @@ fun RecentPlayPanel(
             tick++
         }
     }
+
     fun perform(action: () -> Unit) {
         scope.launch {
             try {
@@ -93,14 +121,15 @@ fun RecentPlayPanel(
                 if (item.kind == EntryKind.Server) {
                     clipboard.setText(AnnotatedString(item.key))
                     controller.store.notify("已复制服务器地址")
-                } else
+                } else {
                     item.save?.let { save ->
                         perform {
                             controller.platform.openFolder(
-                                if (save.path.isDirectory()) save.path else save.path.parent
+                                if (save.path.isDirectory()) save.path else save.path.parent,
                             )
                         }
                     }
+                }
             },
             hide = { item ->
                 perform {
@@ -113,6 +142,7 @@ fun RecentPlayPanel(
                 }
             },
             delete = { deleting = it },
+            statusQuery = actions.serverStatusQuery,
         )
     val visible = items.filter { it.kind == kind && !it.hidden }.take(8)
     Panel(
@@ -135,7 +165,6 @@ fun RecentPlayPanel(
                 Icons.Outlined.Refresh,
                 "刷新最近游玩的存档与服务器",
                 onClick = {
-                    RecentServerCache.clear()
                     refresh++
                 },
             )
@@ -149,16 +178,19 @@ fun RecentPlayPanel(
             )
         }
         if (expanded) {
-            if (visible.isEmpty())
+            if (visible.isEmpty()) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        if (loading) "正在读取…"
-                        else "暂无${if (kind == EntryKind.World) "存档" else "服务器"}，可在查看全部中恢复隐藏项",
+                        if (loading) {
+                            "正在读取…"
+                        } else {
+                            "暂无${if (kind == EntryKind.World) "存档" else "服务器"}，可在查看全部中恢复隐藏项"
+                        },
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            else
+            } else {
                 RecentPlayList(
                     visible,
                     busy,
@@ -166,9 +198,10 @@ fun RecentPlayPanel(
                     callbacks,
                     Modifier.fillMaxWidth().weight(1f).padding(horizontal = 8.dp, vertical = 4.dp),
                 )
+            }
         }
     }
-    if (showAll)
+    if (showAll) {
         RecentPlayDialog(
             items,
             kind,
@@ -177,20 +210,22 @@ fun RecentPlayPanel(
             loading,
             callbacks,
             onRefresh = {
-                RecentServerCache.clear()
                 refresh++
             },
             onDismiss = { showAll = false },
         )
+    }
     deleting?.let { item ->
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text(if (item.kind == EntryKind.Server) "删除服务器？" else "删除存档？") },
             text = {
                 Text(
-                    if (item.kind == EntryKind.Server)
+                    if (item.kind == EntryKind.Server) {
                         "「${item.title}」将从当前游戏目录的服务器列表移除，游戏内也不再显示。共用此目录的实例同步生效；修改前会备份原列表。请先退出使用此目录的游戏。"
-                    else "「${item.title}」将移入回收站，可从回收站恢复。"
+                    } else {
+                        "「${item.title}」将移入回收站，可从回收站恢复。"
+                    },
                 )
             },
             confirmButton = {
@@ -200,7 +235,7 @@ fun RecentPlayPanel(
                         if (item.kind == EntryKind.Server) {
                             val result = controller.deleteServer(instance.id, item.key)
                             controller.store.notify(
-                                if (result.removed > 0) "服务器已删除，原列表已备份" else "已移除这条历史记录"
+                                if (result.removed > 0) "服务器已删除，原列表已备份" else "已移除这条历史记录",
                             )
                         } else {
                             require(controller.deleteSave(instance.id, item.key)) {

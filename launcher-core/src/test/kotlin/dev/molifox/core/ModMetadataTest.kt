@@ -5,18 +5,25 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.reader
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ModMetadataTest {
     @TempDir lateinit var temporary: Path
 
-    private fun jar(name: String, entries: Map<String, String>): Path =
+    private fun jar(
+        name: String,
+        entries: Map<String, String>,
+    ): Path =
         temporary.resolve(name).also { path ->
             ZipOutputStream(path.outputStream()).use { zip ->
                 entries.forEach { (name, content) ->
@@ -36,22 +43,28 @@ class ModMetadataTest {
                     "fabric.jar",
                     mapOf(
                         "fabric.mod.json" to
-                            """{"id":"fox","name":"茉狐","version":"1.2","authors":["Alice",{"name":"Bob"}],"depends":{"minecraft":"1.20.1"}}"""
+                            """{"id":"fox","name":"茉狐","version":"1.2","authors":["Alice",{"name":"Bob"}],"depends":{"minecraft":"1.20.1"}}""",
                     ),
-                )
+                ),
             )
         assertEquals("茉狐", fabric.title)
         assertEquals("Alice, Bob", fabric.entries.single().authors)
-        assertTrue(fabric.entries.single().dependencies.single().contains("minecraft"))
+        assertTrue(
+            fabric.entries
+                .single()
+                .dependencies
+                .single()
+                .contains("minecraft"),
+        )
         val quilt =
             reader.read(
                 jar(
                     "quilt.jar",
                     mapOf(
                         "quilt.mod.json" to
-                            """{"quilt_loader":{"id":"fox","version":"2","metadata":{"name":"Quilt Fox","contributors":{"C":"Developer"}},"depends":[{"id":"quilt_loader"}]}}"""
+                            """{"quilt_loader":{"id":"fox","version":"2","metadata":{"name":"Quilt Fox","contributors":{"C":"Developer"}},"depends":[{"id":"quilt_loader"}]}}""",
                     ),
-                )
+                ),
             )
         assertEquals("Quilt", quilt.loader)
         assertEquals("C", quilt.entries.single().authors)
@@ -81,17 +94,21 @@ class ModMetadataTest {
                                 [[dependencies.fox]]
                                 modId="minecraft"
                                 versionRange="[1.20,1.21)"
-                                """
-                                    .trimIndent(),
+                                """.trimIndent(),
                             "META-INF/MANIFEST.MF" to
                                 "Manifest-Version: 1.0\nImplementation-Version: 3.4\n\n",
                         ),
-                    )
+                    ),
                 )
         assertEquals("NeoForge", result.loader)
         assertEquals(2, result.entries.size)
         assertEquals("3.4", result.entries.first().version)
-        assertTrue(result.entries.first().description.contains("line description"))
+        assertTrue(
+            result.entries
+                .first()
+                .description
+                .contains("line description"),
+        )
         assertEquals(listOf("minecraft [1.20,1.21)"), result.entries.first().dependencies)
     }
 
@@ -105,11 +122,10 @@ class ModMetadataTest {
                     jar(
                         "old.jar",
                         mapOf(
-                            "mcmod.info" to """[{"modid":"old","name":"Old Fox","version":"1"}]"""
+                            "mcmod.info" to """[{"modid":"old","name":"Old Fox","version":"1"}]""",
                         ),
-                    )
-                )
-                .title,
+                    ),
+                ).title,
         )
         val bad = jar("bad.jar", mapOf("fabric.mod.json" to "{bad"))
         assertTrue(reader.read(bad).warning.isNotBlank())
@@ -119,13 +135,13 @@ class ModMetadataTest {
             reader
                 .read(jar("large.jar", mapOf("fabric.mod.json" to "x".repeat(2 * 1024 * 1024 + 1))))
                 .warning
-                .isNotBlank()
+                .isNotBlank(),
         )
         assertTrue(
             reader
                 .read(temporary.resolve("broken.jar").apply { writeText("not a jar") })
                 .warning
-                .isNotBlank()
+                .isNotBlank(),
         )
     }
 }

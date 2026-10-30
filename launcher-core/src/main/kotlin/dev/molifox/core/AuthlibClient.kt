@@ -7,11 +7,6 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import java.io.IOException
-import java.net.URI
-import java.util.UUID
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -21,33 +16,52 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.IOException
+import java.net.URI
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 /** 外置认证（authlib-injector / Yggdrasil）失败类别；界面据此区分提示，不必解析文案。 */
 enum class AuthlibError {
     /** 地址格式无效或服务器不提供 Yggdrasil 接口。 */
     InvalidServer,
+
     /** 地址可访问，但返回的不是 Yggdrasil 元数据。 */
     NotYggdrasil,
+
     /** 超时、断网或无法建立连接。 */
     Network,
+
     /** 用户名或密码错误。 */
     InvalidCredentials,
+
     /** 令牌已失效，需要用户重新输入密码。 */
     SessionExpired,
+
     /** 账户在该服务器上没有可用角色。 */
     NoProfile,
+
     /** 服务器返回其它错误状态码。 */
     ServerError,
+
     /** 服务器返回的 JSON 无法解析或缺少必要字段。 */
     InvalidResponse,
+
     /** authlib-injector 下载失败。 */
     DownloadFailed,
 }
 
 /** 带类别与中文可操作提示的外置认证异常；不会把原始异常文本直接抛给界面。 */
-class AuthlibException(val error: AuthlibError, message: String) : Exception(message)
+class AuthlibException(
+    val error: AuthlibError,
+    message: String,
+) : Exception(message)
 
-data class AuthlibProfile(val id: String, val name: String)
+data class AuthlibProfile(
+    val id: String,
+    val name: String,
+)
 
 data class AuthlibSession(
     val server: String,
@@ -59,7 +73,11 @@ data class AuthlibSession(
 )
 
 /** 服务器元数据（Yggdrasil API 根地址的 JSON）；[rawJson] 用于 authlib-injector 预取参数。 */
-data class AuthlibMetadata(val apiRoot: String, val name: String, val rawJson: String)
+data class AuthlibMetadata(
+    val apiRoot: String,
+    val name: String,
+    val rawJson: String,
+)
 
 /** 规范化用户输入的认证服务器地址：补 https://、去首尾空白与末尾 `/`。 只接受 http(s) 且不含账号密码、查询串或片段的地址；无法识别时返回 null。 */
 fun normalizeAuthlibServerUrl(raw: String): String? {
@@ -81,7 +99,9 @@ fun normalizeAuthlibServerUrl(raw: String): String? {
  * 只负责协议与错误归类：认证服务器由用户自行填写（LittleSkin 等）， 因此请求直接使用 [NetworkClient] 的代理配置，但允许 http(s) 地址—— 启动器其它接口仍强制
  * HTTPS。选择 http 会让密码与令牌明文传输，由用户自行承担。
  */
-class AuthlibClient(private val network: NetworkClient) {
+class AuthlibClient(
+    private val network: NetworkClient,
+) {
     private val http: OkHttpClient by lazy {
         network.client
             .newBuilder()
@@ -97,10 +117,11 @@ class AuthlibClient(private val network: NetworkClient) {
      */
     suspend fun metadata(serverUrl: String): AuthlibMetadata {
         val base = normalizeAuthlibServerUrl(serverUrl) ?: throw invalidServer()
-        val candidates = buildList {
-            add(base)
-            if (!base.endsWith("/api/yggdrasil")) add("$base/api/yggdrasil")
-        }
+        val candidates =
+            buildList {
+                add(base)
+                if (!base.endsWith("/api/yggdrasil")) add("$base/api/yggdrasil")
+            }
         var lastError: AuthlibException = invalidServer()
         for (candidate in candidates) {
             val result =
@@ -139,7 +160,11 @@ class AuthlibClient(private val network: NetworkClient) {
     }
 
     /** 用户名密码登录；[server] 应为已规范化的 API 根地址。 */
-    suspend fun authenticate(server: String, username: String, password: String): AuthlibSession {
+    suspend fun authenticate(
+        server: String,
+        username: String,
+        password: String,
+    ): AuthlibSession {
         val root = normalizeAuthlibServerUrl(server) ?: throw invalidServer()
         val clientToken = UUID.randomUUID().toString()
         val body =
@@ -167,7 +192,11 @@ class AuthlibClient(private val network: NetworkClient) {
     }
 
     /** 用 refreshToken（Yggdrasil 中即 accessToken）续期。 */
-    suspend fun refresh(server: String, accessToken: String, clientToken: String): AuthlibSession {
+    suspend fun refresh(
+        server: String,
+        accessToken: String,
+        clientToken: String,
+    ): AuthlibSession {
         val root = normalizeAuthlibServerUrl(server) ?: throw invalidServer()
         val body =
             JsonObject().apply {
@@ -186,7 +215,11 @@ class AuthlibClient(private val network: NetworkClient) {
     }
 
     /** 令牌是否仍有效；403 返回 false，网络错误继续抛出，避免把断网误判成需要重新登录。 */
-    suspend fun validate(server: String, accessToken: String, clientToken: String): Boolean {
+    suspend fun validate(
+        server: String,
+        accessToken: String,
+        clientToken: String,
+    ): Boolean {
         val body =
             JsonObject().apply {
                 addProperty("accessToken", accessToken)
@@ -202,13 +235,15 @@ class AuthlibClient(private val network: NetworkClient) {
         deniedMessage: String,
     ): JsonObject {
         val result = request(url, body)
-        if (result.code == 401 || result.code == 403)
+        if (result.code == 401 || result.code == 403) {
             throw AuthlibException(deniedError, deniedMessage)
-        if (result.code !in 200..299)
+        }
+        if (result.code !in 200..299) {
             throw AuthlibException(
                 AuthlibError.ServerError,
                 "认证服务器请求失败 (${result.code})",
             )
+        }
         return runCatching { JsonParser.parseString(result.body.orEmpty()).asJsonObject }
             .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
     }
@@ -220,20 +255,29 @@ class AuthlibClient(private val network: NetworkClient) {
         fallbackClientToken: String,
     ): AuthlibSession {
         val accessToken = json.string("accessToken").trim()
-        if (accessToken.isBlank())
+        if (accessToken.isBlank()) {
             throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+        }
         val clientToken = json.string("clientToken").trim().ifBlank { fallbackClientToken }
         val user = json.get("user")?.takeIf { it.isJsonObject }?.asJsonObject
-        val username = user?.string("username")?.trim().orEmpty().ifBlank { fallbackUsername }
+        val username =
+            user
+                ?.string("username")
+                ?.trim()
+                .orEmpty()
+                .ifBlank { fallbackUsername }
         val profilesJson = json.get("availableProfiles")?.takeIf { it.isJsonArray }?.asJsonArray
         val available =
             profilesJson
                 ?.mapNotNull { element ->
                     element.takeIf { it.isJsonObject }?.asJsonObject?.let(::profile)
-                }
-                .orEmpty()
+                }.orEmpty()
         val selected =
-            json.get("selectedProfile")?.takeIf { it.isJsonObject }?.asJsonObject?.let(::profile)
+            json
+                .get("selectedProfile")
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.let(::profile)
         return AuthlibSession(server, accessToken, clientToken, username, selected, available)
     }
 
@@ -251,32 +295,48 @@ class AuthlibClient(private val network: NetworkClient) {
             json.has("skinDomains")
     }
 
-    private fun metadataName(json: JsonObject, candidate: String): String {
+    private fun metadataName(
+        json: JsonObject,
+        candidate: String,
+    ): String {
         val minecraft = json.get("meta")?.takeIf { it.isJsonObject }?.asJsonObject
         val serverName =
-            minecraft?.get("serverName")?.takeUnless { it.isJsonNull }?.asString?.trim().orEmpty()
+            minecraft
+                ?.get("serverName")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
+                ?.trim()
+                .orEmpty()
         return serverName.ifBlank {
             runCatching { URI(candidate).host }.getOrNull().orEmpty().ifBlank { candidate }
         }
     }
 
-    private data class HttpResult(val code: Int, val body: String?)
+    private data class HttpResult(
+        val code: Int,
+        val body: String?,
+    )
 
-    private suspend fun request(url: String, body: JsonObject?): HttpResult {
+    private suspend fun request(
+        url: String,
+        body: JsonObject?,
+    ): HttpResult {
         val request =
             try {
-                Request.Builder()
+                Request
+                    .Builder()
                     .url(url)
                     .header(
                         "User-Agent",
                         "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)",
-                    )
-                    .header("Accept", "application/json")
+                    ).header("Accept", "application/json")
                     .apply {
-                        if (body == null) get()
-                        else post(body.toString().toRequestBody(jsonMediaType))
-                    }
-                    .build()
+                        if (body == null) {
+                            get()
+                        } else {
+                            post(body.toString().toRequestBody(jsonMediaType))
+                        }
+                    }.build()
             } catch (_: IllegalArgumentException) {
                 throw invalidServer()
             }
@@ -285,37 +345,47 @@ class AuthlibClient(private val network: NetworkClient) {
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(
                 object : Callback {
-                    override fun onFailure(call: Call, error: IOException) {
-                        if (continuation.isActive)
+                    override fun onFailure(
+                        call: Call,
+                        e: IOException,
+                    ) {
+                        if (continuation.isActive) {
                             continuation.resumeWith(Result.failure(connectionError()))
+                        }
                     }
 
-                    override fun onResponse(call: Call, response: Response) {
+                    override fun onResponse(
+                        call: Call,
+                        response: Response,
+                    ) {
                         val result =
                             try {
                                 response.use {
                                     val bytes =
                                         it.body?.byteStream()?.readNBytes(MAX_RESPONSE_BYTES + 1)
                                             ?: ByteArray(0)
-                                    if (bytes.size > MAX_RESPONSE_BYTES)
+                                    if (bytes.size > MAX_RESPONSE_BYTES) {
                                         throw AuthlibException(
                                             AuthlibError.InvalidResponse,
                                             "认证服务器返回的数据无效",
                                         )
+                                    }
                                     HttpResult(it.code, bytes.toString(Charsets.UTF_8))
                                 }
                             } catch (error: AuthlibException) {
-                                if (continuation.isActive)
+                                if (continuation.isActive) {
                                     continuation.resumeWith(Result.failure(error))
+                                }
                                 return
                             } catch (_: IOException) {
-                                if (continuation.isActive)
+                                if (continuation.isActive) {
                                     continuation.resumeWith(Result.failure(connectionError()))
+                                }
                                 return
                             }
                         if (continuation.isActive) continuation.resume(result)
                     }
-                }
+                },
             )
         }
     }

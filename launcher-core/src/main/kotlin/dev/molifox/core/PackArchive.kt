@@ -13,7 +13,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 /** Read metadata without extracting it or trusting the ZIP's claimed uncompressed size alone. */
-internal fun packJson(zip: ZipFile, name: String): JsonObject? {
+internal fun packJson(
+    zip: ZipFile,
+    name: String,
+): JsonObject? {
     val entry = zip.getEntry(name) ?: return null
     require(!entry.isDirectory && entry.size in 1..8_388_608) { "整合包清单过大或为空：$name" }
     val bytes = zip.getInputStream(entry).use { it.readNBytes(8_388_609) }
@@ -26,18 +29,23 @@ internal fun packJson(zip: ZipFile, name: String): JsonObject? {
 }
 
 /** Only one pack root is accepted; mcbbs.packmeta and its companion manifest may coexist. */
-internal fun findArchiveMetadata(zip: ZipFile, names: Set<String>): List<String> =
-    zip.entries()
+internal fun findArchiveMetadata(
+    zip: ZipFile,
+    names: Set<String>,
+): List<String> =
+    zip
+        .entries()
         .asSequence()
         .filter {
             !it.isDirectory &&
                 it.name.substringAfterLast('/') in names &&
                 it.name.count { ch -> ch == '/' } <= 1 &&
-                !(hasRootPackMetadata(zip) &&
-                    '/' in it.name &&
-                    it.name.substringBefore('/') in packPayloadFolders)
-        }
-        .map { it.name }
+                !(
+                    hasRootPackMetadata(zip) &&
+                        '/' in it.name &&
+                        it.name.substringBefore('/') in packPayloadFolders
+                )
+        }.map { it.name }
         .toList()
         .also { found ->
             require(found.distinct().size == found.size) { "整合包包含重复清单" }
@@ -48,14 +56,13 @@ private val packPayloadFolders =
 
 private fun hasRootPackMetadata(zip: ZipFile) =
     listOf(
-            "modrinth.index.json",
-            "molifox-instance.json",
-            "mmc-pack.json",
-            "manifest.json",
-            "mcbbs.packmeta",
-            "modpack.json",
-        )
-        .any { zip.getEntry(it) != null }
+        "modrinth.index.json",
+        "molifox-instance.json",
+        "mmc-pack.json",
+        "manifest.json",
+        "mcbbs.packmeta",
+        "modpack.json",
+    ).any { zip.getEntry(it) != null }
 
 internal fun validatePackPayload(
     zip: ZipFile,
@@ -65,10 +72,16 @@ internal fun validatePackPayload(
 ): List<Pair<ZipEntry, String>> {
     val entries =
         validateArchive(zip, prefix, root).map { (entry, target) ->
-            val relative = root.toAbsolutePath().normalize().relativize(target).joinToString("/")
+            val relative =
+                root
+                    .toAbsolutePath()
+                    .normalize()
+                    .relativize(target)
+                    .joinToString("/")
             packPath(root, relative)
             entry to relative
         }
+
     fun key(path: String) = if (os == "windows") path.lowercase() else path
     val paths = entries.map { key(it.second) }
     val seen = paths.toSet()
@@ -83,7 +96,10 @@ internal fun validatePackPayload(
     return entries
 }
 
-internal fun zipEntryHash(zip: ZipFile, entry: ZipEntry): String {
+internal fun zipEntryHash(
+    zip: ZipFile,
+    entry: ZipEntry,
+): String {
     val hash = MessageDigest.getInstance("SHA-1")
     var read = 0L
     zip.getInputStream(entry).use { input ->

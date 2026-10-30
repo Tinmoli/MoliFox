@@ -5,19 +5,56 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.onClick
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.ContentDetails
+import dev.molifox.core.ContentHit
+import dev.molifox.core.ContentInstallPlan
+import dev.molifox.core.ContentSource
+import dev.molifox.core.ContentVersion
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import kotlinx.coroutines.*
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -58,7 +95,8 @@ fun ContentInstallDialog(
         try {
             changelog =
                 withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog.versionDetails(hit.id, versionId, instanceId)
+                    actions.controller.content.catalog
+                        .versionDetails(hit.id, versionId, instanceId)
                 }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -72,8 +110,11 @@ fun ContentInstallDialog(
         plan = null
         try {
             withContext(Dispatchers.IO) {
-                if (details == null)
-                    details = actions.controller.content.catalog.details(hit.id, instanceId)
+                if (details == null) {
+                    details =
+                        actions.controller.content.catalog
+                            .details(hit.id, instanceId)
+                }
                 if (versionId.isBlank()) {
                     val versions = requireNotNull(details).versions
                     versionId =
@@ -94,11 +135,13 @@ fun ContentInstallDialog(
                     )
                 // 用户确认的目录就是实际写入的目录：只替换目录名，依赖、哈希与账本校验保持原样。
                 plan =
-                    if (destinationFolder == null) planned
-                    else
+                    if (destinationFolder == null) {
+                        planned
+                    } else {
                         planned.copy(
-                            files = planned.files.map { it.copy(folder = destinationFolder) }
+                            files = planned.files.map { it.copy(folder = destinationFolder) },
                         )
+                    }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -119,9 +162,11 @@ fun ContentInstallDialog(
             TextButton({ retry++ }) { Text("重试") }
         }
         if (destination != null) {
-            if (destinationFolder == null)
+            if (destinationFolder == null) {
                 MutedText("所选文件夹不在实例内，资源会安装到实例的 " + contentFolderForType(hit.type) + " 目录。")
-            else MutedText("下载位置 · " + destination)
+            } else {
+                MutedText("下载位置 · " + destination)
+            }
         }
         Column(
             Modifier.fillMaxWidth().heightIn(max = 390.dp).verticalScroll(rememberScrollState()),
@@ -132,7 +177,7 @@ fun ContentInstallDialog(
                 MutedText(
                     "${info.providerName} · " +
                         "${info.license.ifBlank { "未声明许可" }} · " +
-                        "${info.versions.size} 个兼容版本"
+                        "${info.versions.size} 个兼容版本",
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     info.links.forEach { link ->
@@ -171,7 +216,11 @@ fun ContentInstallDialog(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        "${item.number.ifBlank { item.name }} · ${item.channel} · ${item.published.take(10)}"
+                                        "${item.number.ifBlank {
+                                            item.name
+                                        }} · ${item.channel} · ${item.published.take(
+                                            10,
+                                        )}",
                                     )
                                 },
                                 onClick = {
@@ -181,8 +230,9 @@ fun ContentInstallDialog(
                                 },
                             )
                         }
-                        if (versions.isEmpty())
+                        if (versions.isEmpty()) {
                             DropdownMenuItem({ Text("此通道没有兼容版本") }, {}, enabled = false)
+                        }
                     }
                 }
                 chosen?.let {
@@ -220,8 +270,11 @@ fun ContentInstallDialog(
                                 dependency.id in selected,
                                 { enabled ->
                                     selected =
-                                        if (enabled) selected + dependency.id
-                                        else selected - dependency.id
+                                        if (enabled) {
+                                            selected + dependency.id
+                                        } else {
+                                            selected - dependency.id
+                                        }
                                 },
                                 enabled = !loading,
                             )

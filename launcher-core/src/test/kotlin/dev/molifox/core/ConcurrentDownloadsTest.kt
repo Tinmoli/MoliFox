@@ -5,16 +5,39 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import okhttp3.mockwebserver.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ConcurrentDownloadsTest {
     @TempDir lateinit var directory: Path
@@ -25,7 +48,7 @@ class ConcurrentDownloadsTest {
         }
 
     @Test
-    fun `independent tasks start while a conflicting task waits and cancelled reservations release`() =
+    fun `conflicting tasks wait and cancelled reservations release`() =
         runBlocking {
             val store = LauncherStore(DesktopPlatform(), directory)
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -56,15 +79,21 @@ class ConcurrentDownloadsTest {
                 withTimeout(10_000) { queue.awaitIdle() }
                 assertEquals(
                     JobStatus.Completed,
-                    store.state.value.jobs.first { it.id == first }.status,
+                    store.state.value.jobs
+                        .first { it.id == first }
+                        .status,
                 )
                 assertEquals(
                     JobStatus.Cancelled,
-                    store.state.value.jobs.first { it.id == second }.status,
+                    store.state.value.jobs
+                        .first { it.id == second }
+                        .status,
                 )
                 assertEquals(
                     JobStatus.Completed,
-                    store.state.value.jobs.first { it.id == fourth }.status,
+                    store.state.value.jobs
+                        .first { it.id == fourth }
+                        .status,
                 )
             } finally {
                 scope.cancel()
@@ -87,13 +116,15 @@ class ConcurrentDownloadsTest {
                         val ready = CompletableDeferred<Unit>()
                         val job =
                             queue.enqueue("Download", setOf("A")) {
-                                for (target in listOf(own, borrowed, existing)) network.download(
-                                    DownloadArtifact(
-                                        server.loopbackUrl("/file").toString(),
-                                        target,
-                                        size = 3,
+                                for (target in listOf(own, borrowed, existing)) {
+                                    network.download(
+                                        DownloadArtifact(
+                                            server.loopbackUrl("/file").toString(),
+                                            target,
+                                            size = 3,
+                                        ),
                                     )
-                                )
+                                }
                                 ready.complete(Unit)
                                 awaitCancellation()
                             }
@@ -105,11 +136,13 @@ class ConcurrentDownloadsTest {
                                         server.loopbackUrl("/file").toString(),
                                         borrowed,
                                         size = 3,
-                                    )
+                                    ),
                                 )
                             }
                         eventually {
-                            store.state.value.jobs.first { it.id == consumer }.status ==
+                            store.state.value.jobs
+                                .first { it.id == consumer }
+                                .status ==
                                 JobStatus.Completed
                         }
                         queue.cancel(job)
@@ -124,7 +157,11 @@ class ConcurrentDownloadsTest {
             }
         }
 
-    private fun artifact(server: MockWebServer, target: Path, bytes: ByteArray): DownloadArtifact =
+    private fun artifact(
+        server: MockWebServer,
+        target: Path,
+        bytes: ByteArray,
+    ): DownloadArtifact =
         DownloadArtifact(
             server.loopbackUrl("/large").toString(),
             target,
@@ -137,26 +174,25 @@ class ConcurrentDownloadsTest {
         ignore: Boolean = false,
         slow: Boolean = false,
         observed: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf()),
-    ) =
-        object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest): MockResponse {
-                val range = request.getHeader("Range")
-                if (range != null) observed.add(range)
-                if (ignore || range == null) return MockResponse().setBody(Buffer().write(bytes))
-                val match =
-                    Regex("bytes=(\\d+)-(\\d*)").matchEntire(range)
-                        ?: return MockResponse().setResponseCode(416)
-                val start = match.groupValues[1].toInt()
-                val end = match.groupValues[2].toIntOrNull() ?: bytes.lastIndex
-                return MockResponse()
-                    .setResponseCode(206)
-                    .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
-                    .setBody(Buffer().write(bytes, start, end - start + 1))
-                    .apply {
-                        if (slow && end > start) throttleBody(16384, 20, TimeUnit.MILLISECONDS)
-                    }
-            }
+    ) = object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            val range = request.getHeader("Range")
+            if (range != null) observed.add(range)
+            if (ignore || range == null) return MockResponse().setBody(Buffer().write(bytes))
+            val match =
+                Regex("bytes=(\\d+)-(\\d*)").matchEntire(range)
+                    ?: return MockResponse().setResponseCode(416)
+            val start = match.groupValues[1].toInt()
+            val end = match.groupValues[2].toIntOrNull() ?: bytes.lastIndex
+            return MockResponse()
+                .setResponseCode(206)
+                .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
+                .setBody(Buffer().write(bytes, start, end - start + 1))
+                .apply {
+                    if (slow && end > start) throttleBody(16384, 20, TimeUnit.MILLISECONDS)
+                }
         }
+    }
 
     @Test
     fun `large verified artifact is downloaded in bounded ranges and merged exactly`() =
@@ -177,39 +213,42 @@ class ConcurrentDownloadsTest {
         }
 
     @Test
-    fun `server ignoring Range falls back to verified full download`() = runBlocking {
-        val bytes = ByteArray(8 * 1024 * 1024) { it.toByte() }
-        MockWebServer().use { server ->
-            NetworkClient().use { network ->
-                server.dispatcher = ranges(bytes, ignore = true)
-                val target = directory.resolve("fallback.bin")
-                network.download(artifact(server, target, bytes), attempts = 1)
-                assertContentEquals(bytes, target.readBytes())
-                assertFalse(SegmentedDownloader.directory(target).exists())
+    fun `server ignoring Range falls back to verified full download`() =
+        runBlocking {
+            val bytes = ByteArray(8 * 1024 * 1024) { it.toByte() }
+            MockWebServer().use { server ->
+                NetworkClient().use { network ->
+                    server.dispatcher = ranges(bytes, ignore = true)
+                    val target = directory.resolve("fallback.bin")
+                    network.download(artifact(server, target, bytes), attempts = 1)
+                    assertContentEquals(bytes, target.readBytes())
+                    assertFalse(SegmentedDownloader.directory(target).exists())
+                }
             }
         }
-    }
 
     @Test
-    fun `explicit cancellation removes every partial segment`() = runBlocking {
-        val bytes = ByteArray(8 * 1024 * 1024) { it.toByte() }
-        MockWebServer().use { server ->
-            NetworkClient().use { network ->
-                server.dispatcher = ranges(bytes, slow = true)
-                val target = directory.resolve("cancel.bin")
-                val job =
-                    launch(Dispatchers.IO) {
-                        network.download(artifact(server, target, bytes), attempts = 1)
+    fun `explicit cancellation removes every partial segment`() =
+        runBlocking {
+            val bytes = ByteArray(8 * 1024 * 1024) { it.toByte() }
+            MockWebServer().use { server ->
+                NetworkClient().use { network ->
+                    server.dispatcher = ranges(bytes, slow = true)
+                    val target = directory.resolve("cancel.bin")
+                    val job =
+                        launch(Dispatchers.IO) {
+                            network.download(artifact(server, target, bytes), attempts = 1)
+                        }
+                    eventually {
+                        val parts = SegmentedDownloader.directory(target)
+                        parts.exists() &&
+                            parts.listDirectoryEntries("*.part").any { it.fileSize() > 0 }
                     }
-                eventually {
-                    val parts = SegmentedDownloader.directory(target)
-                    parts.exists() && parts.listDirectoryEntries("*.part").any { it.fileSize() > 0 }
+                    withTimeout(5000) { job.cancelAndJoin() }
+                    assertFalse(target.exists())
+                    assertFalse(network.partialFile(target).exists())
+                    assertFalse(SegmentedDownloader.directory(target).exists())
                 }
-                withTimeout(5000) { job.cancelAndJoin() }
-                assertFalse(target.exists())
-                assertFalse(network.partialFile(target).exists())
-                assertFalse(SegmentedDownloader.directory(target).exists())
             }
         }
-    }
 }

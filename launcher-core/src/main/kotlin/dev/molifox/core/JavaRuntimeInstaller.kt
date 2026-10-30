@@ -5,6 +5,10 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -16,11 +20,19 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import kotlin.io.path.copyTo
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isExecutable
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.setAttribute
+import kotlin.io.path.setPosixFilePermissions
+import kotlin.io.path.walk
 
 /**
  * 安装流程：解析厂商包 → 下载到 MoliFox 下载目录（带 .part 断点）→ 校验 sha256 与大小 →
@@ -55,26 +67,42 @@ internal class JavaRuntimeInstaller(
                 }
             context.progress(
                 .02f,
-                "查询 Java $major 安装包（${javaDownloadSourceLabel(store.data.settings.effectiveJavaDownloadSource)}）…",
+                "查询 Java $major 安装包（${javaDownloadSourceLabel(
+                    store.data.settings.effectiveJavaDownloadSource,
+                )}）…",
             )
             val packageInfo =
                 JavaRuntimePackages(network)
-                    .find(major, os, arch, imageType, store.data.settings.effectiveJavaDownloadSource)
+                    .find(
+                        major,
+                        os,
+                        arch,
+                        imageType,
+                        store.data.settings.effectiveJavaDownloadSource,
+                    )
             store.log(
                 "准备安装 ${packageInfo.vendor} Java $major（${packageInfo.imageType.uppercase()}）" +
                     "，来源：${packageInfo.sourceLabel}" +
-                    "：${packageInfo.primaryUrl}"
+                    "：${packageInfo.primaryUrl}",
             )
             val runtimes = service.runtimesDirectory.apply { createDirectories() }
-            val downloadDirectory = store.downloadDirectory.resolve("java").apply { createDirectories() }
+            val downloadDirectory =
+                store.downloadDirectory
+                    .resolve(
+                        "java",
+                    ).apply { createDirectories() }
             val archive =
                 downloadDirectory.resolve(
                     packageInfo.fileName.takeIf { it.isNotBlank() }
-                        ?: "java-$major-${arch}.${if (os == "windows") "zip" else "tar.gz"}"
+                        ?: "java-$major-$arch.${if (os == "windows") "zip" else "tar.gz"}",
                 )
-            val unpacking = runtimes.resolve(".part-${UUID.randomUUID()}").apply { createDirectories() }
+            val unpacking =
+                runtimes
+                    .resolve(
+                        ".part-${UUID.randomUUID()}",
+                    ).apply { createDirectories() }
             require(
-                downloadDirectory.toFile().usableSpace > packageInfo.size * 3 + 64L * 1024 * 1024
+                downloadDirectory.toFile().usableSpace > packageInfo.size * 3 + 64L * 1024 * 1024,
             ) {
                 "磁盘空间不足，无法安装 Java $major（需要约 ${formatMegabytes(packageInfo.size * 3)}）"
             }
@@ -92,12 +120,19 @@ internal class JavaRuntimeInstaller(
                 // 这里只拒绝空文件，完整性与大小由下载器的 SHA-256 校验保证。
                 require(actual > 0) { "下载文件为空，请重试" }
                 context.progress(.82f, "解压 Java 运行环境…")
-                if (os == "windows") extractZipRuntime(archive, unpacking) { store.log(it) }
-                else extractTarRuntime(archive, unpacking) { store.log(it) }
+                if (os == "windows") {
+                    extractZipRuntime(archive, unpacking) { store.log(it) }
+                } else {
+                    extractTarRuntime(archive, unpacking) { store.log(it) }
+                }
                 // Zulu/Temurin 的压缩包通常带一层同名目录；剥掉它，保证 runtimes/<目录> 下直接是 bin/。
                 val topLevel = Files.list(unpacking).use { it.toList() }
                 val installRoot =
-                    topLevel.singleOrNull()?.takeIf { it.isDirectory() && findExecutable(it) != null }
+                    topLevel.singleOrNull()?.takeIf {
+                        it.isDirectory() && findExecutable(
+                            it,
+                        ) != null
+                    }
                         ?: unpacking
                 val executable =
                     findExecutable(installRoot)
@@ -106,14 +141,15 @@ internal class JavaRuntimeInstaller(
                 require(Files.isRegularFile(executable) && Files.isExecutable(executable)) {
                     "解压后的 Java 可执行文件不可运行：$executable（可能被杀毒软件拦截或解压不完整）"
                 }
-                val found = service.inspect(executable.toString(), verifyRunnable = true)
-                    ?: error("下载的 Java 无法运行")
+                val found =
+                    service.inspect(executable.toString(), verifyRunnable = true)
+                        ?: error("下载的 Java 无法运行")
                 require(found.majorVersion == major) {
                     "Java 版本校验失败：期望 $major，实际 ${found.majorVersion}"
                 }
                 require(
                     normalizedJavaArchitecture(found.architecture) ==
-                        normalizedJavaArchitecture(store.platform.architecture)
+                        normalizedJavaArchitecture(store.platform.architecture),
                 ) {
                     "Java 架构校验失败：${found.architecture}"
                 }
@@ -158,17 +194,22 @@ internal class JavaRuntimeInstaller(
                             os = os,
                             arch = arch,
                             sizeBytes = runtime.sizeBytes,
-                        )
+                        ),
                     )
                 service.invalidate()
                 context.progress(1f, "Java $major 安装完成")
                 store.log(
-                    "已安装 ${runtime.displayName}（${formatMegabytes(runtime.sizeBytes)}）：${runtime.path}"
+                    "已安装 ${runtime.displayName}（${formatMegabytes(
+                        runtime.sizeBytes,
+                    )}）：${runtime.path}",
                 )
                 runtime
             } catch (failure: Exception) {
                 keepDiagnostics = keepsExtractionDiagnostics(failure)
-                store.log("安装 Java $major 失败：${failure.message ?: failure.javaClass.simpleName}", true)
+                store.log(
+                    "安装 Java $major 失败：${failure.message ?: failure.javaClass.simpleName}",
+                    true,
+                )
                 throw IllegalStateException(
                     javaInstallFailureReason(failure, major, unpacking.takeIf { keepDiagnostics }),
                     failure,
@@ -203,7 +244,7 @@ internal class JavaRuntimeInstaller(
                         // 不传元数据大小：Zulu 的 size 与 CDN 响应可能相差几十字节，避免误杀正确文件。
                         size = 0,
                         hashAlgorithm = "SHA-256",
-                    )
+                    ),
                 ) { bytes, total ->
                     context.transfer(archive.toString(), bytes, total)
                     context.progress(
@@ -233,18 +274,16 @@ internal class JavaRuntimeInstaller(
 
     private fun findExecutable(root: Path): Path? =
         runCatching {
-                Files.walk(root, 4).use { stream ->
-                    stream
-                        .filter {
-                            it.isRegularFile() &&
-                                it.fileName.toString() == store.platform.javaExecutable &&
-                                it.parent?.fileName?.toString() == "bin"
-                        }
-                        .findFirst()
-                        .orElse(null)
-                }
+            Files.walk(root, 4).use { stream ->
+                stream
+                    .filter {
+                        it.isRegularFile() &&
+                            it.fileName.toString() == store.platform.javaExecutable &&
+                            it.parent?.fileName?.toString() == "bin"
+                    }.findFirst()
+                    .orElse(null)
             }
-            .getOrNull()
+        }.getOrNull()
 
     private fun deleteTree(root: Path) {
         if (!root.exists()) return
@@ -255,14 +294,13 @@ internal class JavaRuntimeInstaller(
 
     private fun directorySize(directory: Path): Long =
         runCatching {
-                Files.walk(directory).use { stream ->
-                    stream
-                        .filter { Files.isRegularFile(it) }
-                        .mapToLong { runCatching { it.fileSize() }.getOrDefault(0) }
-                        .sum()
-                }
+            Files.walk(directory).use { stream ->
+                stream
+                    .filter { Files.isRegularFile(it) }
+                    .mapToLong { runCatching { it.fileSize() }.getOrDefault(0) }
+                    .sum()
             }
-            .getOrDefault(0)
+        }.getOrDefault(0)
 
     private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1048576f)
 
@@ -324,13 +362,13 @@ private fun writeZipEntry(
             clearReadOnly(target)
             Files.deleteIfExists(target)
             zip.getInputStream(entry).use { input ->
-                Files.newOutputStream(
+                Files
+                    .newOutputStream(
                         target,
                         StandardOpenOption.CREATE,
                         StandardOpenOption.TRUNCATE_EXISTING,
                         StandardOpenOption.WRITE,
-                    )
-                    .use { output -> input.copyTo(output) }
+                    ).use { output -> input.copyTo(output) }
             }
             return
         } catch (interrupted: InterruptedException) {
@@ -383,8 +421,11 @@ internal fun extractTarRuntime(
                             Files.setPosixFilePermissions(
                                 target,
                                 PosixFilePermissions.fromString(
-                                    if (entry.mode and 0b001001001 != 0) "rwxr-xr-x"
-                                    else "rw-r--r--"
+                                    if (entry.mode and 0b001001001 != 0) {
+                                        "rwxr-xr-x"
+                                    } else {
+                                        "rw-r--r--"
+                                    },
                                 ),
                             )
                         }

@@ -7,14 +7,20 @@ package dev.molifox.core
 
 import com.sun.jna.Pointer
 import com.sun.jna.platform.win32.User32
-import com.sun.jna.platform.win32.WinDef.*
+import com.sun.jna.platform.win32.WinDef.HWND
+import com.sun.jna.platform.win32.WinDef.LPARAM
+import com.sun.jna.platform.win32.WinDef.RECT
+import com.sun.jna.platform.win32.WinDef.WPARAM
 import com.sun.jna.ptr.IntByReference
 import java.awt.Rectangle
 
 internal object WindowsGameWindow {
     private fun handle(window: GameWindow) = HWND(Pointer.createConstant(window.id.toLong()))
 
-    private fun owns(handle: HWND, pid: Long): Boolean {
+    private fun owns(
+        handle: HWND,
+        pid: Long,
+    ): Boolean {
         val actual = IntByReference()
         User32.INSTANCE.GetWindowThreadProcessId(handle, actual)
         return actual.value.toLong() == pid
@@ -28,8 +34,8 @@ internal object WindowsGameWindow {
                     val rect = RECT()
                     if (
                         User32.INSTANCE.GetWindowRect(handle, rect) &&
-                            rect.right - rect.left > 200 &&
-                            rect.bottom - rect.top > 200
+                        rect.right - rect.left > 200 &&
+                        rect.bottom - rect.top > 200
                     ) {
                         found =
                             GameWindow(

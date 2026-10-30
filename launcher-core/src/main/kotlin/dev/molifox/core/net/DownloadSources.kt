@@ -8,7 +8,10 @@ package dev.molifox.core.net
 import java.io.IOException
 
 /** 源的一条地址前缀映射：官方前缀 → 该源前缀，路径原样保留。 */
-data class SourceRoute(val from: String, val to: String)
+data class SourceRoute(
+    val from: String,
+    val to: String,
+)
 
 /**
  * 一个下载源。[routes] 为空表示原样服务（官方源）；镜像与 Maven 源只服务登记过的前缀，
@@ -24,21 +27,28 @@ class DownloadSource(
     /** 该源能提供的地址；服务不了这个前缀时返回 null。 */
     fun serve(url: String): String? {
         if (routes.isEmpty()) return url
-        for (route in routes) if (url.startsWith(route.from)) {
-            return route.to + url.removePrefix(route.from)
+        for (route in routes) {
+            if (url.startsWith(route.from)) {
+                return route.to + url.removePrefix(route.from)
+            }
         }
         return null
     }
 }
 
 /** 候选源：源与它提供的具体地址。 */
-data class CandidateSource(val source: DownloadSource, val url: String)
+data class CandidateSource(
+    val source: DownloadSource,
+    val url: String,
+)
 
 /**
  * 源登记表。顺序即自动模式的优先顺序：官方 → BMCLAPI → 各 Maven 镜像（只做回退）。
  * 每个源自带 URL 前缀表，所以「这个源能不能服务这个地址」由登记表回答。
  */
-class DownloadSourceCatalog(sources: List<DownloadSource>) {
+class DownloadSourceCatalog(
+    sources: List<DownloadSource>,
+) {
     val all: List<DownloadSource> = sources.toList()
     private val index = all.withIndex().associate { it.value.key to it.index }
 
@@ -48,19 +58,26 @@ class DownloadSourceCatalog(sources: List<DownloadSource>) {
         DownloadSourceCatalog(all + extra)
 
     /** 某个地址的候选源；[selection] 为 auto / official / bmclapi，旧值或未知值按自动。 */
-    fun candidates(url: String, selection: String = AUTO): List<CandidateSource> {
+    fun candidates(
+        url: String,
+        selection: String = AUTO,
+    ): List<CandidateSource> {
         val official = source(OFFICIAL) ?: return emptyList()
         val mode = if (selection == OFFICIAL || selection == BMCLAPI) selection else AUTO
         if (mode != AUTO) {
             val manual = source(mode)
             val served = manual?.serve(url)
             // 手动源服务不了这个地址（例如 Modrinth API）：保持原名，不做域名替换。
-            return if (manual != null && served != null) listOf(CandidateSource(manual, served))
-            else listOf(CandidateSource(official, url))
+            return if (manual != null && served != null) {
+                listOf(CandidateSource(manual, served))
+            } else {
+                listOf(CandidateSource(official, url))
+            }
         }
         // 自动模式：官方优先，其次 BMCLAPI，其余 Maven 镜像只排在回退位。
         val served =
-            all.mapNotNull { source -> source.serve(url)?.let { CandidateSource(source, it) } }
+            all
+                .mapNotNull { source -> source.serve(url)?.let { CandidateSource(source, it) } }
                 .sortedBy { candidate -> rankOf(candidate.source) }
                 .distinctBy { it.url }
         return if (served.isEmpty()) listOf(CandidateSource(official, url)) else served
@@ -129,21 +146,28 @@ class DownloadSourceCatalog(sources: List<DownloadSource>) {
                     "腾讯云 Maven",
                     "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
                 ),
-                mavenMirror("huawei", "华为云 Maven", "https://repo.huaweicloud.com/repository/maven/"),
+                mavenMirror(
+                    "huawei",
+                    "华为云 Maven",
+                    "https://repo.huaweicloud.com/repository/maven/",
+                ),
                 mavenMirror("central", "Maven Central", "https://repo1.maven.org/maven2/"),
             )
 
-        private fun mavenMirror(key: String, title: String, base: String) =
-            DownloadSource(
-                key,
-                title,
-                mirror = true,
-                routes =
-                    listOf(
-                        SourceRoute("https://libraries.minecraft.net/", base),
-                        SourceRoute("https://repo1.maven.org/maven2/", base),
-                    ),
-            )
+        private fun mavenMirror(
+            key: String,
+            title: String,
+            base: String,
+        ) = DownloadSource(
+            key,
+            title,
+            mirror = true,
+            routes =
+                listOf(
+                    SourceRoute("https://libraries.minecraft.net/", base),
+                    SourceRoute("https://repo1.maven.org/maven2/", base),
+                ),
+        )
 
         val DEFAULT = DownloadSourceCatalog(GAME_SOURCES + MAVEN_SOURCES)
 
@@ -163,8 +187,11 @@ data class SourceAttempt(
     fun describe(): String =
         buildString {
             append(sourceTitle).append('：').append(url)
-            if (status != null) append(" → HTTP ").append(status)
-            else if (reason.isNotBlank()) append(" → ").append(reason.take(160))
+            if (status != null) {
+                append(" → HTTP ").append(status)
+            } else if (reason.isNotBlank()) {
+                append(" → ").append(reason.take(160))
+            }
         }
 }
 
@@ -174,7 +201,10 @@ class DownloadSourceFailureException(
     val attempts: List<SourceAttempt>,
 ) : IOException(buildMessage(target, attempts)) {
     companion object {
-        private fun buildMessage(target: String, attempts: List<SourceAttempt>): String =
+        private fun buildMessage(
+            target: String,
+            attempts: List<SourceAttempt>,
+        ): String =
             buildString {
                 append("下载失败：").append(target)
                 if (attempts.isEmpty()) {
@@ -182,7 +212,11 @@ class DownloadSourceFailureException(
                 } else {
                     append("\n每个源尝试的 URL 与状态码：")
                     attempts.take(8).forEach { append("\n  ").append(it.describe()) }
-                    if (attempts.size > 8) append("\n  …另有 ").append(attempts.size - 8).append(" 个源")
+                    if (attempts.size >
+                        8
+                    ) {
+                        append("\n  …另有 ").append(attempts.size - 8).append(" 个源")
+                    }
                 }
             }
     }

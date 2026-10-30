@@ -6,21 +6,47 @@
 package dev.molifox.desktop
 
 import TestWindowFocus
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.*
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import com.sun.jna.Native
 import com.sun.jna.platform.win32.User32
 import com.sun.jna.platform.win32.WinDef.HWND
-import dev.molifox.core.*
+import dev.molifox.core.EntryKind
+import dev.molifox.core.GameInstance
+import dev.molifox.core.HomePagePreferences
+import dev.molifox.core.JobStatus
+import dev.molifox.core.LauncherController
+import dev.molifox.core.MotdSegment
+import dev.molifox.core.NbtCompound
+import dev.molifox.core.NbtList
+import dev.molifox.core.NbtString
+import dev.molifox.core.ServerStatus
+import dev.molifox.core.listServers
+import dev.molifox.core.ping
+import kotlinx.coroutines.delay
 import java.awt.EventQueue
 import java.awt.Robot
-import java.awt.Window as AwtWindow
 import java.awt.event.InputEvent
 import java.awt.event.WindowEvent
 import java.nio.file.Path
@@ -29,8 +55,17 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.accessibility.AccessibleContext
 import javax.imageio.ImageIO
 import kotlin.concurrent.thread
-import kotlin.io.path.*
-import kotlinx.coroutines.delay
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isHidden
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import java.awt.Window as AwtWindow
 
 private val testWindow = AtomicReference<ComposeWindow>()
 
@@ -59,7 +94,7 @@ fun main() {
                                 HomePagePreferences(
                                     recentPlayExpanded = true,
                                     recentPlayKind = "server",
-                                )
+                                ),
                         ),
                 ),
         )
@@ -70,7 +105,11 @@ fun main() {
         mapOf("id" to "26.3", "mainClass" to "fixture.Main", "libraries" to emptyList<Any>()),
     )
     game.resolve("26.3.jar").writeBytes(byteArrayOf())
-    game.resolve("saves/UI World").createDirectories().resolve("level.dat").writeText("fixture")
+    game
+        .resolve("saves/UI World")
+        .createDirectories()
+        .resolve("level.dat")
+        .writeText("fixture")
     val servers =
         NbtCompound(
             mapOf(
@@ -81,21 +120,21 @@ fun main() {
                                 mapOf(
                                     "name" to NbtString("UI Server A"),
                                     "ip" to NbtString("127.0.0.1:25566"),
-                                )
+                                ),
                             ),
                             NbtCompound(
                                 mapOf(
                                     "name" to NbtString("UI Server B"),
                                     "ip" to
                                         NbtString(
-                                            "very-long-address-for-ellipsis.example.invalid:25565"
+                                            "very-long-address-for-ellipsis.example.invalid:25565",
                                         ),
-                                )
+                                ),
                             ),
                         ),
                         10,
-                    )
-            )
+                    ),
+            ),
         )
     // The core writer is internal to its module; encode this tiny fixture independently.
     java.io.DataOutputStream(game.resolve("servers.dat").outputStream()).use { output ->
@@ -105,11 +144,11 @@ fun main() {
         output.writeUTF("servers")
         output.writeByte(10)
         output.writeInt(2)
-        servers.list("servers")!!.compounds().forEach { entry ->
+        checkNotNull(servers.list("servers")).compounds().forEach { entry ->
             for (key in listOf("name", "ip")) {
                 output.writeByte(8)
                 output.writeUTF(key)
-                output.writeUTF(entry.string(key)!!)
+                output.writeUTF(checkNotNull(entry.string(key)))
             }
             output.writeByte(0)
         }
@@ -128,11 +167,10 @@ fun main() {
             "fixture",
             42,
         )
-    RecentServerCache.put("127.0.0.1:25566", RecentServerStatus(status, System.currentTimeMillis()))
-    RecentServerCache.put(
-        "very-long-address-for-ellipsis.example.invalid:25565",
-        RecentServerStatus(status.copy(ping = 178), System.currentTimeMillis()),
-    )
+    val statusQuery =
+        dev.molifox.core.domain.server.ServerStatusQuery { address ->
+            if (address == "127.0.0.1:25566") status else status.copy(ping = 178)
+        }
     val error = AtomicReference<Throwable?>()
     val driver =
         thread(name = "recent-play-ui-driver") {
@@ -164,7 +202,8 @@ fun main() {
             ) {
                 testWindow.set(window)
                 val state by controller.state.collectAsState()
-                val actions = remember { UiActions(controller, window) }
+                val actions =
+                    remember { UiActions(controller, window, serverStatusQuery = statusQuery) }
                 var expanded by remember { mutableStateOf(true) }
                 var kind by remember { mutableStateOf(EntryKind.Server) }
                 MoliTheme(state.data.settings) {
@@ -209,7 +248,10 @@ private fun exerciseRecentUi(
     await("test window") { testWindow.get()?.isShowing == true }
     val robot = Robot().apply { autoDelay = 90 }
     EventQueue.invokeAndWait {
-        val screen = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+        val screen =
+            java.awt.GraphicsEnvironment
+                .getLocalGraphicsEnvironment()
+                .maximumWindowBounds
         testWindow
             .get()
             .setBounds(
@@ -247,10 +289,11 @@ private fun exerciseRecentUi(
     click(robot, "开始游戏 UI Server A")
     await("target received") { root.resolve("clicked-target.json").exists() }
     check(
-        com.google.gson.JsonParser.parseString(root.resolve("clicked-target.json").readText())
+        com.google.gson.JsonParser
+            .parseString(root.resolve("clicked-target.json").readText())
             .asJsonObject
             .get("key")
-            .asString == "127.0.0.1:25566"
+            .asString == "127.0.0.1:25566",
     )
     click(robot, "更多操作 UI Server A")
     click(robot, "隐藏")
@@ -260,7 +303,7 @@ private fun exerciseRecentUi(
             .gamePath(instance)
             .resolve("servers.dat")
             .readBytes()
-            .contentEquals(original)
+            .contentEquals(original),
     )
     click(robot, "查看全部")
     click(robot, "显示已隐藏")
@@ -276,7 +319,8 @@ private fun exerciseRecentUi(
     screenshot(robot, "MoliFox-recent-all-worlds.png")
     click(robot, "服务器")
     click(robot, "搜索存档或服务器")
-    java.awt.Toolkit.getDefaultToolkit()
+    java.awt.Toolkit
+        .getDefaultToolkit()
         .systemClipboard
         .setContents(java.awt.datatransfer.StringSelection("server b"), null)
     robot.keyPress(java.awt.event.KeyEvent.VK_CONTROL)
@@ -300,14 +344,22 @@ private fun exerciseRecentUi(
         listServers(controller.store.gamePath(instance)).none { it.ip == "127.0.0.1:25566" }
     }
     val backups =
-        controller.store.dataDirectory.resolve("backups/servers").listDirectoryEntries("*.dat")
+        controller.store.dataDirectory
+            .resolve("backups/servers")
+            .listDirectoryEntries("*.dat")
     check(backups.any { it.readBytes().contentEquals(original) })
     click(robot, "关闭存档与服务器列表")
-    controller.saveSettings(controller.store.data.settings.copy(fontScale = 1.25f))
+    controller.saveSettings(
+        controller.store.data.settings
+            .copy(fontScale = 1.25f),
+    )
     EventQueue.invokeAndWait { testWindow.get().setSize(650, 640) }
     Thread.sleep(600)
     screenshot(robot, "MoliFox-recent-font-scale.png")
-    controller.saveSettings(controller.store.data.settings.copy(fontScale = 1f, themeMode = "dark"))
+    controller.saveSettings(
+        controller.store.data.settings
+            .copy(fontScale = 1f, themeMode = "dark"),
+    )
     EventQueue.invokeAndWait { testWindow.get().setSize(1000, 700) }
     Thread.sleep(600)
     screenshot(robot, "MoliFox-recent-dark.png")
@@ -321,11 +373,15 @@ private fun exerciseRecentUi(
         "Download badge overlaps the bottom controls"
     }
     await("download finished") {
-        controller.state.value.jobs.all { it.status == JobStatus.Completed }
+        controller.state.value.jobs
+            .all { it.status == JobStatus.Completed }
     }
     check(contexts("打开任务中心").isNotEmpty()) { "Success badge disappeared before its delay" }
     await("download badge hidden after five seconds", 8000) { contexts("打开任务中心").isEmpty() }
-    check(controller.state.value.jobs.isEmpty()) { "Finished task records were retained" }
+    check(
+        controller.state.value.jobs
+            .isEmpty(),
+    ) { "Finished task records were retained" }
     val cancelledTask =
         controller.jobs.enqueue("New download fixture", setOf("ui-task")) {
             kotlinx.coroutines.awaitCancellation()
@@ -338,14 +394,21 @@ private fun exerciseRecentUi(
         contexts("继续任务").isNotEmpty() && contexts("确定取消").isNotEmpty()
     }
     click(robot, "继续任务")
-    check(controller.state.value.jobs.first { it.id == cancelledTask }.status == JobStatus.Running)
+    check(
+        controller.state.value.jobs
+            .first { it.id == cancelledTask }
+            .status == JobStatus.Running,
+    )
     click(robot, "取消任务 New download fixture")
     click(robot, "确定取消")
     await("cancelled task removed from current list") { contexts("这里暂时没有任务").isNotEmpty() }
     check(contexts("New download fixture").isEmpty())
     click(robot, "关闭任务中心")
     await("cancelled badge hidden", 8000) { contexts("打开任务中心").isEmpty() }
-    check(controller.state.value.jobs.isEmpty())
+    check(
+        controller.state.value.jobs
+            .isEmpty(),
+    )
     writeFixture(
         Path.of("docs/validation/recent-play-ui.json"),
         mapOf(
@@ -371,12 +434,25 @@ private fun exerciseRecentUi(
     println("RECENT_PLAY_UI_OK")
 }
 
-private fun writeFixture(path: Path, value: Any?) {
+private fun writeFixture(
+    path: Path,
+    value: Any?,
+) {
     path.parent.createDirectories()
-    path.writeText(com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(value))
+    path.writeText(
+        com.google.gson
+            .GsonBuilder()
+            .setPrettyPrinting()
+            .create()
+            .toJson(value),
+    )
 }
 
-private fun await(label: String, timeout: Long = 12_000, predicate: () -> Boolean) {
+private fun await(
+    label: String,
+    timeout: Long = 12_000,
+    predicate: () -> Boolean,
+) {
     val end = System.currentTimeMillis() + timeout
     while (System.currentTimeMillis() < end) {
         if (predicate()) return
@@ -385,20 +461,29 @@ private fun await(label: String, timeout: Long = 12_000, predicate: () -> Boolea
     error("Timed out: $label")
 }
 
-private fun contexts(label: String, scope: AccessibleContext? = null): List<AccessibleContext> {
+private fun contexts(
+    label: String,
+    scope: AccessibleContext? = null,
+): List<AccessibleContext> {
     val result = mutableListOf<AccessibleContext>()
     EventQueue.invokeAndWait {
-        fun visit(context: AccessibleContext, depth: Int) {
+        fun visit(
+            context: AccessibleContext,
+            depth: Int,
+        ) {
             if (depth > 30) return
             if (
                 context.accessibleComponent?.isShowing == true &&
-                    (context.accessibleName == label || context.accessibleDescription == label)
-            )
+                (context.accessibleName == label || context.accessibleDescription == label)
+            ) {
                 result += context
-            for (i in 0 until context.accessibleChildrenCount) context
-                .getAccessibleChild(i)
-                ?.accessibleContext
-                ?.let { visit(it, depth + 1) }
+            }
+            for (i in 0 until context.accessibleChildrenCount) {
+                context
+                    .getAccessibleChild(i)
+                    ?.accessibleContext
+                    ?.let { visit(it, depth + 1) }
+            }
         }
         if (scope != null) {
             visit(scope, 0)
@@ -407,12 +492,14 @@ private fun contexts(label: String, scope: AccessibleContext? = null): List<Acce
         val visible = AwtWindow.getWindows().filter { it.isShowing }
         val dialog = visible.filterIsInstance<java.awt.Dialog>().lastOrNull()
         val roots =
-            if (dialog == null) visible
-            else
+            if (dialog == null) {
+                visible
+            } else {
                 visible.filter { candidate ->
                     candidate == dialog ||
                         generateSequence(candidate.owner) { it.owner }.any { it == dialog }
                 }
+            }
         roots.forEach { visit(it.accessibleContext, 0) }
     }
     return result
@@ -433,7 +520,8 @@ private fun focusOwnWindow() {
             val native = User32.INSTANCE
             val foreground = native.GetForegroundWindow()
             val ownHandles =
-                AwtWindow.getWindows()
+                AwtWindow
+                    .getWindows()
                     .filter { it.isShowing }
                     .map {
                         val handle = HWND(Native.getComponentPointer(it))
@@ -449,7 +537,10 @@ private fun focusOwnWindow() {
     }
 }
 
-private fun click(robot: Robot, label: String) {
+private fun click(
+    robot: Robot,
+    label: String,
+) {
     focusOwnWindow()
     var area: java.awt.Rectangle? = null
     await("control $label") {
@@ -464,7 +555,10 @@ private fun click(robot: Robot, label: String) {
     robot.delay(180)
 }
 
-private fun screenshot(robot: Robot, name: String) {
+private fun screenshot(
+    robot: Robot,
+    name: String,
+) {
     val window = testWindow.get()
     val output = Path.of("docs/screenshots/current", name).apply { parent.createDirectories() }
     ImageIO.write(

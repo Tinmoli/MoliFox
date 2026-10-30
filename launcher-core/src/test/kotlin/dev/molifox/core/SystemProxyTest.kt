@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -12,9 +14,7 @@ import java.net.ProxySelector
 import java.net.SocketAddress
 import java.net.URI
 import java.nio.file.Path
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.test.assertEquals
 
 class SystemProxyTest {
     @TempDir lateinit var directory: Path
@@ -24,7 +24,11 @@ class SystemProxyTest {
         object : ProxySelector() {
             override fun select(uri: URI?) = listOf(proxy)
 
-            override fun connectFailed(uri: URI?, sa: SocketAddress?, error: IOException?) {}
+            override fun connectFailed(
+                uri: URI?,
+                sa: SocketAddress?,
+                error: IOException?,
+            ) {}
         }
 
     @Test
@@ -32,24 +36,23 @@ class SystemProxyTest {
         var system = true
         var manual: Proxy? = null
         NetworkClient(
-                { "official" },
-                { manual },
-                { system },
-                SystemProxyResolver(nativeProxy(), { null }),
+            { "official" },
+            { manual },
+            { system },
+            SystemProxyResolver(nativeProxy(), { null }),
+        ).use { network ->
+            val selector = network.client.proxySelector
+            val uri = URI("https://libraries.minecraft.net/test.jar")
+            assertEquals(listOf(proxy), selector.select(uri))
+            system = false
+            assertEquals(listOf(Proxy.NO_PROXY), selector.select(uri))
+            manual = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 18081))
+            assertEquals(listOf(manual), selector.select(uri))
+            assertEquals(
+                listOf(Proxy.NO_PROXY),
+                selector.select(URI("http://127.0.0.1:20000/test")),
             )
-            .use { network ->
-                val selector = network.client.proxySelector
-                val uri = URI("https://libraries.minecraft.net/test.jar")
-                assertEquals(listOf(proxy), selector.select(uri))
-                system = false
-                assertEquals(listOf(Proxy.NO_PROXY), selector.select(uri))
-                manual = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 18081))
-                assertEquals(listOf(manual), selector.select(uri))
-                assertEquals(
-                    listOf(Proxy.NO_PROXY),
-                    selector.select(URI("http://127.0.0.1:20000/test")),
-                )
-            }
+        }
     }
 
     @Test

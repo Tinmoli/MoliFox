@@ -5,6 +5,11 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -15,8 +20,16 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 /** `resourcepacks/` 或 `shaderpacks/` 下的一个直接子项：`.zip` 或文件夹。 */
 data class LocalPackEntry(
@@ -37,41 +50,47 @@ private const val MAX_PACK_BYTES = 512L * 1024 * 1024
  *
  * 只接受 `.zip` 文件或文件夹；重名时在扩展名前加序号（`Pack.zip` → `Pack (2).zip`），从不覆盖已有内容。 复制先落同目录的隐藏临时项，成功后再改名；任何一步失败都删除临时项与本次已导入的内容。
  */
-class LocalPackStore internal constructor(private val store: LauncherStore) {
-
-    fun list(instanceId: String, folder: PackFolder): List<LocalPackEntry> {
+class LocalPackStore internal constructor(
+    private val store: LauncherStore,
+) {
+    fun list(
+        instanceId: String,
+        folder: PackFolder,
+    ): List<LocalPackEntry> {
         val directory = store.instancePath(instanceId).resolve(folder.directory)
-        if (!directory.isDirectory(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(directory))
+        if (!directory.isDirectory(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(directory)) {
             return emptyList()
+        }
         return runCatching {
-                directory
-                    .listDirectoryEntries()
-                    .filter {
-                        !it.name.startsWith(".") &&
-                            !Files.isSymbolicLink(it) &&
-                            (it.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
-                                it.isDirectory(LinkOption.NOFOLLOW_LINKS))
-                    }
-                    .filter {
-                        it.isDirectory(LinkOption.NOFOLLOW_LINKS) || it.name.endsWith(".zip", true)
-                    }
-                    .map { entry ->
-                        val isDirectory = entry.isDirectory(LinkOption.NOFOLLOW_LINKS)
-                        LocalPackEntry(
-                            filename = entry.name,
-                            path = entry,
-                            isDirectory = isDirectory,
-                            size =
-                                if (isDirectory) 0L
-                                else runCatching { Files.size(entry) }.getOrDefault(0L),
-                            modified =
-                                runCatching { Files.getLastModifiedTime(entry).toMillis() }
-                                    .getOrDefault(0L),
+            directory
+                .listDirectoryEntries()
+                .filter {
+                    !it.name.startsWith(".") &&
+                        !Files.isSymbolicLink(it) &&
+                        (
+                            it.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
+                                it.isDirectory(LinkOption.NOFOLLOW_LINKS)
                         )
-                    }
-                    .sortedWith(compareBy({ !it.isDirectory }, { it.filename.lowercase() }))
-            }
-            .getOrElse { emptyList() }
+                }.filter {
+                    it.isDirectory(LinkOption.NOFOLLOW_LINKS) || it.name.endsWith(".zip", true)
+                }.map { entry ->
+                    val isDirectory = entry.isDirectory(LinkOption.NOFOLLOW_LINKS)
+                    LocalPackEntry(
+                        filename = entry.name,
+                        path = entry,
+                        isDirectory = isDirectory,
+                        size =
+                            if (isDirectory) {
+                                0L
+                            } else {
+                                runCatching { Files.size(entry) }.getOrDefault(0L)
+                            },
+                        modified =
+                            runCatching { Files.getLastModifiedTime(entry).toMillis() }
+                                .getOrDefault(0L),
+                    )
+                }.sortedWith(compareBy({ !it.isDirectory }, { it.filename.lowercase() }))
+        }.getOrElse { emptyList() }
     }
 
     /**
@@ -90,7 +109,12 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
             val directory = store.instancePath(instanceId).resolve(folder.directory)
             require(!Files.isSymbolicLink(directory)) { "${folder.title}目录是符号链接，未导入" }
             directory.createDirectories()
-            data class Prepared(val source: Path, val name: String, val isDirectory: Boolean)
+
+            data class Prepared(
+                val source: Path,
+                val name: String,
+                val isDirectory: Boolean,
+            )
 
             val prepared =
                 sources.map { raw ->
@@ -102,15 +126,21 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
                     if (!isDirectory) {
                         require(
                             source.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
-                                source.name.endsWith(".zip", true)
+                                source.name.endsWith(".zip", true),
                         ) {
                             "只能导入 .zip 或文件夹：${raw.fileName}"
                         }
-                        require(runCatching { Files.size(source) }.getOrDefault(0L) <= MAX_PACK_BYTES) {
+                        require(
+                            runCatching { Files.size(source) }.getOrDefault(0L) <= MAX_PACK_BYTES,
+                        ) {
                             "文件过大（上限 512 MB）：${raw.fileName}"
                         }
                         require(
-                            runCatching { ZipFile(source.toFile()).use { true } }.getOrDefault(false)
+                            runCatching {
+                                ZipFile(
+                                    source.toFile(),
+                                ).use { true }
+                            }.getOrDefault(false),
                         ) {
                             "不是有效的 ZIP：${raw.fileName}"
                         }
@@ -127,8 +157,11 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
                     require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标已存在：$name" }
                     val staging = directory.resolve("$PACK_STAGING_PREFIX${UUID.randomUUID()}")
                     try {
-                        if (item.isDirectory) copyTree(item.source, staging)
-                        else Files.copy(item.source, staging)
+                        if (item.isDirectory) {
+                            copyTree(item.source, staging)
+                        } else {
+                            Files.copy(item.source, staging)
+                        }
                         context?.checkCancelled()
                         Files.move(staging, target)
                     } finally {
@@ -141,12 +174,15 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
                             path = target,
                             isDirectory = item.isDirectory,
                             size =
-                                if (item.isDirectory) 0L
-                                else runCatching { Files.size(target) }.getOrDefault(0L),
+                                if (item.isDirectory) {
+                                    0L
+                                } else {
+                                    runCatching { Files.size(target) }.getOrDefault(0L)
+                                },
                             modified =
                                 runCatching { Files.getLastModifiedTime(target).toMillis() }
                                     .getOrDefault(0L),
-                        )
+                        ),
                     )
                     context?.progress(
                         (index + 1).toFloat() / prepared.size,
@@ -162,29 +198,36 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
         }
 
     /** 删除一个包：移入回收站，不硬删；找不到或回收站失败返回 false。 */
-    fun delete(instanceId: String, folder: PackFolder, filename: String): Boolean {
+    fun delete(
+        instanceId: String,
+        folder: PackFolder,
+        filename: String,
+    ): Boolean {
         val directory = store.instancePath(instanceId).resolve(folder.directory)
         val target =
-            runCatching { safePath(directory, safePackFilename(filename)) }.getOrNull() ?: return false
+            runCatching { safePath(directory, safePackFilename(filename)) }.getOrNull()
+                ?: return false
         require(
-            target.parent.toAbsolutePath().normalize() == directory.toAbsolutePath().normalize()
+            target.parent.toAbsolutePath().normalize() == directory.toAbsolutePath().normalize(),
         ) {
             "只能删除${folder.title}目录下的内容：$filename"
         }
         if (!target.exists(LinkOption.NOFOLLOW_LINKS)) return false
         return runCatching {
-                store.platform.moveToTrash(target)
-                store.log("${folder.title}已移入回收站：$filename")
-                true
-            }
-            .getOrElse {
-                store.log("删除${folder.title}失败：${it.message ?: filename}", true)
-                false
-            }
+            store.platform.moveToTrash(target)
+            store.log("${folder.title}已移入回收站：$filename")
+            true
+        }.getOrElse {
+            store.log("删除${folder.title}失败：${it.message ?: filename}", true)
+            false
+        }
     }
 
     /** 递归复制文件夹：跳过符号链接/目录联接与越界路径，空目录也会建出来。 */
-    private fun copyTree(source: Path, target: Path) {
+    private fun copyTree(
+        source: Path,
+        target: Path,
+    ) {
         val root = source.toAbsolutePath().normalize()
         val realRoot = runCatching { root.toRealPath() }.getOrElse { root }
         Files.walkFileTree(
@@ -194,13 +237,17 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
                     dir: Path,
                     attrs: BasicFileAttributes,
                 ): FileVisitResult {
-                    if (dir != root && (attrs.isOther || attrs.isSymbolicLink))
+                    if (dir != root && (attrs.isOther || attrs.isSymbolicLink)) {
                         return FileVisitResult.SKIP_SUBTREE
+                    }
                     target.resolve(root.relativize(dir).joinToString("/")).createDirectories()
                     return FileVisitResult.CONTINUE
                 }
 
-                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                override fun visitFile(
+                    file: Path,
+                    attrs: BasicFileAttributes,
+                ): FileVisitResult {
                     if (!attrs.isRegularFile || attrs.isOther) return FileVisitResult.CONTINUE
                     val real =
                         runCatching { file.toRealPath() }.getOrNull()
@@ -212,8 +259,10 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
                     return FileVisitResult.CONTINUE
                 }
 
-                override fun visitFileFailed(file: Path, error: IOException): FileVisitResult =
-                    FileVisitResult.CONTINUE
+                override fun visitFileFailed(
+                    file: Path,
+                    error: IOException,
+                ): FileVisitResult = FileVisitResult.CONTINUE
             },
         )
     }
@@ -224,13 +273,17 @@ class LocalPackStore internal constructor(private val store: LauncherStore) {
  *
  * 只返回名字，不创建任何东西；目录里已有同名项时继续往后找。
  */
-internal fun uniqueChildName(directory: Path, name: String): String {
+internal fun uniqueChildName(
+    directory: Path,
+    name: String,
+): String {
     val trimmed = name.trim()
     require(trimmed.isNotBlank()) { "名称不能为空" }
     val dot = trimmed.lastIndexOf('.')
     val hasExtension = dot > 0 && dot < trimmed.length - 1
     val base = if (hasExtension) trimmed.substring(0, dot) else trimmed
     val extension = if (hasExtension) trimmed.substring(dot) else ""
+
     fun taken(candidate: String) = directory.resolve(candidate).exists(LinkOption.NOFOLLOW_LINKS)
     if (!taken(trimmed)) return trimmed
     for (index in 2..999) {
@@ -243,7 +296,8 @@ internal fun uniqueChildName(directory: Path, name: String): String {
 /** 文件名安全化：去掉各平台的非法字符与结尾的点/空格，限制长度，空名称回退为 pack。 */
 internal fun safePackFilename(name: String): String {
     val cleaned =
-        name.trim()
+        name
+            .trim()
             .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
             .trimEnd('.', ' ')
             .trim()
@@ -265,16 +319,24 @@ internal fun deleteTreeOrFile(path: Path) {
                 dir: Path,
                 attrs: BasicFileAttributes,
             ): FileVisitResult =
-                if (dir != path && (attrs.isOther || attrs.isSymbolicLink))
+                if (dir != path && (attrs.isOther || attrs.isSymbolicLink)) {
                     FileVisitResult.SKIP_SUBTREE
-                else FileVisitResult.CONTINUE
+                } else {
+                    FileVisitResult.CONTINUE
+                }
 
-            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+            override fun visitFile(
+                file: Path,
+                attrs: BasicFileAttributes,
+            ): FileVisitResult {
                 Files.deleteIfExists(file)
                 return FileVisitResult.CONTINUE
             }
 
-            override fun postVisitDirectory(dir: Path, error: IOException?): FileVisitResult {
+            override fun postVisitDirectory(
+                dir: Path,
+                error: IOException?,
+            ): FileVisitResult {
                 Files.deleteIfExists(dir)
                 return FileVisitResult.CONTINUE
             }

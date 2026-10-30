@@ -5,10 +5,11 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class InstallProgressTest {
     @TempDir lateinit var directory: Path
@@ -17,7 +18,10 @@ class InstallProgressTest {
         val values = mutableListOf<Float>()
         val details = mutableListOf<String>()
 
-        fun record(value: Float, detail: String) {
+        fun record(
+            value: Float,
+            detail: String,
+        ) {
             values += value
             details += detail
         }
@@ -25,7 +29,7 @@ class InstallProgressTest {
         fun keepMonotone() {
             var previous = -1f
             values.forEach { value ->
-                assertTrue(value >= previous, "进度回退：$value 出现在 $previous 之后；全部=${values}")
+                assertTrue(value >= previous, "进度回退：$value 出现在 $previous 之后；全部=$values")
                 assertTrue(value in 0f..1f, "进度越界：$value")
                 previous = value
             }
@@ -42,8 +46,14 @@ class InstallProgressTest {
         return context
     }
 
-    private fun artifact(name: String, size: Long = 0) =
-        DownloadArtifact("https://example.invalid/$name", directory.resolve("files/$name"), size = size)
+    private fun artifact(
+        name: String,
+        size: Long = 0,
+    ) = DownloadArtifact(
+        "https://example.invalid/$name",
+        directory.resolve("files/$name"),
+        size = size,
+    )
 
     @Test
     fun `progress never regresses covers each phase and ends exactly at one`() {
@@ -55,26 +65,26 @@ class InstallProgressTest {
 
         // 和真实安装一致：所有阶段的工作量在开始前一次登记，分母固定。
         progress.plan(
-            InstallPhase.Verify,
+            InstallPhase.VERIFY,
             2 + assets.size,
             clientJar.size + libraryJar.size,
             PROGRESS_VERIFY_BYTES_PER_UNIT,
         )
-        progress.plan(InstallPhase.Libraries, 2, clientJar.size + libraryJar.size)
-        progress.plan(InstallPhase.Assets, assets.size, 0)
+        progress.plan(InstallPhase.LIBRARIES, 2, clientJar.size + libraryJar.size)
+        progress.plan(InstallPhase.ASSETS, assets.size, 0)
 
         // 校验阶段：每个文件都记满「校验文件」的份额。
-        progress.begin(InstallPhase.Verify)
-        progress.verified(InstallPhase.Verify, clientJar)
-        progress.verified(InstallPhase.Verify, libraryJar)
-        assets.forEach { progress.verified(InstallPhase.Verify, it) }
+        progress.begin(InstallPhase.VERIFY)
+        progress.verified(InstallPhase.VERIFY, clientJar)
+        progress.verified(InstallPhase.VERIFY, libraryJar)
+        assets.forEach { progress.verified(InstallPhase.VERIFY, it) }
 
         // 已存在的库文件释放下载份额（客户端 JAR 缺失，需要下载）。
-        progress.release(InstallPhase.Libraries, 1, libraryJar.size)
-        progress.release(InstallPhase.Assets, 0, 0)
+        progress.release(InstallPhase.LIBRARIES, 1, libraryJar.size)
+        progress.release(InstallPhase.ASSETS, 0, 0)
 
         // 下载库：大文件按字节推进。
-        progress.begin(InstallPhase.Libraries)
+        progress.begin(InstallPhase.LIBRARIES)
         progress.started("client.jar", clientJar)
         var done = 0L
         while (done <= clientJar.size) {
@@ -88,7 +98,7 @@ class InstallProgressTest {
         assertTrue(beforeAssets < .99f, "库下完、资源还没开始时不能到 100%，实际 $beforeAssets")
 
         // 下载资源：5000 个文件，每个完成都应推进。
-        progress.begin(InstallPhase.Assets)
+        progress.begin(InstallPhase.ASSETS)
         assets.forEach { asset ->
             progress.started(asset.target.toString(), asset)
             progress.finished(asset.target.toString(), asset)
@@ -97,24 +107,24 @@ class InstallProgressTest {
 
         recorder.keepMonotone()
         assertEquals(1f, recorder.values.last(), "最终进度必须精确等于 1.0")
-        assertTrue(recorder.details.any { it.startsWith(InstallPhase.Verify) }, "缺少「校验文件」阶段标签")
+        assertTrue(recorder.details.any { it.startsWith(InstallPhase.VERIFY) }, "缺少「校验文件」阶段标签")
         assertTrue(
-            recorder.details.any { it.startsWith(InstallPhase.Libraries) },
+            recorder.details.any { it.startsWith(InstallPhase.LIBRARIES) },
             "缺少「下载库」阶段标签",
         )
         assertTrue(
-            recorder.details.any { it.startsWith(InstallPhase.Assets) },
+            recorder.details.any { it.startsWith(InstallPhase.ASSETS) },
             "缺少「下载资源」阶段标签",
         )
         assertTrue(recorder.values.distinct().size > 20, "阶段内应持续推进，而不是只跳几次")
         // 下载阶段的大文件必须按字节推进出多个中间值，而不是只在完成时跳一格。
         assertTrue(
-            recorder.valueDuring(InstallPhase.Libraries).distinct().size >= 8,
-            "大文件下载应按字节推进：${recorder.valueDuring(InstallPhase.Libraries)}",
+            recorder.valueDuring(InstallPhase.LIBRARIES).distinct().size >= 8,
+            "大文件下载应按字节推进：${recorder.valueDuring(InstallPhase.LIBRARIES)}",
         )
         // 5000 个资源文件里，前 100 个就应产生多次推进。
         assertTrue(
-            recorder.valueDuring(InstallPhase.Assets).distinct().size >= 100,
+            recorder.valueDuring(InstallPhase.ASSETS).distinct().size >= 100,
             "每个完成的资源文件都应推动进度",
         )
     }
@@ -125,15 +135,15 @@ class InstallProgressTest {
         val progress = InstallProgress(context(recorder), 0f, 1f, emitIntervalMillis = 0)
         val library = artifact("library.jar", 0)
         val asset = artifact("asset.bin", 0)
-        progress.plan(InstallPhase.Verify, 2, 0, PROGRESS_VERIFY_BYTES_PER_UNIT)
-        progress.plan(InstallPhase.Libraries, 1, 0)
-        progress.plan(InstallPhase.Assets, 1, 0)
-        progress.begin(InstallPhase.Verify)
-        progress.verified(InstallPhase.Verify, library)
-        progress.verified(InstallPhase.Verify, asset)
+        progress.plan(InstallPhase.VERIFY, 2, 0, PROGRESS_VERIFY_BYTES_PER_UNIT)
+        progress.plan(InstallPhase.LIBRARIES, 1, 0)
+        progress.plan(InstallPhase.ASSETS, 1, 0)
+        progress.begin(InstallPhase.VERIFY)
+        progress.verified(InstallPhase.VERIFY, library)
+        progress.verified(InstallPhase.VERIFY, asset)
         val beforeRelease = recorder.values.last()
-        progress.release(InstallPhase.Libraries, 1, 0)
-        progress.release(InstallPhase.Assets, 1, 0)
+        progress.release(InstallPhase.LIBRARIES, 1, 0)
+        progress.release(InstallPhase.ASSETS, 1, 0)
         assertTrue(
             recorder.values.last() >= beforeRelease,
             "释放已完成的工作量后进度回退：${recorder.values.last()} < $beforeRelease",
@@ -147,8 +157,8 @@ class InstallProgressTest {
     fun `failed optional files never push progress above the window`() {
         val recorder = Recorder()
         val progress = InstallProgress(context(recorder), 0f, .5f, emitIntervalMillis = 0)
-        progress.begin(InstallPhase.Libraries)
-        progress.plan(InstallPhase.Libraries, 2, 0)
+        progress.begin(InstallPhase.LIBRARIES)
+        progress.plan(InstallPhase.LIBRARIES, 2, 0)
         val failed = artifact("optional-log-config.xml")
         progress.started("optional-log-config.xml", failed)
         progress.failed("optional-log-config.xml", failed)

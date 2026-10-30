@@ -7,10 +7,14 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
 
 /** 启动时发现的一个游戏根：真实路径，以及 `versions/<id>/<id>.json` 的数量。 */
-data class StartupRoot(val path: Path, val versions: Int)
+data class StartupRoot(
+    val path: Path,
+    val versions: Int,
+)
 
 /**
  * 按启动器自身位置推断现有 Minecraft 游戏根目录。只读探测：不创建、移动或写入任何游戏文件， 也不会因为扫描而在用户的 `.minecraft` 里留下任何东西。
@@ -32,7 +36,10 @@ object StartupGameRoots {
         candidates.add(start.resolve(".minecraft"))
         // 3. 启动器位于 .minecraft 之内：检查上一级与上两级，只接受像游戏根的那一层。
         start.parent?.takeIf { isGameRootCandidate(it) }?.let { candidates.add(it) }
-        start.parent?.parent?.takeIf { isGameRootCandidate(it) }?.let { candidates.add(it) }
+        start.parent
+            ?.parent
+            ?.takeIf { isGameRootCandidate(it) }
+            ?.let { candidates.add(it) }
         val found = linkedMapOf<Path, Int>()
         for (candidate in candidates) {
             val real = realDirectory(candidate) ?: continue
@@ -46,36 +53,35 @@ object StartupGameRoots {
         path.fileName?.toString().equals(".minecraft", ignoreCase = true)
 
     /** 完整游戏根：versions/libraries/assets 三者齐全，用于识别被改了名字的游戏目录。 */
-    private fun isFullGameRoot(path: Path): Boolean = runCatching {
-        Files.isDirectory(path.resolve("versions")) &&
-            Files.isDirectory(path.resolve("libraries")) &&
-            Files.isDirectory(path.resolve("assets"))
-    }
-        .getOrDefault(false)
+    private fun isFullGameRoot(path: Path): Boolean =
+        runCatching {
+            Files.isDirectory(path.resolve("versions")) &&
+                Files.isDirectory(path.resolve("libraries")) &&
+                Files.isDirectory(path.resolve("assets"))
+        }.getOrDefault(false)
 
     private fun isGameRootCandidate(path: Path): Boolean =
         isMinecraftDirectory(path) || isFullGameRoot(path)
 
-    private fun realDirectory(path: Path): Path? = runCatching {
-        path.toRealPath()
-    }
-        .getOrNull()
-        ?.takeIf { Files.isDirectory(it) }
+    private fun realDirectory(path: Path): Path? =
+        runCatching {
+            path.toRealPath()
+        }.getOrNull()
+            ?.takeIf { Files.isDirectory(it) }
 
     /** 数出 `versions/<id>/<id>.json` 的个数；读取失败按 0 处理，不抛异常。 */
     private fun versionProfileCount(root: Path): Int {
         val versions = root.resolve("versions")
         if (!Files.isDirectory(versions)) return 0
         return runCatching {
-                Files.newDirectoryStream(versions).use { entries ->
-                    entries.count { folder ->
-                        Files.isDirectory(folder) &&
-                            Files.isRegularFile(
-                                folder.resolve(folder.fileName.toString() + ".json")
-                            )
-                    }
+            Files.newDirectoryStream(versions).use { entries ->
+                entries.count { folder ->
+                    Files.isDirectory(folder) &&
+                        Files.isRegularFile(
+                            folder.resolve(folder.fileName.toString() + ".json"),
+                        )
                 }
             }
-            .getOrDefault(0)
+        }.getOrDefault(0)
     }
 }

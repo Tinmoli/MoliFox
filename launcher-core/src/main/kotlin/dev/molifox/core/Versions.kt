@@ -6,9 +6,16 @@
 package dev.molifox.core
 
 /** Meta services do not all return loader releases in chronological order. */
-fun compareLoaderVersions(left: String, right: String): Int {
+fun compareLoaderVersions(
+    left: String,
+    right: String,
+): Int {
     fun numericBase(value: String) =
-        value.substringBefore('-').substringBefore('+').split('.').map { it.toIntOrNull() ?: 0 }
+        value
+            .substringBefore('-')
+            .substringBefore('+')
+            .split('.')
+            .map { it.toIntOrNull() ?: 0 }
     val leftBase = numericBase(left)
     val rightBase = numericBase(right)
     for (index in 0 until maxOf(leftBase.size, rightBase.size)) {
@@ -17,16 +24,20 @@ fun compareLoaderVersions(left: String, right: String): Int {
     }
     val leftQualifier = left.substringBefore('+').substringAfter('-', "")
     val rightQualifier = right.substringBefore('+').substringAfter('-', "")
-    if (leftQualifier.isBlank() != rightQualifier.isBlank())
+    if (leftQualifier.isBlank() != rightQualifier.isBlank()) {
         return if (leftQualifier.isBlank()) 1 else -1
+    }
     val leftTokens = leftQualifier.split('.', '-')
     val rightTokens = rightQualifier.split('.', '-')
     for (index in 0 until maxOf(leftTokens.size, rightTokens.size)) {
         val a = leftTokens.getOrElse(index) { "" }
         val b = rightTokens.getOrElse(index) { "" }
         val compared =
-            if (a.toIntOrNull() != null && b.toIntOrNull() != null) a.toInt().compareTo(b.toInt())
-            else a.compareTo(b)
+            if (a.toIntOrNull() != null && b.toIntOrNull() != null) {
+                a.toInt().compareTo(b.toInt())
+            } else {
+                a.compareTo(b)
+            }
         if (compared != 0) return compared
     }
     return 0
@@ -46,11 +57,12 @@ fun loaderUpgradeCandidates(
 ): List<LoaderVersion> {
     if (
         instance.loader == LoaderType.Vanilla ||
-            !instance.installed ||
-            instance.packFile.isNotBlank() ||
-            instance.loaderVersion.isBlank()
-    )
+        !instance.installed ||
+        instance.packFile.isNotBlank() ||
+        instance.loaderVersion.isBlank()
+    ) {
         return emptyList()
+    }
     return available
         .filter { compareLoaderVersions(it.version, instance.loaderVersion) > 0 }
         .sortedWith { left, right -> compareLoaderVersions(right.version, left.version) }

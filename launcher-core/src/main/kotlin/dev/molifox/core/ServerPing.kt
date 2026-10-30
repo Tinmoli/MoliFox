@@ -8,6 +8,9 @@ package dev.molifox.core
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
@@ -16,9 +19,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * MOTD 的一段文字与它最终生效的样式。
@@ -51,7 +51,10 @@ data class ServerStatus(
 )
 
 /** 从 `servers.dat` 的 `ip` 字符串解析出的地址；[port] 缺省 [DEFAULT_SERVER_PORT]。 */
-data class ServerAddress(val host: String, val port: Int = DEFAULT_SERVER_PORT)
+data class ServerAddress(
+    val host: String,
+    val port: Int = DEFAULT_SERVER_PORT,
+)
 
 const val DEFAULT_SERVER_PORT = 25565
 
@@ -147,7 +150,11 @@ suspend fun pingAddress(
 // ---------------------------------------------------------------- 协议实现
 
 /** 现代协议：握手 → status 请求 → 状态 JSON；任何一步不符合预期都返回 null 交给旧版兜底。 */
-private fun modernPing(host: String, port: Int, timeoutMillis: Int): ServerStatus? {
+private fun modernPing(
+    host: String,
+    port: Int,
+    timeoutMillis: Int,
+): ServerStatus? {
     val socket = Socket()
     return try {
         socket.tcpNoDelay = true
@@ -187,7 +194,11 @@ private fun modernPing(host: String, port: Int, timeoutMillis: Int): ServerStatu
  * 旧版（1.4–1.6 及更早）查询：`0xFE 0x01`，响应是 `0xFF` + 长度 + UTF-16BE 字符串。 字段用 `\u0000`
  * 分隔：`§1`、协议号、版本名、MOTD、在线人数、上限（更早的版本没有后两项）。
  */
-private fun legacyPing(host: String, port: Int, timeoutMillis: Int): ServerStatus? {
+private fun legacyPing(
+    host: String,
+    port: Int,
+    timeoutMillis: Int,
+): ServerStatus? {
     val socket = Socket()
     return try {
         socket.tcpNoDelay = true
@@ -215,7 +226,10 @@ private fun legacyPing(host: String, port: Int, timeoutMillis: Int): ServerStatu
     }
 }
 
-private fun statusFromJson(json: String, latency: Int): ServerStatus? {
+private fun statusFromJson(
+    json: String,
+    latency: Int,
+): ServerStatus? {
     val root = runCatching { JsonParser.parseString(json) }.getOrNull()
     val obj = root?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
     val players = obj.get("players")?.takeIf { it.isJsonObject }?.asJsonObject
@@ -230,7 +244,10 @@ private fun statusFromJson(json: String, latency: Int): ServerStatus? {
     )
 }
 
-private fun statusFromLegacy(text: String, latency: Int): ServerStatus {
+private fun statusFromLegacy(
+    text: String,
+    latency: Int,
+): ServerStatus {
     val parts = text.trimEnd('\u0000').split('\u0000')
     // 至少要有版本名；MOTD 行缺失时退回版本名，避免出现空行。
     val version = parts.getOrNull(2)?.trim().orEmpty()
@@ -248,11 +265,11 @@ private fun statusFromLegacy(text: String, latency: Int): ServerStatus {
 private fun JsonObject.intValue(key: String): Int =
     runCatching { get(key)?.takeIf { it.isJsonPrimitive }?.asInt }.getOrNull() ?: 0
 
-private fun JsonObject.stringValue(key: String): String = runCatching {
-    get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
-}
-    .getOrNull()
-    .orEmpty()
+private fun JsonObject.stringValue(key: String): String =
+    runCatching {
+        get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+    }.getOrNull()
+        .orEmpty()
 
 // ---------------------------------------------------------------- MOTD 解析
 
@@ -330,7 +347,11 @@ fun parseMotdText(text: String): List<MotdSegment> {
     return segments
 }
 
-private fun resolveMotd(element: JsonElement?, style: MotdStyle, out: MutableList<MotdSegment>) {
+private fun resolveMotd(
+    element: JsonElement?,
+    style: MotdStyle,
+    out: MutableList<MotdSegment>,
+) {
     if (element == null || element.isJsonNull) return
     when {
         element.isJsonPrimitive -> {
@@ -344,8 +365,9 @@ private fun resolveMotd(element: JsonElement?, style: MotdStyle, out: MutableLis
             val obj = element.asJsonObject
             val own = applyStyle(style, obj)
             val text = obj.get("text")
-            if (text != null && text.isJsonPrimitive && text.asJsonPrimitive.isString)
+            if (text != null && text.isJsonPrimitive && text.asJsonPrimitive.isString) {
                 appendStyled(text.asString, own, out)
+            }
             val extra = obj.get("extra")
             if (extra != null && extra.isJsonArray) {
                 val array = extra.asJsonArray
@@ -358,15 +380,21 @@ private fun resolveMotd(element: JsonElement?, style: MotdStyle, out: MutableLis
 }
 
 /** 合并组件自己声明的样式；无法识别的值保持继承，不抛异常。 */
-private fun applyStyle(base: MotdStyle, obj: JsonObject): MotdStyle {
+private fun applyStyle(
+    base: MotdStyle,
+    obj: JsonObject,
+): MotdStyle {
     var style = base
     val color = obj.get("color")
     if (color != null && color.isJsonPrimitive && color.asJsonPrimitive.isString) {
         val name = color.asString
         // JSON 组件里 color 只改颜色，不像 § 代码那样清掉格式。
         style =
-            if (name.equals("reset", ignoreCase = true)) MotdStyle.Default
-            else parseColor(name)?.let { style.copy(color = it) } ?: style
+            if (name.equals("reset", ignoreCase = true)) {
+                MotdStyle.Default
+            } else {
+                parseColor(name)?.let { style.copy(color = it) } ?: style
+            }
     }
     return style.copy(
         bold = obj.flag("bold") ?: style.bold,
@@ -404,7 +432,11 @@ private fun parseColor(value: String): Int? {
 }
 
 /** 追加一段可能带 `§` 代码的文字：代码切换样式并切断当前片段，`§r` 复位， 未知代码按普通字符保留。连续同样式的小段会合并，最终得到「每个样式一段」。 */
-private fun appendStyled(text: String, style: MotdStyle, out: MutableList<MotdSegment>) {
+private fun appendStyled(
+    text: String,
+    style: MotdStyle,
+    out: MutableList<MotdSegment>,
+) {
     if (text.isEmpty()) return
     val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
     if (normalized.indexOf('§') < 0) {
@@ -433,10 +465,13 @@ private fun appendStyled(text: String, style: MotdStyle, out: MutableList<MotdSe
 }
 
 /** `§` 代码对应的新样式；不是已知代码时返回 null（按字面量处理）。 */
-private fun codeStyle(code: Char, style: MotdStyle): MotdStyle? {
+private fun codeStyle(
+    code: Char,
+    style: MotdStyle,
+): MotdStyle? {
     val lower = code.lowercaseChar()
     val colorIndex = "0123456789abcdef".indexOf(lower)
-    if (colorIndex >= 0)
+    if (colorIndex >= 0) {
         return MotdStyle(
             color = legacyColorCodes[colorIndex],
             bold = false,
@@ -444,6 +479,7 @@ private fun codeStyle(code: Char, style: MotdStyle): MotdStyle? {
             underlined = false,
             struck = false,
         )
+    }
     return when (lower) {
         // §k 是乱码效果，静态界面无法呈现：吞掉代码、不改其它样式。
         'k' -> style
@@ -456,16 +492,20 @@ private fun codeStyle(code: Char, style: MotdStyle): MotdStyle? {
     }
 }
 
-private fun appendRun(text: String, style: MotdStyle, out: MutableList<MotdSegment>) {
+private fun appendRun(
+    text: String,
+    style: MotdStyle,
+    out: MutableList<MotdSegment>,
+) {
     if (text.isEmpty()) return
     val last = out.lastOrNull()
     if (
         last != null &&
-            last.color == style.color &&
-            last.bold == style.bold &&
-            last.italic == style.italic &&
-            last.underlined == style.underlined &&
-            last.struck == style.struck
+        last.color == style.color &&
+        last.bold == style.bold &&
+        last.italic == style.italic &&
+        last.underlined == style.underlined &&
+        last.struck == style.struck
     ) {
         out[out.size - 1] = last.copy(text = last.text + text)
     } else {

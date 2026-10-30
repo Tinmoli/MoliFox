@@ -9,10 +9,16 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
-import kotlin.io.path.*
+import kotlin.io.path.createDirectory
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.readAttributes
 
 /** All launcher-owned paths live beneath this portable root; game directories are separate. */
-class LauncherDirectories(root: Path) {
+class LauncherDirectories(
+    root: Path,
+) {
     val root: Path = root.toAbsolutePath().normalize()
     val config = this.root.resolve("config")
     val configuration = config.resolve("launcher.json")
@@ -37,32 +43,33 @@ class LauncherDirectories(root: Path) {
 
     fun cache(customPath: String = "") =
         LauncherCacheDirectories(
-            customPath.takeIf { it.isNotBlank() }?.let(Path::of) ?: root.resolve("cache")
+            customPath.takeIf { it.isNotBlank() }?.let(Path::of) ?: root.resolve("cache"),
         )
 
     internal fun initialize() {
         createStorageDirectory(root)
         listOf(
-                config,
-                credentials,
-                backgrounds,
-                fonts,
-                music,
-                themes,
-                skins,
-                icons,
-                runtimes,
-                dependencies,
-                logs,
-                configurationBackups,
-                packArchives,
-                instanceBackups,
-            )
-            .forEach(::createStorageDirectory)
+            config,
+            credentials,
+            backgrounds,
+            fonts,
+            music,
+            themes,
+            skins,
+            icons,
+            runtimes,
+            dependencies,
+            logs,
+            configurationBackups,
+            packArchives,
+            instanceBackups,
+        ).forEach(::createStorageDirectory)
     }
 }
 
-class LauncherCacheDirectories(root: Path) {
+class LauncherCacheDirectories(
+    root: Path,
+) {
     val root: Path = root.toAbsolutePath().normalize()
     val downloads = this.root.resolve("downloads")
     val metadata = this.root.resolve("metadata")

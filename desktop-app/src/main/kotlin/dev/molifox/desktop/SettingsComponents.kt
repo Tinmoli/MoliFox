@@ -19,7 +19,22 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.selection.toggleable
@@ -29,8 +44,24 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,8 +89,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 // ---------- 即时保存 ----------
 
@@ -82,14 +113,18 @@ internal fun applySetting(
     if (next == current) return null
     val failure = runCatching { actions.controller.saveSettings(next) }.exceptionOrNull()
     // 即时保存不显示成功提示：连续调整滑块或输入时提示会一直挂着，反而盖住真正的失败原因。
-    if (actions.controller.state.value.toast == "设置已保存")
+    if (actions.controller.state.value.toast == "设置已保存") {
         actions.controller.store.dismissNotification()
+    }
     return failure?.message
 }
 
 /** 滑块本地值：拖动时只改这份本地状态以保证跟手，停手 300ms 后写入设置。 控件被销毁（切分区 / 离开页面）时补写还没到 300ms 的值，拖动结果不会丢。 */
 @Composable
-internal fun rememberSliderDraft(value: Float, onCommit: (Float) -> Unit): MutableFloatState {
+internal fun rememberSliderDraft(
+    value: Float,
+    onCommit: (Float) -> Unit,
+): MutableFloatState {
     val draft = remember { mutableFloatStateOf(value) }
     val commit by rememberUpdatedState(onCommit)
     val saved by rememberUpdatedState(value)
@@ -106,11 +141,18 @@ internal fun rememberSliderDraft(value: Float, onCommit: (Float) -> Unit): Mutab
 }
 
 /** 文本输入的本地草稿：当前文本、输入回调与写盘失败原因。 */
-internal class LiveTextDraft(val text: String, val onChange: (String) -> Unit, val error: String?)
+internal class LiveTextDraft(
+    val text: String,
+    val onChange: (String) -> Unit,
+    val error: String?,
+)
 
 /** 文本本地草稿：输入时只改本地文本，停手 300ms 后写入设置；控件销毁时补写未落盘的输入。 [onCommit] 返回 null 表示已保存，否则是失败原因。 */
 @Composable
-internal fun rememberLiveTextDraft(value: String, onCommit: (String) -> String?): LiveTextDraft {
+internal fun rememberLiveTextDraft(
+    value: String,
+    onCommit: (String) -> String?,
+): LiveTextDraft {
     var text by remember { mutableStateOf(value) }
     var error by remember { mutableStateOf<String?>(null) }
     val commit by rememberUpdatedState(onCommit)
@@ -169,8 +211,11 @@ internal fun LiveTextField(
             Text(
                 message,
                 color =
-                    if (live.error != null) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (live.error != null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 fontSize = 11.sp,
             )
         }
@@ -224,7 +269,8 @@ internal fun SettingsResetFooter(onReset: () -> Unit) {
         Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
             Text(
                 "还原默认配置",
-                Modifier.pressScale()
+                Modifier
+                    .pressScale()
                     .clip(RoundedCornerShape(Metrics.innerRadius))
                     .hoverHighlight()
                     .clickable(role = Role.Button) { confirming = true }
@@ -234,7 +280,7 @@ internal fun SettingsResetFooter(onReset: () -> Unit) {
             )
         }
     }
-    if (confirming)
+    if (confirming) {
         Modal(
             "还原默认配置？",
             "下面这些选项会回到出厂值，并立即生效。",
@@ -252,11 +298,15 @@ internal fun SettingsResetFooter(onReset: () -> Unit) {
                 onCancel = { confirming = false },
             )
         }
+    }
 }
 
 /** 分组小标题：11sp `onSurfaceVariant`，默认上间距 18dp，供设置页分组使用。 */
 @Composable
-fun SettingsGroupTitle(title: String, topPadding: Dp = 18.dp) {
+fun SettingsGroupTitle(
+    title: String,
+    topPadding: Dp = 18.dp,
+) {
     Text(
         title,
         Modifier.padding(start = 2.dp, top = topPadding, bottom = 2.dp),
@@ -299,7 +349,8 @@ fun SettingsSection(
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth()
+                Modifier
+                    .fillMaxWidth()
                     .padding(
                         start = Metrics.cardPadding,
                         end = Metrics.cardPadding,
@@ -336,13 +387,23 @@ fun SettingsSection(
 
 /** 设置行：行高 44（带说明 52），标题 14sp、说明 12sp，行间 10dp。 */
 @Composable
-fun SettingRow(title: String, detail: String = "", content: @Composable () -> Unit) {
+fun SettingRow(
+    title: String,
+    detail: String = "",
+    content: @Composable () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .defaultMinSize(
                 minHeight =
-                    if (LocalCompactSettings.current) 36.dp
-                    else if (detail.isBlank()) Metrics.rowHeight else Metrics.rowHeightWithDetail
+                    if (LocalCompactSettings.current) {
+                        36.dp
+                    } else if (detail.isBlank()) {
+                        Metrics.rowHeight
+                    } else {
+                        Metrics.rowHeightWithDetail
+                    },
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -387,7 +448,7 @@ fun SettingDivider(modifier: Modifier = Modifier) {
                 topLeft = Offset(-bleed, 0f),
                 size = Size(size.width + bleed * 2f, size.height),
             )
-        }
+        },
     )
 }
 
@@ -443,8 +504,13 @@ fun CompactTextField(
         animateColorAsState(
             targetValue = controlBorderColor(focused),
             animationSpec =
-                if (LocalReducedMotion.current) androidx.compose.animation.core.snap()
-                else androidx.compose.animation.core.tween(Motion.fast),
+                if (LocalReducedMotion.current) {
+                    androidx.compose.animation.core
+                        .snap()
+                } else {
+                    androidx.compose.animation.core
+                        .tween(Motion.FAST)
+                },
             label = "fieldBorder",
         )
     // 填充从「比卡片深一档」开始，悬停 / 聚焦再向主题色靠近，动画与边框同步。
@@ -452,8 +518,13 @@ fun CompactTextField(
         animateColorAsState(
             targetValue = controlBackground(focused, hovered),
             animationSpec =
-                if (LocalReducedMotion.current) androidx.compose.animation.core.snap()
-                else androidx.compose.animation.core.tween(Motion.fast),
+                if (LocalReducedMotion.current) {
+                    androidx.compose.animation.core
+                        .snap()
+                } else {
+                    androidx.compose.animation.core
+                        .tween(Motion.FAST)
+                },
             label = "fieldFill",
         )
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -469,7 +540,8 @@ fun CompactTextField(
             )
         }
         Box(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(Metrics.controlHeight)
                 .clip(RoundedCornerShape(Metrics.innerRadius))
                 .background(fillColor)
@@ -488,34 +560,46 @@ fun CompactTextField(
                 interactionSource = interaction,
                 visualTransformation = visualTransformation,
                 keyboardOptions =
-                    if (imeAction == ImeAction.Default) KeyboardOptions.Default
-                    else KeyboardOptions(imeAction = imeAction),
+                    if (imeAction == ImeAction.Default) {
+                        KeyboardOptions.Default
+                    } else {
+                        KeyboardOptions(imeAction = imeAction)
+                    },
                 // IME 的「完成 / 前往 / 发送」统一落到调用方给的同一个提交函数；没有给就保持默认行为。
                 keyboardActions =
-                    if (onImeAction == null) KeyboardActions.Default
-                    else {
+                    if (onImeAction == null) {
+                        KeyboardActions.Default
+                    } else {
                         val action = onImeAction
                         KeyboardActions(
-                            onDone = { action?.invoke() },
-                            onGo = { action?.invoke() },
-                            onSend = { action?.invoke() },
-                            onSearch = { action?.invoke() },
-                            onNext = { action?.invoke() },
+                            onDone = { action() },
+                            onGo = { action() },
+                            onSend = { action() },
+                            onSearch = { action() },
+                            onNext = { action() },
                         )
                     },
                 modifier =
-                    Modifier.fillMaxWidth()
+                    Modifier
+                        .fillMaxWidth()
                         .then(
-                            if (focusRequester == null) Modifier
-                            else Modifier.focusRequester(focusRequester)
-                        )
-                        .then(
-                            if (onFocusChange == null) Modifier
-                            else Modifier.onFocusChanged { onFocusChange(it.isFocused) }
-                        )
-                        .then(
-                            if (label.isBlank()) Modifier
-                            else Modifier.semantics { contentDescription = label }
+                            if (focusRequester == null) {
+                                Modifier
+                            } else {
+                                Modifier.focusRequester(focusRequester)
+                            },
+                        ).then(
+                            if (onFocusChange == null) {
+                                Modifier
+                            } else {
+                                Modifier.onFocusChanged { onFocusChange(it.isFocused) }
+                            },
+                        ).then(
+                            if (label.isBlank()) {
+                                Modifier
+                            } else {
+                                Modifier.semantics { contentDescription = label }
+                            },
                         ),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder.isNotBlank()) {
@@ -549,16 +633,26 @@ fun CompactSwitch(
         animateColorAsState(
             targetValue = if (checked) colors.primary else controlBackground(),
             animationSpec =
-                if (reduced) androidx.compose.animation.core.snap()
-                else androidx.compose.animation.core.tween(Motion.fast),
+                if (reduced) {
+                    androidx.compose.animation.core
+                        .snap()
+                } else {
+                    androidx.compose.animation.core
+                        .tween(Motion.FAST)
+                },
             label = "switchTrack",
         )
     val progress by
         animateFloatAsState(
             targetValue = if (checked) 1f else 0f,
             animationSpec =
-                if (reduced) androidx.compose.animation.core.snap()
-                else androidx.compose.animation.core.tween(Motion.fast),
+                if (reduced) {
+                    androidx.compose.animation.core
+                        .snap()
+                } else {
+                    androidx.compose.animation.core
+                        .tween(Motion.FAST)
+                },
             label = "switchThumb",
         )
     Box(
@@ -572,15 +666,15 @@ fun CompactSwitch(
                 enabled = enabled,
                 role = Role.Switch,
                 onValueChange = onCheckedChange,
-            )
-            .padding(3.dp),
+            ).padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
-            Modifier.size(16.dp)
+            Modifier
+                .size(16.dp)
                 .offset(x = 18.dp * progress)
                 .clip(CircleShape)
-                .background(Color.White)
+                .background(Color.White),
         )
     }
 }
@@ -598,6 +692,7 @@ fun CompactSlider(
     val colors = MaterialTheme.colorScheme
     var widthPx by remember { mutableStateOf(1f) }
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it != 0f } ?: 1f
+
     fun update(positionX: Float) {
         val fraction = (positionX / widthPx).coerceIn(0f, 1f)
         var next = valueRange.start + fraction * span
@@ -623,7 +718,7 @@ fun CompactSlider(
                         update(change.position.x)
                     }
                 }
-            }
+            },
     ) {
         val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
         val centerY = size.height / 2f

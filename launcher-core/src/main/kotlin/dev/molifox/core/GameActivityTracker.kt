@@ -10,7 +10,9 @@ import com.google.gson.JsonParser
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.readText
 
 internal class GameActivityTracker(
     private val store: LauncherStore,
@@ -57,8 +59,11 @@ internal class GameActivityTracker(
                 quickPlayEntries(JsonParser.parseString(text)).maxByOrNull { it.entered } ?: return
             if (newest.entered > lastOfficialEntry) {
                 val key =
-                    if (newest.kind == EntryKind.Server) canonicalAddress(newest.key)
-                    else newest.key
+                    if (newest.kind == EntryKind.Server) {
+                        canonicalAddress(newest.key)
+                    } else {
+                        newest.key
+                    }
                 store.recentUsage.beginSession(
                     sessionId,
                     newest.kind,
@@ -70,8 +75,7 @@ internal class GameActivityTracker(
                 pendingServer = null
             }
             lastContents = text
-        }
-            .onFailure { store.log("读取游戏进入记录失败：${it.javaClass.simpleName}") }
+        }.onFailure { store.log("读取游戏进入记录失败：${it.javaClass.simpleName}") }
     }
 
     @Synchronized fun finish() = store.recentUsage.endSession(sessionId, true)
@@ -80,8 +84,7 @@ internal class GameActivityTracker(
         listServers(store.gamePath(instance))
             .firstOrNull {
                 sameServerAddress(parseServerAddress(it.ip), parseServerAddress(address))
-            }
-            ?.ip ?: address
+            }?.ip ?: address
 
     private companion object {
         const val MAX_RECORD_BYTES = 128 * 1024
@@ -89,13 +92,17 @@ internal class GameActivityTracker(
         val CONNECTING = Regex("^Connecting to (.+), (\\d{1,5})$")
         val DISCONNECTED =
             Regex(
-                "^(?:Disconnected|Lost connection|Stopping!|Connecting to Realms|Couldn't connect|Failed to connect|Starting integrated|Starting minecraft server)"
+                "^(?:Disconnected|Lost connection|Stopping!|Connecting to Realms|Couldn't connect|Failed to connect|Starting integrated|Starting minecraft server)",
             )
         val ENTERED = Regex("(?:Loaded \\d+ advancements|\\[(?:System|CHAT)](?: \\[CHAT])?.+)")
     }
 }
 
-internal data class QuickPlayEntry(val kind: EntryKind, val key: String, val entered: Instant)
+internal data class QuickPlayEntry(
+    val kind: EntryKind,
+    val key: String,
+    val entered: Instant,
+)
 
 internal fun quickPlayEntries(element: JsonElement): List<QuickPlayEntry> {
     if (element.isJsonArray) return element.asJsonArray.flatMap(::quickPlayEntries)
@@ -115,23 +122,28 @@ internal fun quickPlayEntries(element: JsonElement): List<QuickPlayEntry> {
             val address = parseServerAddress(key) ?: return emptyList()
             key =
                 formatServerAddress(
-                    address.copy(port = port.takeIf { it != DEFAULT_SERVER_PORT } ?: address.port)
+                    address.copy(port = port.takeIf { it != DEFAULT_SERVER_PORT } ?: address.port),
                 )
         }
         val rawTime =
             json.get("lastPlayedTime") ?: world.get("lastPlayedTime") ?: return emptyList()
         val entered =
             runCatching {
-                if (rawTime.asJsonPrimitive.isNumber) Instant.ofEpochMilli(rawTime.asLong)
-                else Instant.parse(rawTime.asString)
-            }
-                .getOrNull() ?: return emptyList()
+                if (rawTime.asJsonPrimitive.isNumber) {
+                    Instant.ofEpochMilli(rawTime.asLong)
+                } else {
+                    Instant.parse(rawTime.asString)
+                }
+            }.getOrNull() ?: return emptyList()
         if (key.isNotBlank()) return listOf(QuickPlayEntry(kind, key, entered))
     }
     return json.entrySet().flatMap { (_, value) -> quickPlayEntries(value) }
 }
 
-fun sameServerAddress(left: ServerAddress?, right: ServerAddress?): Boolean =
+fun sameServerAddress(
+    left: ServerAddress?,
+    right: ServerAddress?,
+): Boolean =
     left != null && right != null && left.port == right.port && left.host.equals(right.host, true)
 
 internal fun formatServerAddress(address: ServerAddress): String {

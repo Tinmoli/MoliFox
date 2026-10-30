@@ -10,16 +10,29 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
 
-internal fun applyGameLanguage(store: LauncherStore, instance: GameInstance) {
+internal fun applyGameLanguage(
+    store: LauncherStore,
+    instance: GameInstance,
+) {
     val settings = store.data.settings
     if (!settings.gameLanguageFollowsLauncher) return
     val file = store.gamePath(instance).resolve("options.txt")
     require(
         !file.isSymbolicLink() &&
-            (!file.exists(NOFOLLOW_LINKS) ||
-                (file.isRegularFile(NOFOLLOW_LINKS) && file.fileSize() <= 2L * 1024 * 1024))
+            (
+                !file.exists(NOFOLLOW_LINKS) ||
+                    (file.isRegularFile(NOFOLLOW_LINKS) && file.fileSize() <= 2L * 1024 * 1024)
+            ),
     ) {
         "游戏语言设置文件不可写或过大：$file"
     }

@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.molifox.core.LauncherSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -44,15 +46,17 @@ import javax.imageio.ImageIO
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image as SkiaImage
 
 /** 背景快照的缩小倍数：整图按 1/8 缩小后模糊，绘制时再把对应区域放大回面板尺寸。 */
 private const val SNAPSHOT_DIVISOR = 8
 
 /** 模糊后的背景图缩略图（1/8、RGBA 像素）：只跟背景图片有关，可跨主题 / 背景浓度复用。 */
-private class BlurredWallpaper(val pixels: IntArray, val width: Int, val height: Int)
+private class BlurredWallpaper(
+    val pixels: IntArray,
+    val width: Int,
+    val height: Int,
+)
 
 /** 缩略图缓存：键为「背景路径 + 修订号 + 文件大小/修改时间」，只解码、缩小、模糊一次。 */
 private object WallpaperCache {
@@ -60,7 +64,10 @@ private object WallpaperCache {
     private var key = ""
     private var cached: BlurredWallpaper? = null
 
-    fun get(path: String, revision: Long): BlurredWallpaper? {
+    fun get(
+        path: String,
+        revision: Long,
+    ): BlurredWallpaper? {
         val file = File(path)
         val stamp =
             if (file.isFile) file.length().toString() + ":" + file.lastModified() else "missing"
@@ -122,15 +129,19 @@ private fun compositeSnapshot(
         val blue = baseBlue * keep + (pixel and 0xFF) * take
         pixels[index] =
             (alpha shl 24) or
-                (red.roundToInt().coerceIn(0, 255) shl 16) or
-                (green.roundToInt().coerceIn(0, 255) shl 8) or
-                blue.roundToInt().coerceIn(0, 255)
+            (red.roundToInt().coerceIn(0, 255) shl 16) or
+            (green.roundToInt().coerceIn(0, 255) shl 8) or
+            blue.roundToInt().coerceIn(0, 255)
     }
     return encodeSnapshot(pixels, wallpaper.width, wallpaper.height)
 }
 
 /** 像素 → ImageBitmap：借助 PNG 编码回到 Compose 图元，与外观页加载背景走同一条 Skia 解码路径。 */
-private fun encodeSnapshot(pixels: IntArray, width: Int, height: Int): ImageBitmap? {
+private fun encodeSnapshot(
+    pixels: IntArray,
+    width: Int,
+    height: Int,
+): ImageBitmap? {
     val image =
         BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).apply {
             setRGB(0, 0, width, height, pixels, 0, width)
@@ -144,7 +155,12 @@ private fun encodeSnapshot(pixels: IntArray, width: Int, height: Int): ImageBitm
 }
 
 /** 三遍方框模糊：接近高斯，且在 1/8 的缩略图上只需几毫秒（只在背景变化时执行）。 */
-private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
+private fun boxBlur(
+    pixels: IntArray,
+    width: Int,
+    height: Int,
+    radius: Int,
+) {
     if (radius <= 0) return
     val scratch = IntArray(pixels.size)
     repeat(3) {
@@ -180,16 +196,19 @@ private fun blurPass(
             }
             dst[y * width + x] =
                 ((alpha / span) shl 24) or
-                    ((red / span) shl 16) or
-                    ((green / span) shl 8) or
-                    (blue / span)
+                ((red / span) shl 16) or
+                ((green / span) shl 8) or
+                (blue / span)
         }
     }
 }
 
 /** 只有开启玻璃效果且存在背景图时才需要磨砂快照；关掉玻璃或没有背景图时返回 null。 */
 @Composable
-private fun rememberFrostedBackdrop(settings: LauncherSettings, base: Color): ImageBitmap? {
+private fun rememberFrostedBackdrop(
+    settings: LauncherSettings,
+    base: Color,
+): ImageBitmap? {
     val path = if (settings.glassEnabled) settings.backgroundPath else ""
     val revision = settings.backgroundRevision
     val opacity = settings.backgroundOpacity.coerceIn(0f, 1f)
@@ -197,13 +216,15 @@ private fun rememberFrostedBackdrop(settings: LauncherSettings, base: Color): Im
     val state =
         produceState<ImageBitmap?>(null, path, revision, base, opacity) {
             value =
-                if (path.isBlank()) null
-                else
+                if (path.isBlank()) {
+                    null
+                } else {
                     withContext(Dispatchers.IO) {
                         WallpaperCache.get(path, revision)?.let {
                             compositeSnapshot(it, base, opacity)
                         }
                     }
+                }
         }
     return state.value
 }
@@ -236,8 +257,11 @@ private fun DrawScope.drawBackdropRegion(
         offsetY = 0f
     } else {
         val scale =
-            if (fit == "fit") min(windowWidth / imageWidth, windowHeight / imageHeight)
-            else max(windowWidth / imageWidth, windowHeight / imageHeight)
+            if (fit == "fit") {
+                min(windowWidth / imageWidth, windowHeight / imageHeight)
+            } else {
+                max(windowWidth / imageWidth, windowHeight / imageHeight)
+            }
         scaleX = scale
         scaleY = scale
         val freeX = windowWidth - imageWidth * scale
@@ -313,10 +337,10 @@ fun FrostedPanel(
                 // surface 不透明时模糊看不见，省掉一次贴图；其余情况用模糊快照替换背后画面。
                 if (
                     image != null &&
-                        colors.surface.alpha < 1f &&
-                        coordinates != null &&
-                        windowSize.width > 0 &&
-                        windowSize.height > 0
+                    colors.surface.alpha < 1f &&
+                    coordinates != null &&
+                    windowSize.width > 0 &&
+                    windowSize.height > 0
                 ) {
                     val origin = coordinates.positionInWindow()
                     drawBackdropRegion(
@@ -332,7 +356,7 @@ fun FrostedPanel(
                 }
                 // 唯一的一层底色：surface 已带上「面板不透明度」，与卡片用同一份颜色。
                 drawRect(colors.surface)
-            }
+            },
         )
         Box(Modifier.padding(contentPadding), content = content)
     }

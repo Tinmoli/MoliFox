@@ -5,12 +5,16 @@
 
 package dev.molifox.core
 
-import java.io.IOException
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.IOException
+import java.nio.file.Path
+import kotlin.io.path.absolutePathString
+import kotlin.io.path.createDirectories
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PathOpenerTest {
     @TempDir lateinit var temporary: Path
@@ -51,7 +55,10 @@ class PathOpenerTest {
                 osName = "windows",
                 openWithDesktop = { throw IOException("denied") },
                 launch = { throw IOException("CreateProcess error=5") },
-                copyToClipboard = { value -> clipboard = value; true },
+                copyToClipboard = { value ->
+                    clipboard = value
+                    true
+                },
                 log = {},
                 notice = { notices += it },
             )
@@ -69,7 +76,10 @@ class PathOpenerTest {
         file.writeText("log")
 
         val directoryCommands = pathOpenCommands("windows", directory)
-        assertEquals(listOf("explorer.exe", directory.absolutePathString()), directoryCommands.last().second)
+        assertEquals(
+            listOf("explorer.exe", directory.absolutePathString()),
+            directoryCommands.last().second,
+        )
 
         val fileCommands = pathOpenCommands("windows", file)
         assertEquals(
@@ -78,8 +88,10 @@ class PathOpenerTest {
         )
         assertEquals("/select," + file.absolutePathString(), fileCommands.last().second.last())
         assertTrue(
-            fileCommands.none { it.second.first() == "explorer.exe" && it.second.size == 2 &&
-                it.second.last() == file.absolutePathString() },
+            fileCommands.none {
+                it.second.first() == "explorer.exe" && it.second.size == 2 &&
+                    it.second.last() == file.absolutePathString()
+            },
             "文件不能用 explorer.exe <path> 直接打开：$fileCommands",
         )
     }

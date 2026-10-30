@@ -5,8 +5,8 @@
 
 package dev.molifox.core
 
-import java.net.URI
 import kotlinx.coroutines.CancellationException
+import java.net.URI
 
 /**
  * 一个可安装的运行时包。[urls] 已按尝试顺序排好（第一个优先），每个地址都是同一份文件、 同一个 sha256；[size] 来自厂商
@@ -38,7 +38,9 @@ internal data class JavaRuntimePackage(
         get() = if (vendor.equals("Zulu", true)) "zulu" else "temurin"
 }
 
-internal class JavaRuntimePackages(private val network: NetworkClient) {
+internal class JavaRuntimePackages(
+    private val network: NetworkClient,
+) {
     /**
      * 选择安装包。[preferredImageType] 为 "jre" 时优先 JRE、没有该版本 JRE 时回退 JDK 并保留真实类型；
      * 为 "jdk" 时只查 JDK；为空按 JRE → JDK 自动。
@@ -74,8 +76,11 @@ internal class JavaRuntimePackages(private val network: NetworkClient) {
             for (type in types) {
                 try {
                     val packageInfo =
-                        if (vendor == "zulu") zulu(major, os, zuluArch, type)
-                        else adoptium(major, os, zuluArch, type)
+                        if (vendor == "zulu") {
+                            zulu(major, os, zuluArch, type)
+                        } else {
+                            adoptium(major, os, zuluArch, type)
+                        }
                     packageInfo?.let {
                         return it
                     }
@@ -96,7 +101,7 @@ internal class JavaRuntimePackages(private val network: NetworkClient) {
                 javaDownloadSourceLabel(source) +
                 "）：" +
                 failures.joinToString("；") +
-                "。请手动选择已有的 Java"
+                "。请手动选择已有的 Java",
         )
     }
 
@@ -203,7 +208,7 @@ internal class JavaRuntimePackages(private val network: NetworkClient) {
         require(
             URI(url).scheme == "https" &&
                 URI(url).host in
-                    setOf("github.com", "objects.githubusercontent.com", "api.adoptium.net")
+                setOf("github.com", "objects.githubusercontent.com", "api.adoptium.net"),
         ) {
             "Temurin 下载地址不在允许的域名：${URI(url).host}"
         }
@@ -244,10 +249,12 @@ fun javaDownloadSourceLabel(value: String): String =
 internal fun javaDownloadUrlLabel(url: String): String =
     when (runCatching { URI(url).host.orEmpty() }.getOrDefault("")) {
         "cdn.azul.com",
-        "api.azul.com" -> "官方源（Azul）"
+        "api.azul.com",
+        -> "官方源（Azul）"
         "github.com",
         "objects.githubusercontent.com",
-        "api.adoptium.net" -> "官方源（Temurin）"
+        "api.adoptium.net",
+        -> "官方源（Temurin）"
         else -> "官方源"
     }
 

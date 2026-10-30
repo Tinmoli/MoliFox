@@ -6,11 +6,14 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class CoreRulesTest {
     @TempDir lateinit var directory: Path
@@ -18,20 +21,19 @@ class CoreRulesTest {
     @Test
     fun `archive paths cannot escape on Windows or Linux`() {
         listOf(
-                "../outside",
-                "mods/../../outside",
-                "C:\\secret",
-                "\\\\server\\file",
-                "/etc/passwd",
-                "mods/test.jar:stream",
-                "mods/NUL.jar",
-                "mods/con",
-                "bad.",
-                "bad ",
-            )
-            .forEach { path ->
-                assertFailsWith<IllegalArgumentException>(path) { safePath(directory, path) }
-            }
+            "../outside",
+            "mods/../../outside",
+            "C:\\secret",
+            "\\\\server\\file",
+            "/etc/passwd",
+            "mods/test.jar:stream",
+            "mods/NUL.jar",
+            "mods/con",
+            "bad.",
+            "bad ",
+        ).forEach { path ->
+            assertFailsWith<IllegalArgumentException>(path) { safePath(directory, path) }
+        }
         assertEquals(directory.resolve("mods/中文 模组.jar"), safePath(directory, "mods/中文 模组.jar"))
     }
 
@@ -57,21 +59,21 @@ class CoreRulesTest {
     @Test
     fun `last matching OS rule wins and feature rules require explicit support`() {
         val rules =
-            JsonParser.parseString(
-                    """[{"action":"allow"},{"action":"disallow","os":{"name":"windows"}},{"action":"allow","os":{"name":"windows","arch":"aarch64"}}]"""
-                )
-                .asJsonArray
+            JsonParser
+                .parseString(
+                    """[{"action":"allow"},{"action":"disallow","os":{"name":"windows"}},{"action":"allow","os":{"name":"windows","arch":"aarch64"}}]""",
+                ).asJsonArray
         assertFalse(rulesAllow(rules, "windows", "amd64", "10.0"))
         assertTrue(rulesAllow(rules, "linux", "amd64", "6.8"))
         assertTrue(rulesAllow(rules, "windows", "aarch64", "10.0"))
         val feature =
-            JsonParser.parseString(
-                    """[{"action":"allow","features":{"has_custom_resolution":true}}]"""
-                )
-                .asJsonArray
+            JsonParser
+                .parseString(
+                    """[{"action":"allow","features":{"has_custom_resolution":true}}]""",
+                ).asJsonArray
         assertFalse(rulesAllow(feature, "linux", "amd64", "6.8"))
         assertTrue(
-            rulesAllow(feature, "linux", "amd64", "6.8", mapOf("has_custom_resolution" to true))
+            rulesAllow(feature, "linux", "amd64", "6.8", mapOf("has_custom_resolution" to true)),
         )
     }
 
@@ -87,7 +89,7 @@ class CoreRulesTest {
     @Test
     fun `tokens are redacted before entering log state`() {
         assertFalse(
-            redactSecrets("--accessToken super-secret-value").contains("super-secret-value")
+            redactSecrets("--accessToken super-secret-value").contains("super-secret-value"),
         )
         assertFalse(redactSecrets("Authorization: Bearer secret123").contains("secret123"))
         assertEquals("ordinary game output", redactSecrets("ordinary game output"))
@@ -98,13 +100,13 @@ class CoreRulesTest {
         writeJson(
             directory.resolve("versions/base/base.json"),
             JsonParser.parseString(
-                """{"id":"base","mainClass":"Base","downloads":{"client":{"url":"https://example.com/base.jar"}},"libraries":[{"name":"org.example:library:1"}],"arguments":{"game":["--username","${'$'}{auth_player_name}"]}}"""
+                """{"id":"base","mainClass":"Base","downloads":{"client":{"url":"https://example.com/base.jar"}},"libraries":[{"name":"org.example:library:1"}],"arguments":{"game":["--username","${'$'}{auth_player_name}"]}}""",
             ),
         )
         writeJson(
             directory.resolve("versions/modded/modded.json"),
             JsonParser.parseString(
-                """{"id":"modded","inheritsFrom":"base","mainClass":"Modded","libraries":[{"name":"org.example:library:2"}],"arguments":{"game":["--tweakClass","Example"]}}"""
+                """{"id":"modded","inheritsFrom":"base","mainClass":"Modded","libraries":[{"name":"org.example:library:2"}],"arguments":{"game":["--tweakClass","Example"]}}""",
             ),
         )
         val resolved = VersionResolver(directory, DesktopPlatform()).resolve("modded")
@@ -114,7 +116,13 @@ class CoreRulesTest {
             listOf("org.example:library:2"),
             resolved.json.array("libraries").map { it.asJsonObject.string("name") },
         )
-        assertEquals(4, resolved.json.obj("arguments").array("game").size())
+        assertEquals(
+            4,
+            resolved.json
+                .obj("arguments")
+                .array("game")
+                .size(),
+        )
     }
 
     @Test
@@ -127,10 +135,10 @@ class CoreRulesTest {
     @Test
     fun `native-only libraries do not request a nonexistent ordinary jar`() {
         val library =
-            JsonParser.parseString(
-                    """{"name":"org.lwjgl:lwjgl-platform:2.9","natives":{"windows":"natives-windows","linux":"natives-linux"},"downloads":{"classifiers":{"natives-windows":{"url":"https://example.com/windows.jar","path":"windows.jar"},"natives-linux":{"url":"https://example.com/linux.jar","path":"linux.jar"}}}}"""
-                )
-                .asJsonObject
+            JsonParser
+                .parseString(
+                    """{"name":"org.lwjgl:lwjgl-platform:2.9","natives":{"windows":"natives-windows","linux":"natives-linux"},"downloads":{"classifiers":{"natives-windows":{"url":"https://example.com/windows.jar","path":"windows.jar"},"natives-linux":{"url":"https://example.com/linux.jar","path":"linux.jar"}}}}""",
+                ).asJsonObject
         val resolver = VersionResolver(directory, DesktopPlatform())
         assertFalse(resolver.hasClasspathArtifact(library))
         assertEquals(1, resolver.libraryArtifacts(library).size)
@@ -147,13 +155,12 @@ class CoreRulesTest {
     @Test
     fun `modpack downloads cannot target local services`() {
         listOf(
-                "https://localhost/file",
-                "https://127.0.0.1/admin",
-                "file:///etc/passwd",
-                "http://cdn.modrinth.com/test",
-                "https://cdn.modrinth.com:8443/test",
-            )
-            .forEach { assertFails { validatePackUrl(it) } }
+            "https://localhost/file",
+            "https://127.0.0.1/admin",
+            "file:///etc/passwd",
+            "http://cdn.modrinth.com/test",
+            "https://cdn.modrinth.com:8443/test",
+        ).forEach { assertFails { validatePackUrl(it) } }
         assertEquals(
             "https://cdn.modrinth.com/data/test.jar",
             validatePackUrl("https://cdn.modrinth.com/data/test.jar"),

@@ -15,7 +15,24 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -25,9 +42,33 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.ViewList
+import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,20 +87,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.GameDirectory
+import dev.molifox.core.GameInstance
+import dev.molifox.core.JobStatus
+import dev.molifox.core.LauncherState
+import dev.molifox.core.instanceFolderName
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** 实例行高：64dp，容纳两行文字与 12sp 文字操作。 */
 private val InstanceRowHeight = 64.dp
 
 /** 加载器筛选里「无法识别」实例单独成组：它不冒充任何加载器，也不参与按加载器的筛选。 */
-private const val BrokenLoaderFilter = "无法识别"
+private const val BROKEN_LOADER_FILTER = "无法识别"
 
 /**
  * 实例页：顶部是页头（返回 / 标题 / 计数），其下依次是单行筛选栏（搜索 + 版本 + 加载器 + 排序）、
@@ -92,19 +137,21 @@ fun ColumnScope.InstancesPage(
     var renaming by remember { mutableStateOf<GameInstance?>(null) }
     var copying by remember { mutableStateOf<GameInstance?>(null) }
     var exporting by remember { mutableStateOf<GameInstance?>(null) }
-    val sizes = remember { InstanceSizeCache() }
+    var sizeRevision by remember { mutableIntStateOf(0) }
     // 进入/回到实例列表时做一次廉价的目录签名检查；新增、删除或 JSON 改坏都会在这里出现。
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { runCatching { actions.controller.refreshInstancesIfChanged() } }
-        // 重新扫描后目录内容可能已经变化，占用缓存整表作废，可见行会各自重新统计。
-        sizes.invalidate()
+        withContext(
+            Dispatchers.IO,
+        ) { runCatching { actions.controller.refreshInstancesIfChanged() } }
+        // 重新扫描后可见行重新统计，各行结果随组件离开释放。
+        sizeRevision++
     }
     // 安装 / 修复 / 删除等任务结束后目录内容变化；任务从运行回到空闲时再作废一次，
     // 避免行里长期显示任务开始前的占用。
     val runningTasks = state.jobs.count { it.status == JobStatus.Running }
     var previousRunningTasks by remember { mutableIntStateOf(runningTasks) }
     LaunchedEffect(runningTasks) {
-        if (runningTasks == 0 && previousRunningTasks > 0) sizes.invalidate()
+        if (runningTasks == 0 && previousRunningTasks > 0) sizeRevision++
         previousRunningTasks = runningTasks
     }
     val busy = actions.controller.busy
@@ -119,7 +166,8 @@ fun ColumnScope.InstancesPage(
     val versionOptions =
         remember(all) {
             val versions =
-                all.map { it.gameVersion }
+                all
+                    .map { it.gameVersion }
                     .filter { it.isNotBlank() }
                     .distinct()
                     .sortedWith(instanceVersionOrder)
@@ -136,7 +184,7 @@ fun ColumnScope.InstancesPage(
             buildList {
                 add("" to "加载器：全部")
                 LoaderFilterOrder.filter { it in present }.forEach { add(it to "加载器：" + it) }
-                if (all.any { it.broken }) add(BrokenLoaderFilter to "加载器：无法识别")
+                if (all.any { it.broken }) add(BROKEN_LOADER_FILTER to "加载器：无法识别")
             }
         }
     // 实例被删除或目录切换后，当前筛选值可能已经不存在：自动回到「全部」，避免下拉显示内部取值。
@@ -146,15 +194,21 @@ fun ColumnScope.InstancesPage(
     LaunchedEffect(loaderOptions) {
         if (loaderOptions.none { it.first == loaderFilter }) loaderFilter = ""
     }
-    val filtered = all.filter { instance ->
-        (!favorites || instance.favorite) &&
-            // 搜索只看名称，大小写不敏感且即时生效。
-            (query.isBlank() || instance.name.contains(query.trim(), ignoreCase = true)) &&
-            (versionFilter.isBlank() || instance.gameVersion == versionFilter) &&
-            (loaderFilter.isBlank() ||
-                if (loaderFilter == BrokenLoaderFilter) instance.broken
-                else !instance.broken && instance.loader.title == loaderFilter)
-    }
+    val filtered =
+        all.filter { instance ->
+            (!favorites || instance.favorite) &&
+                // 搜索只看名称，大小写不敏感且即时生效。
+                (query.isBlank() || instance.name.contains(query.trim(), ignoreCase = true)) &&
+                (versionFilter.isBlank() || instance.gameVersion == versionFilter) &&
+                (
+                    loaderFilter.isBlank() ||
+                        if (loaderFilter == BROKEN_LOADER_FILTER) {
+                            instance.broken
+                        } else {
+                            !instance.broken && instance.loader.title == loaderFilter
+                        }
+                )
+        }
     val versions =
         when (sort) {
             "name" -> filtered.sortedBy { it.name.lowercase() }
@@ -162,13 +216,14 @@ fun ColumnScope.InstancesPage(
             else ->
                 filtered.sortedWith(
                     compareByDescending<GameInstance> { preferences.favoritesFirst && it.favorite }
-                        .thenByDescending { it.lastPlayed ?: it.createdAt }
+                        .thenByDescending { it.lastPlayed ?: it.createdAt },
                 )
         }
+
     fun launch(instance: GameInstance) {
         if (instance.broken) {
             actions.controller.store.notify(
-                "「" + instance.name + "」无法识别：" + instance.brokenReason
+                "「" + instance.name + "」无法识别：" + instance.brokenReason,
             )
             return
         }
@@ -198,8 +253,9 @@ fun ColumnScope.InstancesPage(
     val probe by
         produceState<String?>(null, directory?.path, probeToken) {
             value = null
-            if (directory != null)
+            if (directory != null) {
                 value = withContext(Dispatchers.IO) { probeGameDirectory(directory) }
+            }
         }
     // 安装 / 修复任务运行中且列表为空时视为读取中，不额外造一个假的加载状态。
     val pendingRead =
@@ -220,10 +276,12 @@ fun ColumnScope.InstancesPage(
             maxLines = 1,
         )
         Text(
-            if (versions.size != all.size)
+            if (versions.size != all.size) {
                 versions.size.toString() + " / " + all.size + " 个实例 · " +
                     versions.count { it.installed } + " 个已安装"
-            else all.size.toString() + " 个实例 · " + all.count { it.installed } + " 个已安装",
+            } else {
+                all.size.toString() + " 个实例 · " + all.count { it.installed } + " 个已安装"
+            },
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -316,7 +374,7 @@ fun ColumnScope.InstancesPage(
         issue != null && issue.isNotBlank() ->
             InstanceErrorState(Modifier.weight(1f).fillMaxWidth(), issue) {
                 probeToken++
-                sizes.invalidate()
+                sizeRevision++
                 actions.run { actions.controller.refreshGameDirectory() }
             }
         versions.isEmpty() && pendingRead ->
@@ -338,7 +396,7 @@ fun ColumnScope.InstancesPage(
                         state.data.selectedInstanceId,
                         busy,
                         preferences.showNotes,
-                        sizes,
+                        sizeRevision,
                         // 开始页的「版本选择」把这里当作挑选页：选中后立刻回开始页，
                         // 「当前游戏」卡与按钮文字跟着切到新实例。
                         onSelect = {
@@ -379,16 +437,20 @@ fun ColumnScope.InstancesPage(
                     )
                 }
                 // 列表 / 网格切换 180ms 交叉淡入；关闭动画时直接切换
-                if (LocalAnimationsEnabled.current)
+                if (LocalAnimationsEnabled.current) {
                     Crossfade(
                         grid,
                         Modifier.fillMaxSize(),
-                        animationSpec = tween(Motion.normal),
+                        animationSpec = tween(Motion.NORMAL),
                         label = "versions-view",
                     ) { showGrid ->
                         if (showGrid) cards() else list()
                     }
-                else if (grid) cards() else list()
+                } else if (grid) {
+                    cards()
+                } else {
+                    list()
+                }
             }
     }
     renaming?.let { instance ->
@@ -418,22 +480,28 @@ private fun CompactToggleButton(
     val background by
         animateColorAsState(
             if (selected) selectedRowBackground() else Color.Transparent,
-            tween(Motion.fast),
+            tween(Motion.FAST),
             label = "toggle-bg",
         )
     val tint =
-        if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurfaceVariant
+        if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
     Row(
-        Modifier.height(Metrics.controlHeight)
+        Modifier
+            .height(Metrics.controlHeight)
             .then(if (label == null) Modifier.width(Metrics.controlHeight) else Modifier)
             .clip(shape)
             // 只有图标的切换按钮必须自带无障碍名字，否则读屏与 GUI 测试只能靠位置猜。
             .then(
-                if (description == null) Modifier
-                else Modifier.semantics { contentDescription = description }
-            )
-            .hoverHighlight(shape)
+                if (description == null) {
+                    Modifier
+                } else {
+                    Modifier.semantics { contentDescription = description }
+                },
+            ).hoverHighlight(shape)
             .clickable(onClick = onClick)
             .background(background, shape)
             .padding(horizontal = if (label == null) 8.dp else 10.dp),
@@ -455,7 +523,8 @@ private fun InstanceTextAction(
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Box(
-        Modifier.height(28.dp)
+        Modifier
+            .height(28.dp)
             .clip(shape)
             .hoverHighlight(shape, enabled = enabled)
             .clickable(enabled = enabled, onClick = onClick)
@@ -471,33 +540,6 @@ private fun InstanceTextAction(
     }
 }
 
-/**
- * 实例占用缓存：按实例 id 存一次遍历结果，只在行可见时由 [InstanceListBody] 里的行请求计算。
- * [invalidate] 清空整表并推进 [revision]，可见行的 LaunchedEffect 会跟着重新统计；滚动本身不触发任何目录遍历。
- */
-private class InstanceSizeCache {
-    private val entries = mutableStateMapOf<String, Long?>()
-
-    /** 每次作废递增；行把它作为 LaunchedEffect 的键。 */
-    var revision by mutableIntStateOf(0)
-        private set
-
-    /** 已缓存的结果；null 表示尚未统计，-1 表示统计过但目录不可读。 */
-    fun cached(id: String): Long? = entries[id]
-
-    /** 是否已经统计过（结果可能是 null）。 */
-    fun knows(id: String): Boolean = entries.containsKey(id)
-
-    fun store(id: String, bytes: Long?) {
-        entries[id] = bytes
-    }
-
-    fun invalidate() {
-        entries.clear()
-        revision++
-    }
-}
-
 /** 列表视图：行高 64dp、圆角 6、悬停淡入；右键或行尾「更多操作」打开上下文菜单。 */
 @Composable
 private fun InstanceListBody(
@@ -506,7 +548,7 @@ private fun InstanceListBody(
     selectedId: String?,
     busy: Boolean,
     showNotes: Boolean,
-    sizes: InstanceSizeCache,
+    sizeRevision: Int,
     onSelect: (GameInstance) -> Unit,
     onManage: (String) -> Unit,
     onLaunch: (GameInstance) -> Unit,
@@ -531,7 +573,7 @@ private fun InstanceListBody(
                     selected = instance.id == selectedId,
                     busy = busy || actions.controller.isInstanceBusy(instance.id),
                     showNotes = showNotes,
-                    sizes = sizes,
+                    sizeRevision = sizeRevision,
                     onSelect = { onSelect(instance) },
                     onManage = { onManage(instance.id) },
                     onLaunch = { onLaunch(instance) },
@@ -557,7 +599,7 @@ private fun InstanceListRow(
     selected: Boolean,
     busy: Boolean,
     showNotes: Boolean,
-    sizes: InstanceSizeCache,
+    sizeRevision: Int,
     onSelect: () -> Unit,
     onManage: () -> Unit,
     onLaunch: () -> Unit,
@@ -574,22 +616,16 @@ private fun InstanceListRow(
     // 但锚点必须落在各自的实际坐标空间里，否则弹窗会跑到页面左侧或窗口外。
     var menuAnchor by remember(instance.id) { mutableStateOf(InstanceMenuAnchor.Pointer) }
     val density = LocalDensity.current
-    // 占用只在行可见时按需统计：LazyColumn 只组合可见行，滚动到新行时才发起一次 IO 遍历，
-    // 结果按实例 id 缓存；页面刷新时整表作废。
-    val cachedSize = sizes.cached(instance.id)
-    LaunchedEffect(instance.id, sizes.revision) {
-        if (sizes.knows(instance.id)) return@LaunchedEffect
-        sizes.store(
-            instance.id,
-            withContext(Dispatchers.IO) {
-                // -1 是「统计过但目录不可读」的缓存标记，避免每一帧都重试遍历。
-                instanceDirectoryBytes(actions.controller.store.versionGamePath(instance)) ?: -1L
-            },
-        )
+    var directorySize by remember(instance.id, instance.gameDirectoryId, sizeRevision) {
+        mutableStateOf<Long?>(null)
+    }
+    LaunchedEffect(instance.id, instance.gameDirectoryId, sizeRevision) {
+        directorySize = actions.controller.instanceDirectorySize(instance.id) ?: -1L
     }
     Box(Modifier.fillMaxWidth()) {
         Surface(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(InstanceRowHeight)
                 // 右键：在指针位置打开同一份上下文菜单；已打开的菜单不重复弹。
                 .pointerInput(instance.id) {
@@ -598,7 +634,7 @@ private fun InstanceListRow(
                             val event = awaitPointerEvent()
                             if (
                                 event.type == PointerEventType.Press &&
-                                    event.buttons.isSecondaryPressed
+                                event.buttons.isSecondaryPressed
                             ) {
                                 event.changes.firstOrNull()?.let { change ->
                                     menuOffset =
@@ -615,15 +651,17 @@ private fun InstanceListRow(
                             }
                         }
                     }
-                }
-                .clickable(onClick = onSelect),
+                }.clickable(onClick = onSelect),
             shape = shape,
             color = MaterialTheme.colorScheme.surface,
             border =
                 BorderStroke(
                     1.dp,
-                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .6f)
-                    else hairline(),
+                    if (selected) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = .6f)
+                    } else {
+                        hairline()
+                    },
                 ),
         ) {
             Row(
@@ -646,16 +684,20 @@ private fun InstanceListRow(
                             modifier = Modifier.weight(1f, fill = false),
                         )
                         if (selected) Tag("当前版本")
-                        if (!instance.broken && !instance.installed)
+                        if (!instance.broken && !instance.installed) {
                             Tag("待修复", MaterialTheme.colorScheme.error)
+                        }
                     }
                     // 紧凑信息行：版本 · 加载器 · 最后游玩 · 占用大小；无法识别时整行用错误色。
                     Text(
-                        instanceMetaLine(instance, cachedSize, showNotes),
+                        instanceMetaLine(instance, directorySize, showNotes),
                         fontSize = 12.sp,
                         color =
-                            if (instance.broken) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (instance.broken) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -670,8 +712,11 @@ private fun InstanceListRow(
                     if (instance.favorite) "已收藏" else "收藏",
                     onFavorite,
                     tint =
-                        if (instance.favorite) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (instance.favorite) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                 )
                 InstanceTextAction("设置", onManage)
                 InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
@@ -687,7 +732,7 @@ private fun InstanceListRow(
                         },
                         size = 28.dp,
                     )
-                    if (menuAnchor == InstanceMenuAnchor.Button)
+                    if (menuAnchor == InstanceMenuAnchor.Button) {
                         InstanceContextMenu(
                             expanded = menuOpen,
                             offset = ButtonMenuOffset,
@@ -697,14 +742,21 @@ private fun InstanceListRow(
                             onLaunch = onLaunch,
                             onRename = onRename,
                             onCopy = onCopy,
-                            onOpenFolder = { actions.run { actions.controller.openFolder(instance.id) } },
+                            onOpenFolder = {
+                                actions.run {
+                                    actions.controller.openFolder(
+                                        instance.id,
+                                    )
+                                }
+                            },
                             onExport = onExport,
                             onDelete = onDelete,
                         )
+                    }
                 }
             }
         }
-        if (menuAnchor == InstanceMenuAnchor.Pointer)
+        if (menuAnchor == InstanceMenuAnchor.Pointer) {
             InstanceContextMenu(
                 expanded = menuOpen,
                 offset = menuOffset,
@@ -718,12 +770,14 @@ private fun InstanceListRow(
                 onExport = onExport,
                 onDelete = onDelete,
             )
+        }
     }
 }
 
 private enum class InstanceMenuAnchor {
     /** 右键：菜单出现在指针位置（行内坐标）。 */
     Pointer,
+
     /** ⋯ 按钮：菜单贴着按钮打开，右边缘与按钮对齐。 */
     Button,
 }
@@ -851,8 +905,9 @@ private fun RenameInstanceDialog(
             label = "实例名称",
             placeholder = instance.name,
         )
-        if (error.isNotBlank())
+        if (error.isNotBlank()) {
             Text(error, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        }
         DialogActions(
             confirmText = "保存",
             onConfirm = {
@@ -861,13 +916,15 @@ private fun RenameInstanceDialog(
                     val failure =
                         withContext(Dispatchers.IO) {
                             runCatching {
-                                    actions.controller.renameInstance(instance.id, trimmed)
-                                }
-                                .exceptionOrNull()
+                                actions.controller.renameInstance(instance.id, trimmed)
+                            }.exceptionOrNull()
                         }
                     running = false
-                    if (failure == null) onDismiss()
-                    else error = failure.message ?: "重命名失败，请稍后重试"
+                    if (failure == null) {
+                        onDismiss()
+                    } else {
+                        error = failure.message ?: "重命名失败，请稍后重试"
+                    }
                 }
             },
             onCancel = onDismiss,
@@ -950,7 +1007,8 @@ private fun InstanceGridCard(
     val density = LocalDensity.current
     Box(Modifier.fillMaxWidth()) {
         Surface(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(InstanceCardHeight)
                 .pointerInput(instance.id) {
                     awaitPointerEventScope {
@@ -958,7 +1016,7 @@ private fun InstanceGridCard(
                             val event = awaitPointerEvent()
                             if (
                                 event.type == PointerEventType.Press &&
-                                    event.buttons.isSecondaryPressed
+                                event.buttons.isSecondaryPressed
                             ) {
                                 event.changes.firstOrNull()?.let { change ->
                                     menuOffset =
@@ -975,14 +1033,15 @@ private fun InstanceGridCard(
                             }
                         }
                     }
-                }
-                .hoverable(hoverSource)
+                }.hoverable(hoverSource)
                 .clickable(onClick = onSelect),
             shape = shape,
             color =
-                if (hovered)
+                if (hovered) {
                     lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primary, .04f)
-                else MaterialTheme.colorScheme.surface,
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
             border =
                 BorderStroke(
                     1.dp,
@@ -1005,12 +1064,18 @@ private fun InstanceGridCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (instance.broken) "无法识别 · " + instance.brokenReason
-                    else instance.gameVersion + " · " + instance.loader.title,
+                    if (instance.broken) {
+                        "无法识别 · " + instance.brokenReason
+                    } else {
+                        instance.gameVersion + " · " + instance.loader.title
+                    },
                     fontSize = 12.sp,
                     color =
-                        if (instance.broken) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (instance.broken) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1030,8 +1095,11 @@ private fun InstanceGridCard(
                         if (instance.favorite) "已收藏" else "收藏",
                         onFavorite,
                         tint =
-                            if (instance.favorite) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (instance.favorite) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                     )
                     InstanceTextAction("设置", onManage)
                     InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
@@ -1077,7 +1145,11 @@ private fun InstanceLoadingState(modifier: Modifier) {
 }
 
 @Composable
-private fun InstanceErrorState(modifier: Modifier, message: String, onRetry: () -> Unit) {
+private fun InstanceErrorState(
+    modifier: Modifier,
+    message: String,
+    onRetry: () -> Unit,
+) {
     Column(
         modifier.padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1120,18 +1192,23 @@ private fun InstanceEmptyState(
     ) {
         EmptyState(
             if (noInstance) "还没有游戏实例" else "没有匹配的实例",
-            if (noInstance) "安装一个新版本，从游戏目录导入，或直接新建实例。"
-            else "调整关键词、版本、加载器或收藏筛选后再试。",
+            if (noInstance) {
+                "安装一个新版本，从游戏目录导入，或直接新建实例。"
+            } else {
+                "调整关键词、版本、加载器或收藏筛选后再试。"
+            },
             Icons.Outlined.Widgets,
         )
-        if (noInstance)
+        if (noInstance) {
             PrimaryButton(
                 "安装第一个版本",
                 Icons.Outlined.Add,
                 enabled = !busy,
                 onClick = onNew,
             )
-        else SecondaryButton(onClearFilter) { Text("清除筛选", fontSize = 13.sp) }
+        } else {
+            SecondaryButton(onClearFilter) { Text("清除筛选", fontSize = 13.sp) }
+        }
     }
 }
 
@@ -1142,9 +1219,11 @@ private fun instanceMetaLine(
     showNotes: Boolean,
 ): String {
     val note =
-        if (showNotes && instance.notes.isNotBlank())
+        if (showNotes && instance.notes.isNotBlank()) {
             " · " + instance.notes.replace('\n', ' ')
-        else ""
+        } else {
+            ""
+        }
     return instance.gameVersion.ifBlank { "版本未知" } +
         " · " +
         (if (instance.broken) "无法识别" else instance.loader.title) +
@@ -1179,20 +1258,6 @@ private fun instanceSizeText(bytes: Long?): String =
         else -> bytes.toString() + " B"
     }
 
-/** 实例目录占用：只在 IO 线程调用；不可读的文件按 0 计，目录不存在返回 null。 */
-private fun instanceDirectoryBytes(path: Path): Long? =
-    runCatching {
-            if (!Files.isDirectory(path)) null
-            else
-                Files.walk(path).use { files ->
-                    files
-                        .filter { Files.isRegularFile(it) }
-                        .mapToLong { file -> runCatching { Files.size(file) }.getOrDefault(0L) }
-                        .sum()
-                }
-        }
-        .getOrNull()
-
 /** 加载器筛选的固定显示次序（不含始终在前的「全部」与末尾的「无法识别」分组）。 */
 private val LoaderFilterOrder = listOf("原版", "Forge", "NeoForge", "Fabric", "Quilt")
 
@@ -1218,13 +1283,13 @@ private fun versionSegments(version: String): List<Int> =
         .map { it.takeWhile { char -> char.isDigit() }.toIntOrNull() ?: 0 }
 
 /** 只读地检查目录是否还存在、是否为文件夹、是否可读；在 IO 线程调用。 */
-private fun probeGameDirectory(directory: GameDirectory): String = runCatching {
-    val path = Path.of(directory.path)
-    when {
-        !Files.exists(path) -> "找不到游戏目录：" + directory.path
-        !Files.isDirectory(path) -> "这不是文件夹：" + directory.path
-        !Files.isReadable(path) -> "没有读取权限：" + directory.path
-        else -> ""
-    }
-}
-    .getOrElse { "无法读取游戏目录：" + (it.message ?: directory.path) }
+private fun probeGameDirectory(directory: GameDirectory): String =
+    runCatching {
+        val path = Path.of(directory.path)
+        when {
+            !Files.exists(path) -> "找不到游戏目录：" + directory.path
+            !Files.isDirectory(path) -> "这不是文件夹：" + directory.path
+            !Files.isReadable(path) -> "没有读取权限：" + directory.path
+            else -> ""
+        }
+    }.getOrElse { "无法读取游戏目录：" + (it.message ?: directory.path) }

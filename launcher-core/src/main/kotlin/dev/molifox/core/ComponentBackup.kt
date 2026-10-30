@@ -8,12 +8,26 @@ package dev.molifox.core
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
-internal class ComponentBackup(private val store: LauncherStore) {
+internal class ComponentBackup(
+    private val store: LauncherStore,
+) {
     fun capture(instance: GameInstance): String {
         val id = UUID.randomUUID().toString()
-        val folder = store.directories.instanceBackups.resolve("components").resolve(id)
+        val folder =
+            store.directories.instanceBackups
+                .resolve("components")
+                .resolve(id)
         folder.createDirectories()
         val root = store.minecraftRoot(instance)
         val records = mutableListOf<Map<String, String>>()
@@ -27,7 +41,7 @@ internal class ComponentBackup(private val store: LauncherStore) {
             require(
                 file.isRegularFile(NOFOLLOW_LINKS) &&
                     !file.isSymbolicLink() &&
-                    file.fileSize() <= 8 * 1024 * 1024
+                    file.fileSize() <= 8 * 1024 * 1024,
             ) {
                 "版本配置路径不安全：$file"
             }
@@ -40,7 +54,7 @@ internal class ComponentBackup(private val store: LauncherStore) {
                     "path" to root.relativize(file).joinToString("/"),
                     "file" to target.name,
                     "sha256" to digest(target, "SHA-256"),
-                )
+                ),
             )
             version = readObject(file).string("inheritsFrom")
         }
@@ -50,7 +64,7 @@ internal class ComponentBackup(private val store: LauncherStore) {
                 .resolve("${store.versionGamePath(instance).fileName}.json")
         if (
             alias.isRegularFile(NOFOLLOW_LINKS) &&
-                records.none { it["path"] == root.relativize(alias).joinToString("/") }
+            records.none { it["path"] == root.relativize(alias).joinToString("/") }
         ) {
             require(!alias.isSymbolicLink() && alias.fileSize() <= 8 * 1024 * 1024)
             val file = "${records.size}.json"
@@ -60,7 +74,7 @@ internal class ComponentBackup(private val store: LauncherStore) {
                     "path" to root.relativize(alias).joinToString("/"),
                     "file" to file,
                     "sha256" to digest(alias, "SHA-256"),
-                )
+                ),
             )
         }
         writeJson(
@@ -70,24 +84,28 @@ internal class ComponentBackup(private val store: LauncherStore) {
         return id
     }
 
-    fun restore(id: String, current: GameInstance) {
+    fun restore(
+        id: String,
+        current: GameInstance,
+    ) {
         val manifest = manifest(id, current)
         val folder = directory(id)
         val root = store.minecraftRoot(current)
         val records = manifest.array("profiles").map { it.asJsonObject }
-        val files = records.map { record ->
-            val relative = record.string("path")
-            require(relative.matches(Regex("versions/[^/]+/[^/]+\\.json")))
-            val source = safePath(folder, safeFilename(record.string("file")))
-            require(
-                source.isRegularFile(NOFOLLOW_LINKS) &&
-                    !source.isSymbolicLink() &&
-                    digest(source, "SHA-256") == record.string("sha256")
-            ) {
-                "版本配置备份已改变，未恢复"
+        val files =
+            records.map { record ->
+                val relative = record.string("path")
+                require(relative.matches(Regex("versions/[^/]+/[^/]+\\.json")))
+                val source = safePath(folder, safeFilename(record.string("file")))
+                require(
+                    source.isRegularFile(NOFOLLOW_LINKS) &&
+                        !source.isSymbolicLink() &&
+                        digest(source, "SHA-256") == record.string("sha256"),
+                ) {
+                    "版本配置备份已改变，未恢复"
+                }
+                source to safePath(root, relative)
             }
-            source to safePath(root, relative)
-        }
         files.forEach { (source, target) ->
             require(!target.isSymbolicLink())
             target.parent.createDirectories()
@@ -106,11 +124,14 @@ internal class ComponentBackup(private val store: LauncherStore) {
         }
     }
 
-    private fun manifest(id: String, current: GameInstance): com.google.gson.JsonObject {
+    private fun manifest(
+        id: String,
+        current: GameInstance,
+    ): com.google.gson.JsonObject {
         val result = readObject(directory(id).resolve("manifest.json"))
         require(
             result.obj("instance").string("id") == current.id &&
-                result.string("root") == taskPathKey(store.minecraftRoot(current))
+                result.string("root") == taskPathKey(store.minecraftRoot(current)),
         ) {
             "组件备份不属于当前实例或游戏目录"
         }

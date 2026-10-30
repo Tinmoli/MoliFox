@@ -3,7 +3,7 @@
 
 // 负责通过 Windows Common Item Dialog 选择文件、目录和保存位置。
 
-package dev.molifox.desktop
+package dev.molifox.desktop.platform.dialogs
 
 import com.sun.jna.Function
 import com.sun.jna.Memory
@@ -18,6 +18,8 @@ import com.sun.jna.win32.StdCallLibrary
 
 internal object WindowsFilePicker {
     private interface ShellItems : StdCallLibrary {
+        // JNA 按方法名查找 Windows 导出符号，必须保留系统定义的大小写。
+        @Suppress("ktlint:standard:function-naming")
         fun SHCreateItemFromParsingName(
             path: WString,
             context: Pointer?,
@@ -36,47 +38,59 @@ internal object WindowsFilePicker {
     private const val ALLOW_MULTISELECT = 0x200
     private const val OVERWRITE_PROMPT = 0x2
 
-    fun pick(request: PickRequest, owner: Pointer?): List<java.nio.file.Path> {
+    fun pick(
+        request: PickRequest,
+        owner: Pointer?,
+    ): List<java.nio.file.Path> {
         val ole = Ole32.INSTANCE
         checkResult(ole.CoInitializeEx(null, 2).toInt())
         try {
             val saving = request.mode == PickMode.Save
             val output = PointerByReference()
             checkResult(
-                ole.CoCreateInstance(
+                ole
+                    .CoCreateInstance(
                         GUID(
-                            if (saving) "{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}"
-                            else "{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}"
+                            if (saving) {
+                                "{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}"
+                            } else {
+                                "{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}"
+                            },
                         ),
                         null,
                         1,
                         GUID(
-                            if (saving) "{84BCCD23-5FDE-4CDB-AEA4-AF64B83D78AB}"
-                            else "{D57C7288-D4AD-4768-BE02-9D969532D960}"
+                            if (saving) {
+                                "{84BCCD23-5FDE-4CDB-AEA4-AF64B83D78AB}"
+                            } else {
+                                "{D57C7288-D4AD-4768-BE02-9D969532D960}"
+                            },
                         ),
                         output,
-                    )
-                    .toInt()
+                    ).toInt(),
             )
             val dialog = ComPointer(output.value)
             try {
                 var options = FORCE_FILESYSTEM or NO_CHANGE_DIRECTORY or PATH_MUST_EXIST
                 options =
                     options or
-                        when (request.mode) {
-                            PickMode.Save -> OVERWRITE_PROMPT
-                            PickMode.Directory -> PICK_FOLDERS
-                            PickMode.File -> FILE_MUST_EXIST
-                        }
+                    when (request.mode) {
+                        PickMode.Save -> OVERWRITE_PROMPT
+                        PickMode.Directory -> PICK_FOLDERS
+                        PickMode.File -> FILE_MUST_EXIST
+                    }
                 if (request.multiple && !saving) options = options or ALLOW_MULTISELECT
                 dialog.checked(9, options)
                 dialog.checked(17, WString(request.title))
                 request.initialDirectory
-                    ?.takeIf { java.nio.file.Files.isDirectory(it) }
-                    ?.let { directory ->
+                    ?.takeIf {
+                        java.nio.file.Files
+                            .isDirectory(it)
+                    }?.let { directory ->
                         val item = PointerByReference()
                         val code =
-                            Native.load("shell32", ShellItems::class.java)
+                            Native
+                                .load("shell32", ShellItems::class.java)
                                 .SHCreateItemFromParsingName(
                                     WString(directory.toAbsolutePath().toString()),
                                     null,
@@ -85,8 +99,9 @@ internal object WindowsFilePicker {
                                 )
                         if (code >= 0) ComPointer(item.value).use { dialog.checked(12, it.pointer) }
                     }
-                if (request.defaultName.isNotBlank())
+                if (request.defaultName.isNotBlank()) {
                     dialog.checked(15, WString(request.defaultName))
+                }
                 val extensions = request.extensions.filter { Regex("[A-Za-z0-9]+").matches(it) }
                 // COMDLG_FILTERSPEC holds two UTF-16 pointers; retain the native buffers until Show
                 // returns.
@@ -112,23 +127,25 @@ internal object WindowsFilePicker {
                 if (result == CANCELLED) return emptyList()
                 checkResult(result)
                 return if (saving) {
-                        val item = PointerByReference()
-                        dialog.checked(20, item)
-                        ComPointer(item.value).use { listOf(it.filePath()) }
-                    } else {
-                        val items = PointerByReference()
-                        dialog.checked(27, items)
-                        ComPointer(items.value).use { array ->
-                            val count = IntByReference()
-                            array.checked(7, count)
-                            (0 until count.value).map { index ->
-                                val item = PointerByReference()
-                                array.checked(8, index, item)
-                                ComPointer(item.value).use { it.filePath() }
-                            }
+                    val item = PointerByReference()
+                    dialog.checked(20, item)
+                    ComPointer(item.value).use { listOf(it.filePath()) }
+                } else {
+                    val items = PointerByReference()
+                    dialog.checked(27, items)
+                    ComPointer(items.value).use { array ->
+                        val count = IntByReference()
+                        array.checked(7, count)
+                        (0 until count.value).map { index ->
+                            val item = PointerByReference()
+                            array.checked(8, index, item)
+                            ComPointer(item.value).use { it.filePath() }
                         }
                     }
-                    .also { java.lang.ref.Reference.reachabilityFence(buffers) }
+                }.also {
+                    java.lang.ref.Reference
+                        .reachabilityFence(buffers)
+                }
             } finally {
                 dialog.close()
             }
@@ -141,20 +158,30 @@ internal object WindowsFilePicker {
         check(value >= 0) { "Windows 文件窗口调用失败（HRESULT 0x${Integer.toHexString(value)}）" }
     }
 
-    private class ComPointer(val pointer: Pointer) : AutoCloseable {
-        fun invoke(slot: Int, vararg args: Any?): Int {
+    private class ComPointer(
+        val pointer: Pointer,
+    ) : AutoCloseable {
+        fun invoke(
+            slot: Int,
+            vararg args: Any?,
+        ): Int {
             val function = pointer.getPointer(0).getPointer(slot.toLong() * Native.POINTER_SIZE)
-            return Function.getFunction(function, Function.ALT_CONVENTION)
+            return Function
+                .getFunction(function, Function.ALT_CONVENTION)
                 .invokeInt(arrayOf(pointer, *args))
         }
 
-        fun checked(slot: Int, vararg args: Any?) = checkResult(invoke(slot, *args))
+        fun checked(
+            slot: Int,
+            vararg args: Any?,
+        ) = checkResult(invoke(slot, *args))
 
         fun filePath(): java.nio.file.Path {
             val name = PointerByReference()
             checked(5, FILE_SYSTEM_PATH, name)
             try {
-                return java.nio.file.Path.of(name.value.getWideString(0))
+                return java.nio.file.Path
+                    .of(name.value.getWideString(0))
                     .toAbsolutePath()
                     .normalize()
             } finally {

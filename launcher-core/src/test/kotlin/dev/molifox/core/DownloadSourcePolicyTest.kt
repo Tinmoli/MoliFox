@@ -5,14 +5,20 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.createDirectory
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DownloadSourcePolicyTest {
     @TempDir lateinit var temporary: Path
@@ -41,21 +47,22 @@ class DownloadSourcePolicyTest {
     }
 
     @Test
-    fun `version-list override never reads the unrelated game download source`() = runBlocking {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("{\"versions\":[]}"))
-            NetworkClient(source = { error("file source must not control the version list") })
-                .use { network ->
-                    val result =
-                        network.json(
-                            server.loopbackUrl("/manifest").toString(),
-                            sourceOverride = "official",
-                        )
-                    assertTrue(result.asJsonObject.array("versions").isEmpty)
-                    assertEquals("/manifest", server.takeRequest().path)
-                }
+    fun `version-list override never reads the unrelated game download source`() =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().setBody("{\"versions\":[]}"))
+                NetworkClient(source = { error("file source must not control the version list") })
+                    .use { network ->
+                        val result =
+                            network.json(
+                                server.loopbackUrl("/manifest").toString(),
+                                sourceOverride = "official",
+                            )
+                        assertTrue(result.asJsonObject.array("versions").isEmpty)
+                        assertEquals("/manifest", server.takeRequest().path)
+                    }
+            }
         }
-    }
 
     @Test
     fun `explicit root override installs there without changing the user's current directory`() {

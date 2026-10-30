@@ -22,8 +22,7 @@ internal fun encodeNbt(document: NbtDocument): ByteArray {
     return ByteArrayOutputStream()
         .also { encoded ->
             GZIPOutputStream(encoded).use { it.write(bytes) }
-        }
-        .toByteArray()
+        }.toByteArray()
 }
 
 private fun nbtType(tag: NbtTag): Int =
@@ -42,7 +41,11 @@ private fun nbtType(tag: NbtTag): Int =
         is NbtLongArray -> 12
     }
 
-private fun writeNbtTag(output: DataOutputStream, tag: NbtTag, depth: Int) {
+private fun writeNbtTag(
+    output: DataOutputStream,
+    tag: NbtTag,
+    depth: Int,
+) {
     require(depth <= 64) { "NBT 嵌套过深" }
     when (tag) {
         is NbtByte -> output.writeByte(tag.value.toInt())
@@ -67,7 +70,7 @@ private fun writeNbtTag(output: DataOutputStream, tag: NbtTag, depth: Int) {
         is NbtList -> {
             require(
                 tag.elements.size <= 1_000_000 &&
-                    tag.elements.all { nbtType(it) == tag.elementType }
+                    tag.elements.all { nbtType(it) == tag.elementType },
             ) {
                 "NBT 列表类型无效"
             }

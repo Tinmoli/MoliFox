@@ -7,10 +7,18 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.UUID
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.name
 
 class AccountService(
     private val store: LauncherStore,
@@ -47,8 +55,11 @@ class AccountService(
             current.copy(
                 accounts = accounts,
                 activeAccountId =
-                    if (current.activeAccountId == id) accounts.firstOrNull()?.id
-                    else current.activeAccountId,
+                    if (current.activeAccountId == id) {
+                        accounts.firstOrNull()?.id
+                    } else {
+                        current.activeAccountId
+                    },
             )
         }
     }
@@ -69,14 +80,16 @@ class AccountService(
                 AuthlibException(
                     AuthlibError.InvalidServer,
                     error.message ?: "不是有效的认证服务器地址",
-                )
+                ),
             )
         }
 
     /** 非挂起显示名：账户列表/卡片可直接调用，不发起网络请求。 已保存的服务器取缓存名称，未保存时退回主机名（仍无法识别则为空字符串）。 */
     fun authlibServerName(serverUrl: String): String {
         val normalized = normalizeAuthlibServerUrl(serverUrl) ?: return ""
-        return store.data.authlibServers.find { matchesAuthlibServer(it.url, normalized) }?.name
+        return store.data.authlibServers
+            .find { matchesAuthlibServer(it.url, normalized) }
+            ?.name
             ?: runCatching { java.net.URI(normalized).host }.getOrNull().orEmpty()
     }
 
@@ -133,12 +146,14 @@ class AccountService(
         password: String,
     ): Result<Account> {
         val playerName = username.trim()
-        if (playerName.isBlank() || playerName.length > 320)
+        if (playerName.isBlank() || playerName.length > 320) {
             return Result.failure(
-                AuthlibException(AuthlibError.InvalidCredentials, "请输入认证服务器上的用户名或邮箱")
+                AuthlibException(AuthlibError.InvalidCredentials, "请输入认证服务器上的用户名或邮箱"),
             )
-        if (password.isEmpty())
+        }
+        if (password.isEmpty()) {
             return Result.failure(AuthlibException(AuthlibError.InvalidCredentials, "请输入密码"))
+        }
         return try {
             // 地址先过元数据校验，既确认它是 Yggdrasil 服务器，也顺便记入服务器列表。
             val metadata = authlibClient.metadata(serverUrl)
@@ -186,13 +201,15 @@ class AccountService(
                 AuthlibException(
                     AuthlibError.InvalidResponse,
                     error.message ?: "外置账户登录失败",
-                )
+                ),
             )
         }
     }
 
     suspend fun beginMicrosoftLogin(): DeviceCode {
-        val clientId = store.data.settings.microsoftClientId.trim()
+        val clientId =
+            store.data.settings.microsoftClientId
+                .trim()
         require(runCatching { UUID.fromString(clientId) }.isSuccess) {
             "请先在设置中填写 Microsoft 应用客户端 ID，并启用公共客户端设备登录"
         }
@@ -299,23 +316,26 @@ class AccountService(
         require(credentials.uuid == account.uuid) { "登录账户与保存的游戏档案不匹配" }
         if (
             account.name != credentials.name ||
-                account.skinUrl != credentials.skinUrl ||
-                account.skinVariant != credentials.skinVariant
-        )
+            account.skinUrl != credentials.skinUrl ||
+            account.skinVariant != credentials.skinVariant
+        ) {
             store.mutate {
                 it.copy(
                     accounts =
                         it.accounts.map { item ->
-                            if (item.id == account.id)
+                            if (item.id == account.id) {
                                 item.copy(
                                     name = credentials.name,
                                     skinUrl = credentials.skinUrl,
                                     skinVariant = credentials.skinVariant,
                                 )
-                            else item
-                        }
+                            } else {
+                                item
+                            }
+                        },
                 )
             }
+        }
         return credentials
     }
 
@@ -365,15 +385,16 @@ class AccountService(
         val profile = session.selectedProfile
         val name = profile?.name ?: account.name
         val uuid = profile?.id ?: account.uuid
-        if (name != account.name || !uuid.equals(account.uuid, ignoreCase = true))
+        if (name != account.name || !uuid.equals(account.uuid, ignoreCase = true)) {
             store.mutate {
                 it.copy(
                     accounts =
                         it.accounts.map { item ->
                             if (item.id == account.id) item.copy(name = name, uuid = uuid) else item
-                        }
+                        },
                 )
             }
+        }
         return GameCredentials(
             name = name,
             uuid = uuid,
@@ -405,19 +426,27 @@ class AccountService(
             val servers = data.authlibServers
             data.copy(
                 authlibServers =
-                    if (existing != null) servers.map { if (it.url == existing.url) server else it }
-                    else servers + server
+                    if (existing != null) {
+                        servers.map { if (it.url == existing.url) server else it }
+                    } else {
+                        servers + server
+                    },
             )
         }
         return server
     }
 
     /** 兼容用户输入站点根地址、而保存的是 `<根地址>/api/yggdrasil` 的情况。 */
-    private fun matchesAuthlibServer(savedUrl: String, normalized: String): Boolean =
+    private fun matchesAuthlibServer(
+        savedUrl: String,
+        normalized: String,
+    ): Boolean =
         savedUrl == normalized ||
             savedUrl == "$normalized/api/yggdrasil" ||
-            (savedUrl.endsWith("/api/yggdrasil") &&
-                savedUrl.removeSuffix("/api/yggdrasil") == normalized)
+            (
+                savedUrl.endsWith("/api/yggdrasil") &&
+                    savedUrl.removeSuffix("/api/yggdrasil") == normalized
+            )
 
     private data class StoredAuthlibSession(
         val accessToken: String,
@@ -447,8 +476,7 @@ class AccountService(
                 addProperty("accessToken", session.accessToken)
                 addProperty("clientToken", session.clientToken)
                 addProperty("username", username.ifBlank { session.username })
-            }
-            .toString()
+            }.toString()
 
     private suspend fun exchangeMinecraft(microsoftToken: String): GameCredentials {
         val xboxBody =
@@ -473,7 +501,9 @@ class AccountService(
                         addProperty("SandboxId", "RETAIL")
                         add(
                             "UserTokens",
-                            com.google.gson.JsonArray().apply { add(xbox.string("Token")) },
+                            com.google.gson
+                                .JsonArray()
+                                .apply { add(xbox.string("Token")) },
                         )
                     },
                 )
@@ -487,7 +517,12 @@ class AccountService(
                 if (error is CancellationException) throw error
                 error("Xbox 验证失败：请确认已创建 Xbox 档案，并检查家庭账户权限")
             }
-        val userHash = xsts.obj("DisplayClaims").array("xui")[0].asJsonObject.string("uhs")
+        val userHash =
+            xsts
+                .obj("DisplayClaims")
+                .array("xui")[0]
+                .asJsonObject
+                .string("uhs")
         val login =
             try {
                 network.post(
@@ -497,10 +532,11 @@ class AccountService(
                     },
                 )
             } catch (error: ServiceHttpException) {
-                if (error.statusCode == 403)
+                if (error.statusCode == 403) {
                     error(
-                        "Minecraft 拒绝了此应用的登录请求 (403)。请检查 MoliFox 应用的 Minecraft 接口访问审核及权限；这不一定是账户密码错误。"
+                        "Minecraft 拒绝了此应用的登录请求 (403)。请检查 MoliFox 应用的 Minecraft 接口访问审核及权限；这不一定是账户密码错误。",
                     )
+                }
                 throw error
             }
         val token = login.string("access_token")
@@ -518,8 +554,11 @@ class AccountService(
             token,
             "msa",
             skinUrl,
-            if (activeSkin?.string("variant").equals("SLIM", true)) SkinVariant.Slim
-            else SkinVariant.Classic,
+            if (activeSkin?.string("variant").equals("SLIM", true)) {
+                SkinVariant.Slim
+            } else {
+                SkinVariant.Classic
+            },
         )
     }
 }

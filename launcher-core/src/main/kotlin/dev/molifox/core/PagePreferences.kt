@@ -5,7 +5,10 @@
 
 package dev.molifox.core
 
-data class LauncherFont(val name: String = "", val path: String = "")
+data class LauncherFont(
+    val name: String = "",
+    val path: String = "",
+)
 
 data class PagePreferences(
     val home: HomePagePreferences = HomePagePreferences(),

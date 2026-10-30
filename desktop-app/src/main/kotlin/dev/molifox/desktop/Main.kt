@@ -11,14 +11,49 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CropSquare
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.ManageAccounts
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeWindow
@@ -28,19 +63,45 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.*
-import dev.molifox.core.*
+import androidx.compose.ui.window.Tray
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
+import dev.molifox.core.DesktopPlatform
+import dev.molifox.core.GameInstance
+import dev.molifox.core.LaunchPlan
+import dev.molifox.core.LauncherController
+import dev.molifox.core.LauncherState
+import dev.molifox.core.LauncherWindowAction
+import dev.molifox.core.PackPreview
+import dev.molifox.core.StartupStorageResolver
+import dev.molifox.core.TidyReport
+import dev.molifox.core.domain.server.ServerStatusQuery
+import dev.molifox.core.launcherWindowAction
+import dev.molifox.desktop.platform.dialogs.FilePicker
+import dev.molifox.desktop.platform.dialogs.PickMode
+import dev.molifox.desktop.platform.dialogs.PickRequest
+import dev.molifox.desktop.platform.dialogs.SystemFilePicker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
 import java.awt.Dimension
 import java.nio.file.Path
 import javax.swing.JOptionPane
-import kotlinx.coroutines.*
-import kotlinx.coroutines.swing.Swing
 
 /**
  * 顶部导航显示 Navigation.kt 里的 TopNavPages：开始、下载、联机、设置。
  * 日志（Downloads）与账户列表（Accounts）是子页；实例页不在顶部导航里，可从开始页进入。
  */
-enum class Page(val title: String, val subtitle: String, val icon: ImageVector) {
+enum class Page(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+) {
     Home("开始", "账户与游戏启动", Icons.Outlined.Home),
     Instances("实例", "管理版本与游戏内容", Icons.Outlined.Widgets),
     Discover("下载", "安装游戏与发现资源", Icons.Outlined.Explore),
@@ -54,107 +115,121 @@ enum class Page(val title: String, val subtitle: String, val icon: ImageVector) 
     Accounts("账户列表", "添加、切换与删除游戏账户", Icons.Outlined.ManageAccounts),
 }
 
-class UiActions(val controller: LauncherController, val window: ComposeWindow) {
-    init {
-        PathPicker.owner = window
-    }
+class UiActions
+    @JvmOverloads
+    constructor(
+        val controller: LauncherController,
+        val window: ComposeWindow,
+        private val filePicker: FilePicker = SystemFilePicker(window),
+        val serverStatusQuery: ServerStatusQuery = ServerStatusQuery(controller::serverStatus),
+    ) {
+        val navigation = DesktopNavigationState()
+        var pendingPack by mutableStateOf<PackPreview?>(null)
+        private var packPreviewLoading = false
+        var launchPreview by mutableStateOf<LaunchPlan?>(null)
+        var taskCenterOpen by mutableStateOf(false)
 
-    val navigation = DesktopNavigationState()
-    var pendingPack by mutableStateOf<PackPreview?>(null)
-    private var packPreviewLoading = false
-    var launchPreview by mutableStateOf<LaunchPlan?>(null)
-    var taskCenterOpen by mutableStateOf(false)
-
-    fun taskQueued() {
-        controller.jobs.clearFinished()
-    }
-
-    fun showTasks() {
-        taskCenterOpen = true
-    }
-
-    fun previewLaunch(instanceId: String) = run {
-        launchPreview = controller.previewLaunch(instanceId)
-    }
-
-    fun run(action: suspend () -> Unit) {
-        controller.perform(action)
-    }
-
-    /** 所有路径选择交给系统窗口；空列表表示取消。 */
-    suspend fun choose(
-        title: String,
-        save: Boolean = false,
-        directory: Boolean = false,
-        multiple: Boolean = false,
-        extensions: List<String> = emptyList(),
-        defaultName: String = "",
-    ): List<Path> =
-        PathPicker.pick(
-            PickRequest(
-                title = title,
-                mode =
-                    when {
-                        save -> PickMode.Save
-                        directory -> PickMode.Directory
-                        else -> PickMode.File
-                    },
-                multiple = multiple,
-                extensions = extensions,
-                defaultName = defaultName,
-            )
-        )
-
-    fun importPack() = run {
-        choose("选择 Modrinth / MoliFox 整合包", extensions = listOf("mrpack", "zip"))
-            .firstOrNull()
-            ?.let { source -> withContext(Dispatchers.Swing) { previewPackFile(source) } }
-    }
-
-    fun previewPackFile(source: Path) {
-        if (packPreviewLoading || pendingPack != null) {
-            controller.store.notify("请先完成当前整合包预览")
-            return
+        fun taskQueued() {
+            controller.jobs.clearFinished()
         }
-        packPreviewLoading = true
-        controller.store.notify("正在检查整合包…")
-        run {
-            try {
-                val preview = controller.content.previewPack(source)
-                withContext(Dispatchers.Swing) { pendingPack = preview }
-            } finally {
-                withContext(NonCancellable + Dispatchers.Swing) { packPreviewLoading = false }
+
+        fun showTasks() {
+            taskCenterOpen = true
+        }
+
+        fun previewLaunch(instanceId: String) =
+            run {
+                launchPreview = controller.previewLaunch(instanceId)
+            }
+
+        fun run(action: suspend () -> Unit) {
+            controller.perform(action)
+        }
+
+        /** 所有路径选择交给系统窗口；空列表表示取消。 */
+        suspend fun choose(request: PickRequest): List<Path> = filePicker.pick(request)
+
+        suspend fun choose(
+            title: String,
+            save: Boolean = false,
+            directory: Boolean = false,
+            multiple: Boolean = false,
+            extensions: List<String> = emptyList(),
+            defaultName: String = "",
+        ): List<Path> =
+            choose(
+                PickRequest(
+                    title = title,
+                    mode =
+                        when {
+                            save -> PickMode.Save
+                            directory -> PickMode.Directory
+                            else -> PickMode.File
+                        },
+                    multiple = multiple,
+                    extensions = extensions,
+                    defaultName = defaultName,
+                ),
+            )
+
+        fun importPack() =
+            run {
+                choose("选择 Modrinth / MoliFox 整合包", extensions = listOf("mrpack", "zip"))
+                    .firstOrNull()
+                    ?.let { source -> withContext(Dispatchers.Swing) { previewPackFile(source) } }
+            }
+
+        fun previewPackFile(source: Path) {
+            if (packPreviewLoading || pendingPack != null) {
+                controller.store.notify("请先完成当前整合包预览")
+                return
+            }
+            packPreviewLoading = true
+            controller.store.notify("正在检查整合包…")
+            run {
+                try {
+                    val preview = controller.content.previewPack(source)
+                    withContext(Dispatchers.Swing) { pendingPack = preview }
+                } finally {
+                    withContext(NonCancellable + Dispatchers.Swing) { packPreviewLoading = false }
+                }
             }
         }
-    }
 
-    fun importExisting() = run {
-        choose("选择游戏目录（包含 versions 的文件夹）", directory = true).firstOrNull()?.let {
-            controller.importExisting(it)
-        }
-    }
+        fun importExisting() =
+            run {
+                choose("选择游戏目录（包含 versions 的文件夹）", directory = true).firstOrNull()?.let {
+                    controller.importExisting(it)
+                }
+            }
 
-    fun exportLogs() = run {
-        choose("保存启动器日志", save = true, extensions = listOf("log"), defaultName = "MoliFox.log")
-            .firstOrNull()
-            ?.let { controller.exportLogs(it) }
-    }
+        fun exportLogs() =
+            run {
+                choose(
+                    "保存启动器日志",
+                    save = true,
+                    extensions = listOf("log"),
+                    defaultName = "MoliFox.log",
+                ).firstOrNull()
+                    ?.let { controller.exportLogs(it) }
+            }
 
-    fun exportDiagnostics() = run {
-        choose(
-                "保存游戏诊断包",
-                save = true,
-                extensions = listOf("zip"),
-                defaultName = "MoliFox-diagnostics.zip",
-            )
-            .firstOrNull()
-            ?.let { controller.exportDiagnostics(it) }
+        fun exportDiagnostics() =
+            run {
+                choose(
+                    "保存游戏诊断包",
+                    save = true,
+                    extensions = listOf("zip"),
+                    defaultName = "MoliFox-diagnostics.zip",
+                ).firstOrNull()
+                    ?.let { controller.exportDiagnostics(it) }
+            }
     }
-}
 
 fun main() {
     // 启动计时：只用来看清启动各阶段的耗时，不改变任何行为。
     val startupStartedAt = System.nanoTime()
+
     fun startupMillis() = (System.nanoTime() - startupStartedAt) / 1_000_000
     System.setProperty("java.net.useSystemProxies", "true")
     val controller =
@@ -162,7 +237,8 @@ fun main() {
             val platform = DesktopPlatform()
             val storage = StartupStorageResolver().resolve(platform.defaultDataDirectory)
             val nativeDirectory = storage.resolve("dependencies/native")
-            java.nio.file.Files.createDirectories(nativeDirectory)
+            java.nio.file.Files
+                .createDirectories(nativeDirectory)
             System.setProperty(
                 "skiko.data.path",
                 nativeDirectory.toString(),
@@ -180,7 +256,8 @@ fun main() {
             System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
                 runCatching {
                     java.nio.file.Files.writeString(
-                        java.nio.file.Path.of(diagnosticPath),
+                        java.nio.file.Path
+                            .of(diagnosticPath),
                         error.stackTraceToString(),
                     )
                 }
@@ -204,23 +281,28 @@ fun main() {
                 val stored = launcherState.data.settings.brandIconPath
                 if (stored.isBlank()) return@LaunchedEffect
                 val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
-                if (problem != null)
+                if (problem != null) {
                     controller.store.log("自定义品牌图标不可用（$problem），已回退内置图标")
+                }
             }
             // 默认 1180×720（最小 1000×640），对应 1280×720 游戏画面留出窗口边框。
             val windowState = rememberWindowState(width = 1180.dp, height = 720.dp)
             // 标题栏双击与最大化按钮共用同一段切换逻辑。
             val toggleMaximize: () -> Unit = {
                 windowState.placement =
-                    if (windowState.placement == WindowPlacement.Maximized) WindowPlacement.Floating
-                    else WindowPlacement.Maximized
+                    if (windowState.placement == WindowPlacement.Maximized) {
+                        WindowPlacement.Floating
+                    } else {
+                        WindowPlacement.Maximized
+                    }
             }
             var confirmExit by remember { mutableStateOf(false) }
             var windowVisible by remember { mutableStateOf(true) }
             var mainWindow by remember { mutableStateOf<ComposeWindow?>(null) }
-            val traySupported = remember {
-                runCatching { java.awt.SystemTray.isSupported() }.getOrDefault(false)
-            }
+            val traySupported =
+                remember {
+                    runCatching { java.awt.SystemTray.isSupported() }.getOrDefault(false)
+                }
             val gameRun = launcherState.gameRun
             LaunchedEffect(gameRun?.id, gameRun?.finished) {
                 val event = gameRun ?: return@LaunchedEffect
@@ -237,7 +319,7 @@ fun main() {
                     LauncherWindowAction.Exit -> exitApplication()
                 }
             }
-            if (!windowVisible && traySupported)
+            if (!windowVisible && traySupported) {
                 Tray(
                     painterResource("icons/app/icon.png"),
                     tooltip = "MoliFox · 游戏运行中",
@@ -265,6 +347,7 @@ fun main() {
                         },
                     )
                 }
+            }
             // 窗口透明必须在创建时决定；运行中切换该设置需重启生效。
             val windowTransparent = launcherState.data.settings.windowTransparent
             Window(
@@ -289,18 +372,19 @@ fun main() {
                 val actions = remember(window) { UiActions(controller, window) }
                 MoliTheme(launcherState.data.settings) {
                     Box(
-                        Modifier.fillMaxSize()
+                        Modifier
+                            .fillMaxSize()
                             // 实时上报启动器窗口大小，供「与启动器一样大」的游戏窗口模式使用。
                             .onSizeChanged {
                                 controller.reportLauncherWindowSize(it.width, it.height)
-                            }
-                            .background(
-                                if (launcherState.data.settings.windowTransparent)
+                            }.background(
+                                if (launcherState.data.settings.windowTransparent) {
                                     MaterialTheme.colorScheme.background.copy(alpha = .82f)
-                                else MaterialTheme.colorScheme.background
-                            )
-                            .border(1.dp, MaterialTheme.colorScheme.outline)
-                            .packDropTarget(actions)
+                                } else {
+                                    MaterialTheme.colorScheme.background
+                                },
+                            ).border(1.dp, MaterialTheme.colorScheme.outline)
+                            .packDropTarget(actions),
                     ) {
                         LauncherBackdrop(launcherState.data.settings)
                         Column(Modifier.fillMaxSize()) {
@@ -312,13 +396,14 @@ fun main() {
                                     onTitlebarDoubleClick = toggleMaximize,
                                 ) {
                                     val tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    if (launcherState.jobs.isNotEmpty())
+                                    if (launcherState.jobs.isNotEmpty()) {
                                         SmallIconButton(
                                             Icons.Outlined.CloudDownload,
                                             "任务中心",
                                             { actions.showTasks() },
                                             tint,
                                         )
+                                    }
                                     SmallIconButton(
                                         Icons.Outlined.Remove,
                                         "最小化",
@@ -335,8 +420,11 @@ fun main() {
                                         Icons.Outlined.Close,
                                         "关闭",
                                         {
-                                            if (controller.jobs.busy) confirmExit = true
-                                            else exitApplication()
+                                            if (controller.jobs.busy) {
+                                                confirmExit = true
+                                            } else {
+                                                exitApplication()
+                                            }
                                         },
                                         tint,
                                     )
@@ -347,7 +435,7 @@ fun main() {
                             }
                         }
                     }
-                    if (confirmExit)
+                    if (confirmExit) {
                         AlertDialog(
                             onDismissRequest = { confirmExit = false },
                             title = { Text("退出 MoliFox？") },
@@ -359,6 +447,7 @@ fun main() {
                                 TextButton(onClick = { confirmExit = false }) { Text("继续使用") }
                             },
                         )
+                    }
                 }
             }
         }
@@ -368,7 +457,10 @@ fun main() {
 }
 
 @Composable
-fun MoliApp(state: LauncherState, actions: UiActions) {
+fun MoliApp(
+    state: LauncherState,
+    actions: UiActions,
+) {
     val navigation = actions.navigation
     var deleting by remember { mutableStateOf<GameInstance?>(null) }
     // 实例详情页的工具弹窗：整理报告 / 目录移动。
@@ -393,11 +485,12 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
     val manageInList: (String) -> Unit = { navigation.openInstance(it, Page.Instances) }
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize()
+            Modifier
+                .fillMaxSize()
                 .padding(
                     horizontal = Metrics.pageHorizontal,
                     vertical = Metrics.pageVertical,
-                )
+                ),
         ) {
             // 页面内部使用 ColumnScope.weight 撑满剩余高度；AnimatedContent 的内容是
             // Box 作用域，因此这里显式标注接收者，动画分支补一层 Column 提供真实作用域。
@@ -432,11 +525,10 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                             actions,
                             navigation.downloadKind,
                             { navigation.downloadKind = it },
-                            navigate,
                         )
                     Page.Downloads -> DownloadsPage(state, actions)
                     Page.Multiplayer -> MultiplayerPage()
-                    Page.Settings -> SettingsPage(state, actions, navigate)
+                    Page.Settings -> SettingsPage(state, actions)
                 }
             }
             val current = state.data.instances.find { it.id == navigation.editing }
@@ -447,7 +539,7 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                 if (targetKey.startsWith("instance:")) {
                     val instance =
                         state.data.instances.find { it.id == targetKey.removePrefix("instance:") }
-                    if (instance != null)
+                    if (instance != null) {
                         key(instance.id) {
                             InstanceDetailsPage(
                                 instance,
@@ -478,17 +570,19 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                                                 .choose(
                                                     "选择目标游戏目录（实例会放到其中的 versions 文件夹）",
                                                     directory = true,
-                                                )
-                                                .firstOrNull()
-                                        if (destination != null)
+                                                ).firstOrNull()
+                                        if (destination != null) {
                                             withContext(Dispatchers.Swing) {
                                                 movingInstance = target to destination
                                             }
+                                        }
                                     }
                                 },
                             )
                         }
-                    else Column(Modifier.fillMaxSize()) { pageContent(navigation.page) }
+                    } else {
+                        Column(Modifier.fillMaxSize()) { pageContent(navigation.page) }
+                    }
                 } else {
                     val page =
                         Page.entries.firstOrNull { targetKey == "page:" + it.name }
@@ -505,9 +599,11 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
                     targetState = target,
                     modifier = Modifier.fillMaxSize(),
                     transitionSpec = {
-                        (fadeIn(tween(Motion.fast)) +
-                            slideInVertically(tween(Motion.fast)) { shift }) togetherWith
-                            fadeOut(tween(Motion.fast))
+                        (
+                            fadeIn(tween(Motion.FAST)) +
+                                slideInVertically(tween(Motion.FAST)) { shift }
+                        ) togetherWith
+                            fadeOut(tween(Motion.FAST))
                     },
                     label = "content",
                 ) { stateKey ->
@@ -557,8 +653,11 @@ fun MoliApp(state: LauncherState, actions: UiActions) {
             onDeleted = {
                 deleting = null
                 // 删除的正是当前详情页时按来源返回；在列表里删除则留在列表。
-                if (navigation.editing == instance.id) navigation.closeInstance()
-                else navigation.editing = null
+                if (navigation.editing == instance.id) {
+                    navigation.closeInstance()
+                } else {
+                    navigation.editing = null
+                }
             },
         )
     }

@@ -5,18 +5,25 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class IsolationInferenceTest {
     @TempDir lateinit var temporary: Path
 
     private fun store() = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
 
-    private fun version(root: Path, id: String): Path {
+    private fun version(
+        root: Path,
+        id: String,
+    ): Path {
         val folder = root.resolve("versions/$id").apply { createDirectories() }
         writeJson(
             folder.resolve("$id.json"),
@@ -30,12 +37,15 @@ class IsolationInferenceTest {
         return folder
     }
 
-    private fun scannedStore(root: Path, isolateVersions: Boolean = true): LauncherStore {
+    private fun scannedStore(
+        root: Path,
+        isolateVersions: Boolean = true,
+    ): LauncherStore {
         val store = store()
         store.mutate {
             it.copy(
                 settings =
-                    it.settings.copy(gameRoot = root.toString(), isolateVersions = isolateVersions)
+                    it.settings.copy(gameRoot = root.toString(), isolateVersions = isolateVersions),
             )
         }
         store.refreshInstances()
@@ -58,7 +68,12 @@ class IsolationInferenceTest {
     @Test
     fun `explicitly saved off survives reload`() {
         store().mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
-        assertFalse(LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox")).data.settings.isolateVersions)
+        assertFalse(
+            LauncherStore(
+                DesktopPlatform(),
+                temporary.resolve("MoliFox"),
+            ).data.settings.isolateVersions,
+        )
     }
 
     @Test
@@ -76,7 +91,7 @@ class IsolationInferenceTest {
         assertTrue(
             store.state.value.logs.any {
                 it.message == "推断版本隔离：独立隔离版本（目录内有 saves）"
-            }
+            },
         )
     }
 

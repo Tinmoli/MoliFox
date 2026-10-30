@@ -11,7 +11,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
 data class PackPreview(
     val archive: String,
@@ -26,12 +32,18 @@ data class PackPreview(
     val requiredFiles: Int = 0,
 )
 
-internal fun packDownload(file: JsonObject, target: Path, url: String): DownloadArtifact {
+internal fun packDownload(
+    file: JsonObject,
+    target: Path,
+    url: String,
+): DownloadArtifact {
     val env = file.obj("env")
-    for (side in listOf("client", "server")) require(
-        env.string(side, "required") in setOf("required", "optional", "unsupported")
-    ) {
-        "整合包环境标记无效"
+    for (side in listOf("client", "server")) {
+        require(
+            env.string(side, "required") in setOf("required", "optional", "unsupported"),
+        ) {
+            "整合包环境标记无效"
+        }
     }
     val hashes = file.obj("hashes")
     val sha512 = hashes.string("sha512")
@@ -44,7 +56,7 @@ internal fun packDownload(file: JsonObject, target: Path, url: String): Download
         sizeValue != null &&
             sizeValue.isJsonPrimitive &&
             sizeValue.asJsonPrimitive.isNumber &&
-            sizeValue.asString.matches(Regex("\\d+"))
+            sizeValue.asString.matches(Regex("\\d+")),
     ) {
         "整合包文件大小无效：${file.string("path")}"
     }
@@ -53,15 +65,27 @@ internal fun packDownload(file: JsonObject, target: Path, url: String): Download
     return DownloadArtifact(validatePackUrl(url), target, sha512, size, "SHA-512")
 }
 
-internal fun packPath(root: Path, relative: String): Path {
-    require(!relative.replace('\\', '/').substringBefore('/').lowercase().startsWith(".molifox-")) {
+internal fun packPath(
+    root: Path,
+    relative: String,
+): Path {
+    require(
+        !relative
+            .replace('\\', '/')
+            .substringBefore('/')
+            .lowercase()
+            .startsWith(".molifox-"),
+    ) {
         "整合包不能覆盖启动器维护文件"
     }
     return safePath(root, relative)
 }
 
 /** Stages all pack content before replacing any existing user file. */
-internal class PackFileTransaction(private val store: LauncherStore, private val root: Path) {
+internal class PackFileTransaction(
+    private val store: LauncherStore,
+    private val root: Path,
+) {
     val directory =
         safePath(root, ".molifox-pack-${UUID.randomUUID()}").apply { createDirectories() }
     val content = directory.resolve("files").apply { createDirectories() }
@@ -95,18 +119,21 @@ internal class PackFileTransaction(private val store: LauncherStore, private val
                 installed.add(target)
             }
         } catch (error: Throwable) {
-            val rollback = runCatching {
-                installed.asReversed().forEach { Files.deleteIfExists(it) }
-                for ((target, backup) in backups.entries.toList().asReversed()) Files.move(
-                    backup,
-                    target,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            }
+            val rollback =
+                runCatching {
+                    installed.asReversed().forEach { Files.deleteIfExists(it) }
+                    for ((target, backup) in backups.entries.toList().asReversed()) {
+                        Files.move(
+                            backup,
+                            target,
+                            StandardCopyOption.REPLACE_EXISTING,
+                        )
+                    }
+                }
             if (rollback.isFailure) {
                 retain = true
                 throw IOException("整合包安装未完成，原文件备份保留在 $directory", error).also {
-                    it.addSuppressed(rollback.exceptionOrNull()!!)
+                    rollback.exceptionOrNull()?.let(it::addSuppressed)
                 }
             }
             throw error
@@ -125,7 +152,7 @@ internal class PackFileTransaction(private val store: LauncherStore, private val
         check(
             directory.parent.toAbsolutePath().normalize() == root.toAbsolutePath().normalize() &&
                 directory.name.startsWith(".molifox-pack-") &&
-                !Files.isSymbolicLink(directory)
+                !Files.isSymbolicLink(directory),
         )
         Files.walk(directory).use { paths ->
             paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }

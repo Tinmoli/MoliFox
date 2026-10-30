@@ -25,7 +25,7 @@ data class ContentFilter(
                     slug.isNotEmpty() &&
                         slug.length <= 32 &&
                         slug.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
-                }
+                },
         ) {
             "分类筛选无效"
         }
@@ -33,9 +33,16 @@ data class ContentFilter(
 }
 
 /** 一个可选的资源分类。[id] 是内容源自己的数字分类编号（CurseForge），界面只显示 [name]。 */
-data class ContentCategoryOption(val id: String, val name: String, val slug: String = "")
+data class ContentCategoryOption(
+    val id: String,
+    val name: String,
+    val slug: String = "",
+)
 
-data class ContentLink(val title: String, val url: String)
+data class ContentLink(
+    val title: String,
+    val url: String,
+)
 
 fun filteredContentVersions(
     versions: List<ContentVersion>,
@@ -45,11 +52,12 @@ fun filteredContentVersions(
     versions
         .filter { version ->
             (filter.gameVersion.isBlank() || filter.gameVersion in version.gameVersions) &&
-                (filter.loader == null ||
-                    version.loaders.any { it.equals(filter.loader.name, true) }) &&
+                (
+                    filter.loader == null ||
+                        version.loaders.any { it.equals(filter.loader.name, true) }
+                ) &&
                 (channel == "all" || version.channel == channel)
-        }
-        .sortedByDescending { it.published }
+        }.sortedByDescending { it.published }
 
 /** Prefer the publisher's featured stable file; never label a prerelease as stable. */
 fun recommendedContentVersion(
@@ -61,49 +69,54 @@ fun recommendedContentVersion(
         versions
             .filter {
                 target == null || kind == "modpack" || compatibleContentVersion(it, target, kind)
-            }
-            .sortedByDescending { it.published }
+            }.sortedByDescending { it.published }
     return newest.firstOrNull { it.featured && it.channel == "release" }
         ?: newest.firstOrNull { it.channel == "release" }
         ?: newest.firstOrNull()
 }
 
-fun compatibleContentVersion(version: ContentVersion, instance: GameInstance, kind: String) =
-    instance.installed &&
-        instance.gameVersion in version.gameVersions &&
-        (kind != "mod" || version.loaders.any { it.equals(instance.loader.name, true) })
+fun compatibleContentVersion(
+    version: ContentVersion,
+    instance: GameInstance,
+    kind: String,
+) = instance.installed &&
+    instance.gameVersion in version.gameVersions &&
+    (kind != "mod" || version.loaders.any { it.equals(instance.loader.name, true) })
 
 internal fun contentLinks(
     hit: ContentHit,
     project: JsonObject,
     encyclopediaUrl: String? = null,
-): List<ContentLink> = buildList {
-    add(
-        ContentLink(
-            if (hit.id.startsWith("curseforge:")) "CurseForge" else "Modrinth",
-            contentWebsite(hit),
+): List<ContentLink> =
+    buildList {
+        add(
+            ContentLink(
+                if (hit.id.startsWith("curseforge:")) "CurseForge" else "Modrinth",
+                contentWebsite(hit),
+            ),
         )
-    )
-    (encyclopediaUrl ?: directEncyclopediaUrl(project.string("wiki_url")))?.let {
-        add(ContentLink("MC 百科", it))
-    }
-    for ((key, title) in
+        (encyclopediaUrl ?: directEncyclopediaUrl(project.string("wiki_url")))?.let {
+            add(ContentLink("MC 百科", it))
+        }
+        for (
+        (key, title) in
         listOf(
             "wiki_url" to "项目 Wiki",
             "source_url" to "源代码",
             "issues_url" to "问题反馈",
             "discord_url" to "社区",
-        )) {
-        val url = project.string(key)
-        val uri = runCatching { URI(url) }.getOrNull() ?: continue
-        if (
-            uri.scheme == "https" &&
+        )
+        ) {
+            val url = project.string(key)
+            val uri = runCatching { URI(url) }.getOrNull() ?: continue
+            if (
+                uri.scheme == "https" &&
                 !uri.host.isNullOrBlank() &&
                 uri.rawUserInfo == null &&
                 (uri.port == -1 || uri.port == 443) &&
                 url.length <= 2048
-        )
-            add(ContentLink(title, uri.toASCIIString()))
-    }
-}
-    .distinctBy { it.url }
+            ) {
+                add(ContentLink(title, uri.toASCIIString()))
+            }
+        }
+    }.distinctBy { it.url }

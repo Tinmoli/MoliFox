@@ -7,7 +7,8 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
 
 /**
  * 启动器自身所在目录（单文件 exe 或启动 jar 的上级目录）。
@@ -31,13 +32,11 @@ object LauncherLocation {
     /** 显式指定优先，便于安装器、便携包和测试固定目录。 */
     private fun explicit(): Path? =
         sequenceOf(
-                System.getProperty("molifox.launcher.dir"),
-                System.getenv("MOLIFOX_LAUNCHER_DIR"),
-            )
-            .mapNotNull { value ->
-                value?.takeIf { it.isNotBlank() }?.let { directory(it) }
-            }
-            .firstOrNull()
+            System.getProperty("molifox.launcher.dir"),
+            System.getenv("MOLIFOX_LAUNCHER_DIR"),
+        ).mapNotNull { value ->
+            value?.takeIf { it.isNotBlank() }?.let { directory(it) }
+        }.firstOrNull()
 
     /**
      * 打包运行时原生启动器把 exe 目录写进 `MOLIFOX_DATA_DIR`（标准布局 `<exe目录>/MoliFox`）。
@@ -55,9 +54,11 @@ object LauncherLocation {
     private fun codeSourceDirectory(): Path? {
         val location =
             runCatching {
-                LauncherLocation::class.java.protectionDomain?.codeSource?.location?.toURI()
-            }
-                .getOrNull() ?: return null
+                LauncherLocation::class.java.protectionDomain
+                    ?.codeSource
+                    ?.location
+                    ?.toURI()
+            }.getOrNull() ?: return null
         val source = runCatching { Path.of(location) }.getOrNull() ?: return null
         if (source.isDirectory()) return developmentRoot(source)
         if (!source.isRegularFile()) return null
@@ -66,11 +67,12 @@ object LauncherLocation {
         val data = directory.parent?.parent
         if (
             directory.fileName?.toString() == "launcher" &&
-                directory.parent?.fileName?.toString() == "dependencies" &&
-                data != null &&
-                data.fileName?.toString().equals("MoliFox", ignoreCase = true)
-        )
+            directory.parent?.fileName?.toString() == "dependencies" &&
+            data != null &&
+            data.fileName?.toString().equals("MoliFox", ignoreCase = true)
+        ) {
             return data.parent ?: directory
+        }
         return directory
     }
 
@@ -85,14 +87,14 @@ object LauncherLocation {
         return ancestors.firstOrNull { Files.isRegularFile(it.resolve("build.gradle.kts")) }
     }
 
-    private fun directory(value: String): Path? = runCatching {
-        Path.of(value).toAbsolutePath().normalize()
-    }
-        .getOrNull()
-        ?.takeIf { Files.isDirectory(it) }
+    private fun directory(value: String): Path? =
+        runCatching {
+            Path.of(value).toAbsolutePath().normalize()
+        }.getOrNull()
+            ?.takeIf { Files.isDirectory(it) }
 
-    private fun workingDirectory(): Path = runCatching {
-        Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize()
-    }
-        .getOrDefault(Path.of(".").toAbsolutePath().normalize())
+    private fun workingDirectory(): Path =
+        runCatching {
+            Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize()
+        }.getOrDefault(Path.of(".").toAbsolutePath().normalize())
 }

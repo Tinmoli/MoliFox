@@ -7,9 +7,14 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import java.net.URI
-import kotlin.io.path.*
+import kotlin.io.path.exists
+import kotlin.io.path.name
 
-data class OptionalContent(val id: String, val title: String, val selected: Boolean)
+data class OptionalContent(
+    val id: String,
+    val title: String,
+    val selected: Boolean,
+)
 
 data class PlannedContentFile(
     val projectId: String,
@@ -21,6 +26,7 @@ data class PlannedContentFile(
     val hash: String,
     val algorithm: String,
     val size: Long,
+    val iconUrl: String = "",
 )
 
 data class ContentInstallPlan(
@@ -33,12 +39,22 @@ data class ContentInstallPlan(
     val sources: List<ContentSource> = emptyList(),
 )
 
-internal data class ContentRequest(val hit: ContentHit, val versionId: String = "")
+internal data class ContentRequest(
+    val hit: ContentHit,
+    val versionId: String = "",
+)
 
-internal fun contentSignature(store: LauncherStore, instance: GameInstance) =
-    "${instance.gameVersion}|${instance.loader}|${instance.versionId}|${store.instancePath(instance.id).toAbsolutePath().normalize()}"
+internal fun contentSignature(
+    store: LauncherStore,
+    instance: GameInstance,
+) = "${instance.gameVersion}|${instance.loader}|${instance.versionId}|${store.instancePath(
+    instance.id,
+).toAbsolutePath().normalize()}"
 
-internal fun contentFileUrl(api: String, url: String): String {
+internal fun contentFileUrl(
+    api: String,
+    url: String,
+): String {
     val source = URI(api)
     val target = URI(url)
     // The configured CurseForge mirror/proxy may serve files itself; official endpoints still
@@ -46,11 +62,12 @@ internal fun contentFileUrl(api: String, url: String): String {
     val configuredService = source.host !in setOf("api.modrinth.com", "api.curseforge.com")
     if (
         target.scheme == source.scheme &&
-            target.host == source.host &&
-            target.port == source.port &&
-            (configuredService || source.host == "127.0.0.1")
-    )
+        target.host == source.host &&
+        target.port == source.port &&
+        (configuredService || source.host == "127.0.0.1")
+    ) {
         return url
+    }
     return validatePackUrl(url)
 }
 
@@ -76,7 +93,7 @@ internal class ContentInstallPlanner(
         sources: List<ContentSource> = emptyList(),
     ): ContentInstallPlan {
         require(
-            requests.isNotEmpty() && requests.map { it.hit.id }.distinct().size == requests.size
+            requests.isNotEmpty() && requests.map { it.hit.id }.distinct().size == requests.size,
         ) {
             "同一项目有多个本地版本，请先整理"
         }
@@ -91,14 +108,14 @@ internal class ContentInstallPlanner(
             verifyContentSource(store, instanceId, source)
             require(
                 !registry.obj(source.projectId).boolean("locked") ||
-                    registry.obj(source.projectId).string("versionId") == source.versionId
+                    registry.obj(source.projectId).string("versionId") == source.versionId,
             ) {
                 "锁定版本与本地文件不一致，请先整理或解锁"
             }
             require(
                 registry.obj(source.projectId).string("file").let {
                     it.isBlank() || it == contentBaseFilename(source.filename)
-                }
+                },
             ) {
                 "同一项目有多个文件，请先整理"
             }
@@ -106,18 +123,20 @@ internal class ContentInstallPlanner(
                 source.projectId,
                 contentSourceRecord(
                     source.copy(
-                        locked = source.locked || registry.obj(source.projectId).boolean("locked")
-                    )
+                        locked = source.locked || registry.obj(source.projectId).boolean("locked"),
+                    ),
                 ),
             )
         }
         val projects = mutableMapOf<String, JsonObject>()
         val versions = mutableMapOf<String, JsonObject>()
         val latest = mutableMapOf<String, JsonObject>()
+
         suspend fun project(id: String) =
             projects.getOrPutSuspend(id) {
                 backend.project(id)
             }
+
         suspend fun version(id: String) =
             versions.getOrPutSuspend(id) {
                 backend.version(id)
@@ -133,7 +152,12 @@ internal class ContentInstallPlanner(
             val incompatible = mutableListOf<Pair<String, String>>()
             val manual = linkedMapOf<String, ManualContentFile>()
             var changed = false
-            suspend fun visit(id: String, kind: String, requested: String = "") {
+
+            suspend fun visit(
+                id: String,
+                kind: String,
+                requested: String = "",
+            ) {
                 require(chosen.size < 100) { "资源依赖过多" }
                 if (requested.isNotBlank()) {
                     val previous = required.putIfAbsent(id, requested)
@@ -161,30 +185,36 @@ internal class ContentInstallPlanner(
                     "依赖或项目版本已锁定：$id，请先解锁再更换"
                 }
                 val info =
-                    if (pinned != null) version(pinned)
-                    else
+                    if (pinned != null) {
+                        version(pinned)
+                    } else {
                         latest.getOrPutSuspend(id) {
                             val available =
                                 backend.versions(id, instance, kind).filter {
                                     it.array("game_versions").any {
                                         it.asString == instance.gameVersion
                                     } &&
-                                        (kind != "mod" ||
-                                            it.array("loaders").any {
-                                                it.asString.equals(instance.loader.name, true)
-                                            })
+                                        (
+                                            kind != "mod" ||
+                                                it.array("loaders").any {
+                                                    it.asString.equals(instance.loader.name, true)
+                                                }
+                                        )
                                 }
                             available.firstOrNull { it.string("version_type") == "release" }
                                 ?: available.firstOrNull()
                                 ?: error("资源 $id 没有兼容当前游戏的版本")
                         }
+                    }
                 require(info.string("project_id") == id) { "资源版本与项目不匹配：$id" }
                 require(
                     info.array("game_versions").any { it.asString == instance.gameVersion } &&
-                        (kind != "mod" ||
-                            info.array("loaders").any {
-                                it.asString.equals(instance.loader.name, true)
-                            })
+                        (
+                            kind != "mod" ||
+                                info.array("loaders").any {
+                                    it.asString.equals(instance.loader.name, true)
+                                }
+                        ),
                 ) {
                     "${info.string("name")} 与当前游戏版本或加载器不兼容"
                 }
@@ -196,13 +226,16 @@ internal class ContentInstallPlanner(
                     val dependencyVersion = dependency.string("version_id")
                     val dependencyId =
                         dependency.string("project_id").ifBlank {
-                            if (dependencyVersion.isNotBlank())
+                            if (dependencyVersion.isNotBlank()) {
                                 version(dependencyVersion).string("project_id")
-                            else ""
+                            } else {
+                                ""
+                            }
                         }
                     if (relation == "incompatible") {
-                        if (dependencyId.isNotBlank())
+                        if (dependencyId.isNotBlank()) {
                             incompatible += dependencyId to dependencyVersion
+                        }
                         continue
                     }
                     if (dependencyId.isBlank()) {
@@ -220,7 +253,9 @@ internal class ContentInstallPlanner(
                                 dependencyId in selectedOptional,
                             )
                         if (dependencyId !in selectedOptional) continue
-                    } else if (relation != "required") continue
+                    } else if (relation != "required") {
+                        continue
+                    }
                     visit(dependencyId, details.string("project_type"), dependencyVersion)
                 }
                 val availableFiles = info.array("files").map { it.asJsonObject }
@@ -240,8 +275,8 @@ internal class ContentInstallPlanner(
                 val hash = sha512.ifBlank { hashes.string("sha1") }
                 require(
                     hash.matches(
-                        Regex(if (sha512.isNotBlank()) "[a-fA-F0-9]{128}" else "[a-fA-F0-9]{40}")
-                    )
+                        Regex(if (sha512.isNotBlank()) "[a-fA-F0-9]{128}" else "[a-fA-F0-9]{40}"),
+                    ),
                 ) {
                     "资源文件缺少有效校验信息"
                 }
@@ -262,6 +297,8 @@ internal class ContentInstallPlanner(
                         hash,
                         if (sha512.isNotBlank()) "SHA-512" else "SHA-1",
                         file.get("size")?.asLong ?: 0,
+                        requests.firstOrNull { it.hit.id == id }?.hit?.iconUrl
+                            ?: projects[id]?.string("icon_url").orEmpty(),
                     )
             }
             for (request in requests) visit(request.hit.id, request.hit.type, request.versionId)
@@ -275,13 +312,16 @@ internal class ContentInstallPlanner(
                 require(
                     listOfNotNull(planned, installed).none {
                         versionId.isBlank() || it == versionId
-                    }
+                    },
                 ) {
                     "资源与已安装或待安装项目冲突：$id${if (versionId.isBlank()) "" else " / $versionId"}，请先处理冲突"
                 }
             }
             require(
-                files.values.map { "${it.folder}/${it.filename}" }.distinct().size == files.size
+                files.values
+                    .map { "${it.folder}/${it.filename}" }
+                    .distinct()
+                    .size == files.size,
             ) {
                 "不同项目包含同名文件，无法安全安装"
             }
@@ -300,5 +340,7 @@ internal class ContentInstallPlanner(
     }
 }
 
-private suspend fun <K, V> MutableMap<K, V>.getOrPutSuspend(key: K, value: suspend () -> V): V =
-    get(key) ?: value().also { put(key, it) }
+private suspend fun <K, V> MutableMap<K, V>.getOrPutSuspend(
+    key: K,
+    value: suspend () -> V,
+): V = get(key) ?: value().also { put(key, it) }

@@ -5,17 +5,28 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import kotlin.io.path.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.walk
+import kotlin.io.path.writeText
 
 /** 实例的目录语义：共用游戏目录（多个实例共用 mods/存档），或版本隔离（实例独占目录）。 */
-enum class IsolationMode(val title: String) {
+enum class IsolationMode(
+    val title: String,
+) {
     Shared("共用游戏目录"),
     Isolated("版本隔离"),
 }
@@ -24,10 +35,13 @@ enum class IsolationMode(val title: String) {
 enum class MigrationAction {
     /** 复制到目标，源文件保留。 */
     Copy,
+
     /** 移动到目标并删除源文件；只在显式 [IsolationMigrationTransaction.apply] 的 moveSource 下执行。 */
     Move,
+
     /** 目标已有相同内容，无需搬运。 */
     Skip,
+
     /** 目标已有不同内容或不可覆盖的路径，需要用户处理。 */
     Conflict,
 }
@@ -60,8 +74,7 @@ data class IsolationPlan(
             entries
                 .filter {
                     it.action == MigrationAction.Copy || it.action == MigrationAction.Move
-                }
-                .sumOf { it.size }
+                }.sumOf { it.size }
 
     val moveCount: Int
         get() = entries.count { it.action == MigrationAction.Move }
@@ -71,9 +84,10 @@ data class IsolationPlan(
 
     /** 实际需要执行的文件数，不含 Skip 与 Conflict。 */
     val transferCount: Int
-        get() = entries.count {
-            it.action == MigrationAction.Copy || it.action == MigrationAction.Move
-        }
+        get() =
+            entries.count {
+                it.action == MigrationAction.Copy || it.action == MigrationAction.Move
+            }
 }
 
 /** 隔离切换时唯一会搬运的目录；其余目录（日志、崩溃报告、缓存、截图、启动器文件）一律留在原地。 */
@@ -97,7 +111,6 @@ internal fun IsolationMode.versionIsolation(): VersionIsolation =
  * - 共用游戏目录（Shared）里的文件可能被其他实例使用，即使请求 moveSource 也只复制。
  */
 object IsolationMigrationPlanner {
-
     fun plan(
         instance: GameInstance,
         from: IsolationMode,
@@ -239,8 +252,10 @@ object IsolationMigrationPlanner {
         )
     }
 
-    private fun transferReason(moving: Boolean, to: IsolationMode): String =
-        if (moving) "移动到${to.title}并删除源文件" else "复制到${to.title}"
+    private fun transferReason(
+        moving: Boolean,
+        to: IsolationMode,
+    ): String = if (moving) "移动到${to.title}并删除源文件" else "复制到${to.title}"
 
     /** 按白名单收集源文件；只读，跳过符号链接与目标目录自身。 */
     private fun candidates(
@@ -304,8 +319,9 @@ object IsolationMigrationPlanner {
     /** `copySaves=false` 时给出一条整目录 Skip，并统计存档体积供界面提示。 */
     private fun savesSkip(source: Path): MigrationEntry? {
         val saves = source.resolve("saves")
-        if (!saves.isDirectory(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(saves))
+        if (!saves.isDirectory(LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(saves)) {
             return null
+        }
         var bytes = 0L
         Files.walk(saves).use { paths ->
             paths.forEach {
@@ -328,7 +344,6 @@ internal class IsolationMigrationTransaction(
     private val instanceRoot: Path,
     private val backupRoot: Path,
 ) {
-
     /** 返回实际执行的条目数（Skip 与 Conflict 不计）。 */
     suspend fun apply(
         plan: IsolationPlan,
@@ -349,7 +364,12 @@ internal class IsolationMigrationTransaction(
             }
         require(
             copySaves ||
-                transfer.none { it.relativePath == "saves" || it.relativePath.startsWith("saves/") }
+                transfer.none {
+                    it.relativePath == "saves" ||
+                        it.relativePath.startsWith(
+                            "saves/",
+                        )
+                },
         ) {
             "迁移计划包含存档，但已选择不迁移存档，请重新生成计划"
         }
@@ -367,7 +387,9 @@ internal class IsolationMigrationTransaction(
                 context.checkCancelled()
                 val source = safePath(sourceRoot, entry.relativePath)
                 require(
-                    source.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(source)
+                    source.isRegularFile(
+                        LinkOption.NOFOLLOW_LINKS,
+                    ) && !Files.isSymbolicLink(source),
                 ) {
                     "源文件已不存在，请重新生成迁移计划：${entry.relativePath}"
                 }
@@ -387,8 +409,11 @@ internal class IsolationMigrationTransaction(
             }
             context.checkCancelled()
             val record =
-                if (plan.from == plan.to) original
-                else original.copy(isolation = plan.to.versionIsolation())
+                if (plan.from == plan.to) {
+                    original
+                } else {
+                    original.copy(isolation = plan.to.versionIsolation())
+                }
             updateInstance(record)
             recordUpdated = true
             committed = true
@@ -401,8 +426,7 @@ internal class IsolationMigrationTransaction(
                 runCatching {
                     source.parent?.createDirectories()
                     Files.move(target, source, StandardCopyOption.REPLACE_EXISTING)
-                }
-                    .onFailure { failures += it }
+                }.onFailure { failures += it }
             }
             copied.asReversed().forEach { target ->
                 runCatching { Files.deleteIfExists(target) }.onFailure { failures += it }
@@ -431,7 +455,10 @@ internal class IsolationMigrationTransaction(
     }
 
     /** 目标目录逐级创建，并记录本次新建的目录，回滚时按由深到浅删除空目录。 */
-    private fun ensureParent(target: Path, created: MutableList<Path>) {
+    private fun ensureParent(
+        target: Path,
+        created: MutableList<Path>,
+    ) {
         val parent = target.parent ?: return
         val missing =
             generateSequence(parent) { it.parent }
@@ -442,18 +469,22 @@ internal class IsolationMigrationTransaction(
     }
 
     /** 迁移清单供回滚失败时人工核对；成功或完整回滚后整个目录删除。 */
-    private fun writeManifest(directory: Path, plan: IsolationPlan) {
-        val text = buildString {
-            appendLine("MoliFox 迁移清单")
-            appendLine("实例：${plan.instanceId}")
-            appendLine("方向：${plan.from.title} → ${plan.to.title}")
-            appendLine("源目录：${plan.sourceRoot.toAbsolutePath()}")
-            appendLine("目标目录：${plan.targetRoot.toAbsolutePath()}")
-            appendLine("条目：${plan.entries.size}")
-            plan.entries.forEach {
-                appendLine("${it.action} ${it.relativePath} ${it.size} ${it.reason}")
+    private fun writeManifest(
+        directory: Path,
+        plan: IsolationPlan,
+    ) {
+        val text =
+            buildString {
+                appendLine("MoliFox 迁移清单")
+                appendLine("实例：${plan.instanceId}")
+                appendLine("方向：${plan.from.title} → ${plan.to.title}")
+                appendLine("源目录：${plan.sourceRoot.toAbsolutePath()}")
+                appendLine("目标目录：${plan.targetRoot.toAbsolutePath()}")
+                appendLine("条目：${plan.entries.size}")
+                plan.entries.forEach {
+                    appendLine("${it.action} ${it.relativePath} ${it.size} ${it.reason}")
+                }
             }
-        }
         directory.resolve("isolation-plan.txt").writeText(text)
     }
 
@@ -471,8 +502,9 @@ internal class IsolationMigrationTransaction(
  * 目录语义以 [LauncherStore.gamePath] 为准：共用游戏目录的实例使用游戏根目录，版本隔离的实例
  * 使用自己的目录。切换隔离方式时先搬运文件、再写记录；整体移动时先复制、校验文件数与字节数， 再切记录、最后删源，任何一步失败都不删除源目录。
  */
-class IsolationMigration(private val store: LauncherStore) {
-
+class IsolationMigration(
+    private val store: LauncherStore,
+) {
     /** 预览切换隔离方式要搬运的内容；只读，不修改磁盘。 */
     fun planIsolation(
         instanceId: String,
@@ -489,7 +521,7 @@ class IsolationMigration(private val store: LauncherStore) {
         val targetRoot =
             if (isolate) store.versionGamePath(instance) else store.minecraftRoot(instance)
         require(
-            sourceRoot.toAbsolutePath().normalize() != targetRoot.toAbsolutePath().normalize()
+            sourceRoot.toAbsolutePath().normalize() != targetRoot.toAbsolutePath().normalize(),
         ) {
             "切换隔离方式不会改变此实例的目录，无法迁移"
         }
@@ -530,20 +562,26 @@ class IsolationMigration(private val store: LauncherStore) {
                             settings = data.settings.copy(isolateVersions = isolate),
                             instances =
                                 data.instances.map {
-                                    if (it.id == record.id) it.copy(isolation = record.isolation)
-                                    else it
+                                    if (it.id == record.id) {
+                                        it.copy(isolation = record.isolation)
+                                    } else {
+                                        it
+                                    }
                                 },
                         )
                     }
                 }
             store.log(
-                "已切换隔离方式：${store.instance(instanceId).name} → ${plan.to.title}（$executed 个文件）"
+                "已切换隔离方式：${store.instance(instanceId).name} → ${plan.to.title}（$executed 个文件）",
             )
             executed
         }
 
     /** 预览把整个实例目录移动到另一个游戏目录的内容；只读。 */
-    fun planInstanceMove(instanceId: String, destinationGameDirectory: Path): IsolationPlan {
+    fun planInstanceMove(
+        instanceId: String,
+        destinationGameDirectory: Path,
+    ): IsolationPlan {
         val instance = store.instance(instanceId)
         require(!instance.externalProfile) { "外部游戏目录的实例由原启动器维护，无法移动" }
         require(store.isolated(instance)) { "共用游戏目录的实例没有独立目录，无法移动，请先启用版本隔离" }
@@ -551,13 +589,13 @@ class IsolationMigration(private val store: LauncherStore) {
         require(sourceRoot.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "实例目录不存在，无法移动" }
         val destination = destinationGameDirectory.toAbsolutePath().normalize()
         require(destination.parent != null) { "请选择专用的游戏文件夹，而非磁盘根目录" }
-        val targetRoot = runCatching {
-            safePath(
-                destination.resolve("versions"),
-                instance.gameDirectoryName.ifBlank { instance.versionId },
-            )
-        }
-            .getOrElse { error("目标游戏目录不可用：${it.message}") }
+        val targetRoot =
+            runCatching {
+                safePath(
+                    destination.resolve("versions"),
+                    instance.gameDirectoryName.ifBlank { instance.versionId },
+                )
+            }.getOrElse { error("目标游戏目录不可用：${it.message}") }
         val blockers = mutableListOf<String>()
         if (targetRoot.exists(LinkOption.NOFOLLOW_LINKS)) {
             blockers += "目标游戏目录中已存在同名实例文件夹，请先移除或换一个目录"
@@ -599,7 +637,11 @@ class IsolationMigration(private val store: LauncherStore) {
             val directory =
                 registered
                     ?: GameDirectory(
-                        name = destination.fileName?.toString().orEmpty().ifBlank { "游戏目录" },
+                        name =
+                            destination.fileName
+                                ?.toString()
+                                .orEmpty()
+                                .ifBlank { "游戏目录" },
                         path = destination.toString(),
                     )
             destination.createDirectories()
@@ -616,16 +658,21 @@ class IsolationMigration(private val store: LauncherStore) {
                     store.mutate { data ->
                         data.copy(
                             gameDirectories =
-                                if (registered == null) data.gameDirectories + directory
-                                else data.gameDirectories,
+                                if (registered == null) {
+                                    data.gameDirectories + directory
+                                } else {
+                                    data.gameDirectories
+                                },
                             instances =
                                 data.instances.map { current ->
-                                    if (current.id == instanceId)
+                                    if (current.id == instanceId) {
                                         current.copy(
                                             gameDirectoryId = directory.id,
                                             managedGameDirectory = true,
                                         )
-                                    else current
+                                    } else {
+                                        current
+                                    }
                                 },
                         )
                     }
@@ -650,14 +697,17 @@ class IsolationMigration(private val store: LauncherStore) {
                 .getOrDefault(path.toAbsolutePath().normalize() == destination)
         }
 
-    private fun backupDirectory(kind: String, instanceId: String): Path =
+    private fun backupDirectory(
+        kind: String,
+        instanceId: String,
+    ): Path =
         store.directories.instanceBackups.resolve("$kind-$instanceId-${System.currentTimeMillis()}")
 
     /** 复制完成后核对文件数与字节数，避免记录先切过去、文件却没搬全。 */
     private fun verifyCopy(plan: IsolationPlan) {
         val (files, bytes) = measure(plan.targetRoot)
         require(files == plan.transferCount && bytes == plan.copyBytes) {
-            "复制校验失败：目标 ${files} 个文件 / ${bytes} 字节，应为 ${plan.transferCount} 个 / ${plan.copyBytes} 字节"
+            "复制校验失败：目标 $files 个文件 / $bytes 字节，应为 ${plan.transferCount} 个 / ${plan.copyBytes} 字节"
         }
     }
 

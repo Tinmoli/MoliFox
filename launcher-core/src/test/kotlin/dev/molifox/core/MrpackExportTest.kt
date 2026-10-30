@@ -6,22 +6,38 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
-import java.nio.file.Path
-import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.util.zip.ZipFile
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.reader
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class MrpackExportTest {
     @TempDir lateinit var temporary: Path
     private val metadata = MrpackExportMetadata("茉狐测试包", "1.0.0", "中文简介")
 
     private suspend fun fixture(
-        action: suspend (LauncherStore, ContentService, GameInstance, Path) -> Unit
+        action: suspend (LauncherStore, ContentService, GameInstance, Path) -> Unit,
     ) {
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("profile"))
         val instance =
@@ -45,39 +61,43 @@ class MrpackExportTest {
         }
     }
 
-    private fun write(root: Path, path: String, content: String = path) =
-        root.resolve(path).apply {
-            parent.createDirectories()
-            writeText(content)
-        }
+    private fun write(
+        root: Path,
+        path: String,
+        content: String = path,
+    ) = root.resolve(path).apply {
+        parent.createDirectories()
+        writeText(content)
+    }
 
-    private fun service(store: LauncherStore, network: NetworkClient, server: MockWebServer) =
-        ContentService(
-            store,
-            network,
-            MinecraftInstaller(store, network, JavaService(store, network)),
-            server.loopbackUrl("/v2").toString(),
-        )
+    private fun service(
+        store: LauncherStore,
+        network: NetworkClient,
+        server: MockWebServer,
+    ) = ContentService(
+        store,
+        network,
+        MinecraftInstaller(store, network, JavaService(store, network)),
+        server.loopbackUrl("/v2").toString(),
+    )
 
     private fun remote(
         file: MrpackExportFile,
         url: String = "https://cdn.modrinth.com/data/project/versions/version/file.jar",
-    ) =
-        gson
-            .toJsonTree(
-                mapOf(
-                    "id" to "version",
-                    "files" to
-                        listOf(
-                            mapOf(
-                                "url" to url,
-                                "size" to file.size,
-                                "hashes" to mapOf("sha1" to file.sha1, "sha512" to file.sha512),
-                            )
+    ) = gson
+        .toJsonTree(
+            mapOf(
+                "id" to "version",
+                "files" to
+                    listOf(
+                        mapOf(
+                            "url" to url,
+                            "size" to file.size,
+                            "hashes" to mapOf("sha1" to file.sha1, "sha512" to file.sha512),
                         ),
-                )
-            )
-            .asJsonObject
+                    ),
+            ),
+        ).asJsonObject
 
     @Test
     fun `offline defaults exclude private runtime and user data while preserving configuration`() =
@@ -128,7 +148,11 @@ class MrpackExportTest {
                     assertEquals(
                         plan.defaultSelection.map { "client-overrides/$it" }.toSet() +
                             "modrinth.index.json",
-                        zip.entries().asSequence().map { it.name }.toSet(),
+                        zip
+                            .entries()
+                            .asSequence()
+                            .map { it.name }
+                            .toSet(),
                     )
                     val manifest =
                         readPackManifest(zip, temporary.resolve("destination"), "windows")
@@ -141,34 +165,36 @@ class MrpackExportTest {
         }
 
     @Test
-    fun `unknown local resources need explicit inclusion and permission`() = runBlocking {
-        fixture { store, service, instance, root ->
-            write(root, "mods/private.jar", "private bytes")
-            write(root, "resourcepacks/local.zip")
-            val plan = service.previewMrpackExport(instance.id, metadata, false)
-            assertTrue(plan.defaultSelection.isEmpty())
-            assertTrue(plan.files.all { it.requiresPermission })
-            val selected = plan.files.map { it.path }.toSet()
-            val target = temporary.resolve("local.mrpack")
-            assertFailsWith<IllegalArgumentException> {
-                service.exportMrpack(plan, target, JobContext(store, "test"), selected)
+    fun `unknown local resources need explicit inclusion and permission`() =
+        runBlocking {
+            fixture { store, service, instance, root ->
+                write(root, "mods/private.jar", "private bytes")
+                write(root, "resourcepacks/local.zip")
+                val plan = service.previewMrpackExport(instance.id, metadata, false)
+                assertTrue(plan.defaultSelection.isEmpty())
+                assertTrue(plan.files.all { it.requiresPermission })
+                val selected = plan.files.map { it.path }.toSet()
+                val target = temporary.resolve("local.mrpack")
+                assertFailsWith<IllegalArgumentException> {
+                    service.exportMrpack(plan, target, JobContext(store, "test"), selected)
+                }
+                assertFalse(target.exists())
+                service.exportMrpack(plan, target, JobContext(store, "test"), selected, selected)
+                ZipFile(target.toFile()).use { zip ->
+                    assertEquals(
+                        "private bytes",
+                        zip
+                            .getInputStream(zip.getEntry("client-overrides/mods/private.jar"))
+                            .reader()
+                            .readText(),
+                    )
+                }
+                assertTrue(root.resolve("mods/private.jar").exists())
             }
-            assertFalse(target.exists())
-            service.exportMrpack(plan, target, JobContext(store, "test"), selected, selected)
-            ZipFile(target.toFile()).use { zip ->
-                assertEquals(
-                    "private bytes",
-                    zip.getInputStream(zip.getEntry("client-overrides/mods/private.jar"))
-                        .reader()
-                        .readText(),
-                )
-            }
-            assertTrue(root.resolve("mods/private.jar").exists())
         }
-    }
 
     @Test
-    fun `recognized resources are batched verified indexed and import through existing transaction`() =
+    fun `recognized resources are verified indexed and imported transactionally`() =
         runBlocking {
             fixture { store, _, instance, root ->
                 val payloads =
@@ -185,13 +211,13 @@ class MrpackExportTest {
                         server.dispatcher =
                             object : okhttp3.mockwebserver.Dispatcher() {
                                 override fun dispatch(
-                                    request: okhttp3.mockwebserver.RecordedRequest
+                                    request: okhttp3.mockwebserver.RecordedRequest,
                                 ): MockResponse {
                                     val body =
-                                        com.google.gson.JsonParser.parseString(
-                                                request.body.clone().readUtf8()
-                                            )
-                                            .asJsonObject
+                                        com.google.gson.JsonParser
+                                            .parseString(
+                                                request.body.clone().readUtf8(),
+                                            ).asJsonObject
                                     val hashes = body.array("hashes").map { it.asString }.toSet()
                                     return MockResponse()
                                         .setBody(
@@ -200,8 +226,8 @@ class MrpackExportTest {
                                                     resources
                                                         .filter { it.sha512 in hashes }
                                                         .forEach { add(it.sha512, remote(it)) }
-                                                }
-                                            )
+                                                },
+                                            ),
                                         )
                                 }
                             }
@@ -221,20 +247,24 @@ class MrpackExportTest {
                         ZipFile(target.toFile()).use { zip ->
                             assertEquals(
                                 setOf("modrinth.index.json", "client-overrides/config/中文.toml"),
-                                zip.entries().asSequence().map { it.name }.toSet(),
+                                zip
+                                    .entries()
+                                    .asSequence()
+                                    .map { it.name }
+                                    .toSet(),
                             )
                             val manifest =
                                 readPackManifest(zip, temporary.resolve("imported"), "windows")
                             assertEquals(101, manifest.requiredFiles)
                             assertTrue(
-                                manifest.index!!.array("files").any {
+                                checkNotNull(manifest.index).array("files").any {
                                     it.asJsonObject.string("path").endsWith(".disabled")
-                                }
+                                },
                             )
                             assertTrue(
                                 manifest.index.array("files").all {
                                     it.asJsonObject.obj("env").string("server") == "unsupported"
-                                }
+                                },
                             )
                             val destination =
                                 temporary.resolve("imported").apply { createDirectories() }
@@ -285,15 +315,14 @@ class MrpackExportTest {
                             service.previewMrpackExport(instance.id, metadata, false).files.single()
                         val invalid =
                             listOf(
-                                    "http://cdn.modrinth.com/test.jar",
-                                    "https://cdn.modrinth.com.evil.example/test.jar",
-                                    "https://user@cdn.modrinth.com/a.jar",
-                                    "https://cdn.modrinth.com:8443/a.jar",
-                                    "https://cdn.modrinth.com/a b.jar",
-                                    "https://cdn.modrinth.com/a.jar#fragment",
-                                    "https://edge.forgecdn.net/a.jar",
-                                )
-                                .map { remote(file, it) } +
+                                "http://cdn.modrinth.com/test.jar",
+                                "https://cdn.modrinth.com.evil.example/test.jar",
+                                "https://user@cdn.modrinth.com/a.jar",
+                                "https://cdn.modrinth.com:8443/a.jar",
+                                "https://cdn.modrinth.com/a b.jar",
+                                "https://cdn.modrinth.com/a.jar#fragment",
+                                "https://edge.forgecdn.net/a.jar",
+                            ).map { remote(file, it) } +
                                 listOf(
                                     remote(file).apply {
                                         array("files")
@@ -318,7 +347,7 @@ class MrpackExportTest {
                                 )
                         for (info in invalid) {
                             server.enqueue(
-                                MockResponse().setBody(gson.toJson(mapOf(file.sha512 to info)))
+                                MockResponse().setBody(gson.toJson(mapOf(file.sha512 to info))),
                             )
                             val plan = service.previewMrpackExport(instance.id, metadata)
                             assertTrue(plan.defaultSelection.isEmpty())
@@ -331,23 +360,28 @@ class MrpackExportTest {
         }
 
     @Test
-    fun `failed remote lookup is visible and never silently embeds resources`() = runBlocking {
-        fixture { store, _, instance, root ->
-            write(root, "mods/test.jar")
-            MockWebServer().use { server ->
-                NetworkClient().use { network ->
-                    server.enqueue(
-                        MockResponse().setResponseCode(403).setBody("secret-service-message")
-                    )
-                    val plan =
-                        service(store, network, server).previewMrpackExport(instance.id, metadata)
-                    assertEquals(1, plan.warnings.size)
-                    assertFalse(plan.warnings.single().contains("secret-service-message"))
-                    assertTrue(plan.defaultSelection.isEmpty())
+    fun `failed remote lookup is visible and never silently embeds resources`() =
+        runBlocking {
+            fixture { store, _, instance, root ->
+                write(root, "mods/test.jar")
+                MockWebServer().use { server ->
+                    NetworkClient().use { network ->
+                        server.enqueue(
+                            MockResponse().setResponseCode(403).setBody("secret-service-message"),
+                        )
+                        val plan =
+                            service(
+                                store,
+                                network,
+                                server,
+                            ).previewMrpackExport(instance.id, metadata)
+                        assertEquals(1, plan.warnings.size)
+                        assertFalse(plan.warnings.single().contains("secret-service-message"))
+                        assertTrue(plan.defaultSelection.isEmpty())
+                    }
                 }
             }
         }
-    }
 
     @Test
     fun `changed and missing files preserve existing output and remove partial archives`() =
@@ -372,63 +406,70 @@ class MrpackExportTest {
         }
 
     @Test
-    fun `component changes invalidate a prepared export`() = runBlocking {
-        fixture { store, service, instance, root ->
-            write(root, "config/a.txt")
-            val plan = service.previewMrpackExport(instance.id, metadata, false)
-            store.updateInstance(instance.id) {
-                it.copy(loader = LoaderType.Fabric, loaderVersion = "0.16.14")
-            }
-            val target = temporary.resolve("changed.mrpack")
-            assertFailsWith<IllegalArgumentException> {
-                service.exportMrpack(plan, target, JobContext(store, "test"))
-            }
-            assertFalse(target.exists())
-        }
-    }
-
-    @Test
-    fun `output inside game or launcher data and invalid selections are refused`() = runBlocking {
-        fixture { store, service, instance, root ->
-            write(root, "config/a.txt")
-            val plan = service.previewMrpackExport(instance.id, metadata, false)
-            for (target in
-                listOf(
-                    root.resolve("out.mrpack"),
-                    store.minecraftRoot.resolve("out.mrpack"),
-                    store.dataDirectory.resolve("out.mrpack"),
-                    temporary.resolve("out.zip"),
-                )) {
+    fun `component changes invalidate a prepared export`() =
+        runBlocking {
+            fixture { store, service, instance, root ->
+                write(root, "config/a.txt")
+                val plan = service.previewMrpackExport(instance.id, metadata, false)
+                store.updateInstance(instance.id) {
+                    it.copy(loader = LoaderType.Fabric, loaderVersion = "0.16.14")
+                }
+                val target = temporary.resolve("changed.mrpack")
                 assertFailsWith<IllegalArgumentException> {
                     service.exportMrpack(plan, target, JobContext(store, "test"))
                 }
                 assertFalse(target.exists())
             }
-            assertFailsWith<IllegalArgumentException> {
-                service.exportMrpack(
-                    plan,
-                    temporary.resolve("out.mrpack"),
-                    JobContext(store, "test"),
-                    setOf("../private.json"),
-                )
-            }
         }
-    }
 
     @Test
-    fun `cancelled export creates no output or temporary archive`() = runBlocking {
-        fixture { store, service, instance, root ->
-            write(root, "config/a.txt")
-            val plan = service.previewMrpackExport(instance.id, metadata, false)
-            val target = temporary.resolve("cancelled.mrpack")
-            val job = Job().apply { cancel() }
-            assertFailsWith<CancellationException> {
-                withContext(job) { service.exportMrpack(plan, target, JobContext(store, "test")) }
+    fun `output inside game or launcher data and invalid selections are refused`() =
+        runBlocking {
+            fixture { store, service, instance, root ->
+                write(root, "config/a.txt")
+                val plan = service.previewMrpackExport(instance.id, metadata, false)
+                for (
+                target in
+                listOf(
+                    root.resolve("out.mrpack"),
+                    store.minecraftRoot.resolve("out.mrpack"),
+                    store.dataDirectory.resolve("out.mrpack"),
+                    temporary.resolve("out.zip"),
+                )
+                ) {
+                    assertFailsWith<IllegalArgumentException> {
+                        service.exportMrpack(plan, target, JobContext(store, "test"))
+                    }
+                    assertFalse(target.exists())
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    service.exportMrpack(
+                        plan,
+                        temporary.resolve("out.mrpack"),
+                        JobContext(store, "test"),
+                        setOf("../private.json"),
+                    )
+                }
             }
-            assertFalse(target.exists())
-            assertTrue(temporary.listDirectoryEntries("*.part").isEmpty())
         }
-    }
+
+    @Test
+    fun `cancelled export creates no output or temporary archive`() =
+        runBlocking {
+            fixture { store, service, instance, root ->
+                write(root, "config/a.txt")
+                val plan = service.previewMrpackExport(instance.id, metadata, false)
+                val target = temporary.resolve("cancelled.mrpack")
+                val job = Job().apply { cancel() }
+                assertFailsWith<CancellationException> {
+                    withContext(
+                        job,
+                    ) { service.exportMrpack(plan, target, JobContext(store, "test")) }
+                }
+                assertFalse(target.exists())
+                assertTrue(temporary.listDirectoryEntries("*.part").isEmpty())
+            }
+        }
 
     @Test
     fun `all four loader dependencies and vanilla round trip without launcher specific metadata`() =
@@ -461,7 +502,7 @@ class MrpackExportTest {
         }
 
     @Test
-    fun `shared directory exports user content and external standard loaders with explicit versions`() =
+    fun `shared directory exports user content and explicit external loader versions`() =
         runBlocking {
             fixture { store, service, instance, _ ->
                 // 共用游戏目录：只有实例自己把隔离设为「关闭」才会落到游戏根；全局开关不再覆盖实例值。
@@ -494,57 +535,65 @@ class MrpackExportTest {
         }
 
     @Test
-    fun `user data can be selected explicitly while private credentials cannot`() = runBlocking {
-        fixture { store, service, instance, root ->
-            write(root, "saves/World/level.dat", "save")
-            write(root, "screenshots/a.png")
-            write(root, "credentials/account.json", "private")
-            val plan = service.previewMrpackExport(instance.id, metadata, false)
-            assertTrue(plan.defaultSelection.isEmpty())
-            val target = temporary.resolve("selected.mrpack")
-            service.exportMrpack(
-                plan,
-                target,
-                JobContext(store, "test"),
-                setOf("saves/World/level.dat"),
-            )
-            ZipFile(target.toFile()).use { zip ->
-                assertEquals(
-                    setOf("modrinth.index.json", "client-overrides/saves/World/level.dat"),
-                    zip.entries().asSequence().map { it.name }.toSet(),
-                )
-            }
-            assertFailsWith<IllegalArgumentException> {
+    fun `user data can be selected explicitly while private credentials cannot`() =
+        runBlocking {
+            fixture { store, service, instance, root ->
+                write(root, "saves/World/level.dat", "save")
+                write(root, "screenshots/a.png")
+                write(root, "credentials/account.json", "private")
+                val plan = service.previewMrpackExport(instance.id, metadata, false)
+                assertTrue(plan.defaultSelection.isEmpty())
+                val target = temporary.resolve("selected.mrpack")
                 service.exportMrpack(
                     plan,
                     target,
                     JobContext(store, "test"),
-                    setOf("credentials/account.json"),
+                    setOf("saves/World/level.dat"),
                 )
+                ZipFile(target.toFile()).use { zip ->
+                    assertEquals(
+                        setOf("modrinth.index.json", "client-overrides/saves/World/level.dat"),
+                        zip
+                            .entries()
+                            .asSequence()
+                            .map { it.name }
+                            .toSet(),
+                    )
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    service.exportMrpack(
+                        plan,
+                        target,
+                        JobContext(store, "test"),
+                        setOf("credentials/account.json"),
+                    )
+                }
             }
         }
-    }
 
     @Test
-    fun `invalid package metadata and missing loader versions fail before export`() = runBlocking {
-        fixture { store, service, instance, _ ->
-            for (info in
+    fun `invalid package metadata and missing loader versions fail before export`() =
+        runBlocking {
+            fixture { store, service, instance, _ ->
+                for (
+                info in
                 listOf(
                     metadata.copy(name = " "),
                     metadata.copy(version = ""),
                     metadata.copy(summary = "x".repeat(2001)),
                     metadata.copy(name = "bad\u0000name"),
-                )) {
+                )
+                ) {
+                    assertFailsWith<IllegalArgumentException> {
+                        service.previewMrpackExport(instance.id, info, false)
+                    }
+                }
+                store.updateInstance(instance.id) {
+                    it.copy(loader = LoaderType.Forge, loaderVersion = "")
+                }
                 assertFailsWith<IllegalArgumentException> {
-                    service.previewMrpackExport(instance.id, info, false)
+                    service.previewMrpackExport(instance.id, metadata, false)
                 }
             }
-            store.updateInstance(instance.id) {
-                it.copy(loader = LoaderType.Forge, loaderVersion = "")
-            }
-            assertFailsWith<IllegalArgumentException> {
-                service.previewMrpackExport(instance.id, metadata, false)
-            }
         }
-    }
 }

@@ -7,14 +7,19 @@ package dev.molifox.core
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
+import org.tomlj.Toml
 import java.nio.file.Path
 import java.util.jar.Manifest
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import org.tomlj.Toml
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.name
 
 /** 声明中指向项目主页的引用；`provider` 只使用 `modrinth` 或 `curseforge`。 */
-data class ModProjectRef(val provider: String, val slug: String)
+data class ModProjectRef(
+    val provider: String,
+    val slug: String,
+)
 
 data class ModEntry(
     val id: String,
@@ -38,7 +43,12 @@ data class ModMetadata(
         get() = entries.joinToString(" / ") { it.name.ifBlank { it.id } }
 
     val versions
-        get() = entries.map { it.version }.filter { it.isNotBlank() }.distinct().joinToString(" / ")
+        get() =
+            entries
+                .map { it.version }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .joinToString(" / ")
 
     val ids
         get() = entries.map { it.id }.filter { it.isNotBlank() }.distinct()
@@ -63,7 +73,11 @@ data class ModMetadata(
 
 /** Reads declarations only. Never loads classes, extracts files, or evaluates build expressions. */
 internal class ModMetadataReader {
-    private data class Cached(val size: Long, val modified: Long, val metadata: ModMetadata)
+    private data class Cached(
+        val size: Long,
+        val modified: Long,
+        val metadata: ModMetadata,
+    )
 
     private val cache =
         object : LinkedHashMap<Path, Cached>(64, .75f, true) {
@@ -81,10 +95,10 @@ internal class ModMetadataReader {
             ?.let {
                 return it.metadata
             }
-        val metadata = runCatching {
-            parse(path)
-        }
-            .getOrElse {
+        val metadata =
+            runCatching {
+                parse(path)
+            }.getOrElse {
                 ModMetadata(warning = "无法读取模组声明：${it.message.orEmpty().take(180)}")
             }
         cache[key] = Cached(size, modified, metadata)
@@ -108,7 +122,8 @@ internal class ModMetadataReader {
                 val loader = root.obj("quilt_loader")
                 val info = loader.obj("metadata")
                 val minecraft =
-                    loader.array("depends")
+                    loader
+                        .array("depends")
                         .mapNotNull { it.takeIf(JsonElement::isJsonObject)?.asJsonObject }
                         .firstOrNull { it.string("id") == "minecraft" }
                 return@use ModMetadata(
@@ -121,18 +136,21 @@ internal class ModMetadataReader {
                             info.obj("contributors").keySet().joinToString(),
                             info.string("description"),
                             loader.array("depends").mapNotNull {
-                                if (it.isJsonObject)
+                                if (it.isJsonObject) {
                                     it.asJsonObject.string("id").takeIf(String::isNotBlank)
-                                else null
+                                } else {
+                                    null
+                                }
                             },
-                            minecraft?.get("versions")
+                            minecraft
+                                ?.get("versions")
                                 ?.let { jsonStrings(it).joinToString(" || ") }
                                 .orEmpty(),
                             projectRefs(
                                 jsonStrings(info.get("contact")) +
-                                    jsonStrings(info.get("homepage"))
+                                    jsonStrings(info.get("homepage")),
                             ),
-                        )
+                        ),
                     ),
                 )
             }
@@ -149,22 +167,24 @@ internal class ModMetadataReader {
                             info.string("version"),
                             info.array("authors").joinToString { authorName(it) },
                             info.string("description"),
-                            info.obj("depends").entrySet().map { (id, value) -> "$id ${value}" },
+                            info.obj("depends").entrySet().map { (id, value) -> "$id $value" },
                             minecraftConstraint,
                             projectRefs(
                                 jsonStrings(info.get("contact")) +
                                     jsonStrings(info.get("homepage")) +
-                                    jsonStrings(info.get("sources"))
+                                    jsonStrings(info.get("sources")),
                             ),
-                        )
+                        ),
                     ),
                 )
             }
-            for ((filename, loader) in
-                listOf(
-                    "META-INF/neoforge.mods.toml" to "NeoForge",
-                    "META-INF/mods.toml" to "Forge",
-                )) {
+            for (
+            (filename, loader) in
+            listOf(
+                "META-INF/neoforge.mods.toml" to "NeoForge",
+                "META-INF/mods.toml" to "Forge",
+            )
+            ) {
                 val source = text(filename) ?: continue
                 val parsed = Toml.parse(source)
                 require(!parsed.hasErrors()) { "TOML 声明格式错误" }
@@ -174,8 +194,7 @@ internal class ModMetadataReader {
                             Manifest(it.byteInputStream())
                                 .mainAttributes
                                 .getValue("Implementation-Version")
-                        }
-                        .orEmpty()
+                        }.orEmpty()
                 val mods =
                     parsed.getArray("mods")
                         ?: return@use ModMetadata(loader, warning = "声明缺少 mods 列表")
@@ -186,11 +205,13 @@ internal class ModMetadataReader {
                         val id = mod.getString("modId").orEmpty()
                         val dependencies = parsed.getTable("dependencies")?.getArray(listOf(id))
                         val dependencyList =
-                            if (dependencies == null) emptyList()
-                            else
+                            if (dependencies == null) {
+                                emptyList()
+                            } else {
                                 (0 until dependencies.size()).map { item ->
                                     dependencies.getTable(item)
                                 }
+                            }
                         val minecraftConstraint =
                             dependencyList
                                 .firstOrNull { it.getString("modId") == "minecraft" }
@@ -199,13 +220,16 @@ internal class ModMetadataReader {
                         ModEntry(
                             id,
                             mod.getString("displayName") ?: id,
-                            mod.getString("version")
+                            mod
+                                .getString("version")
                                 .orEmpty()
                                 .replace("\${file.jarVersion}", version),
                             mod.getString("authors").orEmpty(),
                             mod.getString("description").orEmpty(),
                             dependencyList.map { dependency ->
-                                "${dependency.getString("modId").orEmpty()} ${dependency.getString("versionRange").orEmpty()}"
+                                "${dependency.getString(
+                                    "modId",
+                                ).orEmpty()} ${dependency.getString("versionRange").orEmpty()}"
                             },
                             minecraftConstraint,
                             projectRefs(
@@ -213,7 +237,7 @@ internal class ModMetadataReader {
                                     mod.getString("displayURL"),
                                     mod.getString("displayUrl"),
                                     mod.getString("homepage"),
-                                )
+                                ),
                             ),
                         )
                     },
@@ -228,9 +252,10 @@ internal class ModMetadataReader {
                     mods.map { value ->
                         val info = value.asJsonObject
                         val minecraftConstraint =
-                            (listOf(info.string("mcversion"), info.string("gameVersion")) +
-                                    info.array("acceptableMinecraftVersions").map { it.asString })
-                                .filter { it.isNotBlank() }
+                            (
+                                listOf(info.string("mcversion"), info.string("gameVersion")) +
+                                    info.array("acceptableMinecraftVersions").map { it.asString }
+                            ).filter { it.isNotBlank() }
                                 .distinct()
                                 .joinToString(" || ")
                         ModEntry(
@@ -258,8 +283,11 @@ internal class ModMetadataReader {
             value.isJsonObject ->
                 value.asJsonObject.entrySet().flatMap { (key, child) ->
                     // 只收集可能是链接或版本号的文本字段，跳过颜色、文件名等无关值。
-                    if (key.equals("logoFile", true) || key.equals("icon", true)) emptyList()
-                    else jsonStrings(child)
+                    if (key.equals("logoFile", true) || key.equals("icon", true)) {
+                        emptyList()
+                    } else {
+                        jsonStrings(child)
+                    }
                 }
             else -> emptyList()
         }
@@ -279,8 +307,13 @@ internal class ModMetadataReader {
     }
 
     private fun authorName(value: JsonElement): String =
-        if (value.isJsonObject) value.asJsonObject.string("name")
-        else if (value.isJsonPrimitive) value.asString else ""
+        if (value.isJsonObject) {
+            value.asJsonObject.string("name")
+        } else if (value.isJsonPrimitive) {
+            value.asString
+        } else {
+            ""
+        }
 }
 
 private val modrinthProjectUrl =

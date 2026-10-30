@@ -5,6 +5,14 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import java.net.URI
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -17,13 +25,20 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
-import kotlin.io.path.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
 
-data class MrpackExportMetadata(val name: String, val version: String, val summary: String = "")
+data class MrpackExportMetadata(
+    val name: String,
+    val version: String,
+    val summary: String = "",
+)
 
 /** 导出目标格式：前四项可被对应启动器导入，最后一项只是完整备份。 */
 enum class PackExportFormat(
@@ -62,7 +77,6 @@ enum class PackExportFormat(
         false,
         "完整备份：保留存档、截图和可选日志，只用于还原或留档；其他启动器不会把它识别成整合包。",
     ),
-    ;
 }
 
 /**
@@ -85,7 +99,7 @@ data class PackExportOptions(
     companion object {
         /** 切换格式时使用各格式的合理默认值，避免备份漏掉存档。 */
         fun defaultsFor(format: PackExportFormat): PackExportOptions =
-            if (format == PackExportFormat.Backup)
+            if (format == PackExportFormat.Backup) {
                 PackExportOptions(
                     includeLocalResources = true,
                     includeSaves = true,
@@ -93,7 +107,9 @@ data class PackExportOptions(
                     includeOptionsTxt = true,
                     includeLogs = false,
                 )
-            else PackExportOptions()
+            } else {
+                PackExportOptions()
+            }
     }
 }
 
@@ -113,20 +129,20 @@ data class MrpackExportFile(
 
 /** Fixed preview; exporting rechecks both the instance identity and selected file contents. */
 class MrpackExportPlan
-internal constructor(
-    val instanceId: String,
-    val metadata: MrpackExportMetadata,
-    val files: List<MrpackExportFile>,
-    val warnings: List<String>,
-    /** 预览时是否扫描了 logs/ 与 crash-reports/（只有完整备份会）。 */
-    val includesLogs: Boolean,
-    internal val root: Path,
-    internal val realRoot: Path,
-    internal val components: InstallRequest,
-) {
-    val defaultSelection: Set<String>
-        get() = files.filter { it.selectedByDefault }.map { it.path }.toSet()
-}
+    internal constructor(
+        val instanceId: String,
+        val metadata: MrpackExportMetadata,
+        val files: List<MrpackExportFile>,
+        val warnings: List<String>,
+        /** 预览时是否扫描了 logs/ 与 crash-reports/（只有完整备份会）。 */
+        val includesLogs: Boolean,
+        internal val root: Path,
+        internal val realRoot: Path,
+        internal val components: InstallRequest,
+    ) {
+        val defaultSelection: Set<String>
+            get() = files.filter { it.selectedByDefault }.map { it.path }.toSet()
+    }
 
 /** 该文件会原样写进包内（而不是写下载/受管清单）。 */
 internal fun MrpackExportFile.embeddedIn(format: PackExportFormat): Boolean =
@@ -136,13 +152,23 @@ internal fun MrpackExportFile.embeddedIn(format: PackExportFormat): Boolean =
             curseForgeProjectId == null || curseForgeFileId == null
         PackExportFormat.MultiMc,
         PackExportFormat.Mcbbs,
-        PackExportFormat.Backup -> true
+        PackExportFormat.Backup,
+        -> true
     }
 
 /** 会被原样打包的本地资源：需要用户确认分发权限。备份只留在本机，不做这层限制。 */
-fun exportLocalResourcePaths(plan: MrpackExportPlan, format: PackExportFormat): Set<String> =
-    if (format == PackExportFormat.Backup) emptySet()
-    else plan.files.filter { it.requiresPermission && it.embeddedIn(format) }.map { it.path }.toSet()
+fun exportLocalResourcePaths(
+    plan: MrpackExportPlan,
+    format: PackExportFormat,
+): Set<String> =
+    if (format == PackExportFormat.Backup) {
+        emptySet()
+    } else {
+        plan.files
+            .filter { it.requiresPermission && it.embeddedIn(format) }
+            .map { it.path }
+            .toSet()
+    }
 
 /**
  * 与界面共用的默认勾选集：默认内容 + 开关控制的可选内容，并剔除禁用模组。
@@ -155,28 +181,43 @@ fun exportDefaultSelection(
 ): Set<String> {
     val all = plan.files
     val selected =
-        if (format == PackExportFormat.Backup) all.map { it.path }.toMutableSet()
-        else plan.defaultSelection.toMutableSet()
+        if (format == PackExportFormat.Backup) {
+            all.map { it.path }.toMutableSet()
+        } else {
+            plan.defaultSelection.toMutableSet()
+        }
     if (format == PackExportFormat.Backup) {
-        if (!options.includeSaves) selected -= all.filter { saveExportPath(it.path) }.map { it.path }
-        if (!options.includeScreenshots)
+        if (!options.includeSaves) {
+            selected -=
+                all.filter { saveExportPath(it.path) }.map { it.path }
+        }
+        if (!options.includeScreenshots) {
             selected -= all.filter { screenshotExportPath(it.path) }.map { it.path }
-        if (!options.includeOptionsTxt)
+        }
+        if (!options.includeOptionsTxt) {
             selected -= all.filter { preferenceExportPath(it.path) }.map { it.path }
-        if (!options.includeLogs)
+        }
+        if (!options.includeLogs) {
             selected -= all.filter { backupOnlyExportPath(it.path) }.map { it.path }
+        }
     } else {
         if (options.includeSaves) selected += all.filter { saveExportPath(it.path) }.map { it.path }
-        if (options.includeScreenshots)
+        if (options.includeScreenshots) {
             selected += all.filter { screenshotExportPath(it.path) }.map { it.path }
-        if (options.includeOptionsTxt)
+        }
+        if (options.includeOptionsTxt) {
             selected += all.filter { preferenceExportPath(it.path) }.map { it.path }
+        }
         selected -= all.filter { backupOnlyExportPath(it.path) }.map { it.path }
-        if (options.includeLocalResources) selected += exportLocalResourcePaths(plan, format)
-        else selected -= exportLocalResourcePaths(plan, format)
+        if (options.includeLocalResources) {
+            selected += exportLocalResourcePaths(plan, format)
+        } else {
+            selected -= exportLocalResourcePaths(plan, format)
+        }
     }
-    if (options.enabledModsOnly)
+    if (options.enabledModsOnly) {
         selected -= all.filter { disabledModExportPath(it.path) }.map { it.path }
+    }
     return selected
 }
 
@@ -204,7 +245,10 @@ data class PackExportEntry(
 }
 
 /** 顶层条目扫描结果：可勾选条目 + 明确不导出的启动器数据/实例元数据。 */
-data class PackExportScan(val entries: List<PackExportEntry>, val omitted: List<String>)
+data class PackExportScan(
+    val entries: List<PackExportEntry>,
+    val omitted: List<String>,
+)
 
 private class ExportEntryState(
     val name: String,
@@ -258,15 +302,20 @@ fun exportSelectedPaths(
             .filter { format == PackExportFormat.Backup || !backupOnlyExportPath(it.path) }
             .map { it.path }
             .toMutableSet()
-    if (format != PackExportFormat.Backup && !options.includeLocalResources)
+    if (format != PackExportFormat.Backup && !options.includeLocalResources) {
         selected -= exportLocalResourcePaths(plan, format)
-    if (options.enabledModsOnly)
+    }
+    if (options.enabledModsOnly) {
         selected -= plan.files.filter { disabledModExportPath(it.path) }.map { it.path }
+    }
     return selected
 }
 
 /** 实例自身的版本文件与升级备份副本：属于实例元数据，不当作整合包内容。 */
-internal fun instanceOwnExportFile(name: String, versionId: String): Boolean {
+internal fun instanceOwnExportFile(
+    name: String,
+    versionId: String,
+): Boolean {
     val lower = name.lowercase(Locale.ROOT)
     if (lower.contains(".json.molifox-backup-")) return true
     val id = versionId.lowercase(Locale.ROOT)
@@ -331,121 +380,127 @@ internal class MrpackExporter(
      */
     fun entries(id: String): Flow<PackExportScan> =
         flow {
-                val instance = exportableInstance(id)
-                val root = store.instancePath(id).toAbsolutePath().normalize()
-                require(root.isDirectory() && !Files.isSymbolicLink(root)) {
-                    "实例目录不存在或是符号链接"
-                }
-                val isolated = store.isolated(instance)
-                val tracks = mutableListOf<ExportEntryState>()
-                val omitted = mutableListOf<String>()
-                Files.newDirectoryStream(root).use { children ->
-                    for (child in children) {
-                        coroutineContext.ensureActive()
-                        if (Files.isSymbolicLink(child)) continue
-                        val name = child.fileName.toString()
-                        if (
-                            instanceOwnExportFile(name, instance.versionId) ||
-                                launcherPrivateExportEntry(name)
-                        ) {
-                            omitted += name
-                            continue
-                        }
-                        val directory = Files.isDirectory(child, NOFOLLOW_LINKS)
-                        val key = name.lowercase(Locale.ROOT)
-                        val backupOnly =
-                            key in backupOnlyExportRoots ||
-                                (!directory && (key.endsWith(".log") || key.endsWith(".log.gz")))
-                        tracks +=
-                            ExportEntryState(
-                                name,
-                                directory,
-                                backupOnly,
-                                unavailable = !isolated && key !in exportContentRoots,
-                            )
+            val instance = exportableInstance(id)
+            val root = store.instancePath(id).toAbsolutePath().normalize()
+            require(root.isDirectory() && !Files.isSymbolicLink(root)) {
+                "实例目录不存在或是符号链接"
+            }
+            val isolated = store.isolated(instance)
+            val tracks = mutableListOf<ExportEntryState>()
+            val omitted = mutableListOf<String>()
+            Files.newDirectoryStream(root).use { children ->
+                for (child in children) {
+                    coroutineContext.ensureActive()
+                    if (Files.isSymbolicLink(child)) continue
+                    val name = child.fileName.toString()
+                    if (
+                        instanceOwnExportFile(name, instance.versionId) ||
+                        launcherPrivateExportEntry(name)
+                    ) {
+                        omitted += name
+                        continue
                     }
-                }
-                tracks.sortWith(
-                    compareByDescending<ExportEntryState> { it.directory }
-                        .thenBy { it.name.lowercase(Locale.ROOT) }
-                )
-                omitted.sort()
-                var lastEmit = 0L
-                var filesSinceEmit = 0
-                suspend fun emitSnapshot(force: Boolean) {
-                    val now = System.nanoTime()
-                    if (!force && now - lastEmit < 60_000_000L) return
-                    lastEmit = now
-                    filesSinceEmit = 0
-                    emit(
-                        PackExportScan(
-                            tracks.map {
-                                PackExportEntry(
-                                    it.name,
-                                    it.directory,
-                                    it.fileCount,
-                                    it.totalBytes,
-                                    it.scanning,
-                                    it.backupOnly,
-                                    it.unavailable,
-                                )
-                            },
-                            omitted.toList(),
+                    val directory = Files.isDirectory(child, NOFOLLOW_LINKS)
+                    val key = name.lowercase(Locale.ROOT)
+                    val backupOnly =
+                        key in backupOnlyExportRoots ||
+                            (!directory && (key.endsWith(".log") || key.endsWith(".log.gz")))
+                    tracks +=
+                        ExportEntryState(
+                            name,
+                            directory,
+                            backupOnly,
+                            unavailable = !isolated && key !in exportContentRoots,
                         )
-                    )
                 }
-                emitSnapshot(true)
-                for (track in tracks) {
-                    if (track.unavailable) {
-                        track.scanning = false
-                        continue
-                    }
-                    val child = root.resolve(track.name)
-                    if (!track.directory) {
-                        track.fileCount = 1
-                        track.totalBytes = runCatching { Files.size(child) }.getOrDefault(0L)
-                        track.scanning = false
-                        emitSnapshot(true)
-                        continue
-                    }
-                    val pending = ArrayDeque<Path>().apply { add(child) }
-                    while (pending.isNotEmpty()) {
-                        coroutineContext.ensureActive()
-                        val directory = pending.removeFirst()
-                        try {
-                            Files.newDirectoryStream(directory).use { paths ->
-                                for (file in paths) {
-                                    coroutineContext.ensureActive()
-                                    if (Files.isSymbolicLink(file)) continue
-                                    val relative = root.relativize(file).joinToString("/")
-                                    // 日志目录按“显式勾选才写入”统计；普通目录不计嵌套日志。
-                                    if (excludedExportPath(relative, allowLogs = track.backupOnly))
-                                        continue
-                                    if (Files.isDirectory(file, NOFOLLOW_LINKS)) {
-                                        pending.add(file)
-                                        continue
-                                    }
-                                    if (!Files.isRegularFile(file, NOFOLLOW_LINKS)) continue
-                                    track.fileCount++
-                                    track.totalBytes +=
-                                        runCatching { Files.size(file) }.getOrDefault(0L)
-                                    filesSinceEmit++
-                                    if (filesSinceEmit >= 64) emitSnapshot(false)
-                                }
-                            }
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            // 单个目录不可读时跳过，其余条目照常统计。
-                        }
-                    }
+            }
+            tracks.sortWith(
+                compareByDescending<ExportEntryState> { it.directory }
+                    .thenBy { it.name.lowercase(Locale.ROOT) },
+            )
+            omitted.sort()
+            var lastEmit = 0L
+            var filesSinceEmit = 0
+
+            suspend fun emitSnapshot(force: Boolean) {
+                val now = System.nanoTime()
+                if (!force && now - lastEmit < 60_000_000L) return
+                lastEmit = now
+                filesSinceEmit = 0
+                emit(
+                    PackExportScan(
+                        tracks.map {
+                            PackExportEntry(
+                                it.name,
+                                it.directory,
+                                it.fileCount,
+                                it.totalBytes,
+                                it.scanning,
+                                it.backupOnly,
+                                it.unavailable,
+                            )
+                        },
+                        omitted.toList(),
+                    ),
+                )
+            }
+            emitSnapshot(true)
+            for (track in tracks) {
+                if (track.unavailable) {
+                    track.scanning = false
+                    continue
+                }
+                val child = root.resolve(track.name)
+                if (!track.directory) {
+                    track.fileCount = 1
+                    track.totalBytes = runCatching { Files.size(child) }.getOrDefault(0L)
                     track.scanning = false
                     emitSnapshot(true)
+                    continue
                 }
-                // 全部条目扫描结束（包括全部不可用的情形）后一定发一次终态。
+                val pending = ArrayDeque<Path>().apply { add(child) }
+                while (pending.isNotEmpty()) {
+                    coroutineContext.ensureActive()
+                    val directory = pending.removeFirst()
+                    try {
+                        Files.newDirectoryStream(directory).use { paths ->
+                            for (file in paths) {
+                                coroutineContext.ensureActive()
+                                if (Files.isSymbolicLink(file)) continue
+                                val relative = root.relativize(file).joinToString("/")
+                                // 日志目录按“显式勾选才写入”统计；普通目录不计嵌套日志。
+                                if (excludedExportPath(
+                                        relative,
+                                        allowLogs = track.backupOnly,
+                                    )
+                                ) {
+                                    continue
+                                }
+                                if (Files.isDirectory(file, NOFOLLOW_LINKS)) {
+                                    pending.add(file)
+                                    continue
+                                }
+                                if (!Files.isRegularFile(file, NOFOLLOW_LINKS)) continue
+                                track.fileCount++
+                                track.totalBytes +=
+                                    runCatching { Files.size(file) }.getOrDefault(0L)
+                                filesSinceEmit++
+                                if (filesSinceEmit >= 64) emitSnapshot(false)
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        // 单个目录不可读时跳过，其余条目照常统计。
+                    }
+                }
+                track.scanning = false
                 emitSnapshot(true)
             }
-            .flowOn(Dispatchers.IO)
+            // 全部条目扫描结束（包括全部不可用的情形）后一定发一次终态。
+            emitSnapshot(true)
+        }.flowOn(Dispatchers.IO)
+
     suspend fun preview(
         id: String,
         metadata: MrpackExportMetadata,
@@ -462,7 +517,7 @@ internal class MrpackExporter(
             }
             require(metadata.summary.length <= 2000) { "整合包简介最多 2000 字" }
             require(
-                listOf(metadata.name, metadata.version, metadata.summary).none { '\u0000' in it }
+                listOf(metadata.name, metadata.version, metadata.summary).none { '\u0000' in it },
             ) {
                 "整合包信息包含无效字符"
             }
@@ -474,7 +529,8 @@ internal class MrpackExporter(
             val files = mutableListOf<MrpackExportFile>()
             // Standard component metadata cannot preserve another launcher's custom patches.
             val names = mutableSetOf<String>()
-            val contentRoots = if (includeLogs) exportContentRoots + backupOnlyExportRoots else exportContentRoots
+            val contentRoots =
+                if (includeLogs) exportContentRoots + backupOnlyExportRoots else exportContentRoots
             val directories = ArrayDeque<Path>().apply { add(root) }
             while (directories.isNotEmpty()) {
                 Files.newDirectoryStream(directories.removeFirst()).use { paths ->
@@ -494,7 +550,9 @@ internal class MrpackExporter(
                         }
                         if (!Files.isRegularFile(checked, NOFOLLOW_LINKS)) continue
                         // 日志可能带登录凭据：即使已选择包含日志，命中凭据特征的单个文件也跳过。
-                        if (includeLogs && backupOnlyExportPath(path) && exportLogContainsSecret(checked)) {
+                        if (includeLogs && backupOnlyExportPath(path) &&
+                            exportLogContainsSecret(checked)
+                        ) {
                             warnings += "已跳过疑似包含登录凭据的日志：$path"
                             continue
                         }
@@ -504,7 +562,7 @@ internal class MrpackExporter(
                         val resource =
                             top in setOf("mods", "resourcepacks", "shaderpacks") ||
                                 path.substringAfterLast('.', "").lowercase(Locale.ROOT) in
-                                    setOf("jar", "zip", "mrpack", "exe", "dll", "so")
+                                setOf("jar", "zip", "mrpack", "exe", "dll", "so")
                         files +=
                             MrpackExportFile(
                                 path,
@@ -520,12 +578,14 @@ internal class MrpackExporter(
             }
             val remotes = mutableMapOf<String, String>()
             if (resolveDownloads) {
-                for (batch in
-                    files
-                        .filter { it.requiresPermission }
-                        .map { it.sha512 }
-                        .distinct()
-                        .chunked(100)) {
+                for (
+                batch in
+                files
+                    .filter { it.requiresPermission }
+                    .map { it.sha512 }
+                    .distinct()
+                    .chunked(100)
+                ) {
                     coroutineContext.ensureActive()
                     try {
                         val body =
@@ -555,8 +615,7 @@ internal class MrpackExporter(
                                                     candidate.get("size")?.asLong == file.size &&
                                                     allowedMrpackDownload(candidate.string("url"))
                                             }
-                                    }
-                                    ?.asJsonObject
+                                    }?.asJsonObject
                             if (remote != null) remotes[file.sha512] = remote.string("url")
                         }
                     } catch (cancelled: CancellationException) {
@@ -571,9 +630,9 @@ internal class MrpackExporter(
                 val candidates = files.filter { curseForgeCandidate(it.path) }
                 if (candidates.isNotEmpty()) {
                     val backend = curseForge
-                    if (backend == null)
+                    if (backend == null) {
                         warnings += "CurseForge 匹配不可用；所有模组会放进 overrides/mods，不会写入受管清单。"
-                    else
+                    } else {
                         try {
                             val matched =
                                 backend.fingerprints(candidates.map { safePath(root, it.path) })
@@ -582,18 +641,21 @@ internal class MrpackExporter(
                                 curseForgeIds[file.path] = curseForgeIds(info) ?: continue
                             }
                             val unmatched = candidates.size - curseForgeIds.size
-                            if (unmatched > 0)
+                            if (unmatched > 0) {
                                 warnings +=
                                     "$unmatched 个模组未匹配到 CurseForge 编号，会放进 overrides/mods（该包不会对它们自动更新）。"
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
                             warnings += "CurseForge 指纹匹配失败；所有模组会放进 overrides/mods，不会写入受管清单。"
                         }
+                    }
                 }
             }
-            if (instance.externalProfile)
+            if (instance.externalProfile) {
                 warnings += "外部实例仅导出标准游戏与加载器组件；原启动器的特殊补丁、启动命令和认证配置不会写入整合包。"
+            }
             MrpackExportPlan(
                 id,
                 metadata,
@@ -639,156 +701,160 @@ internal class MrpackExporter(
         context: JobContext,
         format: PackExportFormat = PackExportFormat.Modrinth,
         options: PackExportOptions = PackExportOptions(),
-    ) =
-        withContext(Dispatchers.IO) {
-            context.checkCancelled()
-            validateSnapshot(plan)
-            require(destination.extension.equals(format.extension, true)) {
-                "此整合包格式需要 .${format.extension} 扩展名"
+    ) = withContext(Dispatchers.IO) {
+        context.checkCancelled()
+        validateSnapshot(plan)
+        require(destination.extension.equals(format.extension, true)) {
+            "此整合包格式需要 .${format.extension} 扩展名"
+        }
+        val target = destination.toAbsolutePath().normalize()
+        // Resolve existing ancestors before creating anything, including aliases to the game
+        // root.
+        val resolved = resolveExportDestination(target)
+        val protectedRoots =
+            listOf(
+                plan.realRoot,
+                store.dataDirectory.toRealPath(),
+                store.minecraftRoot(store.instance(plan.instanceId)).toRealPath(),
+            )
+        require(protectedRoots.none { resolved.startsWith(it) }) {
+            "请将整合包保存到游戏目录和 MoliFox 数据目录外"
+        }
+        require(selected.all { path -> plan.files.any { it.path == path } }) {
+            "导出选择已失效，请重新预览"
+        }
+        require(selected.isNotEmpty()) { "请至少选择一项要写入的内容" }
+        require(
+            format == PackExportFormat.Backup || selected.none { backupOnlyExportPath(it) },
+        ) {
+            "日志与崩溃报告只随完整备份导出"
+        }
+        // 日志只属于完整备份；禁用模组按选项排除，不改名为启用。
+        val files =
+            plan.files
+                .filter { it.path in selected }
+                .filter {
+                    format == PackExportFormat.Backup &&
+                        (!backupOnlyExportPath(it.path) || options.includeLogs) ||
+                        format != PackExportFormat.Backup && !backupOnlyExportPath(it.path)
+                }.filter { !(options.enabledModsOnly && disabledModExportPath(it.path)) }
+        require(files.isNotEmpty()) { "勾选的内容没有可写入的文件，请重新选择" }
+        val embedded = files.filter { it.embeddedIn(format) }
+        // 完整备份只留在本机，不属于分发，不需要逐个确认分发权限。
+        val missing =
+            if (format == PackExportFormat.Backup) {
+                emptyList()
+            } else {
+                embedded.filter { it.requiresPermission && it.path !in permittedLocalFiles }
             }
-            val target = destination.toAbsolutePath().normalize()
-            // Resolve existing ancestors before creating anything, including aliases to the game
-            // root.
-            val resolved = resolveExportDestination(target)
-            val protectedRoots =
-                listOf(
-                    plan.realRoot,
-                    store.dataDirectory.toRealPath(),
-                    store.minecraftRoot(store.instance(plan.instanceId)).toRealPath(),
-                )
-            require(protectedRoots.none { resolved.startsWith(it) }) {
-                "请将整合包保存到游戏目录和 MoliFox 数据目录外"
-            }
-            require(selected.all { path -> plan.files.any { it.path == path } }) {
-                "导出选择已失效，请重新预览"
-            }
-            require(selected.isNotEmpty()) { "请至少选择一项要写入的内容" }
-            require(format == PackExportFormat.Backup || selected.none { backupOnlyExportPath(it) }) {
-                "日志与崩溃报告只随完整备份导出"
-            }
-            // 日志只属于完整备份；禁用模组按选项排除，不改名为启用。
-            val files =
-                plan.files
-                    .filter { it.path in selected }
-                    .filter {
-                        format == PackExportFormat.Backup &&
-                            (!backupOnlyExportPath(it.path) || options.includeLogs) ||
-                            format != PackExportFormat.Backup && !backupOnlyExportPath(it.path)
-                    }
-                    .filter { !(options.enabledModsOnly && disabledModExportPath(it.path)) }
-            require(files.isNotEmpty()) { "勾选的内容没有可写入的文件，请重新选择" }
-            val embedded = files.filter { it.embeddedIn(format) }
-            // 完整备份只留在本机，不属于分发，不需要逐个确认分发权限。
-            val missing =
-                if (format == PackExportFormat.Backup) emptyList()
-                else embedded.filter { it.requiresPermission && it.path !in permittedLocalFiles }
-            require(missing.isEmpty()) {
-                "以下本地资源尚未确认分发权限：${missing.joinToString { it.path }}"
-            }
-            val icon =
-                try {
-                    if (format == PackExportFormat.Modrinth || format == PackExportFormat.Mcbbs)
-                        InstanceIcons(store).exportImage(store.instance(plan.instanceId))
-                    else null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
+        require(missing.isEmpty()) {
+            "以下本地资源尚未确认分发权限：${missing.joinToString { it.path }}"
+        }
+        val icon =
+            try {
+                if (format == PackExportFormat.Modrinth || format == PackExportFormat.Mcbbs) {
+                    InstanceIcons(store).exportImage(store.instance(plan.instanceId))
+                } else {
                     null
                 }
-            val layout = buildPackExportLayout(format, plan, options, files, icon)
-            require(layout.documents.all { it.second.size <= 8 * 1024 * 1024 }) {
-                "导出清单过大，请减少选择的文件"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
             }
-            target.parent.createDirectories()
-            val temporary = target.resolveSibling(".${target.fileName}.${UUID.randomUUID()}.part")
-            try {
-                val total = layout.totalEntries
-                var written = 0
-                ZipOutputStream(
-                        Files.newOutputStream(
-                            temporary,
-                            java.nio.file.StandardOpenOption.CREATE_NEW,
-                        )
-                    )
-                    .use { zip ->
-                        for (directory in layout.directories) {
-                            context.checkCancelled()
-                            zip.putNextEntry(ZipEntry(directory))
-                            zip.closeEntry()
-                            written++
-                        }
-                        for ((name, bytes) in layout.documents) {
-                            context.checkCancelled()
-                            context.progress(
-                                written.toFloat() / maxOf(1, total),
-                                "写入 $name（${written + 1}/$total）",
-                            )
-                            zip.putNextEntry(ZipEntry(name))
-                            zip.write(bytes)
-                            zip.closeEntry()
-                            written++
-                        }
-                        if (layout.icon != null) {
-                            context.checkCancelled()
-                            zip.putNextEntry(ZipEntry("icon.png"))
-                            zip.write(layout.icon)
-                            zip.closeEntry()
-                            written++
-                        }
-                        for ((archivePath, file) in layout.payload) {
-                            context.checkCancelled()
-                            context.progress(
-                                written.toFloat() / maxOf(1, total),
-                                "导出 ${file.path}（${written + 1}/$total）",
-                            )
-                            val source = safePath(plan.root, file.path)
-                            require(
-                                Files.isRegularFile(source, NOFOLLOW_LINKS) &&
-                                    source.toRealPath().startsWith(plan.realRoot)
-                            ) {
-                                "文件已移动，请重新预览：${file.path}"
-                            }
-                            zip.putNextEntry(ZipEntry(archivePath))
-                            val hashes =
-                                hashExportFile(source) { bytes, count ->
-                                    zip.write(bytes, 0, count)
-                                }
-                            require(
-                                hashes == ExportHashes(file.size, file.sha1, file.sha512)
-                            ) {
-                                "文件已改变，请重新预览：${file.path}"
-                            }
-                            zip.closeEntry()
-                            written++
-                        }
-                    }
-                context.checkCancelled()
-                // 重新打开写好的归档，逐项确认该格式必需的条目和清单字段都在。
-                validatePackExport(
-                    temporary,
-                    format,
-                    layout,
-                    plan,
-                    options,
-                    files.map { it.path }.toSet(),
-                )
-                validateSnapshot(plan)
-                require(resolveExportDestination(target) == resolved) { "导出目录已改变" }
-                try {
-                    Files.move(
-                        temporary,
-                        target,
-                        StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING,
-                    )
-                } catch (_: AtomicMoveNotSupportedException) {
-                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
-                }
-                context.progress(1f, "${format.title} 已导出")
-            } finally {
-                temporary.deleteIfExists()
-            }
+        val layout = buildPackExportLayout(format, plan, options, files, icon)
+        require(layout.documents.all { it.second.size <= 8 * 1024 * 1024 }) {
+            "导出清单过大，请减少选择的文件"
         }
+        target.parent.createDirectories()
+        val temporary = target.resolveSibling(".${target.fileName}.${UUID.randomUUID()}.part")
+        try {
+            val total = layout.totalEntries
+            var written = 0
+            ZipOutputStream(
+                Files.newOutputStream(
+                    temporary,
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                ),
+            ).use { zip ->
+                for (directory in layout.directories) {
+                    context.checkCancelled()
+                    zip.putNextEntry(ZipEntry(directory))
+                    zip.closeEntry()
+                    written++
+                }
+                for ((name, bytes) in layout.documents) {
+                    context.checkCancelled()
+                    context.progress(
+                        written.toFloat() / maxOf(1, total),
+                        "写入 $name（${written + 1}/$total）",
+                    )
+                    zip.putNextEntry(ZipEntry(name))
+                    zip.write(bytes)
+                    zip.closeEntry()
+                    written++
+                }
+                if (layout.icon != null) {
+                    context.checkCancelled()
+                    zip.putNextEntry(ZipEntry("icon.png"))
+                    zip.write(layout.icon)
+                    zip.closeEntry()
+                    written++
+                }
+                for ((archivePath, file) in layout.payload) {
+                    context.checkCancelled()
+                    context.progress(
+                        written.toFloat() / maxOf(1, total),
+                        "导出 ${file.path}（${written + 1}/$total）",
+                    )
+                    val source = safePath(plan.root, file.path)
+                    require(
+                        Files.isRegularFile(source, NOFOLLOW_LINKS) &&
+                            source.toRealPath().startsWith(plan.realRoot),
+                    ) {
+                        "文件已移动，请重新预览：${file.path}"
+                    }
+                    zip.putNextEntry(ZipEntry(archivePath))
+                    val hashes =
+                        hashExportFile(source) { bytes, count ->
+                            zip.write(bytes, 0, count)
+                        }
+                    require(
+                        hashes == ExportHashes(file.size, file.sha1, file.sha512),
+                    ) {
+                        "文件已改变，请重新预览：${file.path}"
+                    }
+                    zip.closeEntry()
+                    written++
+                }
+            }
+            context.checkCancelled()
+            // 重新打开写好的归档，逐项确认该格式必需的条目和清单字段都在。
+            validatePackExport(
+                temporary,
+                format,
+                layout,
+                plan,
+                options,
+                files.map { it.path }.toSet(),
+            )
+            validateSnapshot(plan)
+            require(resolveExportDestination(target) == resolved) { "导出目录已改变" }
+            try {
+                Files.move(
+                    temporary,
+                    target,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+            context.progress(1f, "${format.title} 已导出")
+        } finally {
+            temporary.deleteIfExists()
+        }
+    }
 
     private fun exportableInstance(id: String): GameInstance =
         store.instance(id).also {
@@ -797,7 +863,7 @@ internal class MrpackExporter(
             }
             require(
                 it.gameVersion.isNotBlank() &&
-                    (it.loader == LoaderType.Vanilla || it.loaderVersion.isNotBlank())
+                    (it.loader == LoaderType.Vanilla || it.loaderVersion.isNotBlank()),
             ) {
                 "实例缺少明确的游戏或加载器版本"
             }
@@ -810,7 +876,7 @@ internal class MrpackExporter(
                 plan.root.toRealPath() == plan.realRoot &&
                 instance.gameVersion == plan.components.gameVersion &&
                 instance.loader == plan.components.loader &&
-                instance.loaderVersion == plan.components.loaderVersion
+                instance.loaderVersion == plan.components.loaderVersion,
         ) {
             "实例配置已改变，请重新预览"
         }
@@ -837,7 +903,10 @@ private val exportContentRoots =
         )
 
 /** Launcher private/runtime files are never offered, even when a user selects all candidates. */
-internal fun excludedExportPath(path: String, allowLogs: Boolean = false): Boolean {
+internal fun excludedExportPath(
+    path: String,
+    allowLogs: Boolean = false,
+): Boolean {
     if (path.endsWith(".part", true)) return true
     val parts = path.lowercase(Locale.ROOT).split('/')
     val logLike =
@@ -850,38 +919,38 @@ internal fun excludedExportPath(path: String, allowLogs: Boolean = false): Boole
         part.startsWith(".molifox") ||
             part.startsWith("credentials") ||
             part in
-                setOf(
-                    "molifox",
-                    ".hmcl",
-                    ".git",
-                    ".fabric",
-                    ".quilt",
-                    "natives",
-                    "libraries",
-                    "assets",
-                    "versions",
-                    "accounts",
-                    "tokens",
-                    "launcher.json",
-                    "launcher.json.bak",
-                    "accounts.json",
-                    "hmcl.json",
-                    "hmclversion.cfg",
-                    "instance.cfg",
-                    "launcher_profiles.json",
-                    "launcher_accounts.json",
-                    "launcher_msa_credentials.bin",
-                    "usernamecache.json",
-                    "usercache.json",
-                    "realms_persistence.json",
-                    "modrinth.index.json",
-                    "mcbbs.packmeta",
-                    "molifox-instance.json",
-                    "molifox-backup.json",
-                    "manifest.json",
-                    "modpack.json",
-                    "mmc-pack.json",
-                )
+            setOf(
+                "molifox",
+                ".hmcl",
+                ".git",
+                ".fabric",
+                ".quilt",
+                "natives",
+                "libraries",
+                "assets",
+                "versions",
+                "accounts",
+                "tokens",
+                "launcher.json",
+                "launcher.json.bak",
+                "accounts.json",
+                "hmcl.json",
+                "hmclversion.cfg",
+                "instance.cfg",
+                "launcher_profiles.json",
+                "launcher_accounts.json",
+                "launcher_msa_credentials.bin",
+                "usernamecache.json",
+                "usercache.json",
+                "realms_persistence.json",
+                "modrinth.index.json",
+                "mcbbs.packmeta",
+                "molifox-instance.json",
+                "molifox-backup.json",
+                "manifest.json",
+                "modpack.json",
+                "mmc-pack.json",
+            )
     }
 }
 
@@ -889,8 +958,7 @@ internal fun excludedExportPath(path: String, allowLogs: Boolean = false): Boole
 internal fun backupOnlyExportPath(path: String): Boolean =
     path.substringBefore('/').lowercase(Locale.ROOT) in backupOnlyExportRoots
 
-internal fun saveExportPath(path: String): Boolean =
-    path.substringBefore('/').equals("saves", true)
+internal fun saveExportPath(path: String): Boolean = path.substringBefore('/').equals("saves", true)
 
 internal fun screenshotExportPath(path: String): Boolean =
     path.substringBefore('/').equals("screenshots", true)
@@ -939,18 +1007,22 @@ internal fun exportLogContainsSecret(path: Path): Boolean =
         true
     }
 
-private fun allowedMrpackDownload(value: String): Boolean = runCatching {
-    val uri = URI(value)
-    uri.scheme == "https" &&
-        uri.host?.lowercase(Locale.ROOT) in
+private fun allowedMrpackDownload(value: String): Boolean =
+    runCatching {
+        val uri = URI(value)
+        uri.scheme == "https" &&
+            uri.host?.lowercase(Locale.ROOT) in
             setOf("cdn.modrinth.com", "github.com", "raw.githubusercontent.com", "gitlab.com") &&
-        uri.userInfo == null &&
-        uri.fragment == null &&
-        uri.port in setOf(-1, 443)
-}
-    .getOrDefault(false)
+            uri.userInfo == null &&
+            uri.fragment == null &&
+            uri.port in setOf(-1, 443)
+    }.getOrDefault(false)
 
-internal data class ExportHashes(val size: Long, val sha1: String, val sha512: String)
+internal data class ExportHashes(
+    val size: Long,
+    val sha1: String,
+    val sha512: String,
+)
 
 internal suspend fun hashExportFile(
     path: Path,

@@ -5,11 +5,6 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.UUID
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -17,6 +12,20 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.UUID
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ContentInstallTest {
     @TempDir lateinit var temporary: Path
@@ -48,13 +57,21 @@ class ContentInstallTest {
                 )
             store.mutate { it.copy(instances = listOf(instance)) }
             val root = store.instancePath(instance.id).apply { createDirectories() }
-            fun dependency(project: String, version: String, relation: String = "required") =
-                mapOf(
-                    "project_id" to project,
-                    "version_id" to version,
-                    "dependency_type" to relation,
-                )
-            fun version(project: String, versionId: String): String {
+
+            fun dependency(
+                project: String,
+                version: String,
+                relation: String = "required",
+            ) = mapOf(
+                "project_id" to project,
+                "version_id" to version,
+                "dependency_type" to relation,
+            )
+
+            fun version(
+                project: String,
+                versionId: String,
+            ): String {
                 val dependencies =
                     when (project) {
                         "a" ->
@@ -87,9 +104,9 @@ class ContentInstallTest {
                                     "url" to server.loopbackUrl("/files/$project.jar").toString(),
                                     "size" to body.size,
                                     "hashes" to mapOf("sha1" to sha1(body)),
-                                )
+                                ),
                             ),
-                    )
+                    ),
                 )
             }
             server.dispatcher =
@@ -108,21 +125,24 @@ class ContentInstallTest {
                                             mapOf(
                                                 "project_type" to "mod",
                                                 "title" to path.substringAfterLast('/'),
-                                            )
-                                        )
+                                            ),
+                                        ),
                                     )
                             path.startsWith("/v2/version/") -> {
                                 val id = path.substringAfterLast('/')
                                 MockResponse().setBody(version(id.take(1), id))
                             }
                             path.startsWith("/files/") ->
-                                if (mode == "download-failure" && path.endsWith("a.jar"))
+                                if (mode == "download-failure" && path.endsWith("a.jar")) {
                                     MockResponse().setResponseCode(404)
-                                else
+                                } else {
                                     MockResponse()
                                         .setBody(
-                                            "${path.substringAfterLast('/').substringBefore('.')}-new"
+                                            "${path.substringAfterLast(
+                                                '/',
+                                            ).substringBefore('.')}-new",
                                         )
+                                }
                             else -> MockResponse().setResponseCode(404)
                         }
                     }
@@ -210,7 +230,7 @@ class ContentInstallTest {
             assertTrue(
                 service.planContent(hit(), instance.id, setOf("c")).files.any {
                     it.projectId == "c"
-                }
+                },
             )
         }
 

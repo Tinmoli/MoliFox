@@ -6,7 +6,14 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -29,10 +36,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import java.nio.file.Path
+import dev.molifox.core.AccountType
+import dev.molifox.core.LauncherState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.nio.file.Path
 
 /**
  * 开始页账户摘要：当前账户的头像、名字，行尾是「皮肤概览 / 刷新 / 箭头」。
@@ -59,6 +67,7 @@ fun HomeAccountSummary(
         produceState<Path?>(null, account?.id, account?.skinUrl, account?.localSkinId, revision) {
             value = account?.let { actions.controller.accountSkin(it, refresh = revision > 0) }
         }
+
     fun refresh() {
         val target = account ?: return
         if (refreshing) return
@@ -67,8 +76,9 @@ fun HomeAccountSummary(
             try {
                 // 正版账户的皮肤地址写在正版档案里：先重新拉档案（顺带更新 skinUrl），
                 // 再由 revision 让头像重读纹理缓存；离线与外置认证账户没有这个接口，只重读本地皮肤。
-                if (target.type == AccountType.Microsoft)
+                if (target.type == AccountType.Microsoft) {
                     actions.controller.skins.refreshProfile(target.id)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -79,13 +89,14 @@ fun HomeAccountSummary(
             }
         }
     }
-    if (account != null && managingSkin)
+    if (account != null && managingSkin) {
         SkinManagerDialog(
             account,
             actions,
             onUpdated = { revision++ },
             onDismiss = { managingSkin = false },
         )
+    }
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Row(
         modifier
@@ -99,7 +110,7 @@ fun HomeAccountSummary(
     ) {
         StaticSkinHead(
             skinPath,
-            actions.controller.store.directories,
+            { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
             revision,
             Modifier.size(48.dp).clip(RoundedCornerShape(Metrics.innerRadius)),
         )

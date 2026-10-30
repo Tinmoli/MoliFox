@@ -9,16 +9,37 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.onClick
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,7 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.LAUNCHER_VERSION
+import dev.molifox.core.LauncherState
 
 /** 顶部导航条目，列表顺序就是显示顺序：开始、下载、联机、设置。 「实例」已从导航移除（页面与 [Page] 枚举保留，仍可从开始页与实例详情进入）。 */
 val TopNavPages: List<Page> = listOf(Page.Home, Page.Discover, Page.Multiplayer, Page.Settings)
@@ -49,12 +71,16 @@ fun topNavPageOf(stored: String?): Page {
     return TopNavPages.firstOrNull { it.name.equals(key, true) || it.title == key } ?: Page.Home
 }
 
-class DesktopNavigationState(initialTab: String? = null) {
+class DesktopNavigationState(
+    initialTab: String? = null,
+) {
     var page by androidx.compose.runtime.mutableStateOf(topNavPageOf(initialTab))
     var editing by androidx.compose.runtime.mutableStateOf<String?>(null)
     var downloadKind by androidx.compose.runtime.mutableStateOf("minecraft")
+
     // 「账户列表」是开始页的子页：记住进入前的页面，返回时回到来源，而不是固定回开始页。
     private var accountReturnTo by androidx.compose.runtime.mutableStateOf(Page.Home)
+
     // 实例详情同属子页：开始页「版本设置」进详情后返回开始，从实例列表进来则返回列表。
     private var detailReturnTo by androidx.compose.runtime.mutableStateOf(Page.Instances)
 
@@ -62,7 +88,10 @@ class DesktopNavigationState(initialTab: String? = null) {
     val activeTab: Page
         get() = if (page in TopNavPages) page else Page.Home
 
-    fun navigate(destination: Page, resources: Boolean = false) {
+    fun navigate(
+        destination: Page,
+        resources: Boolean = false,
+    ) {
         editing = null
         if (destination == Page.Discover && resources) downloadKind = "mod"
         page = destination
@@ -87,7 +116,10 @@ class DesktopNavigationState(initialTab: String? = null) {
     }
 
     /** 打开实例详情：记下打开时可见的那一页。 开始页的「版本设置」传 Page.Home，实例列表里的「设置」传 Page.Instances。 */
-    fun openInstance(id: String, from: Page) {
+    fun openInstance(
+        id: String,
+        from: Page,
+    ) {
         editing = id
         detailReturnTo = if (from == Page.Home) Page.Home else Page.Instances
         page = Page.Instances
@@ -103,7 +135,7 @@ class DesktopNavigationState(initialTab: String? = null) {
 /** 选中/悬停/文字颜色共用的过渡曲线；关闭动画时直接跳到终值。 */
 @Composable
 private fun <T> stateSpec(): AnimationSpec<T> =
-    if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.fast)
+    if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.FAST)
 
 /**
  * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧；「设置」右侧的测试提示占用剩余空间， 窗口宽度不足 1100dp
@@ -119,25 +151,32 @@ fun AppHeader(
     val colors = MaterialTheme.colorScheme
     // 标题栏半透明：让背景/壁纸透过标题栏，无需开启玻璃效果；关闭时使用实色。
     val headerColor =
-        if (state.data.settings.titlebarTransparent) colors.surface.copy(alpha = 0f)
-        else colors.surface
+        if (state.data.settings.titlebarTransparent) {
+            colors.surface.copy(alpha = 0f)
+        } else {
+            colors.surface
+        }
     Column(Modifier.fillMaxWidth().background(headerColor)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // 窄窗口下提示会让位：整条隐藏，避免文字挤进窗口三键。
             val showBetaNotice = maxWidth >= 1100.dp
             Row(
-                Modifier.fillMaxWidth()
+                Modifier
+                    .fillMaxWidth()
                     .height(Metrics.titlebarHeight)
                     .padding(start = 16.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // 品牌 + 导航：这一整片是窗口拖拽区的可视部分，双击切换最大化。
                 Row(
-                    Modifier.fillMaxHeight()
+                    Modifier
+                        .fillMaxHeight()
                         .then(
-                            if (onTitlebarDoubleClick != null)
+                            if (onTitlebarDoubleClick != null) {
                                 Modifier.titlebarDoubleClick(onTitlebarDoubleClick)
-                            else Modifier
+                            } else {
+                                Modifier
+                            },
                         ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -178,17 +217,19 @@ fun AppHeader(
                 }
                 // 品牌与导航宽度固定，剩余空间全给提示；窗口三键始终贴右，位置不随提示变化。
                 Box(
-                    Modifier.weight(1f)
+                    Modifier
+                        .weight(1f)
                         .fillMaxHeight()
                         .then(
-                            if (onTitlebarDoubleClick != null)
+                            if (onTitlebarDoubleClick != null) {
                                 Modifier.titlebarDoubleClick(onTitlebarDoubleClick)
-                            else Modifier
-                        )
-                        .padding(end = 12.dp),
+                            } else {
+                                Modifier
+                            },
+                        ).padding(end = 12.dp),
                     contentAlignment = Alignment.CenterEnd,
                 ) {
-                    if (showBetaNotice)
+                    if (showBetaNotice) {
                         Text(
                             BETA_NOTICE,
                             modifier = Modifier.fillMaxWidth(),
@@ -198,6 +239,7 @@ fun AppHeader(
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.End,
                         )
+                    }
                 }
                 controls()
             }
@@ -241,7 +283,8 @@ private fun TopNavItem(
             label = "navContent",
         )
     Row(
-        Modifier.height(Metrics.navItemHeight)
+        Modifier
+            .height(Metrics.navItemHeight)
             .focusRing(focused, cornerRadius = Metrics.cardRadius)
             .clip(shape)
             .background(background)
@@ -251,8 +294,7 @@ private fun TopNavItem(
                 LocalIndication.current,
                 role = Role.Tab,
                 onClick = onClick,
-            )
-            .padding(horizontal = 12.dp),
+            ).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(page.icon, null, Modifier.size(17.dp), content)
@@ -329,7 +371,8 @@ fun NavigationEntry(
             label = "entryBackground",
         )
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .height(Metrics.controlHeight)
             .focusRing(focused, cornerRadius = Metrics.cardRadius)
             .clip(RoundedCornerShape(Metrics.cardRadius))
@@ -340,8 +383,7 @@ fun NavigationEntry(
                 LocalIndication.current,
                 role = Role.Tab,
                 onClick = onClick,
-            )
-            .padding(horizontal = 10.dp),
+            ).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (wide) Arrangement.Start else Arrangement.Center,
     ) {
@@ -363,15 +405,18 @@ fun NavigationEntry(
 
 /** 紧凑侧栏的缩进子条目（游戏文件夹/管理子菜单等）。 */
 @Composable
-fun RailSubEntry(title: String, onClick: () -> Unit) {
+fun RailSubEntry(
+    title: String,
+    onClick: () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .height(26.dp)
             .hoverHighlight(
                 RoundedCornerShape(Metrics.cardRadius),
                 alpha = .05f,
-            )
-            .clip(RoundedCornerShape(Metrics.cardRadius))
+            ).clip(RoundedCornerShape(Metrics.cardRadius))
             .selectable(false, role = Role.Tab, onClick = onClick)
             .padding(start = 25.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

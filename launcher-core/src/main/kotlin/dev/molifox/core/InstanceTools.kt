@@ -5,15 +5,25 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.UUID
-import kotlin.io.path.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.walk
 
 /** 整理实例目录的统计结果；重复模组、残留文件只报告，不删除用户内容。 */
 data class TidyReport(
@@ -42,7 +52,10 @@ data class VerifyReport(
 )
 
 /** 复制时单个文件的来源与目标相对路径（统一正斜杠，与账本一致）。 */
-private data class CopyEntry(val source: Path, val relative: String)
+private data class CopyEntry(
+    val source: Path,
+    val relative: String,
+)
 
 private val tidySkipRoots = setOf("logs", "crash-reports", "caches", ".cache")
 
@@ -59,8 +72,9 @@ private val modFilePattern = Regex("(?i).*\\.jar(?:\\.disabled)?")
  * - 整理默认只删除实例目录内的空目录；重复模组、停用模组、残留文件只统计和报告。
  * - 校验按 账本比对，未知文件只列入报告。
  */
-class InstanceTools(private val store: LauncherStore) {
-
+class InstanceTools(
+    private val store: LauncherStore,
+) {
     /**
      * 把 [sourceId] 复制到独立的新实例目录。
      *
@@ -101,7 +115,7 @@ class InstanceTools(private val store: LauncherStore) {
                                     playTimeSeconds = 0,
                                     installed = false,
                                     packFile = "",
-                                )
+                                ),
                     )
                 }
                 val destination = store.instancePath(targetId)
@@ -143,23 +157,29 @@ class InstanceTools(private val store: LauncherStore) {
      *
      * 只删除实例根之内的空目录，不跟随符号链接或目录联接，也不会删除实例根本身； 重复模组等危险动作不默认执行，仅在报告中列出。
      */
-    fun tidyInstance(instanceId: String, removeEmptyDirs: Boolean = true): TidyReport {
+    fun tidyInstance(
+        instanceId: String,
+        removeEmptyDirs: Boolean = true,
+    ): TidyReport {
         val instance = store.instance(instanceId)
         require(store.isolated(instance)) { "共用游戏目录的实例无法整理，请先启用版本隔离" }
         val root = store.instancePath(instanceId)
         require(root.isDirectory()) { "实例目录不存在，无法整理" }
         val mods = root.resolve("mods")
         val modFiles =
-            if (mods.isDirectory(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(mods))
+            if (mods.isDirectory(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(mods)) {
                 mods.listDirectoryEntries().filter {
                     it.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(it)
                 }
-            else emptyList()
+            } else {
+                emptyList()
+            }
         val disabledMods = modFiles.count { it.name.endsWith(".disabled", true) }
         val orphans = modFiles.filterNot { modFilePattern.matches(it.name) }
-        val hashes = modFiles.mapNotNull { file ->
-            runCatching { digest(file) }.getOrNull()?.lowercase()?.let { it to file }
-        }
+        val hashes =
+            modFiles.mapNotNull { file ->
+                runCatching { digest(file) }.getOrNull()?.lowercase()?.let { it to file }
+            }
         val duplicates =
             hashes
                 .groupBy({ it.first }, { it.second })
@@ -167,11 +187,12 @@ class InstanceTools(private val store: LauncherStore) {
                 .filter { it.size > 1 }
                 .map { group -> group.map { it.name }.sorted() }
                 .sortedBy { it.first() }
-        val totalBytes = duplicates.sumOf { group ->
-            group.drop(1).sumOf { name ->
-                runCatching { mods.resolve(name).fileSize() }.getOrDefault(0L)
+        val totalBytes =
+            duplicates.sumOf { group ->
+                group.drop(1).sumOf { name ->
+                    runCatching { mods.resolve(name).fileSize() }.getOrDefault(0L)
+                }
             }
-        }
         val removedEmptyDirs = if (removeEmptyDirs) removeEmptyDirectories(root) else 0
         return TidyReport(
             removedEmptyDirs = removedEmptyDirs,
@@ -207,8 +228,8 @@ class InstanceTools(private val store: LauncherStore) {
             val target = runCatching { safePath(root, file.path) }.getOrNull()
             if (
                 target == null ||
-                    !target.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
-                    Files.isSymbolicLink(target)
+                !target.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
+                Files.isSymbolicLink(target)
             ) {
                 missing.add(file.path)
                 continue
@@ -242,7 +263,10 @@ class InstanceTools(private val store: LauncherStore) {
 
     /** 同名实例自动加序号，避免两个实例在列表中无法区分。 */
     private fun uniqueName(base: String): String {
-        val taken = store.data.instances.map { it.name }.toSet()
+        val taken =
+            store.data.instances
+                .map { it.name }
+                .toSet()
         if (base !in taken) return base
         for (index in 2..999) {
             val candidate = "$base $index"
@@ -312,7 +336,11 @@ class InstanceTools(private val store: LauncherStore) {
     }
 
     /** 复制排除规则：只看相对路径，避免不同磁盘上绝对路径差异影响判断。 */
-    private fun skipForCopy(relative: String, copySaves: Boolean, copyMods: Boolean): Boolean {
+    private fun skipForCopy(
+        relative: String,
+        copySaves: Boolean,
+        copyMods: Boolean,
+    ): Boolean {
         val first = relative.substringBefore('/')
         if (first == ".molifox-saves-backups") return true
         if (first in tidySkipRoots) return true

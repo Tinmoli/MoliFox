@@ -2,6 +2,7 @@
 .work/
 .tooling/
 /MoliFox/
+/.minecraft/
 MoliFox.exe
 MoliFox-linux-*.run
 .gradle-home/

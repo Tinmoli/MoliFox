@@ -5,12 +5,6 @@
 
 package dev.molifox.core
 
-import java.io.ByteArrayOutputStream
-import java.nio.file.Path
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -19,6 +13,22 @@ import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayOutputStream
+import java.nio.file.Path
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class SelectedDirectoryInstallTest {
     @TempDir lateinit var directory: Path
@@ -33,8 +43,7 @@ class SelectedDirectoryInstallTest {
                         zip.closeEntry()
                     }
                 }
-            }
-            .toByteArray()
+            }.toByteArray()
 
     @Test
     fun `real downloads and pack overrides use chosen root even after another root is selected`() =
@@ -57,9 +66,9 @@ class SelectedDirectoryInstallTest {
                                             "url" to "$base/client.jar",
                                             "sha1" to sha1(jar),
                                             "size" to jar.size,
-                                        )
+                                        ),
                                 ),
-                        )
+                        ),
                     )
                 val metadata =
                     gson.toJson(
@@ -71,9 +80,9 @@ class SelectedDirectoryInstallTest {
                                         "type" to "release",
                                         "url" to "$base/version.json",
                                         "sha1" to sha1(profile.toByteArray()),
-                                    )
-                                )
-                        )
+                                    ),
+                                ),
+                        ),
                     )
                 server.dispatcher =
                     object : Dispatcher() {
@@ -123,7 +132,7 @@ class SelectedDirectoryInstallTest {
                                 "name" to "Pack in selected root",
                                 "dependencies" to mapOf("minecraft" to "1.20.1"),
                                 "files" to emptyList<Any>(),
-                            )
+                            ),
                         )
                     val pack =
                         directory.resolve("fixture.mrpack").apply {
@@ -133,8 +142,8 @@ class SelectedDirectoryInstallTest {
                                         "modrinth.index.json" to index.toByteArray(),
                                         "overrides/config/marker.txt" to
                                             "pack content".toByteArray(),
-                                    )
-                                )
+                                    ),
+                                ),
                             )
                         }
                     ContentService(store, network, installer)
@@ -155,7 +164,7 @@ class SelectedDirectoryInstallTest {
                         Path.of(
                             store.data.gameDirectories
                                 .single { it.id == store.data.activeGameDirectoryId }
-                                .path
+                                .path,
                         ),
                     )
                     assertFalse(later.resolve("versions").exists())

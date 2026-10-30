@@ -5,8 +5,10 @@
 
 package dev.molifox.core
 
-import kotlin.test.*
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class GameLogDecoderTest {
     @Test
@@ -14,13 +16,12 @@ class GameLogDecoderTest {
         val logs = mutableListOf<DecodedGameLog>()
         val decoder = GameLogDecoder(logs::add)
         listOf(
-                "<log4j:Event logger=\"game\" level=\"ERROR\" thread=\"Render thread\">",
-                "<log4j:Message><![CDATA[Could not load resource]]></log4j:Message>",
-                "<log4j:Throwable><![CDATA[java.io.IOException: missing",
-                "\tat example.Main.run(Main.java:1)]]></log4j:Throwable>",
-                "</log4j:Event>",
-            )
-            .forEach(decoder::accept)
+            "<log4j:Event logger=\"game\" level=\"ERROR\" thread=\"Render thread\">",
+            "<log4j:Message><![CDATA[Could not load resource]]></log4j:Message>",
+            "<log4j:Throwable><![CDATA[java.io.IOException: missing",
+            "\tat example.Main.run(Main.java:1)]]></log4j:Throwable>",
+            "</log4j:Event>",
+        ).forEach(decoder::accept)
         assertTrue(logs.single().error)
         assertTrue(logs.single().message.contains("Could not load resource"))
         assertTrue(logs.single().message.contains("example.Main.run"))
@@ -32,10 +33,10 @@ class GameLogDecoderTest {
         val logs = mutableListOf<DecodedGameLog>()
         val decoder = GameLogDecoder(logs::add)
         decoder.accept(
-            "<log4j:Event level=\"INFO\" thread=\"main\"><log4j:Message>A &amp; B &#x4E2D;</log4j:Message></log4j:Event>"
+            "<log4j:Event level=\"INFO\" thread=\"main\"><log4j:Message>A &amp; B &#x4E2D;</log4j:Message></log4j:Event>",
         )
         decoder.accept(
-            "<log4j:Event level=\"WARN\"><log4j:Message><![CDATA[A & B]]></log4j:Message></log4j:Event>"
+            "<log4j:Event level=\"WARN\"><log4j:Message><![CDATA[A & B]]></log4j:Message></log4j:Event>",
         )
         decoder.accept("MOLIFOX_GAME_STARTED")
         decoder.accept("<log4j:Event level=\"ERROR\">")

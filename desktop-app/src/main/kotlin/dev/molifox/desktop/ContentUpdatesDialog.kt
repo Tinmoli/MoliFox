@@ -5,23 +5,54 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.onClick
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import kotlinx.coroutines.*
+import dev.molifox.core.ContentHit
+import dev.molifox.core.ContentInstallPlan
+import dev.molifox.core.ContentSource
+import dev.molifox.core.ContentUpdateReport
+import dev.molifox.core.ModFile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 资源更新管理：检查更新后选择资源、准备安装计划，再确认执行更新任务。 */
 @Composable
-fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -> Unit) {
+fun ContentUpdatesDialog(
+    instanceId: String,
+    actions: UiActions,
+    onDismiss: () -> Unit,
+) {
     var report by remember(instanceId) { mutableStateOf<ContentUpdateReport?>(null) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var includePrerelease by remember { mutableStateOf(false) }
@@ -42,11 +73,17 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
         report = null
         selected = emptySet()
         try {
-            report =
+            val checkedReport =
                 withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog.checkUpdates(instanceId, includePrerelease)
+                    actions.controller.content.catalog
+                        .checkUpdates(instanceId, includePrerelease)
                 }
-            selected = report!!.items.filter { it.update != null }.map { it.key }.toSet()
+            report = checkedReport
+            selected =
+                checkedReport.items
+                    .filter { it.update != null }
+                    .map { it.key }
+                    .toSet()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -120,9 +157,9 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                     }
                     if (prepared.optional.isNotEmpty()) MutedText("可选前置默认不安装；可在项目详情中单独选择。")
                 }
-            } else
+            } else {
                 report?.let { result ->
-                    if (result.items.isEmpty())
+                    if (result.items.isEmpty()) {
                         Panel(Modifier.fillMaxWidth()) {
                             EmptyState(
                                 "没有可检查的资源",
@@ -130,7 +167,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                 Icons.Outlined.CloudOff,
                             )
                         }
-                    else
+                    } else {
                         SettingsSection(
                             "可更新资源",
                             "已识别 ${result.items.size} 个文件 · 已选 ${selected.size} 项",
@@ -146,8 +183,11 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                         item.key in selected,
                                         { checked ->
                                             selected =
-                                                if (checked) selected + item.key
-                                                else selected - item.key
+                                                if (checked) {
+                                                    selected + item.key
+                                                } else {
+                                                    selected - item.key
+                                                }
                                         },
                                         enabled = item.update != null && !loading && !busy,
                                     )
@@ -209,7 +249,9 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                 }
                             }
                         }
+                    }
                 }
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onDismiss) { Text("关闭更新管理") }
@@ -226,7 +268,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                             if (prepared != null) {
                                 actions.controller.installContent(prepared)
                                 onDismiss()
-                            } else
+                            } else {
                                 plan =
                                     withContext(Dispatchers.IO) {
                                         actions.controller.content.planUpdates(
@@ -234,6 +276,7 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
                                             selected,
                                         )
                                     }
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
@@ -249,7 +292,10 @@ fun ContentUpdatesDialog(instanceId: String, actions: UiActions, onDismiss: () -
 }
 
 @Composable
-fun ModDetailsDialog(mod: ModFile, onDismiss: () -> Unit) {
+fun ModDetailsDialog(
+    mod: ModFile,
+    onDismiss: () -> Unit,
+) {
     Modal(mod.metadata.title.ifBlank { mod.filename }, mod.filename, onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
@@ -265,8 +311,9 @@ fun ModDetailsDialog(mod: ModFile, onDismiss: () -> Unit) {
                 MutedText("Mod ID：${entry.id}")
                 if (entry.authors.isNotBlank()) Text("作者：${entry.authors}")
                 if (entry.description.isNotBlank()) Text(entry.description)
-                if (entry.dependencies.isNotEmpty())
+                if (entry.dependencies.isNotEmpty()) {
                     Text("声明的依赖：\n${entry.dependencies.joinToString("\n")}")
+                }
             }
             MutedText("使用模组页的「检查更新」查看更新；这里可按文件哈希识别内容来源，再查看项目详情、选择版本或锁定。")
         }

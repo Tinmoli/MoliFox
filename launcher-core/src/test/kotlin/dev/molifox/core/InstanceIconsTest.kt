@@ -5,14 +5,27 @@
 
 package dev.molifox.core
 
-import java.awt.image.BufferedImage
-import java.nio.file.Path
-import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.awt.image.BufferedImage
+import java.nio.file.Path
+import javax.imageio.ImageIO
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class InstanceIconsTest {
     @TempDir lateinit var temporary: Path
@@ -21,12 +34,21 @@ class InstanceIconsTest {
         path: Path = temporary.resolve("icon.png"),
         width: Int = 32,
         height: Int = 32,
-    ): Path = path.apply {
-        parent.createDirectories()
-        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-        for (x in 0 until width) for (y in 0 until height) image.setRGB(x, y, 0xFF8866CC.toInt())
-        ImageIO.write(image, "png", toFile())
-    }
+    ): Path =
+        path.apply {
+            parent.createDirectories()
+            val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    image.setRGB(
+                        x,
+                        y,
+                        0xFF8866CC.toInt(),
+                    )
+                }
+            }
+            ImageIO.write(image, "png", toFile())
+        }
 
     private fun fixture(): Pair<LauncherStore, GameInstance> {
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
@@ -102,7 +124,12 @@ class InstanceIconsTest {
             }
             val icons = InstanceIcons(store)
             assertEquals(externalIcon, icons.texture(instance))
-            assertTrue(store.dataDirectory.resolve("icons").listDirectoryEntries().isEmpty())
+            assertTrue(
+                store.dataDirectory
+                    .resolve("icons")
+                    .listDirectoryEntries()
+                    .isEmpty(),
+            )
             icons.setPreset(instance.id, InstanceIconStyle.Fabric)
             assertNull(icons.texture(store.instance(instance.id)))
             assertTrue(externalIcon.exists())
@@ -111,25 +138,30 @@ class InstanceIconsTest {
         }
 
     @Test
-    fun `invalid image dimensions corrupt assets and forged IDs cannot alter existing icons`():
-        Unit = runBlocking {
-        val (store, instance) = fixture()
-        val icons = InstanceIcons(store)
-        icons.setCustom(instance.id, image())
-        val valid = store.instance(instance.id)
-        val fake = temporary.resolve("fake.png").apply { writeText("invalid") }
-        assertFailsWith<IllegalArgumentException> { icons.setCustom(instance.id, fake) }
-        assertFailsWith<IllegalArgumentException> {
-            icons.setCustom(instance.id, image(temporary.resolve("rectangle.png"), 32, 16))
+    fun `invalid images and forged IDs cannot alter existing icons`(): Unit =
+        runBlocking {
+            val (store, instance) = fixture()
+            val icons = InstanceIcons(store)
+            icons.setCustom(instance.id, image())
+            val valid = store.instance(instance.id)
+            val fake = temporary.resolve("fake.png").apply { writeText("invalid") }
+            assertFailsWith<IllegalArgumentException> { icons.setCustom(instance.id, fake) }
+            assertFailsWith<IllegalArgumentException> {
+                icons.setCustom(instance.id, image(temporary.resolve("rectangle.png"), 32, 16))
+            }
+            assertEquals(valid, store.instance(instance.id))
+            val asset = requireNotNull(icons.texture(valid))
+            asset.writeText("broken")
+            assertNull(icons.texture(valid))
+            assertNull(icons.texture(valid.copy(iconId = "../../../fake")))
+            assertEquals("invalid", fake.readText())
+            assertTrue(
+                store.dataDirectory
+                    .resolve("icons")
+                    .listDirectoryEntries("*.tmp")
+                    .isEmpty(),
+            )
         }
-        assertEquals(valid, store.instance(instance.id))
-        val asset = requireNotNull(icons.texture(valid))
-        asset.writeText("broken")
-        assertNull(icons.texture(valid))
-        assertNull(icons.texture(valid.copy(iconId = "../../../fake")))
-        assertEquals("invalid", fake.readText())
-        assertTrue(store.dataDirectory.resolve("icons").listDirectoryEntries("*.tmp").isEmpty())
-    }
 
     @Test
     fun `older instance JSON retains automatic icon defaults`() {

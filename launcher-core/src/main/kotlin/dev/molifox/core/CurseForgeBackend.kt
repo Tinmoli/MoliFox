@@ -6,10 +6,11 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
-import java.nio.file.Path
-import kotlin.io.path.*
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import java.nio.file.Path
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
 
 internal fun curseForgeProjectId(id: String): String {
     require(id.matches(Regex("curseforge:[1-9][0-9]{0,9}"))) { "无效的 CurseForge 项目标识" }
@@ -35,14 +36,18 @@ internal class CurseForgeBackend(
     private var fallbackLoggedFor: String? = null
 
     private fun baseUrl(): String {
-        val raw = store.data.settings.curseForgeBaseUrl.orEmpty()
+        val raw =
+            store.data.settings.curseForgeBaseUrl
+                .orEmpty()
         val effective = normalizedCurseForgeBaseUrl(raw)
         if (effective == DEFAULT_CURSE_FORGE_BASE_URL && raw.trim().trimEnd('/') != effective) {
             if (fallbackLoggedFor != raw) {
                 store.log("CurseForge 服务地址无效，已使用默认镜像：$DEFAULT_CURSE_FORGE_BASE_URL", true)
                 fallbackLoggedFor = raw
             }
-        } else fallbackLoggedFor = null
+        } else {
+            fallbackLoggedFor = null
+        }
         return effective
     }
 
@@ -59,23 +64,33 @@ internal class CurseForgeBackend(
             "datapack" to "data-packs",
         )
 
-    /** 分类按资源类型缓存：只存内存，切换类型时按 classId 重新取，不落盘。 */
-    private val categoryCache = mutableMapOf<Int, List<ContentCategoryOption>>()
-
-    private suspend fun request(path: String, body: JsonObject? = null) =
-        network.curseForgeJson("$api/$path", body)
+    private suspend fun request(
+        path: String,
+        body: JsonObject? = null,
+    ) = network.curseForgeJson("$api/$path", body)
 
     /** 失败时只带响应开头，供日志和界面定位是哪一级、哪段数据出的问题。 */
     private fun snippet(payload: Any): String =
-        payload.toString().take(200).replace('\n', ' ').replace('\r', ' ')
+        payload
+            .toString()
+            .take(200)
+            .replace('\n', ' ')
+            .replace('\r', ' ')
 
-    private fun fail(stage: String, detail: String, payload: Any): Nothing {
+    private fun fail(
+        stage: String,
+        detail: String,
+        payload: Any,
+    ): Nothing {
         val message = "CurseForge $stage 失败：$detail；响应片段：${snippet(payload)}"
         store.log(message, true)
         throw IllegalStateException(message)
     }
 
-    private class ClassIndex(val kinds: Map<Int, String>, val payload: JsonObject)
+    private class ClassIndex(
+        val kinds: Map<Int, String>,
+        val payload: JsonObject,
+    )
 
     /** 顶层资源类型（游戏 ID 432 的 class 分类）。镜像字段可能缺失，这里按顶层项容错识别。 */
     private suspend fun classIndex(): ClassIndex {
@@ -89,15 +104,14 @@ internal class CurseForgeBackend(
                 .filter { category ->
                     category.flag("isClass")
                         ?: (category.get("classId") == null || category.get("classId").isJsonNull)
-                }
-                .mapNotNull { category ->
+                }.mapNotNull { category ->
                     classSlugs.entries
                         .find { it.value == category.string("slug") }
                         ?.let { category.int("id") to it.key }
-                }
-                .toMap()
-        if (kinds.isEmpty())
+                }.toMap()
+        if (kinds.isEmpty()) {
             fail("分类映射", "镜像没有返回可识别的资源类型（mc-mods、modpacks 等）", payload)
+        }
         return ClassIndex(kinds, payload)
     }
 
@@ -107,35 +121,35 @@ internal class CurseForgeBackend(
     suspend fun categories(kind: String): List<ContentCategoryOption> {
         val index = classIndex()
         val classId =
-            index.kinds.entries.find { it.value == kind }?.key
+            index.kinds.entries
+                .find { it.value == kind }
+                ?.key
                 ?: fail("分类映射", "镜像没有 $kind 对应的资源类型", index.payload)
         return categoryOptions(classId)
     }
 
-    private suspend fun categoryOptions(classId: Int): List<ContentCategoryOption> =
-        categoryCache[classId]
-            ?: run {
-                val payload = request("categories?gameId=432&classId=$classId")
-                val options =
-                    payload
-                        .array("data")
-                        .mapNotNull { element -> runCatching { element.asJsonObject }.getOrNull() }
-                        .filter { it.intOrNull("id") != null && it.string("name").isNotBlank() }
-                        .map {
-                            ContentCategoryOption(
-                                it.string("id"),
-                                it.string("name"),
-                                it.string("slug"),
-                            )
-                        }
-                        .distinctBy { it.id }
-                // 空列表不缓存，镜像恢复后下一次搜索能重新取到。
-                if (options.isNotEmpty()) categoryCache[classId] = options
-                options
-            }
+    private suspend fun categoryOptions(classId: Int): List<ContentCategoryOption> {
+        val payload = request("categories?gameId=432&classId=$classId")
+        val options =
+            payload
+                .array("data")
+                .mapNotNull { element -> runCatching { element.asJsonObject }.getOrNull() }
+                .filter { it.intOrNull("id") != null && it.string("name").isNotBlank() }
+                .map {
+                    ContentCategoryOption(
+                        it.string("id"),
+                        it.string("name"),
+                        it.string("slug"),
+                    )
+                }.distinctBy { it.id }
+        return options
+    }
 
     /** 选中的分类必须能在镜像自己的分类表里找到，否则不发 categoryId，避免静默 0 结果。 */
-    private suspend fun resolveCategory(classId: Int, selected: Set<String>): Int? {
+    private suspend fun resolveCategory(
+        classId: Int,
+        selected: Set<String>,
+    ): Int? {
         if (selected.isEmpty()) return null
         val known = categoryOptions(classId).map { it.id }.toSet()
         val matched =
@@ -144,8 +158,9 @@ internal class CurseForgeBackend(
             store.log("CurseForge 分类筛选无法映射到当前资源类型，已忽略：${selected.joinToString()}", true)
             return null
         }
-        if (matched.size > 1)
+        if (matched.size > 1) {
             store.log("CurseForge 一次只按一个分类筛选，已使用分类 ${matched.first()}")
+        }
         return matched.first()
     }
 
@@ -189,22 +204,27 @@ internal class CurseForgeBackend(
     ): ContentSearch {
         val index = classIndex()
         val classId =
-            index.kinds.entries.find { it.value == kind }?.key
+            index.kinds.entries
+                .find { it.value == kind }
+                ?.key
                 ?: fail("搜索分类", "镜像没有 $kind 对应的资源类型", index.payload)
         val pageSize = minOf(12, 10000 - offset)
         if (pageSize <= 0) return ContentSearch(emptyList(), 10000)
         val selection = filter ?: ContentFilter(instance?.gameVersion.orEmpty(), instance?.loader)
         // CurseForge 的类别是数字 categoryId；只发送镜像自己确认存在的编号。
-        val filters = buildString {
-            resolvedGameVersion(selection.gameVersion)?.let {
-                append("&gameVersion=${encoded(it)}")
+        val filters =
+            buildString {
+                resolvedGameVersion(selection.gameVersion)?.let {
+                    append("&gameVersion=${encoded(it)}")
+                }
+                if (kind == "mod") loaderId(selection.loader)?.let { append("&modLoaderType=$it") }
+                resolveCategory(classId, selection.categories)?.let { append("&categoryId=$it") }
             }
-            if (kind == "mod") loaderId(selection.loader)?.let { append("&modLoaderType=$it") }
-            resolveCategory(classId, selection.categories)?.let { append("&categoryId=$it") }
-        }
         val result =
             request(
-                "mods/search?gameId=432&classId=$classId&searchFilter=${encoded(query)}&index=$offset&pageSize=$pageSize&sortField=${if (query.isBlank()) 6 else 2}&sortOrder=desc$filters"
+                "mods/search?gameId=432&classId=$classId&searchFilter=${encoded(
+                    query,
+                )}&index=$offset&pageSize=$pageSize&sortField=${if (query.isBlank()) 6 else 2}&sortOrder=desc$filters",
             )
         val data = result.array("data").toList()
         val hits = mutableListOf<ContentHit>()
@@ -217,25 +237,34 @@ internal class CurseForgeBackend(
             }
             val outcome = runCatching { hitOrNull(info, kind) }
             val hit = outcome.getOrNull()
-            if (hit != null) hits += hit
-            else failures += outcome.exceptionOrNull()?.message ?: "项目标识或游戏 ID 无效"
+            if (hit != null) {
+                hits += hit
+            } else {
+                failures += outcome.exceptionOrNull()?.message ?: "项目标识或游戏 ID 无效"
+            }
         }
         // 映射问题不能变成「没有结果」：一条都没认出来时按错误上报，并带上响应片段。
-        if (hits.isEmpty() && data.isNotEmpty())
+        if (hits.isEmpty() && data.isNotEmpty()) {
             fail("搜索结果映射", "全部 ${data.size} 条无法识别（${failures.first()}）", result)
-        if (failures.isNotEmpty())
+        }
+        if (failures.isNotEmpty()) {
             store.log(
                 "CurseForge 搜索结果有 ${failures.size} 条无法识别，已跳过：${failures.first()}",
                 true,
             )
+        }
         val total = result.obj("pagination").int("totalCount").coerceIn(0, 10000)
-        if (data.isEmpty() && total > 0)
+        if (data.isEmpty() && total > 0) {
             store.log("CurseForge 返回 totalCount=$total 但没有条目，请稍后重试：$offset", true)
+        }
         return ContentSearch(hits, total)
     }
 
     /** 搜索结果中的一条。缺失的可选字段按空值处理，只有标识矛盾才跳过（不抛异常拖垮整页）。 */
-    private fun hitOrNull(info: JsonObject, kind: String): ContentHit? {
+    private fun hitOrNull(
+        info: JsonObject,
+        kind: String,
+    ): ContentHit? {
         info.intOrNull("gameId")?.let { require(it == 432) { "搜索结果不属于 Minecraft" } }
         val rawId = info.string("id")
         val id = "curseforge:$rawId"
@@ -248,7 +277,8 @@ internal class CurseForgeBackend(
             info.array("authors").joinToString(", ") { author ->
                 runCatching { author.asJsonObject.string("name") }.getOrDefault("")
             },
-            info.get("downloadCount")
+            info
+                .get("downloadCount")
                 ?.takeUnless { it.isJsonNull }
                 ?.let { runCatching { it.asLong }.getOrNull() }
                 ?: 0,
@@ -261,8 +291,10 @@ internal class CurseForgeBackend(
         )
     }
 
-    private fun hit(info: JsonObject, kind: String): ContentHit =
-        requireNotNull(hitOrNull(info, kind)) { "CurseForge 项目标识无效" }
+    private fun hit(
+        info: JsonObject,
+        kind: String,
+    ): ContentHit = requireNotNull(hitOrNull(info, kind)) { "CurseForge 项目标识无效" }
 
     override suspend fun project(id: String): JsonObject {
         val raw = rawProject(id)
@@ -317,7 +349,10 @@ internal class CurseForgeBackend(
         val requested = versionIds.distinct().associateWith(::curseForgeVersionId)
         val projects = mutableMapOf<String, JsonObject>()
         val files = mutableMapOf<String, JsonObject>()
-        for (batch in requested.values.map { it.first }.distinct().chunked(50)) {
+        for (batch in requested.values
+            .map { it.first }
+            .distinct()
+            .chunked(50)) {
             val body =
                 JsonObject().apply { add("modIds", gson.toJsonTree(batch.map { it.toLong() })) }
             for (entry in request("mods", body).array("data")) {
@@ -328,7 +363,10 @@ internal class CurseForgeBackend(
                 projects[info.string("id")] = info
             }
         }
-        for (batch in requested.values.map { it.second }.distinct().chunked(50)) {
+        for (batch in requested.values
+            .map { it.second }
+            .distinct()
+            .chunked(50)) {
             val body =
                 JsonObject().apply { add("fileIds", gson.toJsonTree(batch.map { it.toLong() })) }
             for (entry in request("mods/files", body).array("data")) {
@@ -372,15 +410,19 @@ internal class CurseForgeBackend(
                     .filter { it.boolean("isAvailable") && !it.boolean("isServerPack") }
                     .map { normalizeFile(it, project) }
             offset += page.size
-            if (page.size < 50 || offset >= response.obj("pagination").int("totalCount", offset))
+            if (page.size < 50 || offset >= response.obj("pagination").int("totalCount", offset)) {
                 break
+            }
         }
         return files
             .distinctBy { it.string("id") }
             .sortedByDescending { it.string("date_published") }
     }
 
-    internal fun normalizeFile(file: JsonObject, project: JsonObject): JsonObject {
+    internal fun normalizeFile(
+        file: JsonObject,
+        project: JsonObject,
+    ): JsonObject {
         val projectId = "curseforge:${project.string("id")}"
         val versionId = "$projectId:${file.string("id")}"
         curseForgeVersionId(versionId)
@@ -388,7 +430,7 @@ internal class CurseForgeBackend(
             file.isMinecraftProject() &&
                 file.string("modId") == curseForgeProjectId(projectId) &&
                 file.boolean("isAvailable") &&
-                !file.boolean("isServerPack")
+                !file.boolean("isServerPack"),
         ) {
             "CurseForge 文件不可用、属于服务端或项目不匹配"
         }
@@ -431,7 +473,7 @@ internal class CurseForgeBackend(
                 gson.toJsonTree(
                     tags.filter {
                         Regex("^(?:[0-9]|[ab][0-9]|rd-|inf-).*").matches(it)
-                    }
+                    },
                 ),
             )
             add(
@@ -439,7 +481,7 @@ internal class CurseForgeBackend(
                 gson.toJsonTree(
                     tags
                         .filter { it.lowercase() in setOf("fabric", "quilt", "forge", "neoforge") }
-                        .map { it.lowercase() }
+                        .map { it.lowercase() },
                 ),
             )
             add(
@@ -452,10 +494,12 @@ internal class CurseForgeBackend(
                         mapOf(
                             "project_id" to dependency,
                             "dependency_type" to
-                                (relations[dep.int("relationType")]
-                                    ?: error("未知的 CurseForge 依赖类型")),
+                                (
+                                    relations[dep.int("relationType")]
+                                        ?: error("未知的 CurseForge 依赖类型")
+                                ),
                         )
-                    }
+                    },
                 ),
             )
             val filename = safeFilename(file.string("fileName"))
@@ -470,7 +514,18 @@ internal class CurseForgeBackend(
                 addProperty("manual_download", true)
                 addProperty(
                     "website",
-                    "https://www.curseforge.com/minecraft/${classSlugs.values.find { project.obj("links").string("websiteUrl").contains("/$it/") } ?: "mc-mods"}/${encoded(project.string("slug"))}/files/${file.string("id")}",
+                    "https://www.curseforge.com/minecraft/${classSlugs.values.find {
+                        project
+                            .obj(
+                                "links",
+                            ).string(
+                                "websiteUrl",
+                            ).contains(
+                                "/$it/",
+                            )
+                    } ?: "mc-mods"}/${encoded(
+                        project.string("slug"),
+                    )}/files/${file.string("id")}",
                 )
             }
             add(
@@ -481,19 +536,26 @@ internal class CurseForgeBackend(
                             "filename" to filename,
                             "primary" to true,
                             "url" to
-                                if (restricted) ""
-                                else contentFileUrl(api, file.string("downloadUrl")),
+                                if (restricted) {
+                                    ""
+                                } else {
+                                    contentFileUrl(api, file.string("downloadUrl"))
+                                },
                             "size" to size,
                             "hashes" to mapOf("sha1" to sha1),
-                        )
-                    )
+                        ),
+                    ),
                 ),
             )
         }
     }
 
     /** 本地文件的 CurseForge 指纹；按路径 + 大小 + 修改时间缓存，重复检查不再重读整颗 jar。 */
-    private data class MurmurEntry(val size: Long, val modified: Long, val fingerprint: Long)
+    private data class MurmurEntry(
+        val size: Long,
+        val modified: Long,
+        val fingerprint: Long,
+    )
 
     private val murmurCache =
         object : LinkedHashMap<String, MurmurEntry>(64, .75f, true) {
@@ -503,14 +565,14 @@ internal class CurseForgeBackend(
 
     private suspend fun fingerprintOf(path: Path): Pair<Long, Long>? {
         val size = runCatching { path.fileSize() }.getOrNull() ?: return null
-        val modified = runCatching { path.getLastModifiedTime().toMillis() }.getOrNull() ?: return null
+        val modified =
+            runCatching { path.getLastModifiedTime().toMillis() }.getOrNull() ?: return null
         val key = path.toAbsolutePath().normalize().toString()
         synchronized(murmurCache) {
             murmurCache[key]?.takeIf { it.size == size && it.modified == modified }
+        }?.let {
+            return it.fingerprint to size
         }
-            ?.let {
-                return it.fingerprint to size
-            }
         val fingerprint = runCatching { curseForgeFingerprint(path) }.getOrNull() ?: return null
         synchronized(murmurCache) { murmurCache[key] = MurmurEntry(size, modified, fingerprint) }
         return fingerprint to size
@@ -531,14 +593,18 @@ internal class CurseForgeBackend(
         }
         if (local.isEmpty()) return emptyMap()
         val exact = mutableMapOf<Pair<Long, Long>, MutableList<JsonObject>>()
-        for (batch in local.values.map { it.first }.distinct().chunked(1000)) {
+        for (batch in local.values
+            .map { it.first }
+            .distinct()
+            .chunked(1000)) {
             val body = JsonObject().apply { add("fingerprints", gson.toJsonTree(batch)) }
             for (element in request("fingerprints/432", body).obj("data").array("exactMatches")) {
                 val file =
                     runCatching { element.asJsonObject.obj("file") }.getOrNull() ?: continue
                 val fingerprint =
                     file.get("fileFingerprint")?.takeUnless { it.isJsonNull }?.asLong ?: continue
-                val length = file.get("fileLength")?.takeUnless { it.isJsonNull }?.asLong ?: continue
+                val length =
+                    file.get("fileLength")?.takeUnless { it.isJsonNull }?.asLong ?: continue
                 exact.getOrPut(fingerprint to length) { mutableListOf() } += file
             }
         }
@@ -558,10 +624,10 @@ internal class CurseForgeBackend(
                                 hash.int("algo") == 1 &&
                                 hash.string("value").equals(sha1, true)
                         }
-                    }
-                    .distinctBy { it.string("id") }
-            if (unique.size == 1 && unique.first().string("id").isNotBlank())
+                    }.distinctBy { it.string("id") }
+            if (unique.size == 1 && unique.first().string("id").isNotBlank()) {
                 matched[path] = unique.first()
+            }
         }
         return matched
     }
@@ -591,12 +657,24 @@ internal class CurseForgeBackend(
      * 用于模组、资源包与光影的更新检查：指纹与项目各一次批量请求，指纹记录字段不全时再用
      * 一次批量文件请求补齐；[kind] 非空时用镜像自己的分类表过滤资源类型。
      */
-    suspend fun fingerprintFiles(files: List<Path>, kind: String? = null): Map<Path, JsonObject> {
+    suspend fun fingerprintFiles(
+        files: List<Path>,
+        kind: String? = null,
+    ): Map<Path, JsonObject> {
         val matches = matchFiles(files)
         if (matches.isEmpty()) return emptyMap()
         val projects = mutableMapOf<String, JsonObject>()
-        for (batch in
-            matches.values.map { it.string("modId") }.filter { it.isNotBlank() }.distinct().chunked(50)) {
+        for (
+        batch in
+        matches.values
+            .map {
+                it.string(
+                    "modId",
+                )
+            }.filter { it.isNotBlank() }
+            .distinct()
+            .chunked(50)
+        ) {
             val body =
                 JsonObject().apply {
                     add("modIds", gson.toJsonTree(batch.mapNotNull { it.toLongOrNull() }))
@@ -613,15 +691,19 @@ internal class CurseForgeBackend(
             val project = projects[file.string("modId")] ?: continue
             if (kinds != null && kinds[project.intOrNull("classId") ?: 0] != kind) continue
             val normalized = runCatching { normalizeFile(file, project) }.getOrNull()
-            if (normalized != null) result[path] = normalized
-            else incomplete += path to file.string("id")
+            if (normalized != null) {
+                result[path] = normalized
+            } else {
+                incomplete += path to file.string("id")
+            }
         }
         if (incomplete.isNotEmpty()) {
             val full = filesById(incomplete.map { it.second })
             for ((path, id) in incomplete) {
                 val file = full[id] ?: continue
                 val project = projects[file.string("modId")] ?: continue
-                val normalized = runCatching { normalizeFile(file, project) }.getOrNull() ?: continue
+                val normalized =
+                    runCatching { normalizeFile(file, project) }.getOrNull() ?: continue
                 result[path] = normalized
             }
         }

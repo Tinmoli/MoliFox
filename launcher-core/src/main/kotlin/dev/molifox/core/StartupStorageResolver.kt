@@ -10,10 +10,14 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
 
-/** Validate the portable directory; never silently create a second profile elsewhere. */
-class StartupStorageResolver(private val probe: (Path) -> Unit = ::checkStartupStorage) {
+/** 检查便携数据目录；不可写时明确报错，避免静默转移配置到其他位置。 */
+class StartupStorageResolver(
+    private val probe: (Path) -> Unit = ::checkStartupStorage,
+) {
     fun resolve(directory: Path): Path {
         val target = directory.toAbsolutePath().normalize()
         try {
@@ -35,12 +39,11 @@ private fun checkStartupStorage(directory: Path) {
     } finally {
         Files.deleteIfExists(temporary)
     }
-    // A directory can be writable while an existing lock file has a restrictive ACL.
-    // Opening must succeed, but do not acquire or modify another process's lock.
-    FileChannel.open(
+    // 文件夹可写不代表已有锁文件可写；只验证打开权限，不获取其他进程的锁。
+    FileChannel
+        .open(
             directory.resolve("instance.lock"),
             StandardOpenOption.CREATE,
             StandardOpenOption.WRITE,
-        )
-        .use {}
+        ).use {}
 }

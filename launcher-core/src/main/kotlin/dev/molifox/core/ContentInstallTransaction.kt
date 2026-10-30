@@ -11,14 +11,25 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.walk
+import kotlin.io.path.writeBytes
 
 internal class ContentInstallTransaction(
     private val store: LauncherStore,
     private val network: NetworkClient,
     private val api: String,
 ) {
-    suspend fun install(plan: ContentInstallPlan, context: JobContext) {
+    suspend fun install(
+        plan: ContentInstallPlan,
+        context: JobContext,
+    ) {
         val instance = store.instance(plan.instanceId)
         require(instance.installed && contentSignature(store, instance) == plan.signature) {
             "实例配置已改变，请重新选择安装内容"
@@ -34,7 +45,7 @@ internal class ContentInstallTransaction(
             verifyContentSource(store, instance.id, source)
             require(
                 !registry.obj(source.projectId).boolean("locked") ||
-                    registry.obj(source.projectId).string("versionId") == source.versionId
+                    registry.obj(source.projectId).string("versionId") == source.versionId,
             ) {
                 "锁定版本与本地文件不一致，请先整理或解锁"
             }
@@ -42,8 +53,8 @@ internal class ContentInstallTransaction(
                 source.projectId,
                 contentSourceRecord(
                     source.copy(
-                        locked = source.locked || registry.obj(source.projectId).boolean("locked")
-                    )
+                        locked = source.locked || registry.obj(source.projectId).boolean("locked"),
+                    ),
                 ),
             )
         }
@@ -60,6 +71,7 @@ internal class ContentInstallTransaction(
         val installed = mutableListOf<Path>()
         var committed = false
         var cleanStaging = true
+
         fun backup(file: Path) {
             if (file in backups || !file.exists()) return
             require(file.isRegularFile() && !Files.isSymbolicLink(file)) { "资源目标不是普通文件：$file" }
@@ -92,7 +104,7 @@ internal class ContentInstallTransaction(
             )
             require(
                 contentSignature(store, store.instance(plan.instanceId)) == plan.signature &&
-                    (if (registryFile.exists()) digest(registryFile) else "") == plan.registryHash
+                    (if (registryFile.exists()) digest(registryFile) else "") == plan.registryHash,
             ) {
                 "安装期间实例或资源列表发生变化，请重新准备安装"
             }
@@ -114,7 +126,8 @@ internal class ContentInstallTransaction(
                             ?.let { safePath(root.resolve(previousFolder), safeFilename(it)) }
                 val oldIsDisabled = old?.name?.endsWith(".disabled", true) == true
                 require(
-                    !oldIsDisabled || !old!!.resolveSibling(contentBaseFilename(old.name)).exists()
+                    !oldIsDisabled ||
+                        !old.resolveSibling(contentBaseFilename(old.name)).exists(),
                 ) {
                     "同一模组存在启用和禁用两个副本，请先整理"
                 }
@@ -132,14 +145,14 @@ internal class ContentInstallTransaction(
                             value.isJsonObject &&
                             value.asJsonObject.string("folder") == file.folder &&
                             value.asJsonObject.string("file") == file.filename
-                    }
+                    },
                 ) {
                     "此文件名已由其他项目使用：${file.filename}"
                 }
                 if (
                     target.exists() &&
-                        target != old &&
-                        target != old?.resolveSibling("${old.fileName}.disabled")
+                    target != old &&
+                    target != old?.resolveSibling("${old.fileName}.disabled")
                 ) {
                     require(digest(target, file.algorithm).equals(file.hash, true)) {
                         "同名本地文件已存在，未覆盖：$filename"
@@ -163,33 +176,40 @@ internal class ContentInstallTransaction(
                         addProperty("hashAlgorithm", file.algorithm)
                         addProperty("locked", previous.boolean("locked"))
                         addProperty("title", file.title)
+                        addProperty("iconUrl", file.iconUrl)
                     },
                 )
             }
             context.checkCancelled()
             writeJson(registryFile, registry)
             committed = true
-            for (backup in backups.values) runCatching { store.platform.moveToTrash(backup) }
-                .onFailure {
-                    cleanStaging = false
-                    store.log("旧资源副本保留在 $staging", true)
-                }
+            for (backup in backups.values) {
+                runCatching { store.platform.moveToTrash(backup) }
+                    .onFailure {
+                        cleanStaging = false
+                        store.log("旧资源副本保留在 $staging", true)
+                    }
+            }
             context.progress(1f, "资源与依赖安装完成")
             store.log("资源安装完成：${plan.title}（${plan.files.size} 个文件）")
         } catch (error: Throwable) {
             if (!committed) {
-                val rollback = runCatching {
-                    installed.asReversed().forEach { Files.deleteIfExists(it) }
-                    for ((target, backup) in backups.entries.toList().asReversed()) {
-                        Files.move(backup, target, StandardCopyOption.REPLACE_EXISTING)
+                val rollback =
+                    runCatching {
+                        installed.asReversed().forEach { Files.deleteIfExists(it) }
+                        for ((target, backup) in backups.entries.toList().asReversed()) {
+                            Files.move(backup, target, StandardCopyOption.REPLACE_EXISTING)
+                        }
+                        if (original == null) {
+                            registryFile.deleteIfExists()
+                        } else {
+                            registryFile.writeBytes(original)
+                        }
                     }
-                    if (original == null) registryFile.deleteIfExists()
-                    else registryFile.writeBytes(original)
-                }
                 if (rollback.isFailure) {
                     cleanStaging = false
                     throw IOException("资源安装未完成，原文件备份保留在 $staging，请先恢复后再操作", error).also {
-                        it.addSuppressed(rollback.exceptionOrNull()!!)
+                        rollback.exceptionOrNull()?.let(it::addSuppressed)
                     }
                 }
             }
@@ -200,7 +220,7 @@ internal class ContentInstallTransaction(
                     staging.parent.toAbsolutePath().normalize() ==
                         root.toAbsolutePath().normalize() &&
                         staging.name.startsWith(".molifox-content-") &&
-                        !Files.isSymbolicLink(staging)
+                        !Files.isSymbolicLink(staging),
                 )
                 Files.walk(staging).use { paths ->
                     paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }

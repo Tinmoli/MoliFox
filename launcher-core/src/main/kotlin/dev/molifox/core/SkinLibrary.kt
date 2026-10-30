@@ -5,16 +5,26 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.writeBytes
 
-enum class SkinVariant(val title: String, val apiValue: String) {
+enum class SkinVariant(
+    val title: String,
+    val apiValue: String,
+) {
     Classic("标准手臂", "classic"),
     Slim("纤细手臂", "slim"),
 }
@@ -27,7 +37,9 @@ data class LibrarySkin(
 )
 
 /** Local assets belong to the launcher, never to a selected game directory. */
-class SkinLibrary(private val store: LauncherStore) {
+class SkinLibrary(
+    private val store: LauncherStore,
+) {
     private val root: Path
         get() = store.dataDirectory.resolve("skins")
 
@@ -50,7 +62,7 @@ class SkinLibrary(private val store: LauncherStore) {
             .map { gson.fromJson(it, LibrarySkin::class.java) }
             .also { entries ->
                 require(
-                    entries.size <= 1000 && entries.map { it.id }.distinct().size == entries.size
+                    entries.size <= 1000 && entries.map { it.id }.distinct().size == entries.size,
                 ) {
                     "皮肤库条目异常"
                 }
@@ -58,7 +70,7 @@ class SkinLibrary(private val store: LauncherStore) {
                     require(
                         runCatching { UUID.fromString(entry.id) }.isSuccess &&
                             entry.name.length in 1..100 &&
-                            entry.sha256.matches(Regex("[a-f0-9]{64}"))
+                            entry.sha256.matches(Regex("[a-f0-9]{64}")),
                     ) {
                         "皮肤库条目无效"
                     }
@@ -69,7 +81,11 @@ class SkinLibrary(private val store: LauncherStore) {
     private fun save(entries: List<LibrarySkin>) =
         writeJson(index, mapOf("formatVersion" to 1, "skins" to entries))
 
-    suspend fun importSkin(source: Path, name: String, variant: SkinVariant): LibrarySkin =
+    suspend fun importSkin(
+        source: Path,
+        name: String,
+        variant: SkinVariant,
+    ): LibrarySkin =
         withContext(Dispatchers.IO) {
             require(name.isNotBlank() && name.trim().length <= 100) { "皮肤名称需为 1–100 字" }
             require(validSkinTexture(source)) { "请选择有效的 Minecraft PNG 皮肤（64×64、64×32 或等比例纹理）" }
@@ -120,8 +136,10 @@ class SkinLibrary(private val store: LauncherStore) {
             }
         }
 
-    suspend fun exportSkin(id: String, destination: Path) =
-        exportSkinTexture(texture(id), destination)
+    suspend fun exportSkin(
+        id: String,
+        destination: Path,
+    ) = exportSkinTexture(texture(id), destination)
 
     suspend fun removeSkin(id: String) =
         withContext(Dispatchers.IO) {
@@ -143,26 +161,31 @@ class SkinLibrary(private val store: LauncherStore) {
         }
 }
 
-internal suspend fun exportSkinTexture(source: Path, destination: Path) =
-    withContext(Dispatchers.IO) {
-        require(validSkinTexture(source)) { "没有可导出的皮肤纹理" }
-        require(destination.extension.equals("png", true)) { "皮肤请保存为 PNG 文件" }
-        val target = destination.toAbsolutePath().normalize()
-        require(target != source.toAbsolutePath().normalize() && !Files.isSymbolicLink(target)) {
-            "请选择不同的导出文件"
-        }
-        target.parent.createDirectories()
-        val staging = Files.createTempFile(target.parent, ".molifox-skin-", ".tmp")
-        try {
-            Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
-            require(validSkinTexture(staging)) { "皮肤在导出时改变" }
-            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
-        } finally {
-            staging.deleteIfExists()
-        }
+internal suspend fun exportSkinTexture(
+    source: Path,
+    destination: Path,
+) = withContext(Dispatchers.IO) {
+    require(validSkinTexture(source)) { "没有可导出的皮肤纹理" }
+    require(destination.extension.equals("png", true)) { "皮肤请保存为 PNG 文件" }
+    val target = destination.toAbsolutePath().normalize()
+    require(target != source.toAbsolutePath().normalize() && !Files.isSymbolicLink(target)) {
+        "请选择不同的导出文件"
     }
+    target.parent.createDirectories()
+    val staging = Files.createTempFile(target.parent, ".molifox-skin-", ".tmp")
+    try {
+        Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
+        require(validSkinTexture(staging)) { "皮肤在导出时改变" }
+        Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        staging.deleteIfExists()
+    }
+}
 
-internal fun validateUploadSkin(file: Path, variant: SkinVariant) {
+internal fun validateUploadSkin(
+    file: Path,
+    variant: SkinVariant,
+) {
     require(validSkinTexture(file)) { "皮肤文件无效" }
     val image = ImageIO.read(file.toFile())
     require(image.width == 64 && image.height in setOf(32, 64)) {
@@ -176,7 +199,10 @@ internal fun validateUploadSkin(file: Path, variant: SkinVariant) {
  *
  * 模组目录里的文件是按原版皮肤角色读取的，所以只接受 64×64 / 64×32 标准尺寸； 启动器皮肤库仍可保留高清纹理仅作预览，两者边界不同。
  */
-internal fun validateLocalSkinFile(file: Path, variant: SkinVariant) {
+internal fun validateLocalSkinFile(
+    file: Path,
+    variant: SkinVariant,
+) {
     require(validSkinTexture(file)) { "皮肤文件无效" }
     val image = ImageIO.read(file.toFile()) ?: error("皮肤文件无效")
     try {

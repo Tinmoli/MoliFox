@@ -87,8 +87,14 @@ fun applyInstanceMemoryPolicy(
     }
 
 /** 实例内存滑块的取值：按 256 MB 步进并限制在本机预算内。 */
-fun instanceMemorySliderValue(value: Float, totalMemoryMb: Int? = null): Int =
-    (value.toInt() / 256 * 256).coerceIn(MIN_INSTANCE_MEMORY_MB, instanceMemoryLimitMb(totalMemoryMb))
+fun instanceMemorySliderValue(
+    value: Float,
+    totalMemoryMb: Int? = null,
+): Int =
+    (value.toInt() / 256 * 256).coerceIn(
+        MIN_INSTANCE_MEMORY_MB,
+        instanceMemoryLimitMb(totalMemoryMb),
+    )
 
 /** 窗口宽高输入框回填值：0 表示跟随全局，显示为空，不再显示字面 0。 */
 fun instanceLaunchNumberField(value: Int): String = value.takeIf { it > 0 }?.toString() ?: ""
@@ -143,7 +149,7 @@ fun resolveInstanceLaunchOptions(
             else -> {
                 warnings +=
                     "实例最大内存 ${instance.memoryMb} MB 超出 " +
-                        "$MIN_INSTANCE_MEMORY_MB–$memoryLimit MB，已跟随全局设置"
+                    "$MIN_INSTANCE_MEMORY_MB–$memoryLimit MB，已跟随全局设置"
                 0
             }
         }
@@ -172,8 +178,9 @@ fun resolveInstanceLaunchOptions(
     val globalWidth = globalWindowValue(settings.width, 1280, "宽度", warnings)
     val globalHeight = globalWindowValue(settings.height, 720, "高度", warnings)
     val fullscreenMode =
-        if (instance.windowMode in gameWindowModes) instance.windowMode
-        else {
+        if (instance.windowMode in gameWindowModes) {
+            instance.windowMode
+        } else {
             warnings += "实例窗口模式无效，已跟随全局设置"
             "inherit"
         }
@@ -209,7 +216,7 @@ fun resolveInstanceLaunchOptions(
                 } ?: ""
             warnings +=
                 "额外 JVM 参数无效（${failure.message}），已改用" +
-                    (if (fallback.isBlank()) "默认值" else "全局设置")
+                (if (fallback.isBlank()) "默认值" else "全局设置")
             fallback
         }
     val advancedGameArgs =
@@ -220,14 +227,16 @@ fun resolveInstanceLaunchOptions(
             emptyList()
         }
     val instanceGameArgs =
-        if (instance.extraGameArgs.isBlank()) emptyList()
-        else
+        if (instance.extraGameArgs.isBlank()) {
+            emptyList()
+        } else {
             try {
                 extraGameArguments(AdvancedLaunchSettings(extraGameArgs = instance.extraGameArgs))
             } catch (failure: IllegalArgumentException) {
                 warnings += "实例额外游戏参数无效（${failure.message}），已忽略"
                 emptyList()
             }
+        }
 
     return ResolvedLaunchOptions(
         memory = memory,
@@ -241,7 +250,11 @@ fun resolveInstanceLaunchOptions(
 }
 
 /** 0 表示继承；越界值改为 0 并留下警告，保证坏值不会进入启动命令。 */
-private fun windowValue(value: Int, label: String, warnings: MutableList<String>): Int =
+private fun windowValue(
+    value: Int,
+    label: String,
+    warnings: MutableList<String>,
+): Int =
     when {
         value == 0 -> 0
         value in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE -> value
@@ -258,8 +271,9 @@ private fun globalWindowValue(
     label: String,
     warnings: MutableList<String>,
 ): Int =
-    if (value in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE) value
-    else {
+    if (value in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE) {
+        value
+    } else {
         warnings += "全局游戏窗口$label $value 无效，已改用 $default"
         default
     }

@@ -5,23 +5,34 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopRefinementsTest {
     @TempDir lateinit var directory: Path
 
     @Test
-    fun `encyclopedia matches the provider project link rather than a similar title and caches it`() =
+    fun `encyclopedia resolves provider identity and reuses the result`() =
         runBlocking {
             NetworkClient().use { network ->
                 var calls = 0
@@ -34,7 +45,10 @@ class DesktopRefinementsTest {
                             url.endsWith("/10.html") ->
                                 "<a href=\"https://modrinth.com/mod/another-project\">Modrinth</a>"
                             else ->
-                                "<a href=\"//link.mcmod.cn/target/${java.util.Base64.getEncoder().encodeToString("https://modrinth.com/mod/correct-project".toByteArray())}\">Modrinth</a>"
+                                "<a href=\"//link.mcmod.cn/target/" +
+                                    "${java.util.Base64.getEncoder().encodeToString(
+                                        "https://modrinth.com/mod/correct-project".toByteArray(),
+                                    )}\">Modrinth</a>"
                         }
                     }
                 val hit = ContentHit("p", "correct-project", "Common title", "", "", 0, "mod", null)
@@ -45,21 +59,24 @@ class DesktopRefinementsTest {
         }
 
     @Test
-    fun `a title-only encyclopedia match is hidden`() = runBlocking {
-        NetworkClient().use { network ->
-            val resolver =
-                EncyclopediaLinks(network) { url ->
-                    if (url.contains("search.mcmod.cn"))
-                        "<a href=\"/class/10.html\">Exact title</a>"
-                    else "<a href=\"https://example.com\">Different project</a>"
-                }
-            assertNull(
-                resolver.resolve(
-                    ContentHit("p", "correct-project", "Exact title", "", "", 0, "mod", null)
+    fun `a title-only encyclopedia match is hidden`() =
+        runBlocking {
+            NetworkClient().use { network ->
+                val resolver =
+                    EncyclopediaLinks(network) { url ->
+                        if (url.contains("search.mcmod.cn")) {
+                            "<a href=\"/class/10.html\">Exact title</a>"
+                        } else {
+                            "<a href=\"https://example.com\">Different project</a>"
+                        }
+                    }
+                assertNull(
+                    resolver.resolve(
+                        ContentHit("p", "correct-project", "Exact title", "", "", 0, "mod", null),
+                    ),
                 )
-            )
+            }
         }
-    }
 
     private fun store() = LauncherStore(DesktopPlatform(), directory.resolve("profile"))
 
@@ -158,14 +175,14 @@ class DesktopRefinementsTest {
                 ImageIO.write(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), "png", output)
                 output.toByteArray()
             }
-        // 文件夹光影包：没有 icon / preview 时退回 shaders/ 下的 PNG。
+        // 明确命名的图标可用，普通光影纹理不当作头像。
         val folder = directory.resolve("ShaderPack").apply { createDirectories() }
         folder.resolve("shaders").createDirectories()
         folder.resolve("shaders/pack.png").writeBytes(png)
         assertContentEquals(png, shaderPackIcon(folder))
         folder.resolve("preview.png").writeBytes(png)
         assertContentEquals(png, shaderPackIcon(folder))
-        // zip 光影包：根目录候选之后才看 shaders/*.png。
+        // ZIP 与文件夹使用同样的明确名称规则。
         val zip = directory.resolve("Shader.zip")
         ZipOutputStream(zip.outputStream()).use { out ->
             fun put(name: String) {
@@ -173,7 +190,7 @@ class DesktopRefinementsTest {
                 out.write(png)
                 out.closeEntry()
             }
-            put("shaders/only.png")
+            put("shaders/icon.png")
         }
         assertContentEquals(png, shaderPackIcon(zip))
         assertNull(shaderPackIcon(directory.resolve("missing")))
@@ -195,7 +212,15 @@ class DesktopRefinementsTest {
         backups.restore(id, instance)
         assertContentEquals(original, json.readBytes())
         assertFails {
-            backups.restore(id, instance.copy(id = java.util.UUID.randomUUID().toString()))
+            backups.restore(
+                id,
+                instance.copy(
+                    id =
+                        java.util.UUID
+                            .randomUUID()
+                            .toString(),
+                ),
+            )
         }
     }
 

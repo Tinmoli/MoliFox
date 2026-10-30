@@ -9,7 +9,10 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
 
 /** 存档压缩包的校验结果。 */
 internal data class SaveArchiveLayout(
@@ -27,12 +30,15 @@ internal data class SaveArchiveLayout(
  */
 internal object SaveArchive {
     fun inspect(archive: Path): SaveArchiveLayout {
-        require(archive.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(archive)) {
+        require(
+            archive.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(archive),
+        ) {
             "找不到存档压缩包：${archive.fileName}"
         }
         ZipFile(archive.toFile()).use { zip ->
             val entries =
-                zip.entries()
+                zip
+                    .entries()
                     .asSequence()
                     .filter { !it.isDirectory && !it.name.endsWith("/") }
                     .map { it.name.replace('\\', '/') to it.size }
@@ -57,8 +63,7 @@ internal object SaveArchive {
                     .filter { (name, _) ->
                         name.count { it == '/' } == 1 &&
                             name.substringAfter('/').equals("level.dat", true)
-                    }
-                    .map { (name, size) -> name.substringBefore('/') to size }
+                    }.map { (name, size) -> name.substringBefore('/') to size }
                     .distinctBy { it.first.lowercase() }
             require(wrappers.isNotEmpty()) { "压缩包里没有 level.dat，不是有效的存档" }
             require(wrappers.size == 1) {
@@ -69,7 +74,10 @@ internal object SaveArchive {
             val prefix = "$wrapper/"
             require(entries.all { (name, _) -> name.startsWith(prefix, ignoreCase = true) }) {
                 "压缩包里有包装目录之外的文件（" +
-                    entries.first { (name, _) -> !name.startsWith(prefix, ignoreCase = true) }.first +
+                    entries
+                        .first { (name, _) ->
+                            !name.startsWith(prefix, ignoreCase = true)
+                        }.first +
                     "），无法导入"
             }
             return SaveArchiveLayout(prefix)

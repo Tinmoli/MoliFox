@@ -5,6 +5,9 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
@@ -12,11 +15,25 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createDirectory
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PackIconsTest {
     @TempDir lateinit var temporary: Path
@@ -29,7 +46,10 @@ class PackIconsTest {
             bytes.toByteArray()
         }
 
-    private fun pack(name: String, files: Map<String, ByteArray>): Path =
+    private fun pack(
+        name: String,
+        files: Map<String, ByteArray>,
+    ): Path =
         temporary.resolve(name).apply {
             ZipOutputStream(outputStream()).use { zip ->
                 files.forEach { (path, bytes) ->
@@ -41,7 +61,7 @@ class PackIconsTest {
         }
 
     private suspend fun fixture(
-        action: suspend (LauncherStore, GameInstance, InstanceIcons) -> Unit
+        action: suspend (LauncherStore, GameInstance, InstanceIcons) -> Unit,
     ) {
         val store = LauncherStore(DesktopPlatform(), temporary.resolve("MoliFox"))
         val instance =
@@ -55,8 +75,8 @@ class PackIconsTest {
                     "type" to "release",
                     "mainClass" to "fixture.Main",
                     "libraries" to emptyList<Any>(),
-                )
-            )
+                ),
+            ),
         )
         folder.resolve("26.3.jar").writeBytes(byteArrayOf())
         store.refreshInstances()
@@ -64,74 +84,77 @@ class PackIconsTest {
     }
 
     @Test
-    fun `pack artwork is durable and user choice wins until reset`() = runBlocking {
-        fixture { store, instance, icons ->
-            val archive = pack("pack.zip", mapOf("icon.png" to image(0xff228866.toInt())))
-            ZipFile(archive.toFile()).use {
-                applyPackIcon(
-                    store,
-                    instance.id,
-                    it,
-                    PackManifest(null, InstallRequest("Pack", "26.3"), emptyList(), 0),
+    fun `pack artwork is durable and user choice wins until reset`() =
+        runBlocking {
+            fixture { store, instance, icons ->
+                val archive = pack("pack.zip", mapOf("icon.png" to image(0xff228866.toInt())))
+                ZipFile(archive.toFile()).use {
+                    applyPackIcon(
+                        store,
+                        instance.id,
+                        it,
+                        PackManifest(null, InstallRequest("Pack", "26.3"), emptyList(), 0),
+                    )
+                }
+                val packId = store.instance(instance.id).packIconId
+                assertTrue(packId.isNotBlank())
+                val supplied = requireNotNull(icons.texture(store.instance(instance.id)))
+                assertEquals(packId, digest(supplied, "SHA-256"))
+                archive.deleteExisting()
+                val chosen =
+                    temporary.resolve("mine.png").apply { writeBytes(image(0xffaa3366.toInt())) }
+                icons.setCustom(instance.id, chosen)
+                val custom = requireNotNull(icons.texture(store.instance(instance.id)))
+                assertNotEquals(supplied, custom)
+                assertEquals(0xffaa3366.toInt(), ImageIO.read(custom.toFile()).getRGB(0, 0))
+                icons.setPreset(instance.id, InstanceIconStyle.Auto)
+                assertEquals(supplied, icons.texture(store.instance(instance.id)))
+                assertTrue(supplied.exists())
+                assertFalse(custom.exists())
+                assertEquals(
+                    packId,
+                    LauncherStore(DesktopPlatform(), store.dataDirectory)
+                        .instance("26.3")
+                        .packIconId,
                 )
             }
-            val packId = store.instance(instance.id).packIconId
-            assertTrue(packId.isNotBlank())
-            val supplied = requireNotNull(icons.texture(store.instance(instance.id)))
-            assertEquals(packId, digest(supplied, "SHA-256"))
-            archive.deleteExisting()
-            val chosen =
-                temporary.resolve("mine.png").apply { writeBytes(image(0xffaa3366.toInt())) }
-            icons.setCustom(instance.id, chosen)
-            val custom = requireNotNull(icons.texture(store.instance(instance.id)))
-            assertNotEquals(supplied, custom)
-            assertEquals(0xffaa3366.toInt(), ImageIO.read(custom.toFile()).getRGB(0, 0))
-            icons.setPreset(instance.id, InstanceIconStyle.Auto)
-            assertEquals(supplied, icons.texture(store.instance(instance.id)))
-            assertTrue(supplied.exists())
-            assertFalse(custom.exists())
-            assertEquals(
-                packId,
-                LauncherStore(DesktopPlatform(), store.dataDirectory)
-                    .instance("26.3")
-                    .packIconId,
-            )
         }
-    }
 
     @Test
-    fun `Prism iconKey resolves only a bundled icon in its instance prefix`() = runBlocking {
-        fixture { store, instance, icons ->
-            val archive =
-                pack(
-                    "prism.zip",
-                    mapOf(
-                        "Example/mmc-pack.json" to "{}".toByteArray(),
-                        "Example/instance.cfg" to "[General]\niconKey=custom\n".toByteArray(),
-                        "Example/icons/custom.png" to image(0xff7755cc.toInt()),
-                    ),
-                )
-            ZipFile(archive.toFile()).use {
-                applyPackIcon(
-                    store,
-                    instance.id,
-                    it,
-                    PackManifest(
-                        null,
-                        InstallRequest("Pack", "26.3"),
-                        emptyList(),
-                        0,
-                        payloadPrefix = "Example/.minecraft/",
-                    ),
+    fun `Prism iconKey resolves only a bundled icon in its instance prefix`() =
+        runBlocking {
+            fixture { store, instance, icons ->
+                val archive =
+                    pack(
+                        "prism.zip",
+                        mapOf(
+                            "Example/mmc-pack.json" to "{}".toByteArray(),
+                            "Example/instance.cfg" to "[General]\niconKey=custom\n".toByteArray(),
+                            "Example/icons/custom.png" to image(0xff7755cc.toInt()),
+                        ),
+                    )
+                ZipFile(archive.toFile()).use {
+                    applyPackIcon(
+                        store,
+                        instance.id,
+                        it,
+                        PackManifest(
+                            null,
+                            InstallRequest("Pack", "26.3"),
+                            emptyList(),
+                            0,
+                            payloadPrefix = "Example/.minecraft/",
+                        ),
+                    )
+                }
+                assertEquals(
+                    0xff7755cc.toInt(),
+                    ImageIO
+                        .read(requireNotNull(icons.texture(store.instance(instance.id))).toFile())
+                        .getRGB(0, 0),
                 )
             }
-            assertEquals(
-                0xff7755cc.toInt(),
-                ImageIO.read(requireNotNull(icons.texture(store.instance(instance.id))).toFile())
-                    .getRGB(0, 0),
-            )
         }
-    }
 
     @Test
     fun `bad or escaping pack icons cannot replace current icon or leave staging files`() =
@@ -174,7 +197,11 @@ class PackIconsTest {
                     .createDirectory()
                     .resolve("settings.txt")
                     .writeText("configuration")
-                root.resolve("mods").createDirectory().resolve("local.jar").writeText("mod bytes")
+                root
+                    .resolve("mods")
+                    .createDirectory()
+                    .resolve("local.jar")
+                    .writeText("mod bytes")
                 root
                     .resolve("credentials")
                     .createDirectory()

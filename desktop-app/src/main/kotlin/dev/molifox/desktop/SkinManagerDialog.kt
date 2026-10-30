@@ -7,13 +7,36 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
@@ -22,10 +45,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.Account
+import dev.molifox.core.AccountType
+import dev.molifox.core.LibrarySkin
+import dev.molifox.core.SkinVariant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import kotlin.io.path.nameWithoutExtension
-import kotlinx.coroutines.*
 import org.jetbrains.skia.Image as SkiaImage
 
 /** Shared account skin tools stay on the start page, preserving the four main navigation items. */
@@ -52,7 +82,11 @@ fun SkinManagerDialog(
     var confirmUpload by remember { mutableStateOf<LibrarySkin?>(null) }
     var confirmRemove by remember { mutableStateOf<LibrarySkin?>(null) }
     val selected = entries.find { it.id == selectedId }
-    fun act(refreshAvatar: Boolean = false, action: suspend () -> Unit) {
+
+    fun act(
+        refreshAvatar: Boolean = false,
+        action: suspend () -> Unit,
+    ) {
         if (busy) return
         scope.launch {
             busy = true
@@ -93,13 +127,17 @@ fun SkinManagerDialog(
             textureError = null
             try {
                 val file =
-                    if (selectedId != null) service.library.texture(requireNotNull(selectedId))
-                    else service.texture(account)
-                value = file?.let {
-                    withContext(Dispatchers.IO) {
-                        SkiaImage.makeFromEncoded(Files.readAllBytes(it)).toComposeImageBitmap()
+                    if (selectedId != null) {
+                        service.library.texture(requireNotNull(selectedId))
+                    } else {
+                        service.texture(account)
                     }
-                }
+                value =
+                    file?.let {
+                        withContext(Dispatchers.IO) {
+                            SkiaImage.makeFromEncoded(Files.readAllBytes(it)).toComposeImageBitmap()
+                        }
+                    }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -115,10 +153,11 @@ fun SkinManagerDialog(
     ) {
         if (account.type == AccountType.Offline) {
             val libraryDirectory = service.library.directory
-            val customSkinLoader = remember(account.id, revision) { service.customSkinLoaderDirectory() }
+            val customSkinLoader =
+                remember(account.id, revision) { service.customSkinLoaderDirectory() }
             MutedText(
                 "离线皮肤不会上传，只写入本地目录（$libraryDirectory），需皮肤模组才会在游戏中显示" +
-                    (customSkinLoader?.let { "；CustomSkinLoader 已同步到 $it" } ?: "")
+                    (customSkinLoader?.let { "；CustomSkinLoader 已同步到 $it" } ?: ""),
             )
         }
         Row(
@@ -127,7 +166,8 @@ fun SkinManagerDialog(
         ) {
             Column(Modifier.width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
-                    Modifier.weight(1f)
+                    Modifier
+                        .weight(1f)
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .35f)),
                     contentAlignment = Alignment.Center,
@@ -161,13 +201,15 @@ fun SkinManagerDialog(
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     items(entries, key = { it.id }) { entry ->
                         Row(
-                            Modifier.fillMaxWidth()
+                            Modifier
+                                .fillMaxWidth()
                                 .background(
-                                    if (selectedId == entry.id)
+                                    if (selectedId == entry.id) {
                                         MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surface
-                                )
-                                .clickable(enabled = !busy) { selectedId = entry.id }
+                                    } else {
+                                        MaterialTheme.colorScheme.surface
+                                    },
+                                ).clickable(enabled = !busy) { selectedId = entry.id }
                                 .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -216,8 +258,10 @@ fun SkinManagerDialog(
                         val placement = service.useOfflinePreview(account.id, imported.id)
                         message =
                             "已导入 ${imported.name}" +
-                                (placement?.customSkinLoader?.let { "，已同步 CustomSkinLoader" }
-                                    ?: "")
+                            (
+                                placement?.customSkinLoader?.let { "，已同步 CustomSkinLoader" }
+                                    ?: ""
+                            )
                     } else {
                         message = "已导入 ${imported.name}"
                     }
@@ -235,10 +279,12 @@ fun SkinManagerDialog(
                                     save = true,
                                     extensions = listOf("png"),
                                     defaultName = "skin.png",
-                                )
-                                .firstOrNull() ?: return@act
-                        if (selected != null) service.library.exportSkin(selected.id, file)
-                        else service.exportCurrent(account.id, file)
+                                ).firstOrNull() ?: return@act
+                        if (selected != null) {
+                            service.library.exportSkin(selected.id, file)
+                        } else {
+                            service.exportCurrent(account.id, file)
+                        }
                         message = "皮肤已导出"
                     }
                 },
@@ -269,8 +315,9 @@ fun SkinManagerDialog(
                 }
             } else {
                 PrimaryButton("用于本地预览", Icons.Outlined.Check, enabled = !busy && selected != null) {
+                    val selectedSkin = selected ?: return@PrimaryButton
                     act(refreshAvatar = true) {
-                        service.useOfflinePreview(account.id, selected!!.id)
+                        service.useOfflinePreview(account.id, selectedSkin.id)
                         message = "已更新本地预览"
                     }
                 }

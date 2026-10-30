@@ -5,9 +5,14 @@
 
 package dev.molifox.core
 
-import kotlin.io.path.*
-import kotlin.test.*
 import org.junit.jupiter.api.Test
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class NbtTest {
     /** 一个覆盖 1–12 号标签的合成复合标签，供压缩与未压缩两种读取路径复用。 */

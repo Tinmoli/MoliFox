@@ -9,7 +9,15 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.writeBytes
 
 /** 实例名称里不允许出现的字符：与 Windows 文件名规则一致，跨平台都按同一套规则拒绝。 */
 private val invalidInstanceName = Regex("[\\\\/:*?\"<>|\\p{Cntrl}]")
@@ -74,10 +82,14 @@ data class InstanceRenamePlan(
  *
  * 只改版本配置本身（`versions/<目录>/<目录>.json` 的固定字段），不对用户文件做全库字符串替换。
  */
-class InstanceRename(private val store: LauncherStore) {
-
+class InstanceRename(
+    private val store: LauncherStore,
+) {
     /** 只校验、不写盘；供界面预览或测试复用。 */
-    fun plan(instanceId: String, requestedName: String): InstanceRenamePlan {
+    fun plan(
+        instanceId: String,
+        requestedName: String,
+    ): InstanceRenamePlan {
         val instance = store.instance(instanceId)
         val newName = requestedName.trim()
         validateInstanceDirectoryName(newName)
@@ -92,22 +104,24 @@ class InstanceRename(private val store: LauncherStore) {
         val target = safePath(versions, newName)
         require(!target.exists(NOFOLLOW_LINKS)) { "versions/$newName 已存在，请换一个名称" }
         val windows = store.platform.osName == "windows"
-        val sameRoot = store.data.instances.filter {
-            it.id != instance.id && taskPathKey(store.minecraftRoot(it)) == taskPathKey(root)
-        }
+        val sameRoot =
+            store.data.instances.filter {
+                it.id != instance.id && taskPathKey(store.minecraftRoot(it)) == taskPathKey(root)
+            }
         sameRoot
             .firstOrNull {
-                it.gameDirectoryName.ifBlank { it.versionId.ifBlank { it.gameVersion } }
+                it.gameDirectoryName
+                    .ifBlank { it.versionId.ifBlank { it.gameVersion } }
                     .equals(newName, ignoreCase = windows)
-            }
-            ?.let { clash ->
+            }?.let { clash ->
                 throw IllegalArgumentException("已有实例「${clash.name}」使用这个名称")
             }
         // 另一个实例以这个目录作为基础版本时，移动它会直接破坏那个实例的版本标识。
-        sameRoot.firstOrNull { it.versionId.equals(oldName, ignoreCase = windows) }
+        sameRoot
+            .firstOrNull { it.versionId.equals(oldName, ignoreCase = windows) }
             ?.let { dependent ->
                 throw IllegalArgumentException(
-                    "versions/$oldName 仍是实例「${dependent.name}」的基础版本目录，请先处理该实例"
+                    "versions/$oldName 仍是实例「${dependent.name}」的基础版本目录，请先处理该实例",
                 )
             }
         val dependents =
@@ -118,20 +132,19 @@ class InstanceRename(private val store: LauncherStore) {
                     it.isDirectory(NOFOLLOW_LINKS) &&
                         !Files.isSymbolicLink(it) &&
                         !it.fileName.toString().equals(oldName, ignoreCase = windows)
-                }
-                .mapNotNull { directory ->
+                }.mapNotNull { directory ->
                     val file = directory.resolve("${directory.fileName}.json")
                     if (
                         !file.isRegularFile(NOFOLLOW_LINKS) ||
-                            Files.isSymbolicLink(file) ||
-                            file.fileSize() > 8 * 1024 * 1024
-                    )
+                        Files.isSymbolicLink(file) ||
+                        file.fileSize() > 8 * 1024 * 1024
+                    ) {
                         return@mapNotNull null
+                    }
                     runCatching { readObject(file).string("inheritsFrom") == oldName }
                         .getOrDefault(false)
                         .let { if (it) file else null }
-                }
-                .toList()
+                }.toList()
         return InstanceRenamePlan(
             instance = instance,
             oldName = oldName,
@@ -149,7 +162,10 @@ class InstanceRename(private val store: LauncherStore) {
      * 执行重命名：目录、同名 JSON/JAR/natives、配置 `id` 与方法内自引用、其它配置的 `inheritsFrom`、
      * 组件备份清单路径和实例记录一起提交；任何一步失败都恢复原目录与文件内容再抛中文错误。
      */
-    fun rename(instanceId: String, requestedName: String): GameInstance {
+    fun rename(
+        instanceId: String,
+        requestedName: String,
+    ): GameInstance {
         val instance = store.instance(instanceId)
         val newName = requestedName.trim()
         validateInstanceDirectoryName(newName)
@@ -157,8 +173,9 @@ class InstanceRename(private val store: LauncherStore) {
         val oldName = source.fileName.toString()
         if (newName == oldName) {
             // 目录已经叫这个名字：只把显示名对齐到目录名（不移动任何文件）。
-            if (instance.name == newName)
+            if (instance.name == newName) {
                 throw IllegalArgumentException("实例已经是这个名称")
+            }
             store.updateInstance(instanceId) { it.copy(name = newName) }
             store.notify("实例名称已更新")
             return store.instance(instanceId)
@@ -175,9 +192,12 @@ class InstanceRename(private val store: LauncherStore) {
         if (hasJson) snapshots[oldJson] = Files.readAllBytes(oldJson)
         plan.dependentProfiles.forEach { file ->
             runCatching {
-                    if (file.fileSize() <= 8 * 1024 * 1024) snapshots[file] = Files.readAllBytes(file)
+                if (file.fileSize() <=
+                    8 * 1024 * 1024
+                ) {
+                    snapshots[file] = Files.readAllBytes(file)
                 }
-                .onFailure { store.log("读取版本配置失败：$file（${it.message}）", true) }
+            }.onFailure { store.log("读取版本配置失败：$file（${it.message}）", true) }
         }
         var directoryMoved = false
         var jsonRenamed = false
@@ -233,8 +253,11 @@ class InstanceRename(private val store: LauncherStore) {
                 .onFailure { store.log("更新组件备份路径失败：${it.message}", true) }
             store.log(
                 "已重命名实例：$oldName → $newName" +
-                    if (plan.dependentProfiles.isEmpty()) ""
-                    else "（同步 ${plan.dependentProfiles.size} 个版本引用）"
+                    if (plan.dependentProfiles.isEmpty()) {
+                        ""
+                    } else {
+                        "（同步 ${plan.dependentProfiles.size} 个版本引用）"
+                    },
             )
             store.notify("实例已重命名为「$newName」")
             return store.instance(instanceId)
@@ -245,7 +268,11 @@ class InstanceRename(private val store: LauncherStore) {
     }
 
     /** 只改这个版本配置自己的 `id` 和指向自身的 `jar`/`inheritsFrom`。 */
-    private fun rewriteOwnProfile(file: Path, oldName: String, newName: String) {
+    private fun rewriteOwnProfile(
+        file: Path,
+        oldName: String,
+        newName: String,
+    ) {
         val json = readObject(file)
         var changed = false
         if (json.string("id") != newName) {
@@ -265,60 +292,66 @@ class InstanceRename(private val store: LauncherStore) {
      * 更新属于本实例的组件回退清单：`profiles[].path` 从旧目录改到新目录，内嵌的实例快照同步名称。
      * 只处理 `<备份目录>/components/<编号>/manifest.json` 中 `instance.id` 与 `root` 都匹配的清单。
      */
-    private fun syncBackupManifests(instanceId: String, oldName: String, newName: String) {
+    private fun syncBackupManifests(
+        instanceId: String,
+        oldName: String,
+        newName: String,
+    ) {
         val current = store.instance(instanceId)
         val folder = store.directories.instanceBackups.resolve("components")
         if (!folder.isDirectory(NOFOLLOW_LINKS) || Files.isSymbolicLink(folder)) return
         val rootKey = taskPathKey(store.minecraftRoot(current))
         for (directory in folder.listDirectoryEntries()) {
             runCatching {
-                    if (!directory.isDirectory(NOFOLLOW_LINKS) || Files.isSymbolicLink(directory))
-                        return@runCatching
-                    val manifest = directory.resolve("manifest.json")
-                    if (
-                        !manifest.isRegularFile(NOFOLLOW_LINKS) ||
-                            Files.isSymbolicLink(manifest) ||
-                            manifest.fileSize() > 8 * 1024 * 1024
-                    )
-                        return@runCatching
-                    val json = readObject(manifest)
-                    val owner = json.getAsJsonObject("instance") ?: return@runCatching
-                    if (owner.string("id") != instanceId || json.string("root") != rootKey)
-                        return@runCatching
-                    var changed = false
-                    if (owner.string("name") != newName) {
-                        owner.addProperty("name", newName)
+                if (!directory.isDirectory(NOFOLLOW_LINKS) || Files.isSymbolicLink(directory)) {
+                    return@runCatching
+                }
+                val manifest = directory.resolve("manifest.json")
+                if (
+                    !manifest.isRegularFile(NOFOLLOW_LINKS) ||
+                    Files.isSymbolicLink(manifest) ||
+                    manifest.fileSize() > 8 * 1024 * 1024
+                ) {
+                    return@runCatching
+                }
+                val json = readObject(manifest)
+                val owner = json.getAsJsonObject("instance") ?: return@runCatching
+                if (owner.string("id") != instanceId || json.string("root") != rootKey) {
+                    return@runCatching
+                }
+                var changed = false
+                if (owner.string("name") != newName) {
+                    owner.addProperty("name", newName)
+                    changed = true
+                }
+                for (key in listOf("gameDirectoryName", "versionId")) {
+                    if (owner.string(key) == oldName) {
+                        owner.addProperty(key, newName)
                         changed = true
                     }
-                    for (key in listOf("gameDirectoryName", "versionId")) {
-                        if (owner.string(key) == oldName) {
-                            owner.addProperty(key, newName)
-                            changed = true
-                        }
-                    }
-                    // 目录名和同名配置文件一起改：versions/<旧>/<旧>.json → versions/<新>/<新>.json。
-                    val prefix = "versions/$oldName/"
-                    json.getAsJsonArray("profiles")?.forEach { element ->
-                        val record = element.asJsonObject
-                        val path = record.string("path")
-                        val updated =
-                            when {
-                                path == "versions/$oldName/$oldName.json" ->
-                                    "versions/$newName/$newName.json"
-                                path.startsWith(prefix) ->
-                                    "versions/$newName/" + path.removePrefix(prefix)
-                                else -> path
-                            }
-                        if (updated != path) {
-                            record.addProperty("path", updated)
-                            changed = true
-                        }
-                    }
-                    if (changed) writeJson(manifest, json)
                 }
-                .onFailure {
-                    store.log("更新组件备份清单失败：${directory.fileName}（${it.message}）", true)
+                // 目录名和同名配置文件一起改：versions/<旧>/<旧>.json → versions/<新>/<新>.json。
+                val prefix = "versions/$oldName/"
+                json.getAsJsonArray("profiles")?.forEach { element ->
+                    val record = element.asJsonObject
+                    val path = record.string("path")
+                    val updated =
+                        when {
+                            path == "versions/$oldName/$oldName.json" ->
+                                "versions/$newName/$newName.json"
+                            path.startsWith(prefix) ->
+                                "versions/$newName/" + path.removePrefix(prefix)
+                            else -> path
+                        }
+                    if (updated != path) {
+                        record.addProperty("path", updated)
+                        changed = true
+                    }
                 }
+                if (changed) writeJson(manifest, json)
+            }.onFailure {
+                store.log("更新组件备份清单失败：${directory.fileName}（${it.message}）", true)
+            }
         }
     }
 
@@ -333,32 +366,37 @@ class InstanceRename(private val store: LauncherStore) {
     ) {
         if (directoryMoved) {
             runCatching {
-                if (nativesRenamed)
+                if (nativesRenamed) {
                     runCatching {
                         Files.move(
                             plan.target.resolve("${plan.newName}-natives"),
                             plan.target.resolve("${plan.oldName}-natives"),
                         )
                     }
-                if (jarRenamed)
+                }
+                if (jarRenamed) {
                     runCatching {
                         Files.move(
                             plan.target.resolve("${plan.newName}.jar"),
                             plan.target.resolve("${plan.oldName}.jar"),
                         )
                     }
+                }
                 if (jsonRenamed) {
                     // 刚改名的配置内容已被改写，删掉新文件后由快照把原内容写回旧路径。
-                    runCatching { Files.deleteIfExists(plan.target.resolve("${plan.newName}.json")) }
+                    runCatching {
+                        Files.deleteIfExists(
+                            plan.target.resolve("${plan.newName}.json"),
+                        )
+                    }
                 }
                 Files.move(plan.target, plan.source)
+            }.onFailure {
+                store.log(
+                    "回滚实例目录失败：${it.message}（${plan.source} → ${plan.target}）",
+                    true,
+                )
             }
-                .onFailure {
-                    store.log(
-                        "回滚实例目录失败：${it.message}（${plan.source} → ${plan.target}）",
-                        true,
-                    )
-                }
         }
         snapshots.forEach { (file, bytes) ->
             runCatching { file.writeBytes(bytes) }

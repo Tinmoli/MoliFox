@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 验收实例真实目录、各页签、导出预览以及移动确认前后的文件归属。
+
+package dev.molifox.desktop.checks
+
+import java.nio.file.Files
+
+internal fun checkInstance(
+    ui: UiProbe,
+    fixture: UiFixture,
+) {
+    ui.click("版本设置")
+    ui.await("实例详情") { ui.exists("管理") }
+    ui.click("游戏文件夹")
+    ui.await("已有目录可见") { ui.exists("日志文件夹") }
+    check(!ui.exists("崩溃报告文件夹"))
+    ui.click("日志文件夹")
+    ui.await(
+        "打开正确目录",
+    ) { fixture.platform.openedFolders.any { it == fixture.source.resolve("logs") } }
+    Files.createDirectories(fixture.source.resolve("crash-reports"))
+    ui.click("游戏文件夹")
+    ui.click("游戏文件夹")
+    ui.await("重新查询新增目录") { ui.exists("崩溃报告文件夹") }
+    ui.click("游戏文件夹")
+    for (tab in listOf("模组", "资源包", "光影", "存档", "数据包", "原理图", "设置")) {
+        ui.tab(tab)
+        ui.capture("instance-" + instanceTabName(tab))
+    }
+    ui.click("管理")
+    ui.await("移动入口可用") { ui.exists("移动实例") && ui.enabled("移动实例") }
+    ui.click("导出整合包")
+    ui.await("导出内容预览") { ui.exists("选择内容") }
+    ui.capture("export-preview")
+    ui.click("取消")
+    ui.await("导出对话框关闭") { !ui.exists("导出整合包 / 完整备份") }
+}
+
+internal fun checkMove(
+    ui: UiProbe,
+    fixture: UiFixture,
+) {
+    fixture.picker.chooseNext(fixture.destination)
+    ui.click("移动实例")
+    ui.await("移动预览完成") { ui.exists("开始移动") && ui.enabled("开始移动") }
+    ui.capture("instance-move")
+    check(Files.isRegularFile(fixture.source.resolve("UI-Main.json")))
+    check(!Files.exists(fixture.destination.resolve("versions/UI-Main/UI-Main.json")))
+    ui.click("取消")
+    ui.await("取消预览关闭") { !ui.exists("移动到其他游戏目录") }
+    check(Files.isRegularFile(fixture.source.resolve("config/preserve.txt")))
+    fixture.picker.chooseNext(fixture.destination)
+    ui.click("移动实例")
+    ui.await("可确认移动") { ui.exists("开始移动") && ui.enabled("开始移动") }
+    ui.click("开始移动")
+    val target = fixture.destination.resolve("versions/UI-Main")
+    ui.await("移动任务完成") {
+        Files.isRegularFile(target.resolve("UI-Main.json")) &&
+            !Files.exists(fixture.source)
+    }
+    check(Files.readString(target.resolve("config/preserve.txt")) == "keep me")
+    ui.tab("开始", navigation = true)
+    ui.await("移动后仍可选中实例") {
+        val store = fixture.controller.store
+        store.data.instances.any { instance ->
+            instance.id == store.data.selectedInstanceId &&
+                store.instancePath(instance.id) == target
+        }
+    }
+}
+
+private fun instanceTabName(tab: String): String =
+    when (tab) {
+        "模组" -> "mods"
+        "资源包" -> "resources"
+        "光影" -> "shaders"
+        "存档" -> "saves"
+        "数据包" -> "datapacks"
+        "原理图" -> "schematics"
+        else -> "settings"
+    }

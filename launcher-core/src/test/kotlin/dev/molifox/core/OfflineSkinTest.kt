@@ -5,22 +5,39 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import javax.imageio.ImageIO
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.name
+import kotlin.io.path.notExists
+import kotlin.io.path.readBytes
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class OfflineSkinTest {
     @TempDir lateinit var temporary: Path
 
-    private fun png(name: String = "skin.png", width: Int = 64, height: Int = 64): Path =
+    private fun png(
+        name: String = "skin.png",
+        width: Int = 64,
+        height: Int = 64,
+    ): Path =
         temporary.resolve(name).apply {
-            ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB), "png", toFile())
+            ImageIO.write(
+                BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB),
+                "png",
+                toFile(),
+            )
         }
 
     private fun store(): LauncherStore =
@@ -29,12 +46,19 @@ class OfflineSkinTest {
     private fun offlineAccount(name: String = "OfflineUser") =
         Account(name = name, uuid = offlineUuid(name), type = AccountType.Offline)
 
-    private fun service(store: LauncherStore, network: NetworkClient) =
-        SkinService(store, network, { error("离线皮肤不得触发账户认证") })
+    private fun service(
+        store: LauncherStore,
+        network: NetworkClient,
+    ) = SkinService(store, network, { error("离线皮肤不得触发账户认证") })
 
-    private fun selectSharedInstance(store: LauncherStore, game: Path) {
+    private fun selectSharedInstance(
+        store: LauncherStore,
+        game: Path,
+    ) {
         store.mutate {
-            it.copy(settings = it.settings.copy(gameRoot = game.toString(), isolateVersions = false))
+            it.copy(
+                settings = it.settings.copy(gameRoot = game.toString(), isolateVersions = false),
+            )
         }
         val instance =
             GameInstance(
@@ -52,7 +76,7 @@ class OfflineSkinTest {
                     it.data.copy(
                         instances = listOf(instance),
                         selectedInstanceId = instance.id,
-                    )
+                    ),
             )
         }
     }
@@ -73,9 +97,15 @@ class OfflineSkinTest {
                 val entry = service.library.importSkin(source, "slim", SkinVariant.Slim)
                 val placement = service.useOfflinePreview(account.id, entry.id)
                 assertNotNull(placement)
-                assertEquals(service.library.directory.resolve("${entry.id}.png"), placement.library)
+                assertEquals(
+                    service.library.directory.resolve("${entry.id}.png"),
+                    placement.library,
+                )
                 assertEquals(modDirectory.resolve("OfflineUser.png"), placement.customSkinLoader)
-                assertContentEquals(source.readBytes(), placement.customSkinLoader!!.readBytes())
+                assertContentEquals(
+                    source.readBytes(),
+                    checkNotNull(placement.customSkinLoader).readBytes(),
+                )
                 val updated = store.data.accounts.single()
                 assertEquals(entry.id, updated.localSkinId)
                 assertEquals(SkinVariant.Slim, updated.skinVariant)
@@ -88,37 +118,43 @@ class OfflineSkinTest {
         }
 
     @Test
-    fun `mod folders are never created when custom skin loader is absent`() = runBlocking {
-        val store = store()
-        val game = temporary.resolve("game").createDirectories()
-        // 只有外层 CustomSkinLoader、没有 LocalSkin/skins 时也不能替用户补目录。
-        game.resolve("CustomSkinLoader/LocalSkin").createDirectories()
-        selectSharedInstance(store, game)
-        val account = offlineAccount()
-        store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
-        NetworkClient().use { network ->
-            val service = service(store, network)
-            val entry = service.library.importSkin(png(), "classic", SkinVariant.Classic)
-            val placement = service.useOfflinePreview(account.id, entry.id)
-            assertNotNull(placement)
-            assertNull(placement.customSkinLoader)
-            assertTrue(game.resolve("CustomSkinLoader/LocalSkin/skins").notExists())
-            assertTrue(service.library.directory.resolve("${entry.id}.png").exists())
+    fun `mod folders are never created when custom skin loader is absent`() =
+        runBlocking {
+            val store = store()
+            val game = temporary.resolve("game").createDirectories()
+            // 只有外层 CustomSkinLoader、没有 LocalSkin/skins 时也不能替用户补目录。
+            game.resolve("CustomSkinLoader/LocalSkin").createDirectories()
+            selectSharedInstance(store, game)
+            val account = offlineAccount()
+            store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
+            NetworkClient().use { network ->
+                val service = service(store, network)
+                val entry = service.library.importSkin(png(), "classic", SkinVariant.Classic)
+                val placement = service.useOfflinePreview(account.id, entry.id)
+                assertNotNull(placement)
+                assertNull(placement.customSkinLoader)
+                assertTrue(game.resolve("CustomSkinLoader/LocalSkin/skins").notExists())
+                assertTrue(
+                    service.library.directory
+                        .resolve("${entry.id}.png")
+                        .exists(),
+                )
+            }
         }
-    }
 
     @Test
-    fun `no selected instance means no mod directory lookup`() = runBlocking {
-        val store = store()
-        val account = offlineAccount()
-        store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
-        NetworkClient().use { network ->
-            val service = service(store, network)
-            assertNull(service.customSkinLoaderDirectory())
-            val entry = service.library.importSkin(png(), "classic", SkinVariant.Classic)
-            assertNull(service.useOfflinePreview(account.id, entry.id)?.customSkinLoader)
+    fun `no selected instance means no mod directory lookup`() =
+        runBlocking {
+            val store = store()
+            val account = offlineAccount()
+            store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
+            NetworkClient().use { network ->
+                val service = service(store, network)
+                assertNull(service.customSkinLoaderDirectory())
+                val entry = service.library.importSkin(png(), "classic", SkinVariant.Classic)
+                assertNull(service.useOfflinePreview(account.id, entry.id)?.customSkinLoader)
+            }
         }
-    }
 
     @Test
     fun `local mod skin accepts 64x64 and 64x32 but rejects other sizes and oversized files`() {
@@ -140,7 +176,8 @@ class OfflineSkinTest {
         }
         val oversized =
             png("oversized.png", 64, 64).apply {
-                java.nio.file.Files.write(this, ByteArray(1024 * 1024), StandardOpenOption.APPEND)
+                java.nio.file.Files
+                    .write(this, ByteArray(1024 * 1024), StandardOpenOption.APPEND)
             }
         assertFailsWith<IllegalArgumentException> {
             validateLocalSkinFile(oversized, SkinVariant.Classic)
@@ -148,20 +185,22 @@ class OfflineSkinTest {
     }
 
     @Test
-    fun `offline account never reports an uploaded skin`() = runBlocking {
-        val store = store()
-        val account = offlineAccount()
-        store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
-        NetworkClient().use { network ->
-            val service = service(store, network)
-            val entry = service.library.importSkin(png(), "local", SkinVariant.Classic)
-            service.useOfflinePreview(account.id, entry.id)
-            val saved = store.data.accounts.single()
-            assertEquals("", saved.skinUrl)
-            assertEquals("", saved.authlibServer)
-            assertNotNull(service.texture(saved))
-            val failure = assertFailsWith<IllegalArgumentException> { service.upload(saved.id, entry.id) }
-            assertTrue(failure.message.orEmpty().contains("微软账户"))
+    fun `offline account never reports an uploaded skin`() =
+        runBlocking {
+            val store = store()
+            val account = offlineAccount()
+            store.mutate { it.copy(accounts = listOf(account), activeAccountId = account.id) }
+            NetworkClient().use { network ->
+                val service = service(store, network)
+                val entry = service.library.importSkin(png(), "local", SkinVariant.Classic)
+                service.useOfflinePreview(account.id, entry.id)
+                val saved = store.data.accounts.single()
+                assertEquals("", saved.skinUrl)
+                assertEquals("", saved.authlibServer)
+                assertNotNull(service.texture(saved))
+                val failure =
+                    assertFailsWith<IllegalArgumentException> { service.upload(saved.id, entry.id) }
+                assertTrue(failure.message.orEmpty().contains("微软账户"))
+            }
         }
-    }
 }

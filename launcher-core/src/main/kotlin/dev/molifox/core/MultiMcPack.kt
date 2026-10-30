@@ -8,7 +8,8 @@ package dev.molifox.core
 import com.google.gson.JsonParser
 import java.nio.file.Path
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.isDirectory
+import kotlin.io.path.name
 
 /** A root instance or one enclosing folder; never guess among several exported instances. */
 internal fun findMultiMcManifest(zip: ZipFile): String? {
@@ -23,7 +24,10 @@ internal fun readMultiMcManifest(
     root: Path,
     os: String,
 ): PackManifest {
-    fun text(name: String, limit: Int): String? {
+    fun text(
+        name: String,
+        limit: Int,
+    ): String? {
         val entry = zip.getEntry(name) ?: return null
         require(entry.size in 1..limit.toLong()) { "MultiMC/Prism 元数据过大或为空" }
         val bytes = zip.getInputStream(entry).use { it.readNBytes(limit + 1) }
@@ -49,14 +53,18 @@ internal fun readMultiMcManifest(
         )
     val supported = loaders.keys + setOf("net.minecraft", "org.lwjgl", "org.lwjgl3")
     require(all.all { it.string("uid") in supported }) {
-        "不支持的整合包组件：${all.filter { it.string("uid") !in supported }.joinToString { it.string("uid") }}"
+        "不支持的整合包组件：${all.filter {
+            it.string(
+                "uid",
+            ) !in supported
+        }.joinToString { it.string("uid") }}"
     }
     require(all.none { it.boolean("custom") }) { "暂不支持 MultiMC/Prism 自定义组件" }
     require(
         zip.entries().asSequence().none {
             !it.isDirectory &&
                 (it.name.startsWith("${prefix}patches/") || it.name.startsWith("${prefix}jarmods/"))
-        }
+        },
     ) {
         "暂不支持包含自定义组件补丁或 JAR 修改的整合包"
     }
@@ -79,7 +87,7 @@ internal fun readMultiMcManifest(
     require(loader == null || loaderVersion.isNotBlank()) { "加载器组件必须指定版本" }
     if (loaderVersion.isNotBlank()) safeFilename(loaderVersion)
     val folders =
-        listOf("${prefix}.minecraft/", "${prefix}minecraft/").filter { candidate ->
+        listOf("$prefix.minecraft/", "${prefix}minecraft/").filter { candidate ->
             zip.entries().asSequence().any { it.name.startsWith(candidate) }
         }
     require(folders.size == 1) { "整合包需要唯一的 .minecraft 或 minecraft 内容目录" }
@@ -88,10 +96,20 @@ internal fun readMultiMcManifest(
         setOf("assets", "libraries", "versions", "natives", "logs", "crash-reports", ".cache")
     val paths =
         validateArchive(zip, folder, root).mapNotNull { (_, target) ->
-            val relative = root.toAbsolutePath().normalize().relativize(target).joinToString("/")
+            val relative =
+                root
+                    .toAbsolutePath()
+                    .normalize()
+                    .relativize(target)
+                    .joinToString("/")
             packPath(root, relative)
-            if (relative.substringBefore('/').lowercase() in excluded) null
-            else if (os == "windows") relative.lowercase() else relative
+            if (relative.substringBefore('/').lowercase() in excluded) {
+                null
+            } else if (os == "windows") {
+                relative.lowercase()
+            } else {
+                relative
+            }
         }
     val seen = paths.toSet()
     require(seen.size == paths.size) { "整合包内容目录包含重复文件" }
@@ -107,14 +125,23 @@ internal fun readMultiMcManifest(
     var name = ""
     for (line in config.lineSequence()) {
         val trimmed = line.trim()
-        if (trimmed.startsWith('[') && trimmed.endsWith(']'))
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
             section = trimmed.substring(1, trimmed.length - 1)
-        if (section == "General" && trimmed.substringBefore('=').trim() == "name" && '=' in trimmed)
+        }
+        if (section == "General" && trimmed
+                .substringBefore(
+                    '=',
+                ).trim() == "name" && '=' in trimmed
+        ) {
             name = trimmed.substringAfter('=').trim().removeSurrounding("\"")
+        }
     }
     name =
         name.replace(Regex("\\\\x([0-9a-fA-F]{1,4})")) {
-            it.groupValues[1].toInt(16).toChar().toString()
+            it.groupValues[1]
+                .toInt(16)
+                .toChar()
+                .toString()
         }
     require(name.isNotBlank() && name.length <= 80 && name.none { it.isISOControl() }) {
         "MultiMC/Prism 实例名称为空或无效"

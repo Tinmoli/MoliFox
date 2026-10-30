@@ -5,15 +5,27 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Test
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Test
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readBytes
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DatapackManagerTest {
     /** 本次测试的数据目录：项目 `.work/` 下，测试结束（含失败）递归删除。 */
@@ -69,7 +81,7 @@ class DatapackManagerTest {
                             }
                         }
                     }
-                }
+                },
             )
         world.createDirectories()
         world.resolve("level.dat").writeBytes(bytes)
@@ -83,14 +95,24 @@ class DatapackManagerTest {
         disabled: List<String> = emptyList(),
     ): Path {
         // 每个测试只建一个实例，这里直接取它的存档目录。
-        val world = store.instancePath(store.data.instances.single().id).resolve("saves").resolve(name)
+        val world =
+            store
+                .instancePath(
+                    store.data.instances
+                        .single()
+                        .id,
+                ).resolve("saves")
+                .resolve(name)
         writeLevelDat(world, enabled, disabled)
         world.resolve("region/r.0.0.mca").parent.createDirectories()
         world.resolve("region/r.0.0.mca").writeText("region")
         return world
     }
 
-    private fun zip(path: Path, entries: List<Pair<String, String>>) {
+    private fun zip(
+        path: Path,
+        entries: List<Pair<String, String>>,
+    ) {
         path.parent.createDirectories()
         ZipOutputStream(path.outputStream().buffered()).use { output ->
             entries.forEach { (name, text) ->
@@ -101,7 +123,10 @@ class DatapackManagerTest {
         }
     }
 
-    private fun validPack(path: Path, format: Int = 15) {
+    private fun validPack(
+        path: Path,
+        format: Int = 15,
+    ) {
         zip(
             path,
             listOf(
@@ -112,16 +137,37 @@ class DatapackManagerTest {
     }
 
     private fun enabledOf(world: Path): List<String> {
-        val packs = readCompound(world.resolve("level.dat"))!!.compound("Data")!!.compound("Packs")!!
-        return packs.list("Enabled")!!.elements.map { (it as NbtString).value }
+        val packs =
+            checkNotNull(
+                checkNotNull(
+                    checkNotNull(
+                        readCompound(
+                            world.resolve("level.dat"),
+                        ),
+                    ).compound("Data"),
+                ).compound("Packs"),
+            )
+        return checkNotNull(packs.list("Enabled")).elements.map { (it as NbtString).value }
     }
 
     private fun disabledOf(world: Path): List<String> {
-        val packs = readCompound(world.resolve("level.dat"))!!.compound("Data")!!.compound("Packs")!!
-        return packs.list("Disabled")!!.elements.map { (it as NbtString).value }
+        val packs =
+            checkNotNull(
+                checkNotNull(
+                    checkNotNull(
+                        readCompound(
+                            world.resolve("level.dat"),
+                        ),
+                    ).compound("Data"),
+                ).compound("Packs"),
+            )
+        return checkNotNull(packs.list("Disabled")).elements.map { (it as NbtString).value }
     }
 
-    private fun <T> withSessionLock(world: Path, block: () -> T): T {
+    private fun <T> withSessionLock(
+        world: Path,
+        block: () -> T,
+    ): T {
         val lockFile = world.resolve("session.lock").apply { writeText("locked") }
         return FileChannel.open(lockFile, StandardOpenOption.WRITE).use { channel ->
             val lock = channel.lock()
@@ -140,7 +186,13 @@ class DatapackManagerTest {
         val store = store()
         val manager = DatapackManager(store)
         val fixture = instance(store)
-        val world = world(store, "World", enabled = listOf("vanilla", "file/on.zip"), disabled = listOf("file/off.zip"))
+        val world =
+            world(
+                store,
+                "World",
+                enabled = listOf("vanilla", "file/on.zip"),
+                disabled = listOf("file/off.zip"),
+            )
         val directory = world.resolve("datapacks").apply { createDirectories() }
         validPack(directory.resolve("on.zip"))
         validPack(directory.resolve("off.zip"))
@@ -200,9 +252,10 @@ class DatapackManagerTest {
         val archive = temporary.resolve("no-manifest.zip")
         zip(archive, listOf("data/demo/function/tick.mcfunction" to "say hi"))
 
-        val error = assertFailsWith<IllegalArgumentException> {
-            manager.install(fixture.id, "World", archive)
-        }
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                manager.install(fixture.id, "World", archive)
+            }
 
         assertTrue(error.message.orEmpty().contains("pack.mcmeta"))
         assertTrue(manager.list(fixture.id, "World").entries.isEmpty(), "校验失败不得安装文件")
@@ -217,9 +270,10 @@ class DatapackManagerTest {
         val archive = temporary.resolve("bad-format.zip")
         zip(archive, listOf("pack.mcmeta" to """{"pack":{"description":"no format"}}"""))
 
-        val error = assertFailsWith<IllegalArgumentException> {
-            manager.install(fixture.id, "World", archive)
-        }
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                manager.install(fixture.id, "World", archive)
+            }
 
         assertTrue(error.message.orEmpty().contains("pack_format"))
         assertTrue(manager.list(fixture.id, "World").entries.isEmpty())
@@ -269,9 +323,10 @@ class DatapackManagerTest {
         val archive = temporary.resolve("demo.zip")
         validPack(archive)
 
-        val error = assertFailsWith<IllegalArgumentException> {
-            manager.install(fixture.id, "World", archive)
-        }
+        val error =
+            assertFailsWith<IllegalArgumentException> {
+                manager.install(fixture.id, "World", archive)
+            }
 
         assertTrue(error.message.orEmpty().contains("同名"))
     }
@@ -286,7 +341,7 @@ class DatapackManagerTest {
         val world = world(store, "World")
         val directory = world.resolve("datapacks").apply { createDirectories() }
         validPack(directory.resolve("demo.zip"))
-        val before = readCompound(world.resolve("level.dat"))!!
+        val before = checkNotNull(readCompound(world.resolve("level.dat")))
         assertEquals(listOf("vanilla"), enabledOf(world))
         assertTrue(disabledOf(world).isEmpty())
 
@@ -294,20 +349,37 @@ class DatapackManagerTest {
 
         assertEquals(listOf("file/demo.zip"), disabledOf(world))
         assertEquals(listOf("vanilla"), enabledOf(world), "启用列表里的其他条目必须保留")
-        assertEquals(false, manager.list(fixture.id, "World").entries.single().enabled)
+        assertEquals(
+            false,
+            manager
+                .list(fixture.id, "World")
+                .entries
+                .single()
+                .enabled,
+        )
 
         manager.setEnabled(fixture.id, "World", "demo.zip", true)
 
         assertTrue(disabledOf(world).isEmpty())
         assertTrue(enabledOf(world).contains("file/demo.zip"))
-        assertEquals(true, manager.list(fixture.id, "World").entries.single().enabled)
+        assertEquals(
+            true,
+            manager
+                .list(fixture.id, "World")
+                .entries
+                .single()
+                .enabled,
+        )
         // 其他标签原样保留。
-        val after = readCompound(world.resolve("level.dat"))!!
+        val after = checkNotNull(readCompound(world.resolve("level.dat")))
         assertEquals("我的世界", after.compound("Data")?.string("LevelName"))
-        assertEquals(42L, (after.compound("Data")!!["RandomSeed"] as NbtLong).value)
+        assertEquals(42L, (checkNotNull(after.compound("Data"))["RandomSeed"] as NbtLong).value)
         assertEquals("1.20.1", after.compound("Data")?.compound("Version")?.string("Id"))
         assertEquals(before.entries.keys, after.entries.keys)
-        assertEquals(before.compound("Data")!!.entries.keys, after.compound("Data")!!.entries.keys)
+        assertEquals(
+            checkNotNull(before.compound("Data")).entries.keys,
+            checkNotNull(after.compound("Data")).entries.keys,
+        )
     }
 
     @Test
@@ -322,8 +394,8 @@ class DatapackManagerTest {
             gzipBytes(
                 TestNbtWriter().root {
                     nested("Data") { string("LevelName", "旧世界") }
-                }
-            )
+                },
+            ),
         )
         val directory = world.resolve("datapacks").apply { createDirectories() }
         validPack(directory.resolve("demo.zip"))
@@ -344,12 +416,17 @@ class DatapackManagerTest {
         validPack(directory.resolve("demo.zip"))
 
         withSessionLock(world) {
-            val error = assertFailsWith<IllegalArgumentException> {
-                manager.setEnabled(fixture.id, "World", "demo.zip", false)
-            }
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    manager.setEnabled(fixture.id, "World", "demo.zip", false)
+                }
             assertTrue(error.message.orEmpty().contains("正在游戏中打开"))
             assertFailsWith<IllegalArgumentException> {
-                manager.install(fixture.id, "World", temporary.resolve("demo.zip").also { validPack(it) })
+                manager.install(
+                    fixture.id,
+                    "World",
+                    temporary.resolve("demo.zip").also { validPack(it) },
+                )
             }
         }
         assertTrue(disabledOf(world).isEmpty(), "被拒绝时不得写 level.dat")
@@ -362,7 +439,8 @@ class DatapackManagerTest {
         val store = store()
         val manager = DatapackManager(store)
         val fixture = instance(store)
-        val world = world(store, "World", enabled = listOf("vanilla"), disabled = listOf("file/demo.zip"))
+        val world =
+            world(store, "World", enabled = listOf("vanilla"), disabled = listOf("file/demo.zip"))
         val archive = world.resolve("datapacks/demo.zip")
         validPack(archive)
         val previous = System.getProperty("molifox.data.dir")
@@ -371,8 +449,11 @@ class DatapackManagerTest {
             try {
                 manager.delete(fixture.id, "World", "demo.zip")
             } finally {
-                if (previous == null) System.clearProperty("molifox.data.dir")
-                else System.setProperty("molifox.data.dir", previous)
+                if (previous == null) {
+                    System.clearProperty("molifox.data.dir")
+                } else {
+                    System.setProperty("molifox.data.dir", previous)
+                }
             }
 
         assertTrue(deleted)

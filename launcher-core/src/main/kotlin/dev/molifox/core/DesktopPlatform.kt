@@ -27,20 +27,23 @@ class DesktopPlatform : PlatformServices {
     override val architecture =
         when (System.getProperty("os.arch").lowercase(Locale.ROOT)) {
             "aarch64",
-            "arm64" -> "arm64"
+            "arm64",
+            -> "arm64"
             "x86",
             "i386",
-            "i686" -> "x86"
+            "i686",
+            -> "x86"
             else -> "x64"
         }
     override val javaExecutable = if (osName == "windows") "java.exe" else "java"
     override val classpathSeparator = if (osName == "windows") ";" else ":"
     override val totalMemoryMb: Int
         get() =
-            ((ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
+            (
+                (ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
                     ?.totalMemorySize
-                    ?.div(1024 * 1024) ?: 8192)
-                .toInt()
+                    ?.div(1024 * 1024) ?: 8192
+            ).toInt()
 
     /**
      * 打开文件夹失败时的日志与用户提示由控制器注入（DesktopPlatform 不持有 store）；
@@ -73,10 +76,11 @@ class DesktopPlatform : PlatformServices {
 
     override val availableMemoryMb: Int
         get() =
-            ((ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
+            (
+                (ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
                     ?.freeMemorySize
-                    ?.div(1024 * 1024) ?: (totalMemoryMb / 2).toLong())
-                .coerceIn(0, totalMemoryMb.toLong())
+                    ?.div(1024 * 1024) ?: (totalMemoryMb / 2).toLong()
+            ).coerceIn(0, totalMemoryMb.toLong())
                 .toInt()
 
     /**
@@ -94,29 +98,38 @@ class DesktopPlatform : PlatformServices {
         require(uri.scheme == "https" && uri.userInfo == null) { "只允许 HTTPS 链接" }
         if (
             !GraphicsEnvironment.isHeadless() &&
-                Desktop.isDesktopSupported() &&
-                Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)
-        )
+            Desktop.isDesktopSupported() &&
+            Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)
+        ) {
             Desktop.getDesktop().browse(uri)
-        else
+        } else {
             ProcessBuilder(
-                    if (osName == "windows") listOf("rundll32", "url.dll,FileProtocolHandler", url)
-                    else listOf("xdg-open", url)
-                )
-                .start()
+                if (osName == "windows") {
+                    listOf("rundll32", "url.dll,FileProtocolHandler", url)
+                } else {
+                    listOf("xdg-open", url)
+                },
+            ).start()
+        }
     }
 
     override fun moveToTrash(file: Path) {
         if (
             !GraphicsEnvironment.isHeadless() &&
-                Desktop.isDesktopSupported() &&
-                Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH) &&
-                Desktop.getDesktop().moveToTrash(file.toFile())
-        )
+            Desktop.isDesktopSupported() &&
+            Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH) &&
+            Desktop.getDesktop().moveToTrash(file.toFile())
+        ) {
             return
+        }
         // Linux desktops may not support AWT trash. Preserve files in the launcher's
         // own recovery folder rather than falling back to irreversible deletion.
-        val trash = defaultDataDirectory.resolve("trash").toFile().apply { mkdirs() }.toPath()
+        val trash =
+            defaultDataDirectory
+                .resolve("trash")
+                .toFile()
+                .apply { mkdirs() }
+                .toPath()
         Files.move(file, trash.resolve("${System.currentTimeMillis()}-${file.fileName}"))
     }
 
@@ -124,20 +137,21 @@ class DesktopPlatform : PlatformServices {
     private fun desktopFileOpener(): ((File) -> Unit)? {
         if (GraphicsEnvironment.isHeadless() || !Desktop.isDesktopSupported()) return null
         val desktop = runCatching { Desktop.getDesktop() }.getOrNull() ?: return null
-        if (!runCatching { desktop.isSupported(Desktop.Action.OPEN) }.getOrDefault(false))
+        if (!runCatching { desktop.isSupported(Desktop.Action.OPEN) }.getOrDefault(false)) {
             return null
+        }
         return { file: File -> desktop.open(file) }
     }
 
     private fun copyPathToClipboard(path: String): Boolean {
         if (GraphicsEnvironment.isHeadless()) return false
         return runCatching {
-                Toolkit.getDefaultToolkit()
-                    .systemClipboard
-                    .setContents(StringSelection(path), null)
-                true
-            }
-            .getOrDefault(false)
+            Toolkit
+                .getDefaultToolkit()
+                .systemClipboard
+                .setContents(StringSelection(path), null)
+            true
+        }.getOrDefault(false)
     }
 }
 
@@ -164,16 +178,23 @@ internal class PathOpener(
         }
         val copied = runCatching { copyToClipboard(path.toString()) }.getOrDefault(false)
         log(
-            "打开 $path 的所有方式都失败" + if (copied) "，已复制路径到剪贴板" else "，剪贴板也不可用"
+            "打开 $path 的所有方式都失败" + if (copied) "，已复制路径到剪贴板" else "，剪贴板也不可用",
         )
         notice(
-            if (copied) "系统拒绝打开（可能被安全软件拦截），路径已复制"
-            else "系统拒绝打开（可能被安全软件拦截），请手动打开：$path"
+            if (copied) {
+                "系统拒绝打开（可能被安全软件拦截），路径已复制"
+            } else {
+                "系统拒绝打开（可能被安全软件拦截），请手动打开：$path"
+            },
         )
         return false
     }
 
-    private fun attempt(name: String, path: Path, action: () -> Unit): Boolean =
+    private fun attempt(
+        name: String,
+        path: Path,
+        action: () -> Unit,
+    ): Boolean =
         try {
             action()
             log("已打开 $path（$name）")
@@ -188,14 +209,20 @@ internal class PathOpener(
  * 命令行回退方式，按顺序尝试。Windows：`cmd /c start "" <path>`（路径作为单独参数， 不拼接字符串），
  * 再 `explorer.exe /select,<path>`（文件）或 `explorer.exe <path>`（目录）。
  */
-internal fun pathOpenCommands(osName: String, target: Path): List<Pair<String, List<String>>> {
+internal fun pathOpenCommands(
+    osName: String,
+    target: Path,
+): List<Pair<String, List<String>>> {
     val path = target.toAbsolutePath().normalize().toString()
     return when (osName) {
         "windows" ->
             buildList {
                 add("cmd /c start" to listOf("cmd", "/c", "start", "", path))
-                if (Files.isDirectory(target)) add("explorer.exe" to listOf("explorer.exe", path))
-                else add("explorer.exe /select" to listOf("explorer.exe", "/select,$path"))
+                if (Files.isDirectory(target)) {
+                    add("explorer.exe" to listOf("explorer.exe", path))
+                } else {
+                    add("explorer.exe /select" to listOf("explorer.exe", "/select,$path"))
+                }
             }
         "osx" -> listOf("open" to listOf("open", path))
         else -> listOf("xdg-open" to listOf("xdg-open", path))

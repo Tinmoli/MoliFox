@@ -6,11 +6,27 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,7 +48,10 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun JavaRuntimePromptDialog(prompt: JavaPrompt, actions: UiActions) {
+internal fun JavaRuntimePromptDialog(
+    prompt: JavaPrompt,
+    actions: UiActions,
+) {
     var rememberDismiss by remember(prompt.instanceId) { mutableStateOf(false) }
     var showList by remember(prompt.instanceId) { mutableStateOf(prompt.candidates.isEmpty()) }
     var choosing by remember(prompt.instanceId) { mutableStateOf(false) }
@@ -43,6 +62,7 @@ internal fun JavaRuntimePromptDialog(prompt: JavaPrompt, actions: UiActions) {
             it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
                 it.resources.contains("java:${prompt.requiredMajor}")
         }
+
     fun dismiss() = actions.controller.dismissJavaPrompt(rememberDismiss)
     Modal(
         "没有找到可用的 Java",
@@ -52,12 +72,13 @@ internal fun JavaRuntimePromptDialog(prompt: JavaPrompt, actions: UiActions) {
     ) {
         Text(
             "这个游戏版本需要 Java ${prompt.requiredMajor}。可以自动下载到 " +
-                "MoliFox\\runtimes\\，不会修改系统环境变量。"
+                "MoliFox\\runtimes\\，不会修改系统环境变量。",
         )
         if (prompt.candidates.isEmpty()) MutedText("没有检测到其它可用的 Java。")
         if (showList) {
             Column(
-                Modifier.fillMaxWidth()
+                Modifier
+                    .fillMaxWidth()
                     .heightIn(max = 250.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -97,10 +118,12 @@ internal fun JavaRuntimePromptDialog(prompt: JavaPrompt, actions: UiActions) {
                                     .choose(
                                         "选择 Java 可执行文件",
                                         extensions =
-                                            if (platform.osName == "windows") listOf("exe")
-                                            else emptyList(),
-                                    )
-                                    .firstOrNull()
+                                            if (platform.osName == "windows") {
+                                                listOf("exe")
+                                            } else {
+                                                emptyList()
+                                            },
+                                    ).firstOrNull()
                             if (chosen != null) {
                                 withContext(Dispatchers.Swing) {
                                     actions.controller.chooseJavaForPrompt(chosen.toString())
@@ -117,14 +140,17 @@ internal fun JavaRuntimePromptDialog(prompt: JavaPrompt, actions: UiActions) {
             }
             SecondaryButton({ showList = !showList }) {
                 Text(
-                    if (showList) "隐藏系统 Java"
-                    else "使用系统已安装的 Java（${prompt.candidates.size}）"
+                    if (showList) {
+                        "隐藏系统 Java"
+                    } else {
+                        "使用系统已安装的 Java（${prompt.candidates.size}）"
+                    },
                 )
             }
             SecondaryButton({ dismiss() }) { Text("取消") }
         }
         MutedText(
-            "按设置里的「Java 下载源」选择 Zulu/Temurin 官方源（不含第三方镜像）；安装写入 MoliFox\\runtimes\\，不注册 PATH、不改 JAVA_HOME、不写注册表。"
+            "按设置里的「Java 下载源」选择 Zulu/Temurin 官方源（不含第三方镜像）；安装写入 MoliFox\\runtimes\\，不注册 PATH、不改 JAVA_HOME、不写注册表。",
         )
     }
 }
@@ -139,7 +165,8 @@ private fun JavaCandidateRow(
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -160,7 +187,8 @@ private fun JavaCandidateRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (runtime.imageType.isNotBlank())
+        if (runtime.imageType.isNotBlank()) {
             Text(runtime.imageType.uppercase(), fontSize = 11.sp, color = colors.onSurfaceVariant)
+        }
     }
 }

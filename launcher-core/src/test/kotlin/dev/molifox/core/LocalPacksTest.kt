@@ -5,16 +5,25 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Test
+import kotlin.io.path.createDirectories
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class LocalPacksTest {
     private val temporary: Path = workTestDirectory("launcher-core-local-packs")
@@ -27,7 +36,10 @@ class LocalPacksTest {
     private fun store(): LauncherStore {
         val platform =
             object : PlatformServices by DesktopPlatform() {
-                override val defaultDataDirectory = temporary.resolve("profile-${UUID.randomUUID()}")
+                override val defaultDataDirectory =
+                    temporary.resolve(
+                        "profile-${UUID.randomUUID()}",
+                    )
 
                 override fun moveToTrash(file: Path) {
                     val target = temporary.resolve("trash/${UUID.randomUUID()}-${file.fileName}")
@@ -95,43 +107,56 @@ class LocalPacksTest {
     }
 
     @Test
-    fun `importing the same zip twice adds a numeric suffix`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val source = zip(temporary.resolve("Fancy.zip"))
-        val packs = LocalPackStore(store)
-        val first = packs.import(instance.id, PackFolder.ResourcePacks, listOf(source))
-        val second = packs.import(instance.id, PackFolder.ResourcePacks, listOf(source))
-        assertEquals(listOf("Fancy.zip"), first.map { it.filename })
-        assertEquals(listOf("Fancy (2).zip"), second.map { it.filename })
-        assertTrue(store.instancePath(instance.id).resolve("resourcepacks/Fancy (2).zip").isRegularFile())
-    }
+    fun `importing the same zip twice adds a numeric suffix`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val source = zip(temporary.resolve("Fancy.zip"))
+            val packs = LocalPackStore(store)
+            val first = packs.import(instance.id, PackFolder.ResourcePacks, listOf(source))
+            val second = packs.import(instance.id, PackFolder.ResourcePacks, listOf(source))
+            assertEquals(listOf("Fancy.zip"), first.map { it.filename })
+            assertEquals(listOf("Fancy (2).zip"), second.map { it.filename })
+            assertTrue(
+                store
+                    .instancePath(
+                        instance.id,
+                    ).resolve("resourcepacks/Fancy (2).zip")
+                    .isRegularFile(),
+            )
+        }
 
     @Test
-    fun `folder import copies contents and rejects non zip files without leftovers`() = runBlocking {
-        val store = store()
-        val instance = instance(store)
-        val folder = temporary.resolve("ShaderPack")
-        folder.resolve("shaders").createDirectories()
-        folder.resolve("shaders/final.fsh").writeText("void main() {}")
-        val packs = LocalPackStore(store)
-        val imported = packs.import(instance.id, PackFolder.ShaderPacks, listOf(folder))
-        assertEquals(listOf("ShaderPack"), imported.map { it.filename })
-        assertTrue(
-            store.instancePath(instance.id).resolve("shaderpacks/ShaderPack/shaders/final.fsh").isRegularFile()
-        )
-        val other = temporary.resolve("notes.txt").apply { writeText("no") }
-        val failure =
-            assertFailsWith<IllegalArgumentException> {
-                runBlocking { packs.import(instance.id, PackFolder.ShaderPacks, listOf(other)) }
-            }
-        assertTrue(failure.message.orEmpty().contains("只能导入"))
-        assertEquals(
-            listOf("ShaderPack"),
-            store.instancePath(instance.id)
-                .resolve("shaderpacks")
-                .listDirectoryEntries()
-                .map { it.name },
-        )
-    }
+    fun `folder import copies contents and rejects non zip files without leftovers`() =
+        runBlocking {
+            val store = store()
+            val instance = instance(store)
+            val folder = temporary.resolve("ShaderPack")
+            folder.resolve("shaders").createDirectories()
+            folder.resolve("shaders/final.fsh").writeText("void main() {}")
+            val packs = LocalPackStore(store)
+            val imported = packs.import(instance.id, PackFolder.ShaderPacks, listOf(folder))
+            assertEquals(listOf("ShaderPack"), imported.map { it.filename })
+            assertTrue(
+                store
+                    .instancePath(
+                        instance.id,
+                    ).resolve("shaderpacks/ShaderPack/shaders/final.fsh")
+                    .isRegularFile(),
+            )
+            val other = temporary.resolve("notes.txt").apply { writeText("no") }
+            val failure =
+                assertFailsWith<IllegalArgumentException> {
+                    runBlocking { packs.import(instance.id, PackFolder.ShaderPacks, listOf(other)) }
+                }
+            assertTrue(failure.message.orEmpty().contains("只能导入"))
+            assertEquals(
+                listOf("ShaderPack"),
+                store
+                    .instancePath(instance.id)
+                    .resolve("shaderpacks")
+                    .listDirectoryEntries()
+                    .map { it.name },
+            )
+        }
 }

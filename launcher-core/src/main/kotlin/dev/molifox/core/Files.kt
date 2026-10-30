@@ -16,27 +16,44 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipFile
-import kotlin.io.path.*
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.name
+import kotlin.io.path.walk
+import kotlin.io.path.writeText
 
 internal val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
 
-internal fun JsonObject.string(key: String, default: String = "") =
-    get(key)?.takeUnless { it.isJsonNull }?.asString ?: default
+internal fun JsonObject.string(
+    key: String,
+    default: String = "",
+) = get(key)?.takeUnless { it.isJsonNull }?.asString ?: default
 
-internal fun JsonObject.int(key: String, default: Int = 0) =
-    get(key)?.takeUnless { it.isJsonNull }?.asInt ?: default
+internal fun JsonObject.int(
+    key: String,
+    default: Int = 0,
+) = get(key)?.takeUnless { it.isJsonNull }?.asInt ?: default
 
 internal fun JsonObject.obj(key: String): JsonObject = getAsJsonObject(key) ?: JsonObject()
 
 internal fun JsonObject.array(key: String): JsonArray = getAsJsonArray(key) ?: JsonArray()
 
-internal fun JsonObject.boolean(key: String, default: Boolean = false) =
-    get(key)?.takeUnless { it.isJsonNull }?.asBoolean ?: default
+internal fun JsonObject.boolean(
+    key: String,
+    default: Boolean = false,
+) = get(key)?.takeUnless { it.isJsonNull }?.asBoolean ?: default
 
 internal fun readObject(path: Path): JsonObject =
     Files.newBufferedReader(path).use { JsonParser.parseReader(it).asJsonObject }
 
-internal fun writeJson(path: Path, value: Any) {
+internal fun writeJson(
+    path: Path,
+    value: Any,
+) {
     path.parent.createDirectories()
     val temporary = path.resolveSibling("${path.fileName}.${UUID.randomUUID()}.tmp")
     try {
@@ -57,14 +74,17 @@ internal fun writeJson(path: Path, value: Any) {
 }
 
 /** Reject traversal, drive prefixes, ADS, and Windows reserved names on every OS. */
-fun safePath(root: Path, relative: String): Path {
+fun safePath(
+    root: Path,
+    relative: String,
+): Path {
     require(
         relative.isNotBlank() &&
             relative.length < 4096 &&
             '\u0000' !in relative &&
             ':' !in relative &&
             !relative.startsWith('/') &&
-            !relative.startsWith('\\')
+            !relative.startsWith('\\'),
     ) {
         "不安全的文件路径"
     }
@@ -75,7 +95,7 @@ fun safePath(root: Path, relative: String): Path {
                 it.endsWith('.') ||
                 it.endsWith(' ') ||
                 Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?").matches(it)
-        }
+        },
     ) {
         "不安全的文件路径"
     }
@@ -96,7 +116,10 @@ internal fun safeFilename(name: String): String {
     return name
 }
 
-internal fun digest(path: Path, algorithm: String = "SHA-1"): String {
+internal fun digest(
+    path: Path,
+    algorithm: String = "SHA-1",
+): String {
     val digest = MessageDigest.getInstance(algorithm)
     Files.newInputStream(path).use { input ->
         val buffer = ByteArray(65536)
@@ -110,7 +133,8 @@ internal fun digest(path: Path, algorithm: String = "SHA-1"): String {
 }
 
 fun offlineUuid(name: String): String =
-    UUID.nameUUIDFromBytes("OfflinePlayer:$name".toByteArray(Charsets.UTF_8))
+    UUID
+        .nameUUIDFromBytes("OfflinePlayer:$name".toByteArray(Charsets.UTF_8))
         .toString()
         .replace("-", "")
 
@@ -139,11 +163,10 @@ fun redactSecrets(text: String): String =
     text
         .replace(
             Regex(
-                "(?i)((?:access[_-]?token|refresh[_-]?token|authorization|--accessToken)[\\\"'\\s:=]+)(?:Bearer\\s+)?[^\\s,\\\"'}]+"
+                "(?i)((?:access[_-]?token|refresh[_-]?token|authorization|--accessToken)[\\\"'\\s:=]+)(?:Bearer\\s+)?[^\\s,\\\"'}]+",
             ),
             "$1[已隐藏]",
-        )
-        .replace(Regex("eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), "[已隐藏]")
+        ).replace(Regex("eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), "[已隐藏]")
 
 internal fun validateArchive(
     zip: ZipFile,
@@ -152,7 +175,11 @@ internal fun validateArchive(
     maxBytes: Long = 4L * 1024 * 1024 * 1024,
 ): List<Pair<java.util.zip.ZipEntry, Path>> {
     val entries =
-        zip.entries().asSequence().filter { it.name.startsWith(prefix) && !it.isDirectory }.toList()
+        zip
+            .entries()
+            .asSequence()
+            .filter { it.name.startsWith(prefix) && !it.isDirectory }
+            .toList()
     require(entries.size <= 50000) { "压缩包文件过多" }
     var size = 0L
     return entries.map { entry ->
@@ -163,7 +190,11 @@ internal fun validateArchive(
     }
 }
 
-internal fun copyTree(source: Path, destination: Path, excluded: Set<String> = emptySet()) {
+internal fun copyTree(
+    source: Path,
+    destination: Path,
+    excluded: Set<String> = emptySet(),
+) {
     require(!Files.isSymbolicLink(source)) { "不支持导入符号链接" }
     if (!source.exists(LinkOption.NOFOLLOW_LINKS)) return
     if (source.isRegularFile(LinkOption.NOFOLLOW_LINKS)) {
@@ -175,11 +206,13 @@ internal fun copyTree(source: Path, destination: Path, excluded: Set<String> = e
         paths.forEach { file ->
             if (file == source) return@forEach
             val relative = source.relativize(file)
-            if (relative.any { it.toString() in excluded } || Files.isSymbolicLink(file))
+            if (relative.any { it.toString() in excluded } || Files.isSymbolicLink(file)) {
                 return@forEach
+            }
             val target = safePath(destination, relative.toString())
-            if (Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS)) target.createDirectories()
-            else {
+            if (Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS)) {
+                target.createDirectories()
+            } else {
                 target.parent.createDirectories()
                 Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING)
             }

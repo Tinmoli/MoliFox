@@ -23,7 +23,26 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,24 +52,63 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FilterAlt
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.Unarchive
+import androidx.compose.material.icons.outlined.ViewList
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import kotlinx.coroutines.*
+import dev.molifox.core.ContentCategoryOption
+import dev.molifox.core.ContentFilter
+import dev.molifox.core.ContentHit
+import dev.molifox.core.ContentSearch
+import dev.molifox.core.GameInstance
+import dev.molifox.core.LauncherState
+import dev.molifox.core.LoaderType
+import dev.molifox.core.minecraftVersionTag
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 结果排序：只在当前页内重排（后端分页接口只按相关度返回，不改业务参数）。 */
 private val contentSortOptions = listOf("downloads" to "下载量", "relevance" to "相关度", "name" to "名称")
@@ -200,7 +258,6 @@ internal fun contentSourceHome(value: String?): String? =
         else -> null
     }
 
-/** 除当前源之外可选的另一内容源；用于「下载源」状态行，不提供点了没反应的切换。 */
 /**
  * 分类多选控件：按钮显示「分类」/「分类 · N」，弹出复选列表并可一键清除。 单选下拉是 [SimpleDropdown]，无法表达集合，所以这里用 DropdownMenu 自己维护选中集合。
  */
@@ -215,7 +272,8 @@ private fun ContentCategoryPicker(
     val pickerShape = RoundedCornerShape(Metrics.innerRadius)
     Box(modifier) {
         Row(
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .height(Metrics.controlHeight)
                 .clip(pickerShape)
                 .background(controlBackground(), pickerShape)
@@ -230,8 +288,11 @@ private fun ContentCategoryPicker(
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 color =
-                    if (selected.isEmpty()) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onPrimaryContainer,
+                    if (selected.isEmpty()) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -265,14 +326,14 @@ private fun ContentCategoryPicker(
             for ((slug, label) in options) {
                 val checked = slug in selected
                 Row(
-                    Modifier.fillMaxWidth()
+                    Modifier
+                        .fillMaxWidth()
                         .heightIn(min = 38.dp)
                         .background(if (checked) selectedRowBackground() else Color.Transparent)
                         .rowHoverHighlight(enabled = !checked)
                         .clickable {
                             onChange(if (checked) selected - slug else selected + slug)
-                        }
-                        .padding(horizontal = 12.dp),
+                        }.padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Checkbox(checked, null)
@@ -281,8 +342,11 @@ private fun ContentCategoryPicker(
                         label,
                         fontSize = 13.sp,
                         color =
-                            if (checked) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurface,
+                            if (checked) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -297,9 +361,7 @@ private fun ContentCategoryPicker(
 fun ColumnScope.ContentBrowser(
     state: LauncherState,
     actions: UiActions,
-    navigate: (Page) -> Unit,
     kind: String,
-    onKindChange: (String) -> Unit = {},
 ) {
     val preferences = state.data.settings.pages.downloads
     var query by remember { mutableStateOf("") }
@@ -349,8 +411,11 @@ fun ColumnScope.ContentBrowser(
             }
     }
     val categoryOptions =
-        if (source == "curseforge") sourceCategories.map { it.id to it.name }
-        else categoriesFor(kind)
+        if (source == "curseforge") {
+            sourceCategories.map { it.id to it.name }
+        } else {
+            categoriesFor(kind)
+        }
     var gameVersions by remember { mutableStateOf(emptyList<String>()) }
     var versionListError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -451,7 +516,7 @@ fun ColumnScope.ContentBrowser(
                 )
                 PrimaryButton("搜索", Icons.Outlined.Search, onClick = { refresh++ })
                 val sourceHome = contentSourceHome(state.data.settings.contentDownloadSource)
-                if (sourceHome != null)
+                if (sourceHome != null) {
                     SmallIconButton(
                         Icons.Outlined.OpenInNew,
                         "打开 " +
@@ -459,6 +524,7 @@ fun ColumnScope.ContentBrowser(
                             " 主页",
                         { actions.run { actions.controller.platform.openUrl(sourceHome) } },
                     )
+                }
             }
             FlowRow(
                 Modifier.fillMaxWidth().heightIn(min = 44.dp),
@@ -482,10 +548,11 @@ fun ColumnScope.ContentBrowser(
                         // 实例版本可能不在官方正式版列表里（例如快照），兜底补一项。
                         if (
                             gameVersion.isNotBlank() &&
-                                gameVersion != instanceVersion &&
-                                gameVersion !in gameVersions
-                        )
+                            gameVersion != instanceVersion &&
+                            gameVersion !in gameVersions
+                        ) {
                             add(gameVersion to gameVersion)
+                        }
                     },
                     { picked -> gameVersion = picked },
                     Modifier.width(140.dp),
@@ -517,12 +584,14 @@ fun ColumnScope.ContentBrowser(
                         "modrinth" to contentSourceName("modrinth"),
                         "curseforge" to contentSourceName("curseforge"),
                     ),
-                    { picked -> actions.run { actions.controller.setContentDownloadSource(picked) } },
+                    { picked ->
+                        actions.run { actions.controller.setContentDownloadSource(picked) }
+                    },
                     Modifier.width(150.dp),
                 )
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
-            if (kind == "modpack")
+            if (kind == "modpack") {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -540,6 +609,7 @@ fun ColumnScope.ContentBrowser(
                         Text("导入整合包", fontSize = 12.sp)
                     }
                 }
+            }
             val followsInstance =
                 selected != null &&
                     gameVersion == instanceVersion.orEmpty() &&
@@ -550,7 +620,7 @@ fun ColumnScope.ContentBrowser(
                     followsInstance -> contentHint(kind, selected)
                     else -> "按所选游戏版本 / 加载器筛选，不会更换安装实例。"
                 }
-            if (hint.isNotBlank())
+            if (hint.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Outlined.Info,
@@ -567,6 +637,7 @@ fun ColumnScope.ContentBrowser(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
         }
     }
     // ---- 结果区 ----
@@ -582,9 +653,11 @@ fun ColumnScope.ContentBrowser(
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val scrolled =
-        if (listView)
+        if (listView) {
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        else gridState.firstVisibleItemIndex > 0
+        } else {
+            gridState.firstVisibleItemIndex > 0
+        }
     val goTop: () -> Unit = {
         scope.launch {
             if (listView) listState.animateScrollToItem(0) else gridState.animateScrollToItem(0)
@@ -596,7 +669,7 @@ fun ColumnScope.ContentBrowser(
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (query.isNotBlank())
+        if (query.isNotBlank()) {
             Text(
                 " · 「" + query + "」",
                 fontSize = 11.sp,
@@ -604,6 +677,7 @@ fun ColumnScope.ContentBrowser(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
         Spacer(Modifier.weight(1f))
         Text(
             "第 ${offset / 12 + 1} 页",
@@ -622,8 +696,11 @@ fun ColumnScope.ContentBrowser(
                 Panel(Modifier.fillMaxWidth()) {
                     // 映射失败不是网络问题：标题要区分，正文保留具体阶段与响应片段。
                     EmptyState(
-                        if (failure.startsWith("CurseForge")) "资源库返回的数据无法识别"
-                        else "暂时无法连接资源库",
+                        if (failure.startsWith("CurseForge")) {
+                            "资源库返回的数据无法识别"
+                        } else {
+                            "暂时无法连接资源库"
+                        },
                         failure,
                         Icons.Outlined.CloudOff,
                     ) {
@@ -704,7 +781,7 @@ fun ColumnScope.ContentBrowser(
                     }
                 }
         }
-        if (LocalAnimationsEnabled.current)
+        if (LocalAnimationsEnabled.current) {
             // 显式写全名：外层是 ColumnScope，否则会解析到 ColumnScope.AnimatedVisibility 扩展。
             androidx.compose.animation.AnimatedVisibility(
                 visible = scrolled,
@@ -714,8 +791,9 @@ fun ColumnScope.ContentBrowser(
             ) {
                 GoTopButton(goTop)
             }
-        else if (scrolled)
+        } else if (scrolled) {
             Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { GoTopButton(goTop) }
+        }
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         MutedText("每页 12 条 · 共 ${result.total} 个资源", Modifier)
@@ -730,7 +808,10 @@ fun ColumnScope.ContentBrowser(
 }
 
 /** 检索条件说明：告诉用户当前按什么筛选、以及为什么安装按钮是灰的。 */
-private fun contentHint(kind: String, target: GameInstance?): String =
+private fun contentHint(
+    kind: String,
+    target: GameInstance?,
+): String =
     when {
         kind == "modpack" -> ""
         target == null -> "先安装并选择游戏实例，即可下载兼容的资源。"
@@ -744,32 +825,40 @@ private fun contentHint(kind: String, target: GameInstance?): String =
     }
 
 @Composable
-private fun ViewToggle(listView: Boolean, onChange: (Boolean) -> Unit) {
+private fun ViewToggle(
+    listView: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
     val shape = RoundedCornerShape(4.dp)
     Row(
-        Modifier.height(26.dp)
+        Modifier
+            .height(26.dp)
             .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
     ) {
-        listOf(false to Icons.Outlined.GridView, true to Icons.Outlined.ViewList).forEach {
-            (isList, icon) ->
-            val active = listView == isList
-            Box(
-                Modifier.width(30.dp)
-                    .fillMaxHeight()
-                    .background(if (active) selectedRowBackground() else Color.Transparent)
-                    .clickable { onChange(isList) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    icon,
-                    if (isList) "列表视图" else "卡片视图",
-                    Modifier.size(14.dp),
-                    if (active) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        listOf(false to Icons.Outlined.GridView, true to Icons.Outlined.ViewList)
+            .forEach { (isList, icon) ->
+                val active = listView == isList
+                Box(
+                    Modifier
+                        .width(30.dp)
+                        .fillMaxHeight()
+                        .background(if (active) selectedRowBackground() else Color.Transparent)
+                        .clickable { onChange(isList) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        icon,
+                        if (isList) "列表视图" else "卡片视图",
+                        Modifier.size(14.dp),
+                        if (active) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
-        }
     }
 }
 
@@ -807,7 +896,9 @@ private fun SkeletonResults() {
                     label = "skeleton-alpha",
                 )
             value
-        } else 0.6f
+        } else {
+            0.6f
+        }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(vertical = 10.dp),
@@ -836,16 +927,18 @@ private fun SkeletonRow(alpha: Float) {
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Box(
-                Modifier.fillMaxWidth(.45f)
+                Modifier
+                    .fillMaxWidth(.45f)
                     .height(12.dp)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(bar)
+                    .background(bar),
             )
             Box(
-                Modifier.fillMaxWidth(.8f)
+                Modifier
+                    .fillMaxWidth(.8f)
                     .height(9.dp)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(bar)
+                    .background(bar),
             )
         }
     }
@@ -952,13 +1045,20 @@ private fun ContentResultCard(
     val hovered by interaction.collectIsHoveredAsState()
     val borderColor by
         animateColorAsState(
-            if (hovered) colors.primary.copy(alpha = .6f)
-            else colors.outlineVariant.copy(alpha = .55f),
+            if (hovered) {
+                colors.primary.copy(alpha = .6f)
+            } else {
+                colors.outlineVariant.copy(alpha = .55f)
+            },
             tween(120),
             label = "card-border",
         )
     Surface(
-        modifier.fillMaxWidth().heightIn(min = 168.dp).pressScale().hoverable(interaction),
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 168.dp)
+            .pressScale()
+            .hoverable(interaction),
         shape = shape,
         color = colors.surface,
         border = BorderStroke(1.dp, borderColor),
@@ -975,7 +1075,7 @@ private fun ContentResultCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (showAuthors)
+                    if (showAuthors) {
                         Text(
                             "by " + hit.author,
                             fontSize = 11.sp,
@@ -983,6 +1083,7 @@ private fun ContentResultCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
                 }
                 SmallIconButton(Icons.Outlined.Info, "查看 " + hit.title + " 的详情与版本", onOpen)
             }
@@ -1026,6 +1127,9 @@ private fun ContentResultCard(
  * 主界面与设置页的调用点不变。
  */
 @Composable
-fun ColumnScope.DownloadsPage(state: LauncherState, actions: UiActions) {
+fun ColumnScope.DownloadsPage(
+    state: LauncherState,
+    actions: UiActions,
+) {
     LogsPage(state, actions)
 }

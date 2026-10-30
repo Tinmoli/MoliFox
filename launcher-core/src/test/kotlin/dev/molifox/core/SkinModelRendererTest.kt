@@ -5,11 +5,21 @@
 
 package dev.molifox.core
 
-import kotlin.test.*
 import org.junit.jupiter.api.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class SkinModelRendererTest {
-    private fun fill(pixels: IntArray, x: Int, y: Int, w: Int, h: Int, color: Int) {
+    private fun fill(
+        pixels: IntArray,
+        x: Int,
+        y: Int,
+        w: Int,
+        h: Int,
+        color: Int,
+    ) {
         for (row in y until y + h) for (column in x until x + w) pixels[row * 64 + column] = color
     }
 
@@ -19,8 +29,10 @@ class SkinModelRendererTest {
         fill(skin, 8, 8, 8, 8, 0xffff0000.toInt())
         fill(skin, 24, 8, 8, 8, 0xff00ff00.toInt())
         fill(skin, 0, 8, 8, 8, 0xff0000ff.toInt())
+
         fun face(yaw: Float) =
-            SkinModelRenderer.render(
+            SkinModelRenderer
+                .render(
                     64,
                     64,
                     skin,
@@ -31,8 +43,7 @@ class SkinModelRendererTest {
                     true,
                     96,
                     96,
-                )
-                .getRGB(48, 48)
+                ).getRGB(48, 48)
         assertEquals(0xff0000, face(0f) and 0xffffff)
         assertTrue((face(180f) ushr 8 and 255) > 180)
         assertTrue((face(90f) and 255) > 180)
@@ -59,6 +70,7 @@ class SkinModelRendererTest {
     fun `slim arms change the silhouette and rendering never mutates the skin`() {
         val skin = IntArray(64 * 64) { 0xff5599aa.toInt() }
         val original = skin.copyOf()
+
         fun size(variant: SkinVariant): Int {
             val frame = SkinModelRenderer.render(64, 64, skin, variant, false, 0f, 0f)
             return frame.getRGB(0, 0, frame.width, frame.height, null, 0, frame.width).count {

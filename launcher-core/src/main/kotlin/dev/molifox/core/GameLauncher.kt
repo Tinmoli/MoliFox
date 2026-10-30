@@ -5,6 +5,17 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -13,8 +24,15 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
-import kotlin.io.path.*
-import kotlinx.coroutines.*
+import kotlin.io.path.bufferedReader
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.forEachLine
+import kotlin.io.path.inputStream
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.reader
+import kotlin.io.path.useLines
 
 data class LaunchPlan(
     val executable: String,
@@ -59,8 +77,10 @@ class LaunchPlanner(
                     if (!native) continue
                     require(artifact.target.isRegularFile()) { "缺少本地依赖，请先修复游戏文件" }
                     ZipFile(artifact.target.toFile()).use { zip ->
-                        for ((entry, target) in
-                            validateArchive(zip, "", natives, 512L * 1024 * 1024)) {
+                        for (
+                        (entry, target) in
+                        validateArchive(zip, "", natives, 512L * 1024 * 1024)
+                        ) {
                             ensureActive()
                             if (excluded.any { entry.name.startsWith(it) }) continue
                             target.parent.createDirectories()
@@ -77,8 +97,9 @@ class LaunchPlanner(
                 libraries
                     .filter { resolver.hasClasspathArtifact(it) }
                     .map { resolver.libraryPath(it) }
-            if (prepareFiles)
+            if (prepareFiles) {
                 require(libraryPaths.all { it.isRegularFile() }) { "游戏依赖不完整，请先修复游戏文件" }
+            }
             val classpath = libraryPaths.distinct() + listOf(jar)
             // Loaders inspect java.class.path themselves. A manifest-only wrapper
             // lets Java load Knot but hides Minecraft from Fabric's game provider.
@@ -99,10 +120,15 @@ class LaunchPlanner(
                 val resources = index.boolean("map_to_resources")
                 if (virtual || resources) {
                     gameAssets =
-                        if (virtual) safePath(assets.resolve("virtual"), indexId)
-                        else game.resolve("resources")
-                    for ((name, value) in
-                        if (prepareFiles) index.obj("objects").entrySet() else emptySet()) {
+                        if (virtual) {
+                            safePath(assets.resolve("virtual"), indexId)
+                        } else {
+                            game.resolve("resources")
+                        }
+                    for (
+                    (name, value) in
+                    if (prepareFiles) index.obj("objects").entrySet() else emptySet()
+                    ) {
                         ensureActive()
                         val hash = value.asJsonObject.string("hash")
                         val from = assets.resolve("objects/${hash.take(2)}/$hash")
@@ -188,29 +214,43 @@ class LaunchPlanner(
             val modern = profile.json.obj("arguments")
             // 实例/全局解析出的内存始终是唯一的 -Xmx/-Xms 来源；模板里的同名参数会被去掉，避免重复。
             val jvm =
-                (if (modern.array("jvm").size() > 0)
-                        expandArguments(modern.array("jvm"), values, platform, features).map {
-                            argument ->
-                            // Modular loaders must ignore the actual inherited JAR, even for
-                            // renamed profiles.
-                            if (argument.startsWith("-DignoreList=")) {
-                                "-DignoreList=" +
-                                    argument.removePrefix("-DignoreList=").split(',').joinToString(
-                                        ","
-                                    ) { entry ->
-                                        if (entry == "${profile.id}.jar") jar.fileName.toString()
-                                        else entry
-                                    }
-                            } else argument
-                        }
-                    else listOf("-Djava.library.path=$natives", "-cp", classpathValue))
-                    .filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
+                (
+                    if (modern.array("jvm").size() > 0) {
+                        expandArguments(modern.array("jvm"), values, platform, features)
+                            .map { argument ->
+                                // Modular loaders must ignore the actual inherited JAR, even for
+                                // renamed profiles.
+                                if (argument.startsWith("-DignoreList=")) {
+                                    "-DignoreList=" +
+                                        argument
+                                            .removePrefix(
+                                                "-DignoreList=",
+                                            ).split(',')
+                                            .joinToString(
+                                                ",",
+                                            ) { entry ->
+                                                if (entry == "${profile.id}.jar") {
+                                                    jar.fileName.toString()
+                                                } else {
+                                                    entry
+                                                }
+                                            }
+                                } else {
+                                    argument
+                                }
+                            }
+                    } else {
+                        listOf("-Djava.library.path=$natives", "-cp", classpathValue)
+                    }
+                ).filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
             val gameArguments =
-                if (profile.json.string("minecraftArguments").isNotBlank())
+                if (profile.json.string("minecraftArguments").isNotBlank()) {
                     splitArguments(profile.json.string("minecraftArguments")).map {
                         substitute(it, values)
                     }
-                else expandArguments(modern.array("game"), values, platform, features)
+                } else {
+                    expandArguments(modern.array("game"), values, platform, features)
+                }
             val extras = splitArguments(launchOptions.extraJvmArgs)
             val command =
                 mutableListOf(
@@ -226,7 +266,7 @@ class LaunchPlanner(
             val logging = profile.json.obj("logging").obj("client")
             if (
                 logging.string("argument").isNotBlank() &&
-                    logging.obj("file").string("id").isNotBlank()
+                logging.obj("file").string("id").isNotBlank()
             ) {
                 val config =
                     safePath(root.resolve("assets/log_configs"), logging.obj("file").string("id"))
@@ -251,8 +291,8 @@ class LaunchPlanner(
             val invocation =
                 if (
                     prepareFiles &&
-                        platform.osName == "windows" &&
-                        command.sumOf { it.length + 3 } > 24_000
+                    platform.osName == "windows" &&
+                    command.sumOf { it.length + 3 } > 24_000
                 ) {
                     require(runtime.majorVersion >= 9) {
                         "启动参数超过 Java 8 的 Windows 长度限制，请将游戏目录改为更短的路径"
@@ -261,7 +301,7 @@ class LaunchPlanner(
                     // The native Java launcher parses @files before file.encoding takes effect.
                     val charset =
                         java.nio.charset.Charset.forName(
-                            System.getProperty("native.encoding", "UTF-8")
+                            System.getProperty("native.encoding", "UTF-8"),
                         )
                     val text = command.joinToString("\n") { quoteJavaArgument(it) }
                     require(charset.newEncoder().canEncode(text)) {
@@ -269,10 +309,12 @@ class LaunchPlanner(
                     }
                     Files.writeString(argumentFile, text, charset)
                     mutableListOf("@${argumentFile.toAbsolutePath()}")
-                } else command
+                } else {
+                    command
+                }
             invocation += profile.mainClass
             invocation += appendMissingQuickPlay(gameArguments, targetArguments)
-            if (!gameArguments.contains("--width"))
+            if (!gameArguments.contains("--width")) {
                 invocation +=
                     listOf(
                         "--width",
@@ -280,24 +322,33 @@ class LaunchPlanner(
                         "--height",
                         height.toString(),
                     )
+            }
             if (fullscreen && "--fullscreen" !in gameArguments) invocation += "--fullscreen"
             // 额外游戏参数最后追加，位于标准参数（宽度/高度/全屏）之后。
             invocation += launchOptions.extraGameArgs
-            if (prepareFiles && platform.osName == "windows")
+            if (prepareFiles && platform.osName == "windows") {
                 require(invocation.sumOf { it.length + 3 } + runtime.path.length < 30_000) {
                     "启动命令过长，请缩短附加游戏参数或游戏目录"
                 }
+            }
             val executable =
                 if (
                     platform.osName == "windows" &&
-                        advanced.useJavaConsoleExecutable &&
-                        Path.of(runtime.path).fileName.toString().equals("javaw.exe", true)
+                    advanced.useJavaConsoleExecutable &&
+                    Path
+                        .of(runtime.path)
+                        .fileName
+                        .toString()
+                        .equals("javaw.exe", true)
                 ) {
-                    Path.of(runtime.path)
+                    Path
+                        .of(runtime.path)
                         .resolveSibling("java.exe")
                         .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
                         .toString()
-                } else runtime.path
+                } else {
+                    runtime.path
+                }
             LaunchPlan(
                 executable,
                 invocation,
@@ -328,7 +379,10 @@ internal fun windowsProcessPriorityName(priority: ProcessPriority): String =
     }
 
 /** [message] 是要写进日志的一行（非 Windows 为 null），[warning] 表示设置失败但启动不受影响。 */
-internal data class ProcessPriorityOutcome(val message: String?, val warning: Boolean = false)
+internal data class ProcessPriorityOutcome(
+    val message: String?,
+    val warning: Boolean = false,
+)
 
 /**
  * 给已启动的游戏进程设置优先级：只处理 Windows，先试 wmic，失败后回退 PowerShell。
@@ -356,7 +410,10 @@ internal fun applyGameProcessPriority(
 }
 
 /** wmic 输出简单、进程启动快；Windows 11 已移除 wmic 时退回 PowerShell 的 PriorityClass 赋值。 */
-private fun priorityCommands(processId: Long, name: String): List<List<String>> =
+private fun priorityCommands(
+    processId: Long,
+    name: String,
+): List<List<String>> =
     listOf(
         listOf("wmic", "process", "where", "processid=$processId", "CALL", "setpriority", name),
         listOf(
@@ -375,22 +432,21 @@ private fun runPriorityCommand(command: List<String>) {
     val output = StringBuilder()
     val reader =
         Thread {
-                runCatching {
-                        process.inputStream.bufferedReader().forEachLine { output.appendLine(it) }
-                    }
-                    .onFailure { output.append(it.javaClass.simpleName) }
-            }
-            .apply {
-                isDaemon = true
-                start()
-            }
+            runCatching {
+                process.inputStream.bufferedReader().forEachLine { output.appendLine(it) }
+            }.onFailure { output.append(it.javaClass.simpleName) }
+        }.apply {
+            isDaemon = true
+            start()
+        }
     if (!process.waitFor(15, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         error("命令超时")
     }
     reader.join(500)
     check(process.exitValue() == 0) {
-        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(300) ?: "退出码 ${process.exitValue()}"
+        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(300)
+            ?: "退出码 ${process.exitValue()}"
     }
 }
 
@@ -405,12 +461,19 @@ class GameLauncher(
     private val runners = ConcurrentHashMap<String, LaunchCommandRunner>()
     private val runtimes = GameRuntimeDirectories(store).also { it.prune() }
     val isRunning: Boolean
-        get() = store.state.value.runningGames.isNotEmpty()
+        get() =
+            store.state.value.runningGames
+                .isNotEmpty()
 
     fun isRunning(instanceId: String): Boolean =
-        store.state.value.runningGames.any { it.instanceId == instanceId }
+        store.state.value.runningGames
+            .any { it.instanceId == instanceId }
 
-    suspend fun launch(instanceId: String, context: JobContext, target: GameLaunchTarget? = null) {
+    suspend fun launch(
+        instanceId: String,
+        context: JobContext,
+        target: GameLaunchTarget? = null,
+    ) {
         val runId = UUID.randomUUID().toString()
         val runtimeDirectory = store.temporaryDirectory.resolve("games").resolve(runId)
         val commands = LaunchCommandRunner(store)
@@ -470,7 +533,7 @@ class GameLauncher(
             if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
             // 工作目录就是解析后的有效隔离结果；来源写进日志，推断值不冒充用户选择。
             store.log(
-                "工作目录：${plan.gameDirectory}（来源：${store.isolationSource(instance).logTitle}）"
+                "工作目录：${plan.gameDirectory}（来源：${store.isolationSource(instance).logTitle}）",
             )
             context.progress(.85f, "执行启动前命令…")
             commands.run(
@@ -497,15 +560,15 @@ class GameLauncher(
                                     "TEMP" to temporary,
                                     "TMP" to temporary,
                                     "TMPDIR" to temporary,
-                                )
+                                ),
                             )
                         environment().putAll(plan.environment)
-                    }
-                    .start()
+                    }.start()
             processes[runId] = instanceId to process
             runners[runId] = commands
             // 进程已经跑起来，优先级只是尽力而为：失败也只记一条警告。
-            val priority = applyGameProcessPriority(store.data.settings.processPriority, process.pid())
+            val priority =
+                applyGameProcessPriority(store.data.settings.processPriority, process.pid())
             priority.message?.let { message ->
                 store.log(
                     message,
@@ -545,15 +608,17 @@ class GameLauncher(
                         instance,
                         runtimeDirectory.resolve("quick-play.json"),
                     )
-                val activityPoller = launch {
-                    while (isActive && process.isAlive) {
-                        activity.pollQuickPlay()
-                        delay(750)
+                val activityPoller =
+                    launch {
+                        while (isActive && process.isAlive) {
+                            activity.pollQuickPlay()
+                            delay(750)
+                        }
                     }
-                }
-                val decoder = GameLogDecoder { entry ->
-                    store.log(entry.message, error = entry.error, game = true)
-                }
+                val decoder =
+                    GameLogDecoder { entry ->
+                        store.log(entry.message, error = entry.error, game = true)
+                    }
                 var exitCode: Int? = null
                 var postFailed = false
                 try {
@@ -616,7 +681,7 @@ class GameLauncher(
                     store.updateInstance(instanceId) {
                         it.copy(
                             playTimeSeconds =
-                                it.playTimeSeconds + (System.currentTimeMillis() - started) / 1000
+                                it.playTimeSeconds + (System.currentTimeMillis() - started) / 1000,
                         )
                     }
                 }

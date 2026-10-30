@@ -5,40 +5,63 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import javax.tools.ToolProvider
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.walk
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AdvancedLaunchTest {
     @TempDir lateinit var temporary: Path
 
     @Test
-    fun `environment values are literal and invalid names duplicates and managed game flags are rejected`() {
+    fun `environment rejects invalid names duplicates and managed flags`() {
         assertEquals(
             mapOf("NAME" to "  a=b ", "EMPTY" to ""),
             parseEnvironmentVariables("NAME=  a=b \nEMPTY=", "linux"),
         )
         assertEquals(2, parseEnvironmentVariables("Name=a\nNAME=b", "linux").size)
-        for (text in listOf("BAD-NAME=a", "NAME", "NAME=a\nNAME=b", "Path=a\nPATH=b")) assertFails {
-            parseEnvironmentVariables(text, "windows")
+        for (text in listOf("BAD-NAME=a", "NAME", "NAME=a\nNAME=b", "Path=a\nPATH=b")) {
+            assertFails {
+                parseEnvironmentVariables(text, "windows")
+            }
         }
-        for (arguments in
-            listOf(
-                "--gameDir other",
-                "--gameDir=other",
-                "--accessToken secret",
-                "--width 800",
-                "@unwanted.args",
-                "--server \"unterminated",
-            )) {
+        for (
+        arguments in
+        listOf(
+            "--gameDir other",
+            "--gameDir=other",
+            "--accessToken secret",
+            "--width 800",
+            "@unwanted.args",
+            "--server \"unterminated",
+        )
+        ) {
             assertFails {
                 validateAdvancedLaunchSettings(AdvancedLaunchSettings(arguments), "windows")
             }
@@ -50,7 +73,7 @@ class AdvancedLaunchTest {
     }
 
     @Test
-    fun `default launch settings inherit and explicit empty instance settings override the group`() {
+    fun `default arguments inherit and explicit empty values override`() {
         val settings = gson.fromJson("{}", LauncherSettings::class.java)
         val instance = gson.fromJson("{}", GameInstance::class.java)
         assertEquals(AdvancedLaunchSettings(), settings.advancedLaunch)
@@ -58,7 +81,7 @@ class AdvancedLaunchTest {
         val global =
             settings.copy(
                 advancedLaunch =
-                    AdvancedLaunchSettings("--server global", mapOf("SAMPLE" to "global"))
+                    AdvancedLaunchSettings("--server global", mapOf("SAMPLE" to "global")),
             )
         assertEquals(global.advancedLaunch, effectiveLaunchSettings(global, instance))
         assertEquals(
@@ -109,20 +132,25 @@ class AdvancedLaunchTest {
                             mapOf("game" to listOf("--accessToken", "${'$'}{auth_access_token}")),
                     ),
                 )
+
                 fun snapshot() =
                     Files.walk(temporary).use { paths ->
                         paths
                             .filter {
                                 it.isRegularFile() && it.fileName.toString() != "instance.lock"
-                            }
-                            .map { it.toString() to digest(it) }
+                            }.map { it.toString() to digest(it) }
                             .toList()
                             .toMap()
                     }
                 val before = snapshot()
                 val preview = controller.previewLaunch(instance.id)
                 assertEquals(before, snapshot())
-                assertFalse(controller.store.instancePath(instance.id).resolve("natives").exists())
+                assertFalse(
+                    controller.store
+                        .instancePath(instance.id)
+                        .resolve("natives")
+                        .exists(),
+                )
                 assertTrue(preview.arguments.any { it.length >= 30_000 })
                 assertTrue(preview.arguments.contains("<访问令牌>"))
                 assertTrue(preview.arguments.contains("example.test"))
@@ -132,16 +160,17 @@ class AdvancedLaunchTest {
         }
 
     @Test
-    fun `real Java receives inherited overridden and cleared arguments and environment in isolated directory`() =
+    fun `real Java receives arguments and environment in an isolated directory`() =
         runBlocking {
             val variable = "MOLIFOX_TEST_" + UUID.randomUUID().toString().replace("-", "")
             val source = temporary.resolve("LaunchOptionsFixture.java")
             source.writeText(
-                """public class LaunchOptionsFixture { public static void main(String[] args) { System.out.println("OPTIONS_ARGS=" + String.join("|", args)); System.out.println("OPTIONS_ENV=" + System.getenv("$variable")); System.out.println("OPTIONS_CWD=" + java.nio.file.Path.of("").toAbsolutePath().normalize()); } }"""
+                """public class LaunchOptionsFixture { public static void main(String[] args) { System.out.println("OPTIONS_ARGS=" + String.join("|", args)); System.out.println("OPTIONS_ENV=" + System.getenv("$variable")); System.out.println("OPTIONS_CWD=" + java.nio.file.Path.of("").toAbsolutePath().normalize()); } }""",
             )
             assertEquals(
                 0,
-                ToolProvider.getSystemJavaCompiler()
+                ToolProvider
+                    .getSystemJavaCompiler()
                     .run(
                         null,
                         null,
@@ -172,12 +201,12 @@ class AdvancedLaunchTest {
                         it.settings.copy(
                             gameRoot = temporary.resolve("中文 game root with spaces").toString(),
                             javaPath =
-                                Path.of(
+                                Path
+                                    .of(
                                         System.getProperty("java.home"),
                                         "bin",
                                         platform.javaExecutable,
-                                    )
-                                    .toString(),
+                                    ).toString(),
                             memoryMb = 512,
                             advancedLaunch =
                                 AdvancedLaunchSettings(
@@ -230,24 +259,30 @@ class AdvancedLaunchTest {
                             jobs.awaitIdle()
                             while (store.state.value.runningInstanceId != null) delay(25)
                         }
-                        val job = store.state.value.jobs.first { it.id == id }
+                        val job =
+                            store.state.value.jobs
+                                .first { it.id == id }
                         assertEquals(JobStatus.Completed, job.status, job.error)
-                        val logs = store.state.value.logs.map { it.message }
+                        val logs =
+                            store.state.value.logs
+                                .map { it.message }
                         assertTrue(
                             logs.contains("OPTIONS_ENV=$expectedEnvironment"),
                             logs.joinToString("\n"),
                         )
                         assertTrue(
                             logs.contains(
-                                "OPTIONS_CWD=${store.instancePath(instance.id).toAbsolutePath().normalize()}"
-                            )
+                                "OPTIONS_CWD=${store.instancePath(
+                                    instance.id,
+                                ).toAbsolutePath().normalize()}",
+                            ),
                         )
                         return logs
                     }
                     assertTrue(
                         run("全局 value=a b")
                             .last { it.startsWith("OPTIONS_ARGS=") }
-                            .contains("--server|global.example|--port|25565")
+                            .contains("--server|global.example|--port|25565"),
                     )
                     store.updateInstance(instance.id) {
                         it.copy(
@@ -255,7 +290,7 @@ class AdvancedLaunchTest {
                                 AdvancedLaunchSettings(
                                     "--server \"instance host\"",
                                     mapOf(variable to "独立 value"),
-                                )
+                                ),
                         )
                     }
                     val overridden = run("独立 value").last { it.startsWith("OPTIONS_ARGS=") }
@@ -265,7 +300,7 @@ class AdvancedLaunchTest {
                         it.copy(advancedLaunch = AdvancedLaunchSettings())
                     }
                     assertFalse(
-                        run("null").last { it.startsWith("OPTIONS_ARGS=") }.contains("--server")
+                        run("null").last { it.startsWith("OPTIONS_ARGS=") }.contains("--server"),
                     )
                     assertNull(System.getenv(variable))
                 } finally {

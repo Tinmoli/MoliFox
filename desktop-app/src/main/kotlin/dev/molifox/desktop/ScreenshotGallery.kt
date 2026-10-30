@@ -8,12 +8,41 @@ package dev.molifox.desktop
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.BrokenImage
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
@@ -21,7 +50,14 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
+import dev.molifox.core.GameInstance
+import dev.molifox.core.GameScreenshot
+import dev.molifox.core.importAppearanceBackground
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
@@ -29,11 +65,11 @@ import java.awt.datatransfer.UnsupportedFlavorException
 import java.time.Instant
 import java.time.ZoneId
 import javax.imageio.ImageIO
-import kotlinx.coroutines.*
 import org.jetbrains.skia.Image as SkiaImage
 
 private fun screenshotDate(shot: GameScreenshot): String =
-    Instant.ofEpochMilli(shot.modifiedMillis)
+    Instant
+        .ofEpochMilli(shot.modifiedMillis)
         .atZone(ZoneId.systemDefault())
         .toLocalDate()
         .toString()
@@ -59,7 +95,11 @@ private fun ScreenshotImageState(
     }
 
 @Composable
-fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () -> Unit) {
+fun ScreenshotGallery(
+    instance: GameInstance,
+    actions: UiActions,
+    onDismiss: () -> Unit,
+) {
     val manager = actions.controller.screenshots
     val scope = rememberCoroutineScope()
     var screenshots by remember(instance.id) { mutableStateOf<List<GameScreenshot>>(emptyList()) }
@@ -74,9 +114,11 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
     var preview by remember { mutableStateOf<GameScreenshot?>(null) }
     var deleting by remember { mutableStateOf(false) }
     val selection = screenshots.filter { it.name in selected }
-    val filtered = screenshots.filter {
-        it.name.contains(query, true) && (date.isBlank() || screenshotDate(it) == date)
-    }
+    val filtered =
+        screenshots.filter {
+            it.name.contains(query, true) && (date.isBlank() || screenshotDate(it) == date)
+        }
+
     fun act(action: suspend () -> Unit) {
         if (busy) return
         scope.launch {
@@ -157,8 +199,9 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
             }
         }
         Box(Modifier.fillMaxWidth().height(330.dp)) {
-            if (loading) CircularProgressIndicator(Modifier.align(Alignment.Center).size(26.dp))
-            else if (filtered.isEmpty())
+            if (loading) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center).size(26.dp))
+            } else if (filtered.isEmpty()) {
                 Column(
                     Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -173,7 +216,7 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
                     Text(if (screenshots.isEmpty()) "这里还没有游戏截图" else "没有匹配的截图")
                     MutedText(if (screenshots.isEmpty()) "游戏内拍摄的截图会出现在这里。" else "试试其他文件名或日期。")
                 }
-            else
+            } else {
                 LazyVerticalGrid(
                     GridCells.Adaptive(180.dp),
                     Modifier.fillMaxSize(),
@@ -183,32 +226,39 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
                     items(filtered, key = { it.name }) { shot ->
                         val image by ScreenshotImageState(shot, actions)
                         Column(
-                            Modifier.background(
-                                    if (shot.name in selected)
+                            Modifier
+                                .background(
+                                    if (shot.name in selected) {
                                         MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .25f)
-                                )
-                                .padding(6.dp)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .25f)
+                                    },
+                                ).padding(6.dp),
                         ) {
                             Box(
                                 Modifier.fillMaxWidth().height(106.dp).clickable { preview = shot },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                if (image != null)
+                                if (image != null) {
                                     Image(
                                         requireNotNull(image),
                                         "预览截图 ${shot.name}",
                                         Modifier.fillMaxSize(),
                                     )
-                                else Icon(Icons.Outlined.BrokenImage, "截图无法预览")
+                                } else {
+                                    Icon(Icons.Outlined.BrokenImage, "截图无法预览")
+                                }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(
                                     shot.name in selected,
                                     { checked ->
                                         selected =
-                                            if (checked) selected + shot.name
-                                            else selected - shot.name
+                                            if (checked) {
+                                                selected + shot.name
+                                            } else {
+                                                selected - shot.name
+                                            }
                                     },
                                     enabled = !busy,
                                 )
@@ -222,19 +272,23 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
                             }
                             MutedText(
                                 "${screenshotDate(shot)} · " +
-                                    if (shot.previewable) "${shot.width}×${shot.height}"
-                                    else "无法预览，可导出原文件"
+                                    if (shot.previewable) {
+                                        "${shot.width}×${shot.height}"
+                                    } else {
+                                        "无法预览，可导出原文件"
+                                    },
                             )
                         }
                     }
                 }
+            }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         message?.let { MutedText(it) }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         DialogActions("完成", onDismiss, enabled = !busy)
     }
-    if (deleting)
+    if (deleting) {
         Modal("移除所选截图", "将 ${selection.size} 张图片移入回收站。", onDismiss = { deleting = false }) {
             Text("原截图会从当前实例的截图目录移除，可以在系统回收站或启动器恢复目录查找。")
             DialogActions(
@@ -252,10 +306,13 @@ fun ScreenshotGallery(instance: GameInstance, actions: UiActions, onDismiss: () 
                 danger = true,
             )
         }
+    }
     preview?.let { shot -> ScreenshotPreviewDialog(shot, actions) { preview = null } }
 }
 
-private class ScreenshotTransferable(private val image: java.awt.Image) : Transferable {
+private class ScreenshotTransferable(
+    private val image: java.awt.Image,
+) : Transferable {
     override fun getTransferDataFlavors() = arrayOf(DataFlavor.imageFlavor)
 
     override fun isDataFlavorSupported(flavor: DataFlavor) = flavor == DataFlavor.imageFlavor
@@ -275,6 +332,7 @@ private fun ScreenshotPreviewDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+
     fun act(action: suspend () -> Unit) {
         scope.launch {
             busy = true
@@ -291,8 +349,11 @@ private fun ScreenshotPreviewDialog(
     }
     Modal("截图预览", shot.name, width = 860.dp, onDismiss = { if (!busy) onDismiss() }) {
         Box(Modifier.fillMaxWidth().height(360.dp), contentAlignment = Alignment.Center) {
-            if (image != null) Image(requireNotNull(image), shot.name, Modifier.fillMaxSize())
-            else Text("此文件无法预览，可以关闭后导出或移入回收站。")
+            if (image != null) {
+                Image(requireNotNull(image), shot.name, Modifier.fillMaxSize())
+            } else {
+                Text("此文件无法预览，可以关闭后导出或移入回收站。")
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(
@@ -303,7 +364,8 @@ private fun ScreenshotPreviewDialog(
                             withContext(Dispatchers.IO) {
                                 ImageIO.read(file.toFile()) ?: error("截图无法解码")
                             }
-                        Toolkit.getDefaultToolkit()
+                        Toolkit
+                            .getDefaultToolkit()
                             .systemClipboard
                             .setContents(ScreenshotTransferable(full), null)
                         message = "图片已复制"
@@ -328,7 +390,7 @@ private fun ScreenshotPreviewDialog(
                             actions.controller.store.data.settings.copy(
                                 backgroundPath = imported.toString(),
                                 backgroundRevision = System.currentTimeMillis(),
-                            )
+                            ),
                         )
                         message = "已设为启动器背景"
                     }

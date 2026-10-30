@@ -9,14 +9,17 @@ internal fun normalizedJavaArchitecture(value: String): String =
     when (value.lowercase()) {
         "amd64",
         "x86_64",
-        "x64" -> "x64"
+        "x64",
+        -> "x64"
         "aarch64",
-        "arm64" -> "arm64"
+        "arm64",
+        -> "arm64"
         "x86",
         "i386",
         "i486",
         "i586",
-        "i686" -> "x86"
+        "i686",
+        -> "x86"
         else -> value.lowercase()
     }
 
@@ -74,8 +77,10 @@ private fun embeddedGameVersion(id: String): String? =
         }
 
 /** 版本清单声明的下限与本机版本规则取较高者：例如 26.3 的清单仍写 21 时，实际要装 25。 */
-fun requiredJavaMajor(gameVersion: String, declared: Int): Int =
-    maxOf(gameJavaMajor(gameVersion) ?: declared, declared)
+fun requiredJavaMajor(
+    gameVersion: String,
+    declared: Int,
+): Int = maxOf(gameJavaMajor(gameVersion) ?: declared, declared)
 
 /** Metadata is a minimum; legacy LaunchWrapper additionally requires Java 8's class loader. */
 internal data class JavaRequirement(
@@ -83,7 +88,10 @@ internal data class JavaRequirement(
     val maximum: Int? = null,
     val exactAutomatic: Boolean = false,
 ) {
-    fun problem(runtime: JavaRuntime, architecture: String): String? =
+    fun problem(
+        runtime: JavaRuntime,
+        architecture: String,
+    ): String? =
         when {
             normalizedJavaArchitecture(runtime.architecture) !=
                 normalizedJavaArchitecture(architecture) ->
@@ -106,12 +114,13 @@ internal data class JavaRequirement(
             val minimum = requiredJavaMajor(gameVersion, profile.requiredJava)
             val legacy =
                 minimum <= 8 && libraries.any { it.startsWith("net.minecraft:launchwrapper:") }
-            val modded = libraries.any {
-                it.startsWith("net.fabricmc:fabric-loader:") ||
-                    it.startsWith("org.quiltmc:quilt-loader:") ||
-                    it.startsWith("net.minecraftforge:") ||
-                    it.startsWith("net.neoforged:")
-            }
+            val modded =
+                libraries.any {
+                    it.startsWith("net.fabricmc:fabric-loader:") ||
+                        it.startsWith("org.quiltmc:quilt-loader:") ||
+                        it.startsWith("net.minecraftforge:") ||
+                        it.startsWith("net.neoforged:")
+                }
             // Use the declared runtime for modded/old games unless the user explicitly overrides
             // it.
             return JavaRequirement(minimum, if (legacy) 8 else null, modded || minimum <= 8)

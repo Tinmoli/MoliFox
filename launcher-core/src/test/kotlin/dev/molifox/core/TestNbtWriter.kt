@@ -23,68 +23,106 @@ internal class TestNbtWriter {
         return out.toByteArray()
     }
 
-    fun byte(name: String, value: Int) {
+    fun byte(
+        name: String,
+        value: Int,
+    ) {
         header(1, name)
         u8(value)
     }
 
-    fun short(name: String, value: Int) {
+    fun short(
+        name: String,
+        value: Int,
+    ) {
         header(2, name)
         u16(value)
     }
 
-    fun int(name: String, value: Int) {
+    fun int(
+        name: String,
+        value: Int,
+    ) {
         header(3, name)
         i32(value)
     }
 
-    fun long(name: String, value: Long) {
+    fun long(
+        name: String,
+        value: Long,
+    ) {
         header(4, name)
         i64(value)
     }
 
-    fun float(name: String, value: Float) {
+    fun float(
+        name: String,
+        value: Float,
+    ) {
         header(5, name)
         i32(value.toRawBits())
     }
 
-    fun double(name: String, value: Double) {
+    fun double(
+        name: String,
+        value: Double,
+    ) {
         header(6, name)
         i64(value.toRawBits())
     }
 
-    fun byteArray(name: String, value: ByteArray) {
+    fun byteArray(
+        name: String,
+        value: ByteArray,
+    ) {
         header(7, name)
         i32(value.size)
         out.write(value)
     }
 
-    fun string(name: String, value: String) {
+    fun string(
+        name: String,
+        value: String,
+    ) {
         header(8, name)
         text(value)
     }
 
     /** 元素类型与元素个数由调用方给出，`block` 里写 [count] 个裸元素。 */
-    fun list(name: String, elementType: Int, count: Int, block: TestNbtWriter.() -> Unit) {
+    fun list(
+        name: String,
+        elementType: Int,
+        count: Int,
+        block: TestNbtWriter.() -> Unit,
+    ) {
         header(9, name)
         u8(elementType)
         i32(count)
         block()
     }
 
-    fun nested(name: String, block: TestNbtWriter.() -> Unit) {
+    fun nested(
+        name: String,
+        block: TestNbtWriter.() -> Unit,
+    ) {
         header(10, name)
         block()
         u8(0)
     }
 
-    fun intArray(name: String, value: IntArray) {
+    fun intArray(
+        name: String,
+        value: IntArray,
+    ) {
         header(11, name)
         i32(value.size)
         value.forEach(::i32)
     }
 
-    fun longArray(name: String, value: LongArray) {
+    fun longArray(
+        name: String,
+        value: LongArray,
+    ) {
         header(12, name)
         i32(value.size)
         value.forEach(::i64)
@@ -100,7 +138,10 @@ internal class TestNbtWriter {
         u8(0)
     }
 
-    private fun header(type: Int, name: String) {
+    private fun header(
+        type: Int,
+        name: String,
+    ) {
         u8(type)
         text(name)
     }

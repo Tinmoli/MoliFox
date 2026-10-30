@@ -5,22 +5,39 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteRecursively
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /** 删除实例：验证回收站默认行为、Shift 永久删除、特殊字符版本名、共用版本目录与受保护目录。 */
 class InstanceDeletionTest {
     @TempDir lateinit var temporary: Path
 
     /** 记录 `moveToTrash` 的假平台：把目标移到临时“回收站”，便于断言到底交给了谁。 */
-    private class TrashPlatform(private val bin: Path) : PlatformServices {
+    private class TrashPlatform(
+        private val bin: Path,
+    ) : PlatformServices {
         var trashCalls = 0
         val trashed = mutableListOf<Path>()
         private var sequence = 0
@@ -45,7 +62,10 @@ class InstanceDeletionTest {
     }
 
     /** 造一个可被扫描的版本清单与客户端 jar；版本 id 原样用作目录名，不做任何模式匹配。 */
-    private fun version(root: Path, id: String): Path {
+    private fun version(
+        root: Path,
+        id: String,
+    ): Path {
         val folder = root.resolve("versions").resolve(id).apply { createDirectories() }
         writeJson(
             folder.resolve("$id.json"),
@@ -67,24 +87,81 @@ class InstanceDeletionTest {
     }
 
     @Test
+    fun `missing game root preserves the technical cause without deleting files`() {
+        val root = temporary.resolve("game")
+        version(root, "Test")
+        val platform = TrashPlatform(temporary.resolve("trash"))
+        LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
+            controller.directories.add(root)
+            val instance =
+                controller.store.data.instances
+                    .single { it.versionId == "Test" }
+            val moved = temporary.resolve("moved-game")
+            Files.move(root, moved)
+
+            val failure =
+                assertFailsWith<InstanceDeletionBlockedException> {
+                    InstanceDeletionService(controller.store).plan(instance.id)
+                }
+
+            assertIs<NoSuchFileException>(failure.cause)
+            assertTrue(failure.message.orEmpty().contains(root.toString()))
+            assertTrue(moved.resolve("versions/Test/Test.json").isRegularFile())
+            assertEquals(0, platform.trashCalls)
+        }
+    }
+
+    @Test
     fun `deleting TwilightMC-1_21_11 with brackets moves exactly that version folder to trash`() {
         val root = temporary.resolve(".minecraft")
         val id = "TwilightMC-1.21.11[彗星版]_v1.3"
         val folder = version(root, id)
-        folder.resolve("mods").createDirectories().resolve("a.jar").writeText("mod")
-        folder.resolve("config").createDirectories().resolve("options.toml").writeText("cfg")
-        folder.resolve("saves/world").createDirectories().resolve("level.dat").writeText("save")
-        folder.resolve("logs").createDirectories().resolve("latest.log").writeText("log")
+        folder
+            .resolve("mods")
+            .createDirectories()
+            .resolve("a.jar")
+            .writeText("mod")
+        folder
+            .resolve("config")
+            .createDirectories()
+            .resolve("options.toml")
+            .writeText("cfg")
+        folder
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("save")
+        folder
+            .resolve("logs")
+            .createDirectories()
+            .resolve("latest.log")
+            .writeText("log")
         val sibling = version(root, "KeepMe[1.21]_v2")
-        root.resolve("saves/world").createDirectories().resolve("level.dat").writeText("shared")
-        root.resolve("libraries").createDirectories().resolve("x.jar").writeText("lib")
-        root.resolve("assets").createDirectories().resolve("a.bin").writeText("asset")
+        root
+            .resolve("saves/world")
+            .createDirectories()
+            .resolve("level.dat")
+            .writeText("shared")
+        root
+            .resolve("libraries")
+            .createDirectories()
+            .resolve("x.jar")
+            .writeText("lib")
+        root
+            .resolve("assets")
+            .createDirectories()
+            .resolve("a.bin")
+            .writeText("asset")
         val expected = folder.toRealPath()
         val platform = TrashPlatform(temporary.resolve("trash"))
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
             controller.directories.add(root)
-            val instance = controller.store.data.instances.single { it.versionId == id }
-            val fallback = controller.store.data.instances.single { it.id != instance.id }
+            val instance =
+                controller.store.data.instances
+                    .single { it.versionId == id }
+            val fallback =
+                controller.store.data.instances
+                    .single { it.id != instance.id }
             controller.store.mutate { it.copy(selectedInstanceId = instance.id) }
             assertEquals(listOf(expected), controller.deletionTargets(instance.id))
             // 确认框的细节：独立游戏目录 + saves 名单（名称与上次修改时间）。
@@ -104,14 +181,17 @@ class InstanceDeletionTest {
                     .resolve("trash")
                     .listDirectoryEntries()
                     .single { it.name.endsWith(id) }
-                    .isDirectory()
+                    .isDirectory(),
             )
             assertTrue(sibling.resolve("KeepMe[1.21]_v2.json").isRegularFile())
             assertTrue(root.resolve("versions").isDirectory())
             assertEquals("shared", root.resolve("saves/world/level.dat").readText())
             assertTrue(root.resolve("libraries/x.jar").isRegularFile())
             assertTrue(root.resolve("assets/a.bin").isRegularFile())
-            assertTrue(controller.store.data.instances.none { it.id == instance.id })
+            assertTrue(
+                controller.store.data.instances
+                    .none { it.id == instance.id },
+            )
             assertEquals(fallback.id, controller.store.data.selectedInstanceId)
         }
     }
@@ -125,18 +205,38 @@ class InstanceDeletionTest {
             controller.directories.add(root)
             val created = controller.installer.createInstance(InstallRequest("隔离实例", "1.20.1"))
             val own = controller.store.instancePath(created.id)
-            own.resolve("mods").createDirectories().resolve("m.jar").writeText("mod")
-            own.resolve("config").createDirectories().resolve("c.toml").writeText("cfg")
-            own.resolve("saves/world").createDirectories().resolve("level.dat").writeText("save")
-            own.resolve("logs").createDirectories().resolve("latest.log").writeText("log")
-            root.resolve("assets").createDirectories().resolve("a.bin").writeText("asset")
+            own
+                .resolve("mods")
+                .createDirectories()
+                .resolve("m.jar")
+                .writeText("mod")
+            own
+                .resolve("config")
+                .createDirectories()
+                .resolve("c.toml")
+                .writeText("cfg")
+            own
+                .resolve("saves/world")
+                .createDirectories()
+                .resolve("level.dat")
+                .writeText("save")
+            own
+                .resolve("logs")
+                .createDirectories()
+                .resolve("latest.log")
+                .writeText("log")
+            root
+                .resolve("assets")
+                .createDirectories()
+                .resolve("a.bin")
+                .writeText("asset")
             // 实例身份就是版本目录：删除目标只有它自己的 versions/隔离实例，不含别的版本目录。
             val expected = setOf(own.toRealPath())
             assertEquals(expected, controller.deletionTargets(created.id).toSet())
-            val report = runBlocking {
-                controller.deleteInstance(created.id, permanent = true)
-            }
-                .getOrThrow()
+            val report =
+                runBlocking {
+                    controller.deleteInstance(created.id, permanent = true)
+                }.getOrThrow()
             assertFalse(report.movedToTrash)
             assertEquals(0, platform.trashCalls)
             assertEquals(expected, report.removedPaths.map { Path.of(it) }.toSet())
@@ -153,7 +253,9 @@ class InstanceDeletionTest {
         val platform = TrashPlatform(temporary.resolve("trash"))
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
             controller.directories.add(root)
-            val target = controller.store.data.instances.single { it.versionId == "26.3" }
+            val target =
+                controller.store.data.instances
+                    .single { it.versionId == "26.3" }
             // 另一个实例只是 gameVersion 字符串相同，versionId 和版本目录都不同，不是真实共用。
             controller.store.mutate {
                 it.copy(
@@ -165,7 +267,7 @@ class InstanceDeletionTest {
                                 versionId = "TwilightMC-26.3v1.0",
                                 gameDirectoryName = "TwilightMC-26.3v1.0",
                                 gameDirectoryId = target.gameDirectoryId,
-                            )
+                            ),
                 )
             }
             val expected = versionFolder.toRealPath()
@@ -177,7 +279,9 @@ class InstanceDeletionTest {
             assertTrue(report.preserved.isEmpty())
             assertTrue(report.freedBytes > 0)
             assertFalse(versionFolder.exists())
-            val messages = controller.store.state.value.logs.map { it.message }
+            val messages =
+                controller.store.state.value.logs
+                    .map { it.message }
             assertTrue(messages.none { "删除实例时保留" in it }, "同版本号不算共用，不应出现保留提示")
             assertTrue(
                 messages.any { "已删除实例记录" in it && "释放 ${report.freedBytes} 字节" in it },
@@ -193,7 +297,9 @@ class InstanceDeletionTest {
         val platform = TrashPlatform(temporary.resolve("trash"))
         LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
             controller.directories.add(root)
-            val target = controller.store.data.instances.single { it.versionId == "26.3" }
+            val target =
+                controller.store.data.instances
+                    .single { it.versionId == "26.3" }
             // 另一个实例的版本 JSON 真的 inheritsFrom 26.3：这是真实共用，必须整次拒绝。
             writeJson(
                 root.resolve("versions/TwilightMC-26.3v1.0/TwilightMC-26.3v1.0.json"),
@@ -209,7 +315,7 @@ class InstanceDeletionTest {
                                 versionId = "TwilightMC-26.3v1.0",
                                 gameDirectoryName = "TwilightMC-26.3v1.0",
                                 gameDirectoryId = target.gameDirectoryId,
-                            )
+                            ),
                 )
             }
             assertTrue(controller.deletionTargets(target.id).isEmpty())
@@ -227,9 +333,14 @@ class InstanceDeletionTest {
             )
             // 记录与文件都原样保留，磁盘一点没动。
             assertTrue(versionFolder.resolve("26.3.json").isRegularFile())
-            assertTrue(controller.store.data.instances.any { it.id == target.id })
+            assertTrue(
+                controller.store.data.instances
+                    .any { it.id == target.id },
+            )
             assertEquals(0, platform.trashCalls)
-            val messages = controller.store.state.value.logs.map { it.message }
+            val messages =
+                controller.store.state.value.logs
+                    .map { it.message }
             assertTrue(
                 messages.any {
                     it == "无法删除：版本目录仍被实例「TwilightMC-26.3v1.0」使用；请先处理该实例"
@@ -270,8 +381,16 @@ class InstanceDeletionTest {
                     "gameVersion" to "1.20.1",
                 ),
             )
-            firstOwn.resolve("mods").createDirectories().resolve("a.jar").writeText("mod")
-            secondOwn.resolve("saves").createDirectories().resolve("level.dat").writeText("save")
+            firstOwn
+                .resolve("mods")
+                .createDirectories()
+                .resolve("a.jar")
+                .writeText("mod")
+            secondOwn
+                .resolve("saves")
+                .createDirectories()
+                .resolve("level.dat")
+                .writeText("save")
             val firstFailure = runBlocking { controller.deleteInstance(first.id) }.exceptionOrNull()
             assertIs<InstanceDeletionBlockedException>(firstFailure)
             assertEquals(
@@ -285,15 +404,28 @@ class InstanceDeletionTest {
             assertEquals("save", secondOwn.resolve("saves/level.dat").readText())
             assertEquals(2, controller.store.data.instances.size)
             // 反过来也一样：占用者还在，第二名实例同样删不掉。
-            val secondFailure = runBlocking { controller.deleteInstance(second.id) }.exceptionOrNull()
+            val secondFailure =
+                runBlocking {
+                    controller.deleteInstance(
+                        second.id,
+                    )
+                }.exceptionOrNull()
             assertIs<InstanceDeletionBlockedException>(secondFailure)
             assertEquals(
                 "无法删除：版本目录仍被实例「第一个」使用；请先处理该实例",
                 secondFailure.message,
             )
-            assertTrue(controller.store.data.instances.any { it.id == first.id })
-            assertTrue(controller.store.data.instances.any { it.id == second.id })
-            val messages = controller.store.state.value.logs.map { it.message }
+            assertTrue(
+                controller.store.data.instances
+                    .any { it.id == first.id },
+            )
+            assertTrue(
+                controller.store.data.instances
+                    .any { it.id == second.id },
+            )
+            val messages =
+                controller.store.state.value.logs
+                    .map { it.message }
             assertTrue(messages.none { "已删除实例记录" in it }, "没有任何一次删除成功：$messages")
         }
     }
@@ -311,9 +443,17 @@ class InstanceDeletionTest {
             own.toFile().deleteRecursively()
             // 模拟下一次启动的发现流程：记录没有对应目录，必须从列表里消失并留一行日志。
             controller.directories.discover(listOf(StartupRoot(root.toRealPath(), 0)))
-            assertTrue(controller.store.data.instances.none { it.id == created.id })
-            assertTrue(controller.store.data.instances.isEmpty())
-            val messages = controller.store.state.value.logs.map { it.message }
+            assertTrue(
+                controller.store.data.instances
+                    .none { it.id == created.id },
+            )
+            assertTrue(
+                controller.store.data.instances
+                    .isEmpty(),
+            )
+            val messages =
+                controller.store.state.value.logs
+                    .map { it.message }
             assertTrue(
                 messages.any { it == "清理失效实例记录：会消失（目录不存在）" },
                 "启动发现必须记录清理：$messages",

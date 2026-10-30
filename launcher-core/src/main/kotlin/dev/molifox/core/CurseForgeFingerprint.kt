@@ -5,14 +5,15 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
-import java.nio.file.Path
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** CurseForge fingerprint: MurmurHash2, seed 1, excluding ASCII space, tab, CR and LF. */
 internal suspend fun curseForgeFingerprint(path: Path): Long {
     var length = 0
+
     suspend fun filtered(consume: (Int) -> Unit) {
         Files.newInputStream(path).use { input ->
             val buffer = ByteArray(65536)

@@ -101,7 +101,13 @@ internal fun ContentToolbar(
         leading?.invoke()
         // 搜索框 / 世界下拉吸收剩余宽度；右侧动作组宽度固定，因此始终贴右、切换页签不跳动。
         // 内容区在受支持的窗口尺寸内（≥ 760dp）比动作组宽得多，搜索框实测不会窄于 300dp。
-        if (flexible != null) Box(Modifier.weight(1f)) { flexible() } else Spacer(Modifier.weight(1f))
+        if (flexible !=
+            null
+        ) {
+            Box(Modifier.weight(1f)) { flexible() }
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         refresh?.let { ToolbarButton(it) }
         importAction?.let { ToolbarButton(it) }
         downloads.forEach { ToolbarButton(it) }
@@ -139,7 +145,8 @@ internal fun ToolbarIconAction(
     val shape = RoundedCornerShape(Metrics.innerRadius)
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
     Box(
-        Modifier.size(ContentToolbarMetrics.height)
+        Modifier
+            .size(ContentToolbarMetrics.height)
             .clip(shape)
             .hoverHighlight(shape, enabled = enabled)
             .clickable(
@@ -176,10 +183,14 @@ private fun ToolbarButton(action: ToolbarAction) {
     val background =
         if (action.style == ToolbarActionStyle.Filled) colors.primary else Color.Transparent
     val border =
-        if (action.style == ToolbarActionStyle.Outline) BorderStroke(1.dp, controlBorderColor())
-        else null
+        if (action.style == ToolbarActionStyle.Outline) {
+            BorderStroke(1.dp, controlBorderColor())
+        } else {
+            null
+        }
     Row(
-        Modifier.height(ContentToolbarMetrics.height)
+        Modifier
+            .height(ContentToolbarMetrics.height)
             .widthIn(min = ContentToolbarMetrics.minButtonWidth)
             .clip(shape)
             .then(if (border == null) Modifier else Modifier.border(border, shape))
@@ -208,8 +219,9 @@ private fun ToolbarButton(action: ToolbarAction) {
 @Composable
 private fun ToolbarSeparator() {
     Box(
-        Modifier.width(1.dp)
+        Modifier
+            .width(1.dp)
             .height(16.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .7f))
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .7f)),
     )
 }

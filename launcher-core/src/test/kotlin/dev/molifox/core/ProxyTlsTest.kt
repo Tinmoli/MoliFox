@@ -5,6 +5,14 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.runBlocking
+import okhttp3.TlsVersion
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -15,16 +23,12 @@ import java.security.KeyStore
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import okhttp3.TlsVersion
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.tls.HandshakeCertificates
-import okhttp3.tls.HeldCertificate
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.name
+import kotlin.io.path.outputStream
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ProxyTlsTest {
     @TempDir lateinit var directory: Path
@@ -34,7 +38,8 @@ class ProxyTlsTest {
         withTrustedFixture("fixture.test") { certificate ->
             MockWebServer().use { server ->
                 server.useHttps(
-                    HandshakeCertificates.Builder()
+                    HandshakeCertificates
+                        .Builder()
                         .heldCertificate(certificate)
                         .build()
                         .sslSocketFactory(),
@@ -63,7 +68,8 @@ class ProxyTlsTest {
         withTrustedFixture("different.test") { certificate ->
             MockWebServer().use { server ->
                 server.useHttps(
-                    HandshakeCertificates.Builder()
+                    HandshakeCertificates
+                        .Builder()
                         .heldCertificate(certificate)
                         .build()
                         .sslSocketFactory(),
@@ -80,7 +86,7 @@ class ProxyTlsTest {
                             }
                         assertTrue(
                             generateSequence<Throwable>(failure) { it.cause }
-                                .any { it is javax.net.ssl.SSLPeerUnverifiedException }
+                                .any { it is javax.net.ssl.SSLPeerUnverifiedException },
                         )
                         assertEquals(1, proxy.connections.get())
                     }
@@ -89,9 +95,16 @@ class ProxyTlsTest {
         }
     }
 
-    private fun withTrustedFixture(host: String, action: (HeldCertificate) -> Unit) {
+    private fun withTrustedFixture(
+        host: String,
+        action: (HeldCertificate) -> Unit,
+    ) {
         val certificate =
-            HeldCertificate.Builder().commonName(host).addSubjectAlternativeName(host).build()
+            HeldCertificate
+                .Builder()
+                .commonName(host)
+                .addSubjectAlternativeName(host)
+                .build()
         val file = directory.resolve("fixture-trust.p12")
         val password = "fixture-only".toCharArray()
         val store =
@@ -146,7 +159,10 @@ class ProxyTlsTest {
                 }
             }
 
-        private fun tunnel(client: Socket, closeHandshake: Boolean) {
+        private fun tunnel(
+            client: Socket,
+            closeHandshake: Boolean,
+        ) {
             try {
                 client.soTimeout = 5000
                 val input = client.getInputStream()

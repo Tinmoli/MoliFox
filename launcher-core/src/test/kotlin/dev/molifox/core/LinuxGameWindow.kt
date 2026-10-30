@@ -48,7 +48,7 @@ internal object LinuxGameWindow {
                         format.value == 32 &&
                         count.value.toLong() == 1L &&
                         value.value != null &&
-                        value.value.getNativeLong(0).toLong() == window.pid
+                        value.value.getNativeLong(0).toLong() == window.pid,
                 ) {
                     "The window no longer belongs to this test game; close was not sent"
                 }
@@ -62,13 +62,13 @@ internal object LinuxGameWindow {
                 check(
                     x11.XGetWMProtocols(display, target, protocols, protocolCount) != 0 &&
                         protocols.value != null &&
-                        protocolCount.value in 1..256
+                        protocolCount.value in 1..256,
                 )
                 check(
                     (0 until protocolCount.value).any {
                         protocols.value.getNativeLong(it.toLong() * NativeLong.SIZE).toLong() ==
                             delete.toLong()
-                    }
+                    },
                 ) {
                     "The test game does not advertise WM_DELETE_WINDOW"
                 }
@@ -96,7 +96,13 @@ internal object LinuxGameWindow {
                     write()
                 }
             check(
-                x11.XSendEvent(display, target, 0, NativeLong(X11.NoEventMask.toLong()), event) != 0
+                x11.XSendEvent(
+                    display,
+                    target,
+                    0,
+                    NativeLong(X11.NoEventMask.toLong()),
+                    event,
+                ) != 0,
             ) {
                 "Cannot request normal game shutdown"
             }

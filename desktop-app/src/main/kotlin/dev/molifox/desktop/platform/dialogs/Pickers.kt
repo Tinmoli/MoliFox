@@ -3,7 +3,7 @@
 
 // 负责文件选择请求模型及系统选择器的统一入口。
 
-package dev.molifox.desktop
+package dev.molifox.desktop.platform.dialogs
 
 import java.awt.Window
 import java.nio.file.Path
@@ -23,11 +23,16 @@ data class PickRequest(
     val initialDirectory: Path? = null,
 )
 
-object PathPicker {
-    var owner: Window? = null
+fun interface FilePicker {
+    suspend fun pick(request: PickRequest): List<Path>
+}
+
+class SystemFilePicker(
+    private val owner: Window,
+) : FilePicker {
     private var lastDirectory: Path? = null
 
-    suspend fun pick(request: PickRequest): List<Path> {
+    override suspend fun pick(request: PickRequest): List<Path> {
         val paths =
             NativePathPicker.pick(
                 request.copy(initialDirectory = request.initialDirectory ?: lastDirectory),

@@ -10,7 +10,8 @@ import com.google.gson.JsonObject
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
-import kotlin.io.path.*
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
 
 /** 最近使用记录的两类条目：世界存档（`saves/` 目录名）与多人服务器（地址）。 */
 enum class EntryKind {
@@ -34,7 +35,12 @@ class RecentUsage(
     private val sessions = mutableMapOf<String, ActiveUsage>()
 
     @Synchronized
-    fun setHidden(kind: EntryKind, instanceId: String, key: String, hidden: Boolean) {
+    fun setHidden(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+        hidden: Boolean,
+    ) {
         require(key.isNotBlank())
         val entries = load()
         val previous =
@@ -46,20 +52,29 @@ class RecentUsage(
     }
 
     @Synchronized
-    fun isHidden(kind: EntryKind, instanceId: String, key: String): Boolean =
+    fun isHidden(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+    ): Boolean =
         load().any { it.kind == kind && it.instanceId == instanceId && it.key == key && it.hidden }
 
     @Synchronized
-    fun summary(kind: EntryKind, instanceId: String, key: String): UsageSummary {
+    fun summary(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+    ): UsageSummary {
         val previous =
             load().find { it.kind == kind && it.instanceId == instanceId && it.key == key }
         val active =
             sessions.values.filter {
                 it.kind == kind && it.instanceId == instanceId && it.key == key
             }
-        val elapsed = active.sumOf {
-            Duration.between(it.entered, clock()).seconds.coerceAtLeast(0)
-        }
+        val elapsed =
+            active.sumOf {
+                Duration.between(it.entered, clock()).seconds.coerceAtLeast(0)
+            }
         return UsageSummary(
             previous?.lastUsed?.takeIf { it > Instant.EPOCH },
             (previous?.seconds ?: 0) + elapsed,
@@ -86,13 +101,17 @@ class RecentUsage(
     }
 
     @Synchronized
-    fun endSession(runId: String, estimated: Boolean = false) {
+    fun endSession(
+        runId: String,
+        estimated: Boolean = false,
+    ) {
         val active = sessions.remove(runId) ?: return
         val elapsed = Duration.between(active.entered, clock()).seconds.coerceAtLeast(0)
         val entries = load()
-        val index = entries.indexOfFirst {
-            it.kind == active.kind && it.instanceId == active.instanceId && it.key == active.key
-        }
+        val index =
+            entries.indexOfFirst {
+                it.kind == active.kind && it.instanceId == active.instanceId && it.key == active.key
+            }
         if (index >= 0) {
             val previous = entries[index]
             entries[index] =
@@ -106,17 +125,27 @@ class RecentUsage(
 
     /** `cache/recent-usage.json`；测试与诊断可直接检查该文件。 */
     val file: Path
-        get() = store.directories.cache().root.resolve(FILE_NAME)
+        get() =
+            store.directories
+                .cache()
+                .root
+                .resolve(FILE_NAME)
 
     /** 记录一次使用：时间取 [clock]，同一条目去重后移到最前。 */
     @Synchronized
-    fun record(kind: EntryKind, instanceId: String, key: String, entered: Instant = clock()) {
+    fun record(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+        entered: Instant = clock(),
+    ) {
         if (instanceId.isBlank() || key.isBlank()) return
         runCatching {
             val entries = load()
-            val previous = entries.find {
-                it.kind == kind && it.instanceId == instanceId && it.key == key
-            }
+            val previous =
+                entries.find {
+                    it.kind == kind && it.instanceId == instanceId && it.key == key
+                }
             entries.removeAll {
                 it.kind == kind && it.instanceId == instanceId && it.key == key
             }
@@ -125,50 +154,58 @@ class RecentUsage(
                 (previous ?: Usage(kind, instanceId, key, entered)).copy(lastUsed = entered),
             )
             save(cap(entries))
-        }
-            .onFailure { store.log("记录最近使用失败：${it.message ?: key}", true) }
+        }.onFailure { store.log("记录最近使用失败：${it.message ?: key}", true) }
     }
 
     /** 某条目最后一次使用时间；没有记录或文件损坏时返回 null。 */
     @Synchronized
-    fun lastUsed(kind: EntryKind, instanceId: String, key: String): Instant? = runCatching {
-        load()
-            .firstOrNull {
-                it.kind == kind && it.instanceId == instanceId && it.key == key
-            }
-            ?.lastUsed
-            ?.takeIf { it > Instant.EPOCH }
-    }
-        .getOrNull()
+    fun lastUsed(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+    ): Instant? =
+        runCatching {
+            load()
+                .firstOrNull {
+                    it.kind == kind && it.instanceId == instanceId && it.key == key
+                }?.lastUsed
+                ?.takeIf { it > Instant.EPOCH }
+        }.getOrNull()
 
     /** 按最后一次使用时间倒序返回 [kind] 的键，最多 [limit] 条；[limit] 不大于 0 时返回空列表。 */
     @Synchronized
-    fun recent(kind: EntryKind, instanceId: String, limit: Int): List<String> {
+    fun recent(
+        kind: EntryKind,
+        instanceId: String,
+        limit: Int,
+    ): List<String> {
         if (limit <= 0) return emptyList()
         return runCatching {
             load()
                 .filter {
                     it.kind == kind && it.instanceId == instanceId && it.lastUsed > Instant.EPOCH
-                }
-                .sortedByDescending { it.lastUsed }
+                }.sortedByDescending { it.lastUsed }
                 .map { it.key }
                 .distinct()
                 .take(limit)
-        }
-            .getOrElse { emptyList() }
+        }.getOrElse { emptyList() }
     }
 
     /** 删除一条记录；没有记录时不做任何写入。 */
     @Synchronized
-    fun forget(kind: EntryKind, instanceId: String, key: String) {
+    fun forget(
+        kind: EntryKind,
+        instanceId: String,
+        key: String,
+    ) {
         runCatching {
             val entries = load()
-            val remaining = entries.filterNot {
-                it.kind == kind && it.instanceId == instanceId && it.key == key
-            }
+            val remaining =
+                entries.filterNot {
+                    it.kind == kind && it.instanceId == instanceId && it.key == key
+                }
             if (remaining.size != entries.size) save(remaining)
-        }
-            .onFailure { store.log("删除最近使用记录失败：${it.message ?: key}", true) }
+        }.onFailure { store.log("删除最近使用记录失败：${it.message ?: key}", true) }
     }
 
     /**
@@ -179,24 +216,28 @@ class RecentUsage(
      * 读改写。没有过期条目时是纯读，不写文件；写入仍走 [save] 的临时文件 + 原子改名。 读文件或写文件失败只记日志，不抛异常。
      */
     @Synchronized
-    fun pruneMissing(kind: EntryKind, instanceId: String, existingKeys: Set<String>): Int {
+    fun pruneMissing(
+        kind: EntryKind,
+        instanceId: String,
+        existingKeys: Set<String>,
+    ): Int {
         if (instanceId.isBlank()) return 0
         return runCatching {
             val entries = load()
-            val remaining = entries.filterNot {
-                it.kind == kind && it.instanceId == instanceId && it.key !in existingKeys
-            }
+            val remaining =
+                entries.filterNot {
+                    it.kind == kind && it.instanceId == instanceId && it.key !in existingKeys
+                }
             val removed = entries.size - remaining.size
             if (removed > 0) {
                 save(remaining)
                 store.log("已清理最近使用记录：${kind.name} / $instanceId，共 $removed 条")
             }
             removed
+        }.getOrElse {
+            store.log("清理最近使用记录失败：${it.message ?: kind.name}", true)
+            0
         }
-            .getOrElse {
-                store.log("清理最近使用记录失败：${it.message ?: kind.name}", true)
-                0
-            }
     }
 
     /** 读取文件并按文件内顺序（新到旧）返回；损坏或版本不认识时当作空记录。 */
@@ -217,8 +258,9 @@ class RecentUsage(
                 val lastUsed =
                     runCatching { Instant.parse(item.string("lastUsed")) }.getOrNull()
                         ?: return@mapNotNull null
-                if (instanceId.isBlank() || key.isBlank()) null
-                else
+                if (instanceId.isBlank() || key.isBlank()) {
+                    null
+                } else {
                     Usage(
                         kind,
                         instanceId,
@@ -228,8 +270,8 @@ class RecentUsage(
                         item.get("seconds")?.asLong?.coerceAtLeast(0) ?: 0,
                         item.boolean("estimated"),
                     )
-            }
-            .toMutableList()
+                }
+            }.toMutableList()
     }
 
     /** 用 [writeJson] 原子写入（临时文件 + 改名）；数组顺序即新到旧。 */
@@ -250,7 +292,7 @@ class RecentUsage(
                                     addProperty("hidden", entry.hidden)
                                     addProperty("seconds", entry.seconds)
                                     addProperty("estimated", entry.estimated)
-                                }
+                                },
                             )
                         }
                     },
@@ -266,8 +308,9 @@ class RecentUsage(
         return entries.filter { entry ->
             if (entry.hidden) return@filter true
             val count = perInstance[entry.instanceId] ?: 0
-            if (count >= MAX_ENTRIES_PER_INSTANCE) false
-            else {
+            if (count >= MAX_ENTRIES_PER_INSTANCE) {
+                false
+            } else {
                 perInstance[entry.instanceId] = count + 1
                 true
             }

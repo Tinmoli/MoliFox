@@ -7,6 +7,13 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,12 +23,22 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
-import kotlin.io.path.*
-import kotlin.test.*
-import kotlinx.coroutines.runBlocking
-import okhttp3.mockwebserver.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.appendBytes
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class CurseForgeTest {
     @TempDir lateinit var temporary: Path
@@ -52,13 +69,12 @@ class CurseForgeTest {
                         "links" to
                             mapOf(
                                 "websiteUrl" to
-                                    "https://www.curseforge.com/minecraft/mc-mods/project-$id"
+                                    "https://www.curseforge.com/minecraft/mc-mods/project-$id",
                             ),
                         "downloadCount" to 100,
                         "allowModDistribution" to (mode != "blocked" || id !in setOf(2, 3)),
-                    )
-                )
-                .asJsonObject
+                    ),
+                ).asJsonObject
 
         fun file(id: Int): JsonObject {
             val project = id / 10
@@ -82,18 +98,21 @@ class CurseForgeTest {
                                 mapOf(
                                     "algo" to 1,
                                     "value" to if (mode == "bad-hash") "0" else hash(bytes),
-                                )
+                                ),
                             ),
                         "downloadUrl" to
-                            if (mode == "missing-url" && id == 21) null
-                            else server.loopbackUrl("/files/$id").toString(),
+                            if (mode == "missing-url" && id == 21) {
+                                null
+                            } else {
+                                server.loopbackUrl("/files/$id").toString()
+                            },
                         "gameVersions" to
                             listOf(
                                 if (mode == "wrong-version") "1.21" else "1.20.1",
                                 if (mode == "wrong-loader") "Forge" else "Fabric",
                             ),
                         "dependencies" to
-                            if (id == 12)
+                            if (id == 12) {
                                 listOf(
                                     mapOf(
                                         "modId" to 2,
@@ -102,10 +121,11 @@ class CurseForgeTest {
                                     mapOf("modId" to 3, "relationType" to 2),
                                     mapOf("modId" to 4, "relationType" to 1),
                                 )
-                            else emptyList(),
-                    )
-                )
-                .asJsonObject
+                            } else {
+                                emptyList()
+                            },
+                    ),
+                ).asJsonObject
         }
 
         companion object {
@@ -116,303 +136,354 @@ class CurseForgeTest {
         }
     }
 
-    private fun fixture(action: suspend Fixture.() -> Unit) = runBlocking {
-        MockWebServer().use { server ->
-            val store =
-                LauncherStore(
-                    object : PlatformServices by DesktopPlatform() {
-                        override fun moveToTrash(file: Path) {
-                            val target = temporary.resolve("trash/${UUID.randomUUID()}")
-                            target.parent.createDirectories()
-                            Files.move(file, target)
-                        }
-                    },
-                    temporary.resolve("profile"),
-                )
-            val instance =
-                GameInstance(
-                    name = "CurseForge fixture",
-                    gameVersion = "1.20.1",
-                    loader = LoaderType.Fabric,
-                    versionId = "fixture",
-                    installed = true,
-                )
-            store.mutate {
-                it.copy(
-                    settings =
-                        it.settings.copy(
-                            contentDownloadSource = "curseforge",
-                            curseForgeBaseUrl =
-                                server.loopbackUrl("").toString().trimEnd('/'),
-                        ),
-                    instances = listOf(instance),
-                )
-            }
-            NetworkClient().use { network ->
-                val service =
-                    ContentService(
-                        store,
-                        network,
-                        MinecraftInstaller(
+    private fun fixture(action: suspend Fixture.() -> Unit) =
+        runBlocking {
+            MockWebServer().use { server ->
+                val store =
+                    LauncherStore(
+                        object : PlatformServices by DesktopPlatform() {
+                            override fun moveToTrash(file: Path) {
+                                val target = temporary.resolve("trash/${UUID.randomUUID()}")
+                                target.parent.createDirectories()
+                                Files.move(file, target)
+                            }
+                        },
+                        temporary.resolve("profile"),
+                    )
+                val instance =
+                    GameInstance(
+                        name = "CurseForge fixture",
+                        gameVersion = "1.20.1",
+                        loader = LoaderType.Fabric,
+                        versionId = "fixture",
+                        installed = true,
+                    )
+                store.mutate {
+                    it.copy(
+                        settings =
+                            it.settings.copy(
+                                contentDownloadSource = "curseforge",
+                                curseForgeBaseUrl =
+                                    server.loopbackUrl("").toString().trimEnd('/'),
+                            ),
+                        instances = listOf(instance),
+                    )
+                }
+                NetworkClient().use { network ->
+                    val service =
+                        ContentService(
                             store,
                             network,
-                            JavaService(store, network),
-                            server.loopbackUrl("/minecraft/manifest").toString(),
-                        ),
-                        server.loopbackUrl("/v2").toString(),
-                    )
-                val fixture =
-                    Fixture(store, server, service, CurseForgeBackend(store, network), instance, network)
-                val client =
-                    ByteArrayOutputStream().use { output ->
-                        ZipOutputStream(output).use { zip ->
-                            zip.putNextEntry(ZipEntry("fixture.txt"))
-                            zip.write("fixture".toByteArray())
-                            zip.closeEntry()
-                        }
-                        output.toByteArray()
-                    }
-                val profile =
-                    gson.toJson(
-                        mapOf(
-                            "id" to "1.20.1",
-                            "mainClass" to "fixture.Main",
-                            "type" to "release",
-                            "downloads" to
-                                mapOf(
-                                    "client" to
-                                        mapOf(
-                                            "url" to
-                                                server
-                                                    .loopbackUrl("/minecraft/client.jar")
-                                                    .toString(),
-                                            "size" to client.size,
-                                            "sha1" to Fixture.hash(client),
-                                        )
-                                ),
-                            "assetIndex" to
-                                mapOf(
-                                    "id" to "fixture",
-                                    "url" to server.loopbackUrl("/minecraft/assets").toString(),
-                                ),
-                            "libraries" to emptyList<String>(),
+                            MinecraftInstaller(
+                                store,
+                                network,
+                                JavaService(store, network),
+                                server.loopbackUrl("/minecraft/manifest").toString(),
+                            ),
+                            server.loopbackUrl("/v2").toString(),
                         )
-                    )
-                server.dispatcher =
-                    object : Dispatcher() {
-                        override fun dispatch(request: RecordedRequest): MockResponse {
-                            fixture.requests += request
-                            val url = request.requestUrl!!
-                            val path = url.encodedPath
-                            if (fixture.mode == "malformed-response" && path.startsWith("/v1/"))
-                                return MockResponse().setBody("invalid-json response body")
-                            if (fixture.mode == "server-error" && path.startsWith("/v1/"))
-                                return MockResponse().setResponseCode(500)
-                            if (
-                                fixture.mode == "no-details" &&
-                                    path.startsWith("/v1/") &&
-                                    (path.endsWith("/description") ||
-                                        path.endsWith("/changelog"))
-                            )
-                                return MockResponse().setResponseCode(404)
-                            if (fixture.mode == "redirect" && path.startsWith("/v1/"))
-                                return MockResponse()
-                                    .setResponseCode(302)
-                                    .addHeader("Location", server.loopbackUrl("/leak"))
-                            if (path == "/v2/search")
-                                return MockResponse()
-                                    .setBody(
-                                        gson.toJson(
-                                            mapOf(
-                                                "hits" to
-                                                    listOf(
-                                                        mapOf(
-                                                            "project_id" to "modrinth-project",
-                                                            "slug" to "modrinth-project",
-                                                            "title" to "Modrinth Project",
-                                                            "description" to "",
-                                                            "author" to "Author",
-                                                            "downloads" to 1,
-                                                            "project_type" to "mod",
-                                                            "icon_url" to "",
-                                                        )
-                                                    ),
-                                                "total_hits" to 1,
-                                            )
-                                        )
-                                    )
-                            if (path.startsWith("/files/")) {
-                                if (fixture.mode == "download-fail" && path.endsWith("21"))
-                                    return MockResponse().setResponseCode(404)
-                                return MockResponse()
-                                    .setBody(
-                                        if (fixture.mode == "corrupt-download") "corrupt"
-                                        else "file${path.substringAfterLast('/')}"
-                                    )
+                    val fixture =
+                        Fixture(
+                            store,
+                            server,
+                            service,
+                            CurseForgeBackend(store, network),
+                            instance,
+                            network,
+                        )
+                    val client =
+                        ByteArrayOutputStream().use { output ->
+                            ZipOutputStream(output).use { zip ->
+                                zip.putNextEntry(ZipEntry("fixture.txt"))
+                                zip.write("fixture".toByteArray())
+                                zip.closeEntry()
                             }
-                            val data: Any =
-                                when {
-                                    path == "/v1/mods" ->
-                                        JsonParser.parseString(request.body.clone().readUtf8())
-                                            .asJsonObject
-                                            .array("modIds")
-                                            .map { fixture.project(it.asInt) }
-                                    path == "/v1/mods/files" ->
-                                        JsonParser.parseString(request.body.clone().readUtf8())
-                                            .asJsonObject
-                                            .array("fileIds")
-                                            .map { fixture.file(it.asInt) }
-                                    path == "/minecraft/manifest" ->
-                                        return MockResponse()
-                                            .setBody(
-                                                gson.toJson(
-                                                    mapOf(
-                                                        "versions" to
-                                                            listOf(
-                                                                mapOf(
-                                                                    "id" to "1.20.1",
-                                                                    "type" to "release",
-                                                                    "url" to
-                                                                        server
-                                                                            .loopbackUrl(
-                                                                                "/minecraft/profile"
-                                                                            )
-                                                                            .toString(),
-                                                                    "sha1" to
-                                                                        Fixture.hash(
-                                                                            profile.toByteArray()
-                                                                        ),
-                                                                )
-                                                            )
-                                                    )
-                                                )
-                                            )
-                                    path == "/minecraft/profile" ->
-                                        return MockResponse().setBody(profile)
-                                    path == "/minecraft/assets" ->
-                                        return MockResponse().setBody("{\"objects\":{}}")
-                                    path == "/minecraft/client.jar" ->
-                                        return MockResponse().setBody(okio.Buffer().write(client))
-                                    path == "/v1/categories" ->
-                                        listOf(
+                            output.toByteArray()
+                        }
+                    val profile =
+                        gson.toJson(
+                            mapOf(
+                                "id" to "1.20.1",
+                                "mainClass" to "fixture.Main",
+                                "type" to "release",
+                                "downloads" to
+                                    mapOf(
+                                        "client" to
                                             mapOf(
-                                                "id" to 6,
-                                                "gameId" to 432,
-                                                "slug" to "mc-mods",
-                                                "isClass" to true,
+                                                "url" to
+                                                    server
+                                                        .loopbackUrl("/minecraft/client.jar")
+                                                        .toString(),
+                                                "size" to client.size,
+                                                "sha1" to Fixture.hash(client),
                                             ),
-                                            mapOf(
-                                                "id" to 12,
-                                                "gameId" to 432,
-                                                "slug" to "texture-packs",
-                                                "isClass" to true,
+                                    ),
+                                "assetIndex" to
+                                    mapOf(
+                                        "id" to "fixture",
+                                        "url" to server.loopbackUrl("/minecraft/assets").toString(),
+                                    ),
+                                "libraries" to emptyList<String>(),
+                            ),
+                        )
+                    server.dispatcher =
+                        object : Dispatcher() {
+                            override fun dispatch(request: RecordedRequest): MockResponse {
+                                fixture.requests += request
+                                val url = checkNotNull(request.requestUrl)
+                                val path = url.encodedPath
+                                if (fixture.mode == "malformed-response" &&
+                                    path.startsWith("/v1/")
+                                ) {
+                                    return MockResponse().setBody("invalid-json response body")
+                                }
+                                if (fixture.mode == "server-error" && path.startsWith("/v1/")) {
+                                    return MockResponse().setResponseCode(500)
+                                }
+                                if (
+                                    fixture.mode == "no-details" &&
+                                    path.startsWith("/v1/") &&
+                                    (
+                                        path.endsWith("/description") ||
+                                            path.endsWith("/changelog")
+                                    )
+                                ) {
+                                    return MockResponse().setResponseCode(404)
+                                }
+                                if (fixture.mode == "redirect" && path.startsWith("/v1/")) {
+                                    return MockResponse()
+                                        .setResponseCode(302)
+                                        .addHeader("Location", server.loopbackUrl("/leak"))
+                                }
+                                if (path == "/v2/search") {
+                                    return MockResponse()
+                                        .setBody(
+                                            gson.toJson(
+                                                mapOf(
+                                                    "hits" to
+                                                        listOf(
+                                                            mapOf(
+                                                                "project_id" to "modrinth-project",
+                                                                "slug" to "modrinth-project",
+                                                                "title" to "Modrinth Project",
+                                                                "description" to "",
+                                                                "author" to "Author",
+                                                                "downloads" to 1,
+                                                                "project_type" to "mod",
+                                                                "icon_url" to "",
+                                                            ),
+                                                        ),
+                                                    "total_hits" to 1,
+                                                ),
                                             ),
                                         )
-                                    path == "/v1/mods/search" ->
-                                        return MockResponse()
-                                            .setBody(
-                                                gson.toJson(
-                                                    mapOf(
-                                                        "data" to listOf(fixture.project(1)),
-                                                        "pagination" to mapOf("totalCount" to 24),
-                                                    )
-                                                )
-                                            )
-                                    path == "/v1/fingerprints/432" -> {
-                                        val body =
-                                            JsonParser.parseString(request.body.clone().readUtf8())
-                                                .asJsonObject
-                                        val file =
-                                            fixture.file(11).apply {
-                                                addProperty(
-                                                    "fileFingerprint",
-                                                    body.array("fingerprints").first().asLong,
-                                                )
-                                            }
-                                        if (fixture.mode == "false-fingerprint")
-                                            file
-                                                .array("hashes")
-                                                .first()
-                                                .asJsonObject
-                                                .addProperty("value", "0".repeat(40))
-                                        mapOf("exactMatches" to listOf(mapOf("file" to file)))
-                                    }
-                                    path.endsWith("/description") ->
-                                        "<p>Project description</p><script>untrusted()</script>"
-                                    path.endsWith("/changelog") -> "<p>Changes</p>"
-                                    Regex("/v1/mods/[0-9]+/files/[0-9]+").matches(path) ->
-                                        fixture.file(path.substringAfterLast('/').toInt())
-                                    Regex("/v1/mods/[0-9]+/files").matches(path) -> {
-                                        val id = url.pathSegments[2].toInt()
-                                        val items =
-                                            if (id == 1) listOf(fixture.file(12), fixture.file(11))
-                                            else listOf(fixture.file(id * 10 + 1))
-                                        return MockResponse()
-                                            .setBody(
-                                                gson.toJson(
-                                                    mapOf(
-                                                        "data" to items,
-                                                        "pagination" to
-                                                            mapOf("totalCount" to items.size),
-                                                    )
-                                                )
-                                            )
-                                    }
-                                    Regex("/v1/mods/[0-9]+").matches(path) ->
-                                        fixture.project(path.substringAfterLast('/').toInt())
-                                    else -> return MockResponse().setResponseCode(404)
                                 }
-                            return MockResponse().setBody(gson.toJson(mapOf("data" to data)))
+                                if (path.startsWith("/files/")) {
+                                    if (fixture.mode == "download-fail" && path.endsWith("21")) {
+                                        return MockResponse().setResponseCode(404)
+                                    }
+                                    return MockResponse()
+                                        .setBody(
+                                            if (fixture.mode == "corrupt-download") {
+                                                "corrupt"
+                                            } else {
+                                                "file${path.substringAfterLast('/')}"
+                                            },
+                                        )
+                                }
+                                val data: Any =
+                                    when {
+                                        path == "/v1/mods" ->
+                                            JsonParser
+                                                .parseString(request.body.clone().readUtf8())
+                                                .asJsonObject
+                                                .array("modIds")
+                                                .map { fixture.project(it.asInt) }
+                                        path == "/v1/mods/files" ->
+                                            JsonParser
+                                                .parseString(request.body.clone().readUtf8())
+                                                .asJsonObject
+                                                .array("fileIds")
+                                                .map { fixture.file(it.asInt) }
+                                        path == "/minecraft/manifest" ->
+                                            return MockResponse()
+                                                .setBody(
+                                                    gson.toJson(
+                                                        mapOf(
+                                                            "versions" to
+                                                                listOf(
+                                                                    mapOf(
+                                                                        "id" to "1.20.1",
+                                                                        "type" to "release",
+                                                                        "url" to
+                                                                            server
+                                                                                .loopbackUrl(
+                                                                                    "/minecraft/profile",
+                                                                                ).toString(),
+                                                                        "sha1" to
+                                                                            Fixture.hash(
+                                                                                profile
+                                                                                    .toByteArray(),
+                                                                            ),
+                                                                    ),
+                                                                ),
+                                                        ),
+                                                    ),
+                                                )
+                                        path == "/minecraft/profile" ->
+                                            return MockResponse().setBody(profile)
+                                        path == "/minecraft/assets" ->
+                                            return MockResponse().setBody("{\"objects\":{}}")
+                                        path == "/minecraft/client.jar" ->
+                                            return MockResponse().setBody(
+                                                okio.Buffer().write(client),
+                                            )
+                                        path == "/v1/categories" ->
+                                            listOf(
+                                                mapOf(
+                                                    "id" to 6,
+                                                    "gameId" to 432,
+                                                    "slug" to "mc-mods",
+                                                    "isClass" to true,
+                                                ),
+                                                mapOf(
+                                                    "id" to 12,
+                                                    "gameId" to 432,
+                                                    "slug" to "texture-packs",
+                                                    "isClass" to true,
+                                                ),
+                                            )
+                                        path == "/v1/mods/search" ->
+                                            return MockResponse()
+                                                .setBody(
+                                                    gson.toJson(
+                                                        mapOf(
+                                                            "data" to listOf(fixture.project(1)),
+                                                            "pagination" to
+                                                                mapOf("totalCount" to 24),
+                                                        ),
+                                                    ),
+                                                )
+                                        path == "/v1/fingerprints/432" -> {
+                                            val body =
+                                                JsonParser
+                                                    .parseString(request.body.clone().readUtf8())
+                                                    .asJsonObject
+                                            val file =
+                                                fixture.file(11).apply {
+                                                    addProperty(
+                                                        "fileFingerprint",
+                                                        body.array("fingerprints").first().asLong,
+                                                    )
+                                                }
+                                            if (fixture.mode == "false-fingerprint") {
+                                                file
+                                                    .array("hashes")
+                                                    .first()
+                                                    .asJsonObject
+                                                    .addProperty("value", "0".repeat(40))
+                                            }
+                                            mapOf("exactMatches" to listOf(mapOf("file" to file)))
+                                        }
+                                        path.endsWith("/description") ->
+                                            "<p>Project description</p><script>untrusted()</script>"
+                                        path.endsWith("/changelog") -> "<p>Changes</p>"
+                                        Regex("/v1/mods/[0-9]+/files/[0-9]+").matches(path) ->
+                                            fixture.file(path.substringAfterLast('/').toInt())
+                                        Regex("/v1/mods/[0-9]+/files").matches(path) -> {
+                                            val id = url.pathSegments[2].toInt()
+                                            val items =
+                                                if (id == 1) {
+                                                    listOf(fixture.file(12), fixture.file(11))
+                                                } else {
+                                                    listOf(fixture.file(id * 10 + 1))
+                                                }
+                                            return MockResponse()
+                                                .setBody(
+                                                    gson.toJson(
+                                                        mapOf(
+                                                            "data" to items,
+                                                            "pagination" to
+                                                                mapOf("totalCount" to items.size),
+                                                        ),
+                                                    ),
+                                                )
+                                        }
+                                        Regex("/v1/mods/[0-9]+").matches(path) ->
+                                            fixture.project(path.substringAfterLast('/').toInt())
+                                        else -> return MockResponse().setResponseCode(404)
+                                    }
+                                return MockResponse().setBody(gson.toJson(mapOf("data" to data)))
+                            }
                         }
-                    }
-                fixture.action()
+                    fixture.action()
+                }
             }
         }
-    }
 
     private fun hit() = ContentHit("curseforge:1", "project-1", "Project 1", "", "", 0, "mod", null)
 
     @Test
-    fun `search filters version loader category and bounded pagination`() = fixture {
-        assertEquals(
-            "curseforge:1",
-            service.search("hello world", "mod", instance.id).hits.single().id,
-        )
-        val request =
-            requests.find { it.requestUrl!!.encodedPath.endsWith("/search") }!!.requestUrl!!
-        assertEquals("hello world", request.queryParameter("searchFilter"))
-        assertEquals("1.20.1", request.queryParameter("gameVersion"))
-        assertEquals("4", request.queryParameter("modLoaderType"))
-        assertEquals("6", request.queryParameter("classId"))
-        service.search("", "mod", offset = 9996)
-        assertEquals("4", requests.last().requestUrl!!.queryParameter("pageSize"))
-        val count = requests.size
-        assertTrue(service.search("", "mod", offset = 10000).hits.isEmpty())
-        assertEquals(count + 1, requests.size) // category discovery only; no out-of-range search
-    }
+    fun `search filters version loader category and bounded pagination`() =
+        fixture {
+            assertEquals(
+                "curseforge:1",
+                service
+                    .search("hello world", "mod", instance.id)
+                    .hits
+                    .single()
+                    .id,
+            )
+            val request =
+                checkNotNull(
+                    checkNotNull(
+                        requests.find {
+                            checkNotNull(it.requestUrl).encodedPath.endsWith("/search")
+                        },
+                    ).requestUrl,
+                )
+            assertEquals("hello world", request.queryParameter("searchFilter"))
+            assertEquals("1.20.1", request.queryParameter("gameVersion"))
+            assertEquals("4", request.queryParameter("modLoaderType"))
+            assertEquals("6", request.queryParameter("classId"))
+            service.search("", "mod", offset = 9996)
+            assertEquals("4", checkNotNull(requests.last().requestUrl).queryParameter("pageSize"))
+            val count = requests.size
+            assertTrue(service.search("", "mod", offset = 10000).hits.isEmpty())
+            // 此时只查询分类，不能发出超出范围的搜索请求。
+            assertEquals(count + 1, requests.size)
+        }
 
     @Test
-    fun `details and exact versions keep provider identity when source changes`() = fixture {
-        store.mutate { it.copy(settings = it.settings.copy(contentDownloadSource = "modrinth")) }
-        val details = service.catalog.details(hit().id, instance.id)
-        assertEquals(listOf("curseforge:1:12", "curseforge:1:11"), details.versions.map { it.id })
-        assertEquals("Project description", details.body)
-        assertEquals("Author", details.hit.author)
-        assertEquals("CurseForge", details.providerName)
-        assertEquals(
-            "Changes",
-            service.catalog.versionDetails(hit().id, "curseforge:1:11", instance.id).changelog,
-        )
-        assertEquals(
-            "https://www.curseforge.com/minecraft/mc-mods/project-1",
-            contentWebsite(details.hit),
-        )
-        val plan = service.planContent(hit(), instance.id, versionId = "curseforge:1:11")
-        assertEquals(listOf("curseforge:1:11"), plan.files.map { it.versionId })
-    }
+    fun `details and exact versions keep provider identity when source changes`() =
+        fixture {
+            store.mutate {
+                it.copy(
+                    settings = it.settings.copy(contentDownloadSource = "modrinth"),
+                )
+            }
+            val details = service.catalog.details(hit().id, instance.id)
+            assertEquals(
+                listOf("curseforge:1:12", "curseforge:1:11"),
+                details.versions.map { it.id },
+            )
+            assertEquals("Project description", details.body)
+            assertEquals("Author", details.hit.author)
+            assertEquals("CurseForge", details.providerName)
+            assertEquals(
+                "Changes",
+                service.catalog.versionDetails(hit().id, "curseforge:1:11", instance.id).changelog,
+            )
+            assertEquals(
+                "https://www.curseforge.com/minecraft/mc-mods/project-1",
+                contentWebsite(details.hit),
+            )
+            val plan = service.planContent(hit(), instance.id, versionId = "curseforge:1:11")
+            assertEquals(listOf("curseforge:1:11"), plan.files.map { it.versionId })
+        }
 
     @Test
-    fun `browse lists provider versions without an instance and excludes loader tags from game versions`() =
+    fun `provider versions exclude loader tags without requiring an instance`() =
         fixture {
             store.mutate {
                 it.copy(settings = it.settings.copy(contentDownloadSource = "modrinth"))
@@ -426,7 +497,12 @@ class CurseForgeTest {
             assertEquals(listOf("1.20.1"), details.versions.first().gameVersions)
             assertEquals(listOf("fabric"), details.versions.first().loaders)
             val request =
-                requests.last { it.requestUrl!!.encodedPath.endsWith("/files") }.requestUrl!!
+                checkNotNull(
+                    requests
+                        .last {
+                            checkNotNull(it.requestUrl).encodedPath.endsWith("/files")
+                        }.requestUrl,
+                )
             assertNull(request.queryParameter("gameVersion"))
             assertNull(request.queryParameter("modLoaderType"))
             assertEquals("curseforge:1:12", recommendedContentVersion(details.versions)?.id)
@@ -443,92 +519,112 @@ class CurseForgeTest {
                 filter = ContentFilter("26.3", LoaderType.NeoForge),
             )
             val request =
-                requests.last { it.requestUrl!!.encodedPath.endsWith("/search") }.requestUrl!!
+                checkNotNull(
+                    requests
+                        .last {
+                            checkNotNull(it.requestUrl).encodedPath.endsWith("/search")
+                        }.requestUrl,
+                )
             assertEquals("26.3", request.queryParameter("gameVersion"))
             assertEquals("6", request.queryParameter("modLoaderType"))
             service.search("", "mod", instance.id, filter = ContentFilter())
             val unfiltered =
-                requests.last { it.requestUrl!!.encodedPath.endsWith("/search") }.requestUrl!!
+                checkNotNull(
+                    requests
+                        .last {
+                            checkNotNull(it.requestUrl).encodedPath.endsWith("/search")
+                        }.requestUrl,
+                )
             assertNull(unfiltered.queryParameter("gameVersion"))
             assertNull(unfiltered.queryParameter("modLoaderType"))
         }
 
     @Test
-    fun `required optional and embedded dependencies use one transactional install`() = fixture {
-        val first = service.planContent(hit(), instance.id)
-        assertEquals(
-            setOf("curseforge:1", "curseforge:2"),
-            first.files.map { it.projectId }.toSet(),
-        )
-        assertEquals(listOf("curseforge:3"), first.optional.map { it.id })
-        val plan = service.planContent(hit(), instance.id, setOf("curseforge:3"))
-        assertEquals(3, plan.files.size)
-        service.installPlan(plan, JobContext(store, "test"))
-        val root = store.instancePath(instance.id)
-        assertEquals("file12", root.resolve("mods/12.jar").readText())
-        assertEquals("file21", root.resolve("mods/21.jar").readText())
-        assertEquals("file31", root.resolve("mods/31.jar").readText())
-        assertTrue(
-            requests
-                .filter { it.path!!.startsWith("/files/") }
-                .all { it.getHeader("Authorization") == null }
-        )
-        assertTrue(readObject(root.resolve(".molifox-content.json")).has("curseforge:1"))
-    }
-
-    @Test
-    fun `blocked dependencies are all reported without guessing downloads`() = fixture {
-        mode = "blocked"
-        val error =
-            assertFailsWith<ManualContentRequired> {
-                service.planContent(hit(), instance.id, setOf("curseforge:3"))
-            }
-        assertEquals(setOf("21.jar", "31.jar"), error.files.map { it.filename }.toSet())
-        assertTrue(
-            error.files.all {
-                it.website.startsWith("https://www.curseforge.com/minecraft/mc-mods/")
-            }
-        )
-        assertFalse(store.instancePath(instance.id).resolve("mods").exists())
-        assertTrue(requests.none { it.path!!.startsWith("/files/") })
-    }
-
-    @Test
-    fun `missing download URLs also require manual files`() = fixture {
-        mode = "missing-url"
-        assertEquals(
-            "21.jar",
-            assertFailsWith<ManualContentRequired> { service.planContent(hit(), instance.id) }
-                .files
-                .single()
-                .filename,
-        )
-    }
-
-    @Test
-    fun `incompatible metadata and malformed hashes are rejected`() = fixture {
-        for (value in
-            listOf("wrong-version", "wrong-loader", "wrong-game", "server-pack", "bad-hash")) {
-            mode = value
-            assertFails(value) { service.planContent(hit(), instance.id) }
+    fun `required optional and embedded dependencies use one transactional install`() =
+        fixture {
+            val first = service.planContent(hit(), instance.id)
+            assertEquals(
+                setOf("curseforge:1", "curseforge:2"),
+                first.files.map { it.projectId }.toSet(),
+            )
+            assertEquals(listOf("curseforge:3"), first.optional.map { it.id })
+            val plan = service.planContent(hit(), instance.id, setOf("curseforge:3"))
+            assertEquals(3, plan.files.size)
+            service.installPlan(plan, JobContext(store, "test"))
+            val root = store.instancePath(instance.id)
+            assertEquals("file12", root.resolve("mods/12.jar").readText())
+            assertEquals("file21", root.resolve("mods/21.jar").readText())
+            assertEquals("file31", root.resolve("mods/31.jar").readText())
+            assertTrue(
+                requests
+                    .filter { checkNotNull(it.path).startsWith("/files/") }
+                    .all { it.getHeader("Authorization") == null },
+            )
+            assertTrue(readObject(root.resolve(".molifox-content.json")).has("curseforge:1"))
         }
-        assertFalse(store.instancePath(instance.id).resolve("mods").exists())
-    }
 
     @Test
-    fun `failed dependency download leaves files and registry untouched`() = fixture {
-        val root = store.instancePath(instance.id)
-        root.resolve("mods").createDirectories()
-        root.resolve("mods/user.jar").writeText("user content")
-        mode = "download-fail"
-        assertFails {
-            service.installPlan(service.planContent(hit(), instance.id), JobContext(store, "test"))
+    fun `blocked dependencies are all reported without guessing downloads`() =
+        fixture {
+            mode = "blocked"
+            val error =
+                assertFailsWith<ManualContentRequired> {
+                    service.planContent(hit(), instance.id, setOf("curseforge:3"))
+                }
+            assertEquals(setOf("21.jar", "31.jar"), error.files.map { it.filename }.toSet())
+            assertTrue(
+                error.files.all {
+                    it.website.startsWith("https://www.curseforge.com/minecraft/mc-mods/")
+                },
+            )
+            assertFalse(store.instancePath(instance.id).resolve("mods").exists())
+            assertTrue(requests.none { checkNotNull(it.path).startsWith("/files/") })
         }
-        assertEquals("user content", root.resolve("mods/user.jar").readText())
-        assertFalse(root.resolve("mods/12.jar").exists())
-        assertFalse(root.resolve(".molifox-content.json").exists())
-        assertTrue(root.listDirectoryEntries(".molifox-content-*").isEmpty())
-    }
+
+    @Test
+    fun `missing download URLs also require manual files`() =
+        fixture {
+            mode = "missing-url"
+            assertEquals(
+                "21.jar",
+                assertFailsWith<ManualContentRequired> { service.planContent(hit(), instance.id) }
+                    .files
+                    .single()
+                    .filename,
+            )
+        }
+
+    @Test
+    fun `incompatible metadata and malformed hashes are rejected`() =
+        fixture {
+            for (
+            value in
+            listOf("wrong-version", "wrong-loader", "wrong-game", "server-pack", "bad-hash")
+            ) {
+                mode = value
+                assertFails(value) { service.planContent(hit(), instance.id) }
+            }
+            assertFalse(store.instancePath(instance.id).resolve("mods").exists())
+        }
+
+    @Test
+    fun `failed dependency download leaves files and registry untouched`() =
+        fixture {
+            val root = store.instancePath(instance.id)
+            root.resolve("mods").createDirectories()
+            root.resolve("mods/user.jar").writeText("user content")
+            mode = "download-fail"
+            assertFails {
+                service.installPlan(
+                    service.planContent(hit(), instance.id),
+                    JobContext(store, "test"),
+                )
+            }
+            assertEquals("user content", root.resolve("mods/user.jar").readText())
+            assertFalse(root.resolve("mods/12.jar").exists())
+            assertFalse(root.resolve(".molifox-content.json").exists())
+            assertTrue(root.listDirectoryEntries(".molifox-content-*").isEmpty())
+        }
 
     @Test
     fun `fingerprint match needs sha1 before adoption and update preserves disabled state`() =
@@ -538,11 +634,17 @@ class CurseForgeTest {
             old.parent.createDirectories()
             old.writeText("file11")
             mode = "false-fingerprint"
-            assertNull(service.catalog.checkUpdates(instance.id).items.single().source)
+            assertNull(
+                service.catalog
+                    .checkUpdates(instance.id)
+                    .items
+                    .single()
+                    .source,
+            )
             mode = "normal"
             val report = service.catalog.checkUpdates(instance.id)
             val item = report.items.single()
-            assertEquals("curseforge:1:12", item.update!!.id)
+            assertEquals("curseforge:1:12", checkNotNull(item.update).id)
             val plan = service.planUpdates(report, setOf(item.key))
             service.installPlan(plan, JobContext(store, "test"))
             assertFalse(old.exists())
@@ -551,59 +653,86 @@ class CurseForgeTest {
         }
 
     @Test
-    fun `empty or invalid service falls back to the default mirror with a log line`() = fixture {
-        store.mutate { it.copy(settings = it.settings.copy(curseForgeBaseUrl = "")) }
-        assertEquals(DEFAULT_CURSE_FORGE_BASE_URL, store.data.settings.effectiveCurseForgeBaseUrl)
-        assertEquals(
-            "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
-            CurseForgeBackend(store, network).api,
-        )
-        assertTrue(store.state.value.logs.any { it.message.contains("默认镜像") })
+    fun `empty or invalid service falls back to the default mirror with a log line`() =
+        fixture {
+            store.mutate { it.copy(settings = it.settings.copy(curseForgeBaseUrl = "")) }
+            assertEquals(
+                DEFAULT_CURSE_FORGE_BASE_URL,
+                store.data.settings.effectiveCurseForgeBaseUrl,
+            )
+            assertEquals(
+                "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
+                CurseForgeBackend(store, network).api,
+            )
+            assertTrue(
+                store.state.value.logs
+                    .any { it.message.contains("默认镜像") },
+            )
 
-        store.mutate {
-            it.copy(settings = it.settings.copy(curseForgeBaseUrl = "ftp://example.com/curseforge"))
-        }
-        assertEquals(DEFAULT_CURSE_FORGE_BASE_URL, store.data.settings.effectiveCurseForgeBaseUrl)
-        assertEquals(
-            "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
-            CurseForgeBackend(store, network).api,
-        )
-    }
-
-    @Test
-    fun `mirrors without description endpoints still expose installable metadata`() = fixture {
-        mode = "no-details"
-        val details = service.catalog.details(hit().id, instance.id)
-        assertEquals("", details.body)
-        assertEquals("", details.versions.first().changelog)
-        assertEquals("curseforge:1:12", details.versions.first().id)
-        assertTrue(
-            service.planContent(hit(), instance.id, versionId = "curseforge:1:12").files.any {
-                it.projectId == "curseforge:1" && it.versionId == "curseforge:1:12"
+            store.mutate {
+                it.copy(
+                    settings = it.settings.copy(curseForgeBaseUrl = "ftp://example.com/curseforge"),
+                )
             }
-        )
-    }
-
-    @Test
-    fun `custom service base is applied to every request`() = fixture {
-        service.search("sodium", "mod", instance.id)
-        val request =
-            requests.last { it.requestUrl!!.encodedPath.endsWith("/search") }.requestUrl!!
-        assertEquals(server.port, request.port)
-        assertEquals("/v1/mods/search", request.encodedPath)
-        assertEquals("sodium", request.queryParameter("searchFilter"))
-    }
-
-    @Test
-    fun `failing CurseForge request is a normal error and other sources stay usable`() = fixture {
-        mode = "server-error"
-        val failure = assertFailsWith<IllegalStateException> { service.search("", "mod") }
-        assertTrue(failure.message.orEmpty().contains("500"))
-        store.mutate {
-            it.copy(settings = it.settings.copy(contentDownloadSource = "modrinth"))
+            assertEquals(
+                DEFAULT_CURSE_FORGE_BASE_URL,
+                store.data.settings.effectiveCurseForgeBaseUrl,
+            )
+            assertEquals(
+                "$DEFAULT_CURSE_FORGE_BASE_URL/v1",
+                CurseForgeBackend(store, network).api,
+            )
         }
-        assertEquals("modrinth-project", service.search("", "mod").hits.single().id)
-    }
+
+    @Test
+    fun `mirrors without description endpoints still expose installable metadata`() =
+        fixture {
+            mode = "no-details"
+            val details = service.catalog.details(hit().id, instance.id)
+            assertEquals("", details.body)
+            assertEquals("", details.versions.first().changelog)
+            assertEquals("curseforge:1:12", details.versions.first().id)
+            assertTrue(
+                service.planContent(hit(), instance.id, versionId = "curseforge:1:12").files.any {
+                    it.projectId == "curseforge:1" && it.versionId == "curseforge:1:12"
+                },
+            )
+        }
+
+    @Test
+    fun `custom service base is applied to every request`() =
+        fixture {
+            service.search("sodium", "mod", instance.id)
+            val request =
+                checkNotNull(
+                    requests
+                        .last {
+                            checkNotNull(it.requestUrl).encodedPath.endsWith("/search")
+                        }.requestUrl,
+                )
+            assertEquals(server.port, request.port)
+            assertEquals("/v1/mods/search", request.encodedPath)
+            assertEquals("sodium", request.queryParameter("searchFilter"))
+        }
+
+    @Test
+    fun `failing CurseForge request is a normal error and other sources stay usable`() =
+        fixture {
+            mode = "server-error"
+            val failure = assertFailsWith<IllegalStateException> { service.search("", "mod") }
+            assertTrue(failure.message.orEmpty().contains("500"))
+            store.mutate {
+                it.copy(settings = it.settings.copy(contentDownloadSource = "modrinth"))
+            }
+            assertEquals(
+                "modrinth-project",
+                service
+                    .search("", "mod")
+                    .hits
+                    .single()
+                    .id,
+            )
+        }
 
     @Test
     fun `fingerprint ignores only defined whitespace and handles streaming block boundaries`() =
@@ -617,11 +746,11 @@ class CurseForgeTest {
             val spaced =
                 temporary.resolve("spaced").apply {
                     writeBytes(
-                        raw.readBytes()
+                        raw
+                            .readBytes()
                             .flatMap {
                                 listOf(it, 9.toByte(), 10.toByte(), 13.toByte(), 32.toByte())
-                            }
-                            .toByteArray()
+                            }.toByteArray(),
                     )
                 }
             assertEquals(curseForgeFingerprint(raw), curseForgeFingerprint(spaced))
@@ -650,9 +779,8 @@ class CurseForgeTest {
                             mapOf("projectID" to 1, "fileID" to 11, "required" to true),
                             mapOf("projectID" to 2, "fileID" to 21, "required" to false),
                         ),
-                )
-            )
-            .asJsonObject
+                ),
+            ).asJsonObject
 
     @Test
     fun `malformed responses hide their body and invalid service schemes stop before network`() =
@@ -683,17 +811,21 @@ class CurseForgeTest {
                 val data = JsonParser.parseString(request.body.clone().readUtf8()).asJsonObject
                 assertTrue(
                     (if (data.has("modIds")) data.array("modIds") else data.array("fileIds"))
-                        .size() <= 50
+                        .size() <= 50,
                 )
             }
             assertTrue(
                 requests.none {
-                    it.path!!.contains("changelog") || it.path!!.contains("description")
-                }
+                    checkNotNull(it.path).contains("changelog") ||
+                        checkNotNull(it.path).contains("description")
+                },
             )
         }
 
-    private fun pack(info: JsonObject, entries: Map<String, String> = emptyMap()): Path {
+    private fun pack(
+        info: JsonObject,
+        entries: Map<String, String> = emptyMap(),
+    ): Path {
         val archive = temporary.resolve("${UUID.randomUUID()}.zip")
         ZipOutputStream(Files.newOutputStream(archive)).use { zip ->
             for ((name, content) in mapOf("manifest.json" to gson.toJson(info)) + entries) {
@@ -721,89 +853,96 @@ class CurseForgeTest {
         }
 
     @Test
-    fun `bad CurseForge manifests fail before network or instance creation`() = fixture {
-        val samples =
-            listOf(
-                manifest().apply { addProperty("manifestVersion", 2) },
-                manifest().apply { addProperty("overrides", "../escape") },
-                manifest().apply { array("files").add(array("files").first().deepCopy()) },
-                manifest().apply { array("files").first().asJsonObject.addProperty("fileID", -1) },
-                manifest().apply { array("files").first().asJsonObject.remove("required") },
-                manifest().apply {
-                    obj("minecraft")
-                        .array("modLoaders")
-                        .first()
-                        .asJsonObject
-                        .addProperty("id", "unsupported-1")
-                },
-            )
-        for (sample in samples) assertFails { service.previewPack(pack(sample)) }
-        assertFails {
-            service.previewPack(
-                pack(manifest(), mapOf("custom-overrides/../../escape.txt" to "bad"))
-            )
+    fun `bad CurseForge manifests fail before network or instance creation`() =
+        fixture {
+            val samples =
+                listOf(
+                    manifest().apply { addProperty("manifestVersion", 2) },
+                    manifest().apply { addProperty("overrides", "../escape") },
+                    manifest().apply { array("files").add(array("files").first().deepCopy()) },
+                    manifest().apply {
+                        array(
+                            "files",
+                        ).first().asJsonObject.addProperty("fileID", -1)
+                    },
+                    manifest().apply { array("files").first().asJsonObject.remove("required") },
+                    manifest().apply {
+                        obj("minecraft")
+                            .array("modLoaders")
+                            .first()
+                            .asJsonObject
+                            .addProperty("id", "unsupported-1")
+                    },
+                )
+            for (sample in samples) assertFails { service.previewPack(pack(sample)) }
+            assertFails {
+                service.previewPack(
+                    pack(manifest(), mapOf("custom-overrides/../../escape.txt" to "bad")),
+                )
+            }
+            assertFails {
+                service.previewPack(
+                    pack(manifest(), mapOf("custom-overrides/.molifox-content.json" to "bad")),
+                )
+            }
+            assertEquals(1, store.data.instances.size)
+            assertTrue(requests.isEmpty())
         }
-        assertFails {
-            service.previewPack(
-                pack(manifest(), mapOf("custom-overrides/.molifox-content.json" to "bad"))
-            )
-        }
-        assertEquals(1, store.data.instances.size)
-        assertTrue(requests.isEmpty())
-    }
 
     @Test
-    fun `CurseForge pack staging respects optional selection and commits overrides`() = fixture {
-        val root = temporary.resolve("pack-game").apply { createDirectories() }
-        val archive = pack(manifest(), mapOf("custom-overrides/config/a.txt" to "setting"))
-        val transaction = PackFileTransaction(store, root)
-        try {
+    fun `CurseForge pack staging respects optional selection and commits overrides`() =
+        fixture {
+            val root = temporary.resolve("pack-game").apply { createDirectories() }
+            val archive = pack(manifest(), mapOf("custom-overrides/config/a.txt" to "setting"))
+            val transaction = PackFileTransaction(store, root)
+            try {
+                ZipFile(archive.toFile()).use { zip ->
+                    val info = readPackManifest(zip, root, "windows")
+                    val files =
+                        prepareCurseForgePack(
+                            info,
+                            backend,
+                            emptySet(),
+                            temporary.resolve("manual-downloads"),
+                            JobContext(store, "test"),
+                        )
+                    assertEquals(listOf("mods/11.jar"), files.map { it.path })
+                    stageCurseForgePackFiles(files, transaction, JobContext(store, "test")) {
+                        network.download(it)
+                    }
+                    stagePackFiles(
+                        info,
+                        zip,
+                        transaction,
+                        root,
+                        emptySet(),
+                        false,
+                        JobContext(store, "test"),
+                    ) {
+                        network.download(it)
+                    }
+                }
+                transaction.commit(JobContext(store, "test"))
+                assertEquals("file11", root.resolve("mods/11.jar").readText())
+                assertEquals("setting", root.resolve("config/a.txt").readText())
+                assertFalse(root.resolve("mods/21.jar").exists())
+            } finally {
+                transaction.cleanup()
+            }
+        }
+
+    @Test
+    fun `manual pack files require exact hashes and are not modified`() =
+        fixture {
+            mode = "blocked"
+            val archive = pack(manifest())
+            val root = temporary.resolve("manual-game").apply { createDirectories() }
+            val manual = temporary.resolve("manual-downloads").apply { createDirectories() }
             ZipFile(archive.toFile()).use { zip ->
                 val info = readPackManifest(zip, root, "windows")
-                val files =
-                    prepareCurseForgePack(
-                        info,
-                        backend,
-                        emptySet(),
-                        temporary.resolve("manual-downloads"),
-                        JobContext(store, "test"),
-                    )
-                assertEquals(listOf("mods/11.jar"), files.map { it.path })
-                stageCurseForgePackFiles(files, transaction, JobContext(store, "test")) {
-                    network.download(it)
-                }
-                stagePackFiles(
-                    info,
-                    zip,
-                    transaction,
-                    root,
-                    emptySet(),
-                    false,
-                    JobContext(store, "test"),
-                ) {
-                    network.download(it)
-                }
-            }
-            transaction.commit(JobContext(store, "test"))
-            assertEquals("file11", root.resolve("mods/11.jar").readText())
-            assertEquals("setting", root.resolve("config/a.txt").readText())
-            assertFalse(root.resolve("mods/21.jar").exists())
-        } finally {
-            transaction.cleanup()
-        }
-    }
-
-    @Test
-    fun `manual pack files require exact hashes and are not modified`() = fixture {
-        mode = "blocked"
-        val archive = pack(manifest())
-        val root = temporary.resolve("manual-game").apply { createDirectories() }
-        val manual = temporary.resolve("manual-downloads").apply { createDirectories() }
-        ZipFile(archive.toFile()).use { zip ->
-            val info = readPackManifest(zip, root, "windows")
-            assertEquals(
-                "21.jar",
-                assertFailsWith<ManualContentRequired> {
+                assertEquals(
+                    "21.jar",
+                    assertFailsWith<ManualContentRequired> {
                         prepareCurseForgePack(
                             info,
                             backend,
@@ -811,126 +950,133 @@ class CurseForgeTest {
                             manual,
                             JobContext(store, "test"),
                         )
-                    }
-                    .files
-                    .single()
-                    .filename,
-            )
-            manual.resolve("21.jar").writeText("wrong!")
-            assertFailsWith<ManualContentRequired> {
-                prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
-            }
-            manual.resolve("21.jar").writeText("file21")
-            val files =
-                prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
-            val transaction = PackFileTransaction(store, root)
-            try {
-                stageCurseForgePackFiles(files, transaction, JobContext(store, "test")) {
-                    network.download(it)
+                    }.files
+                        .single()
+                        .filename,
+                )
+                manual.resolve("21.jar").writeText("wrong!")
+                assertFailsWith<ManualContentRequired> {
+                    prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
                 }
-                transaction.commit(JobContext(store, "test"))
-                assertEquals("file21", root.resolve("mods/21.jar").readText())
-                assertEquals("file21", manual.resolve("21.jar").readText())
-            } finally {
-                transaction.cleanup()
-            }
-        }
-        assertTrue(requests.none { it.path == "/files/21" })
-    }
-
-    @Test
-    fun `missing manual files fail full import before creating a new instance`() = fixture {
-        mode = "blocked"
-        val archive = pack(manifest())
-        val before = store.data.instances
-        assertFailsWith<ManualContentRequired> {
-            service.importPack(archive, JobContext(store, "test"))
-        }
-        assertEquals(before, store.data.instances)
-        assertFalse(store.dataDirectory.resolve("packs").exists())
-        assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
-    }
-
-    @Test
-    fun `manual files changed after preparation cannot be committed`() = fixture {
-        mode = "blocked"
-        val root = temporary.resolve("changed-game").apply { createDirectories() }
-        val manual = temporary.resolve("manual-downloads").apply { createDirectories() }
-        manual.resolve("21.jar").writeText("file21")
-        val archive = pack(manifest())
-        ZipFile(archive.toFile()).use { zip ->
-            val info = readPackManifest(zip, root, "windows")
-            val files =
-                prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
-            manual.resolve("21.jar").writeText("fileXX")
-            val transaction = PackFileTransaction(store, root)
-            try {
-                assertFails {
+                manual.resolve("21.jar").writeText("file21")
+                val files =
+                    prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
+                val transaction = PackFileTransaction(store, root)
+                try {
                     stageCurseForgePackFiles(files, transaction, JobContext(store, "test")) {
                         network.download(it)
                     }
+                    transaction.commit(JobContext(store, "test"))
+                    assertEquals("file21", root.resolve("mods/21.jar").readText())
+                    assertEquals("file21", manual.resolve("21.jar").readText())
+                } finally {
+                    transaction.cleanup()
                 }
-                assertFalse(root.resolve("mods/11.jar").exists())
-                assertFalse(root.resolve("mods/21.jar").exists())
-            } finally {
-                transaction.cleanup()
+            }
+            assertTrue(requests.none { it.path == "/files/21" })
+        }
+
+    @Test
+    fun `missing manual files fail full import before creating a new instance`() =
+        fixture {
+            mode = "blocked"
+            val archive = pack(manifest())
+            val before = store.data.instances
+            assertFailsWith<ManualContentRequired> {
+                service.importPack(archive, JobContext(store, "test"))
+            }
+            assertEquals(before, store.data.instances)
+            assertFalse(store.dataDirectory.resolve("packs").exists())
+            assertTrue(store.cacheDirectory.listDirectoryEntries("pack-import-*").isEmpty())
+        }
+
+    @Test
+    fun `manual files changed after preparation cannot be committed`() =
+        fixture {
+            mode = "blocked"
+            val root = temporary.resolve("changed-game").apply { createDirectories() }
+            val manual = temporary.resolve("manual-downloads").apply { createDirectories() }
+            manual.resolve("21.jar").writeText("file21")
+            val archive = pack(manifest())
+            ZipFile(archive.toFile()).use { zip ->
+                val info = readPackManifest(zip, root, "windows")
+                val files =
+                    prepareCurseForgePack(info, backend, null, manual, JobContext(store, "test"))
+                manual.resolve("21.jar").writeText("fileXX")
+                val transaction = PackFileTransaction(store, root)
+                try {
+                    assertFails {
+                        stageCurseForgePackFiles(files, transaction, JobContext(store, "test")) {
+                            network.download(it)
+                        }
+                    }
+                    assertFalse(root.resolve("mods/11.jar").exists())
+                    assertFalse(root.resolve("mods/21.jar").exists())
+                } finally {
+                    transaction.cleanup()
+                }
             }
         }
-    }
 
     @Test
-    fun `CurseForge full import keeps isolation and failed pack can be repaired`() = fixture {
-        resourcePack = true
-        store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
-        val archive =
-            pack(
-                manifest().apply {
-                    obj("minecraft").add("modLoaders", gson.toJsonTree(emptyList<String>()))
-                },
-                mapOf("custom-overrides/config/a.txt" to "setting"),
-            )
-        val before = store.data.instances.size
-        mode = "download-fail"
-        assertFails { service.importPack(archive, JobContext(store, "test")) }
-        val failed = store.data.instances.last()
-        assertEquals(before + 1, store.data.instances.size)
-        assertEquals(VersionIsolation.Inherit, failed.isolation)
-        assertFalse(failed.installed)
-        val root = store.instancePath(failed.id)
-        assertFalse(root.resolve("resourcepacks/11.zip").exists())
-        assertTrue(root.listDirectoryEntries(".molifox-pack-*").isEmpty())
-        mode = "normal"
-        service.importPack(Path.of(failed.packFile), JobContext(store, "test"), failed.id)
-        assertEquals(before + 1, store.data.instances.size)
-        assertTrue(store.instance(failed.id).installed)
-        assertEquals("file11", root.resolve("resourcepacks/11.zip").readText())
-        assertEquals("file21", root.resolve("resourcepacks/21.zip").readText())
-        root.resolve("config/a.txt").writeText("user setting")
-        service.importPack(Path.of(failed.packFile), JobContext(store, "test"), failed.id)
-        assertEquals("user setting", root.resolve("config/a.txt").readText())
-    }
-
-    @Test
-    fun `repair reuses hash verified existing restricted files`() = fixture {
-        mode = "blocked"
-        val root = temporary.resolve("repair-game").apply { resolve("mods").createDirectories() }
-        root.resolve("mods/21.jar").writeText("file21")
-        val archive = pack(manifest())
-        ZipFile(archive.toFile()).use { zip ->
-            val info = readPackManifest(zip, root, "windows")
-            val files =
-                prepareCurseForgePack(
-                    info,
-                    backend,
-                    null,
-                    temporary.resolve("missing-manual"),
-                    JobContext(store, "test"),
-                    root,
+    fun `CurseForge full import keeps isolation and failed pack can be repaired`() =
+        fixture {
+            resourcePack = true
+            store.mutate { it.copy(settings = it.settings.copy(isolateVersions = false)) }
+            val archive =
+                pack(
+                    manifest().apply {
+                        obj("minecraft").add("modLoaders", gson.toJsonTree(emptyList<String>()))
+                    },
+                    mapOf("custom-overrides/config/a.txt" to "setting"),
                 )
-            assertEquals(
-                root.resolve("mods/21.jar"),
-                files.find { it.path == "mods/21.jar" }!!.local,
-            )
+            val before = store.data.instances.size
+            mode = "download-fail"
+            assertFails { service.importPack(archive, JobContext(store, "test")) }
+            val failed = store.data.instances.last()
+            assertEquals(before + 1, store.data.instances.size)
+            assertEquals(VersionIsolation.Inherit, failed.isolation)
+            assertFalse(failed.installed)
+            val root = store.instancePath(failed.id)
+            assertFalse(root.resolve("resourcepacks/11.zip").exists())
+            assertTrue(root.listDirectoryEntries(".molifox-pack-*").isEmpty())
+            mode = "normal"
+            service.importPack(Path.of(failed.packFile), JobContext(store, "test"), failed.id)
+            assertEquals(before + 1, store.data.instances.size)
+            assertTrue(store.instance(failed.id).installed)
+            assertEquals("file11", root.resolve("resourcepacks/11.zip").readText())
+            assertEquals("file21", root.resolve("resourcepacks/21.zip").readText())
+            root.resolve("config/a.txt").writeText("user setting")
+            service.importPack(Path.of(failed.packFile), JobContext(store, "test"), failed.id)
+            assertEquals("user setting", root.resolve("config/a.txt").readText())
         }
-    }
+
+    @Test
+    fun `repair reuses hash verified existing restricted files`() =
+        fixture {
+            mode = "blocked"
+            val root =
+                temporary
+                    .resolve(
+                        "repair-game",
+                    ).apply { resolve("mods").createDirectories() }
+            root.resolve("mods/21.jar").writeText("file21")
+            val archive = pack(manifest())
+            ZipFile(archive.toFile()).use { zip ->
+                val info = readPackManifest(zip, root, "windows")
+                val files =
+                    prepareCurseForgePack(
+                        info,
+                        backend,
+                        null,
+                        temporary.resolve("missing-manual"),
+                        JobContext(store, "test"),
+                        root,
+                    )
+                assertEquals(
+                    root.resolve("mods/21.jar"),
+                    checkNotNull(files.find { it.path == "mods/21.jar" }).local,
+                )
+            }
+        }
 }

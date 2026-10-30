@@ -19,12 +19,40 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.visible
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,10 +64,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.*
-import java.nio.file.Files
+import dev.molifox.core.EntryKind
+import dev.molifox.core.GameInstance
+import dev.molifox.core.GameLaunchTarget
+import dev.molifox.core.JobStatus
+import dev.molifox.core.LauncherState
+import dev.molifox.core.LauncherStore
+import dev.molifox.core.PlatformServices
+import dev.molifox.core.VersionResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.file.Files
 
 /** 开始页：左栏是账户摘要与撑满列高的「当前游戏」卡（信息在上、启动按钮与「实例管理 / 版本设置」贴底）， 右栏是可折叠的世界 / 服务器面板。 */
 @Composable
@@ -53,7 +88,9 @@ fun ColumnScope.HomePage(
 ) {
     // 页面重新可见时只做目录签名比较：安装/删除/改名/手动改文件夹后回到开始页即可看到最新扫描。
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { runCatching { actions.controller.refreshInstancesIfChanged() } }
+        withContext(
+            Dispatchers.IO,
+        ) { runCatching { actions.controller.refreshInstancesIfChanged() } }
     }
     // 选中记录可能为空或指向已删除的实例：先按「当前游戏目录 → 最近游玩」回退，再把回退结果
     // 写回状态。这样自动识别目录后开始页不会停在「未选择版本」，其他页面读到的也是同一个实例。
@@ -81,8 +118,9 @@ fun ColumnScope.HomePage(
         produceState(true, selected?.id, selected?.versionId) {
             val instance = selected
             value =
-                if (instance == null) true
-                else
+                if (instance == null) {
+                    true
+                } else {
                     withContext(Dispatchers.IO) {
                         instanceFilesPresent(
                             actions.controller.store,
@@ -90,6 +128,7 @@ fun ColumnScope.HomePage(
                             instance,
                         )
                     }
+                }
         }
     val account = state.data.accounts.find { it.id == state.data.activeAccountId }
     val preferences = state.data.settings.pages.home
@@ -109,13 +148,19 @@ fun ColumnScope.HomePage(
         when {
             runningId != null && runningId == launchCard.instanceId -> launchCard.markRunning()
             launchCard.sawRunning &&
-                (runningId == null ||
-                    (run != null && run.instanceId == launchCard.instanceId && run.finished)) ->
+                (
+                    runningId == null ||
+                        (run != null && run.instanceId == launchCard.instanceId && run.finished)
+                ) ->
                 launchCard.clear()
         }
     }
+
     // 开始页的启动路径：先把选中实例写回状态，再把任务交给控制器；进度、取消与失败原因都落在浮窗里。
-    fun beginLaunch(instance: GameInstance, target: GameLaunchTarget? = null) {
+    fun beginLaunch(
+        instance: GameInstance,
+        target: GameLaunchTarget? = null,
+    ) {
         launchCard.begin(instance)
         actions.run { actions.controller.selectInstance(instance.id) }
         try {
@@ -124,9 +169,11 @@ fun ColumnScope.HomePage(
             launchCard.fail(failure.message ?: "启动失败，请查看日志")
         }
     }
+
     fun cancelLaunch() {
         launchCard.jobId?.let { actions.controller.jobs.cancel(it) }
     }
+
     fun closeLaunchCard() {
         val status = state.jobs.firstOrNull { it.id == launchCard.jobId }?.status
         // 运行中手动关闭等同取消；已结束则只收起浮窗。
@@ -145,7 +192,7 @@ fun ColumnScope.HomePage(
             else -> "已安装"
         }
     // 右上角显示当前实例和游戏目录统计。
-    if (preferences.showStatistics)
+    if (preferences.showStatistics) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -159,7 +206,8 @@ fun ColumnScope.HomePage(
             )
             Spacer(Modifier.width(5.dp))
             Text(
-                state.data.instances.size.toString() +
+                state.data.instances.size
+                    .toString() +
                     " 个版本 · " +
                     state.data.accounts.size +
                     " 个账户",
@@ -167,6 +215,7 @@ fun ColumnScope.HomePage(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
     // 浮窗叠在内容之上；开始页保持可见，点击浮窗外部不会关闭它。
     Box(Modifier.weight(1f).fillMaxWidth()) {
         Row(
@@ -188,9 +237,11 @@ fun ColumnScope.HomePage(
                         fillContent = true,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (selected != null)
+                            if (selected != null) {
                                 InstanceArtwork(selected, actions, Modifier.size(40.dp))
-                            else GrassBlockIcon(size = 40.dp)
+                            } else {
+                                GrassBlockIcon(size = 40.dp)
+                            }
                             Spacer(Modifier.width(12.dp))
                             Column(
                                 Modifier.weight(1f),
@@ -207,17 +258,20 @@ fun ColumnScope.HomePage(
                                     )
                                     if (selected != null) {
                                         Spacer(Modifier.width(6.dp))
-                                        if (selected.broken)
+                                        if (selected.broken) {
                                             Tag("无法识别", MaterialTheme.colorScheme.error)
-                                        else
+                                        } else {
                                             Tag(
-                                                if (actions.controller.store.isolated(selected))
+                                                if (actions.controller.store.isolated(selected)) {
                                                     "版本隔离"
-                                                else "共用目录"
+                                                } else {
+                                                    "共用目录"
+                                                },
                                             )
+                                        }
                                     }
                                 }
-                                if (selected != null)
+                                if (selected != null) {
                                     Text(
                                         selected.gameVersion +
                                             " · " +
@@ -229,7 +283,7 @@ fun ColumnScope.HomePage(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                else
+                                } else {
                                     Text(
                                         "安装 Minecraft，或选择已有的游戏目录。",
                                         fontSize = 12.sp,
@@ -237,12 +291,18 @@ fun ColumnScope.HomePage(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                }
                             }
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            selected?.let { actions.controller.store.gamePath(it).toString() }
-                                ?: actions.controller.store.minecraftRoot.toString(),
+                            selected?.let {
+                                actions.controller.store
+                                    .gamePath(it)
+                                    .toString()
+                            }
+                                ?: actions.controller.store.minecraftRoot
+                                    .toString(),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -266,20 +326,20 @@ fun ColumnScope.HomePage(
                                 }
                                 selected.broken -> {
                                     actions.controller.store.notify(
-                                        "「" + selected.name + "」无法识别：" + selected.brokenReason
+                                        "「" + selected.name + "」无法识别：" + selected.brokenReason,
                                     )
                                 }
                                 !selected.installed -> {
                                     // 修复任务在后台推进，进度可从左侧「日志」入口查看。
                                     actions.controller.store.notify(
-                                        "「" + selected.name + "」尚未安装完成，已开始修复，可在日志中查看进度"
+                                        "「" + selected.name + "」尚未安装完成，已开始修复，可在日志中查看进度",
                                     )
                                     actions.run { actions.controller.repair(selected.id) }
                                 }
                                 // 外部目录的版本文件被移走或删掉时无法自动补全，直接启动只会报错。
                                 selected.externalProfile && !filesPresent -> {
                                     actions.controller.store.notify(
-                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" + "可重新选择目录或修复原版本"
+                                        "找不到「" + selected.name + "」的版本文件，已打开安装页；" + "可重新选择目录或修复原版本",
                                     )
                                     onNew()
                                 }
@@ -326,7 +386,7 @@ fun ColumnScope.HomePage(
                     verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
                 ) {
                     // 右栏的世界 / 服务器面板：折叠后只有标题行，「查看全部」从标题行打开。
-                    if (selected != null)
+                    if (selected != null) {
                         RecentPlayPanel(
                             instance = selected,
                             actions = actions,
@@ -339,16 +399,19 @@ fun ColumnScope.HomePage(
                                         pages =
                                             it.pages.copy(
                                                 home =
-                                                    it.pages.home.copy(recentPlayExpanded = value)
-                                            )
+                                                    it.pages.home.copy(recentPlayExpanded = value),
+                                            ),
                                     )
                                 }
                             },
                             onLaunch = { game, target -> beginLaunch(game, target) },
                             // 正文只显示一类：存档或服务器，选择同样写入开始页偏好。
                             kind =
-                                if (preferences.recentPlayKind == "server") EntryKind.Server
-                                else EntryKind.World,
+                                if (preferences.recentPlayKind == "server") {
+                                    EntryKind.Server
+                                } else {
+                                    EntryKind.World
+                                },
                             onKindChange = { value ->
                                 applySetting(actions) {
                                     it.copy(
@@ -357,28 +420,40 @@ fun ColumnScope.HomePage(
                                                 home =
                                                     it.pages.home.copy(
                                                         recentPlayKind =
-                                                            if (value == EntryKind.Server) "server"
-                                                            else "world"
-                                                    )
-                                            )
+                                                            if (value == EntryKind.Server) {
+                                                                "server"
+                                                            } else {
+                                                                "world"
+                                                            },
+                                                    ),
+                                            ),
                                     )
                                 }
                             },
                             // fill = false：折叠后卡片按标题行高度收起。
                             modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         )
+                    }
                 }
             }
         }
         // 启动浮窗固定在右下角：不遮挡左栏的「启动游戏」按钮，点击页面其他区域也不会关闭它。
-        if (launchCard.visible)
+        if (launchCard.visible) {
             LaunchProgressCard(
                 instanceName = launchCard.instanceName,
                 job = cardJob,
                 error = launchCard.localError,
                 startedAtMillis = launchCard.startedAtMillis,
-                lastLog = state.logs.lastOrNull()?.message.orEmpty(),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 2.dp, bottom = 2.dp),
+                lastLog =
+                    state.logs
+                        .lastOrNull()
+                        ?.message
+                        .orEmpty(),
+                modifier =
+                    Modifier
+                        .align(
+                            Alignment.BottomEnd,
+                        ).padding(end = 2.dp, bottom = 2.dp),
                 onCancel = { cancelLaunch() },
                 onRetry = { selected?.let { beginLaunch(it) } },
                 onViewLogs = {
@@ -387,6 +462,7 @@ fun ColumnScope.HomePage(
                 },
                 onDismiss = { closeLaunchCard() },
             )
+        }
     }
 }
 
@@ -415,7 +491,8 @@ internal fun HomeCard(
                     title,
                     style = MaterialTheme.typography.titleMedium,
                     modifier =
-                        Modifier.fillMaxWidth()
+                        Modifier
+                            .fillMaxWidth()
                             .padding(
                                 start = Metrics.cardPadding,
                                 end = Metrics.cardPadding,
@@ -426,7 +503,8 @@ internal fun HomeCard(
                 HorizontalDivider(color = hairline())
             }
             Column(
-                Modifier.padding(contentPadding)
+                Modifier
+                    .padding(contentPadding)
                     .then(if (fillContent) Modifier.weight(1f) else Modifier),
                 content = content,
             )
@@ -447,7 +525,7 @@ private fun InstanceManageButton(
     val hovered by interaction.collectIsHoveredAsState()
     val shape = RoundedCornerShape(Metrics.innerRadius)
     val animation: androidx.compose.animation.core.AnimationSpec<Color> =
-        if (LocalReducedMotion.current) snap<Color>() else tween<Color>(Motion.fast)
+        if (LocalReducedMotion.current) snap<Color>() else tween<Color>(Motion.FAST)
     val fill by
         animateColorAsState(
             controlBackground(hovered = hovered),
@@ -496,7 +574,7 @@ private fun Entrance(
 ) {
     val offset = with(LocalDensity.current) { 8.dp.roundToPx() }
     Box(modifier) {
-        if (LocalAnimationsEnabled.current)
+        if (LocalAnimationsEnabled.current) {
             AnimatedVisibility(
                 visible = visible,
                 enter = fadeIn(tween(150)) + slideInVertically(tween(150)) { offset },
@@ -504,7 +582,9 @@ private fun Entrance(
             ) {
                 content()
             }
-        else content()
+        } else {
+            content()
+        }
     }
 }
 
@@ -554,11 +634,11 @@ private fun instanceFilesPresent(
     store: LauncherStore,
     platform: PlatformServices,
     instance: GameInstance,
-): Boolean = runCatching {
-    val root = store.minecraftRoot(instance)
-    val profile = VersionResolver(root, platform).resolve(instance.versionId)
-    Files.isRegularFile(
-        root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar")
-    )
-}
-    .getOrDefault(false)
+): Boolean =
+    runCatching {
+        val root = store.minecraftRoot(instance)
+        val profile = VersionResolver(root, platform).resolve(instance.versionId)
+        Files.isRegularFile(
+            root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar"),
+        )
+    }.getOrDefault(false)

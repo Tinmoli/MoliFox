@@ -14,7 +14,11 @@ fun mergeSettingsDraft(
     edited: LauncherSettings,
     current: LauncherSettings,
 ): LauncherSettings {
-    fun merge(before: JsonElement?, change: JsonElement?, latest: JsonElement?): JsonElement? {
+    fun merge(
+        before: JsonElement?,
+        change: JsonElement?,
+        latest: JsonElement?,
+    ): JsonElement? {
         if (before == change) return latest?.deepCopy()
         if (before is JsonObject && change is JsonObject && latest is JsonObject) {
             return latest.deepCopy().apply {

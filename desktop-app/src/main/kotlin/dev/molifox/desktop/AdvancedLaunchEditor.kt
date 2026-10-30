@@ -5,12 +5,23 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.molifox.core.*
+import dev.molifox.core.AdvancedLaunchSettings
+import dev.molifox.core.parseEnvironmentVariables
+import dev.molifox.core.validateAdvancedLaunchSettings
 
 @Composable
 fun AdvancedLaunchEditor(
@@ -22,27 +33,28 @@ fun AdvancedLaunchEditor(
     var timeoutText by remember { mutableStateOf(value.commandTimeoutSeconds.toString()) }
     var environmentText by remember {
         mutableStateOf(
-            value.environmentVariables.entries.joinToString("\n") { "${it.key}=${it.value}" }
+            value.environmentVariables.entries.joinToString("\n") { "${it.key}=${it.value}" },
         )
     }
-    val error = runCatching {
-        require(timeoutText.toIntOrNull() in 1..3600) { "命令超时需为 1–3600 秒" }
-        parseEnvironmentVariables(environmentText, os)
-        validateAdvancedLaunchSettings(value, os)
-    }
-        .exceptionOrNull()
-        ?.message
+    val error =
+        runCatching {
+            require(timeoutText.toIntOrNull() in 1..3600) { "命令超时需为 1–3600 秒" }
+            parseEnvironmentVariables(environmentText, os)
+            validateAdvancedLaunchSettings(value, os)
+        }.exceptionOrNull()
+            ?.message
     LaunchedEffect(error) { onValidityChange(error == null) }
     SettingRow("启动时校验文件摘要", "关闭后检查文件是否存在及大小；下载和修复仍进行完整校验。") {
         CompactSwitch(value.verifyFileHashes, { onChange(value.copy(verifyFileHashes = it)) })
     }
-    if (os == "windows")
+    if (os == "windows") {
         SettingRow("使用 java.exe", "使用同一 Java 安装中的 java.exe 替代 javaw.exe，便于兼容和诊断。") {
             CompactSwitch(
                 value.useJavaConsoleExecutable,
                 { onChange(value.copy(useJavaConsoleExecutable = it)) },
             )
         }
+    }
     OutlinedTextField(
         value.extraGameArgs,
         { onChange(value.copy(extraGameArgs = it)) },
@@ -84,7 +96,8 @@ fun AdvancedLaunchEditor(
         timeoutText,
         {
             timeoutText = it
-            it.toIntOrNull()
+            it
+                .toIntOrNull()
                 ?.takeIf { seconds -> seconds in 1..3600 }
                 ?.let { seconds -> onChange(value.copy(commandTimeoutSeconds = seconds)) }
         },
@@ -92,7 +105,7 @@ fun AdvancedLaunchEditor(
         singleLine = true,
     )
     MutedText(
-        "留空不执行；命令在游戏目录运行，不自动解析管道或变量。复杂操作请显式调用脚本解释器。可从环境读取 MOLIFOX_GAME_DIR、MOLIFOX_JAVA_PATH；退出后还提供 MOLIFOX_EXIT_CODE。"
+        "留空不执行；命令在游戏目录运行，不自动解析管道或变量。复杂操作请显式调用脚本解释器。可从环境读取 MOLIFOX_GAME_DIR、MOLIFOX_JAVA_PATH；退出后还提供 MOLIFOX_EXIT_CODE。",
     )
     SettingRow("游戏运行时的启动器") {
         val visibility = value.launcherVisibility

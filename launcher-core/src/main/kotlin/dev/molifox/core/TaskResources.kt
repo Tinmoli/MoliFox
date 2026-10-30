@@ -5,10 +5,10 @@
 
 package dev.molifox.core
 
-import java.nio.file.Path
-import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import java.nio.file.Path
+import java.util.Locale
 
 internal const val GLOBAL_TASK_RESOURCE = "*"
 
@@ -16,11 +16,17 @@ internal fun taskPathKey(path: Path): String =
     (runCatching { path.toRealPath() }.getOrNull() ?: path.toAbsolutePath().normalize())
         .toString()
         .let {
-            if (System.getProperty("os.name").startsWith("Windows", true)) it.lowercase(Locale.ROOT)
-            else it
+            if (System.getProperty("os.name").startsWith("Windows", true)) {
+                it.lowercase(Locale.ROOT)
+            } else {
+                it
+            }
         }
 
-internal fun taskResourcesForInstances(store: LauncherStore, vararg ids: String): Set<String> =
+internal fun taskResourcesForInstances(
+    store: LauncherStore,
+    vararg ids: String,
+): Set<String> =
     buildSet {
         ids.forEach { id ->
             val instance = store.instance(id)
@@ -28,13 +34,18 @@ internal fun taskResourcesForInstances(store: LauncherStore, vararg ids: String)
             add("files:${taskPathKey(store.gamePath(instance))}")
             for (version in setOf(instance.versionId, instance.gameVersion)) {
                 add(
-                    "version:${taskPathKey(store.minecraftRoot(instance).resolve("versions").resolve(version))}"
+                    "version:${taskPathKey(
+                        store.minecraftRoot(instance).resolve("versions").resolve(version),
+                    )}",
                 )
             }
         }
     }
 
-internal fun taskResourcesConflict(left: Set<String>, right: Set<String>): Boolean =
+internal fun taskResourcesConflict(
+    left: Set<String>,
+    right: Set<String>,
+): Boolean =
     GLOBAL_TASK_RESOURCE in left || GLOBAL_TASK_RESOURCE in right || left.any { it in right }
 
 internal class TaskResourceGate {
@@ -43,7 +54,10 @@ internal class TaskResourceGate {
     private val changes = MutableStateFlow(0L)
 
     @Synchronized
-    fun register(id: String, resources: Set<String>) {
+    fun register(
+        id: String,
+        resources: Set<String>,
+    ) {
         waiting[id] = resources
         changes.value++
     }
@@ -76,7 +90,10 @@ internal class TaskResourceGate {
     }
 
     @Synchronized
-    fun rebind(id: String, resources: Set<String>) {
+    fun rebind(
+        id: String,
+        resources: Set<String>,
+    ) {
         check(id in active)
         check(active.none { it != id && taskResourcesConflict(resources, waiting.getValue(it)) }) {
             "整合包目标正在被其他任务使用"

@@ -5,8 +5,8 @@
 
 package dev.molifox.core.net
 
-import java.util.concurrent.ConcurrentHashMap
 import dev.molifox.core.HostGate
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 源闸门：镜像类主机（BMCLAPI、Maven 镜像）默认 4 并发、相邻两次开始至少 100ms；
@@ -24,11 +24,16 @@ internal object SourceThrottle {
 
     private val gates = ConcurrentHashMap<String, HostGate>()
 
-    internal fun gateFor(source: DownloadSource, mirrorConcurrency: Int): HostGate {
+    internal fun gateFor(
+        source: DownloadSource,
+        mirrorConcurrency: Int,
+    ): HostGate {
         val limits =
-            if (source.mirror)
+            if (source.mirror) {
                 mirrorConcurrency.coerceIn(1, 16) to MIRROR_SPACING_MILLIS
-            else OFFICIAL_LIMIT to 0L
+            } else {
+                OFFICIAL_LIMIT to 0L
+            }
         return gates.computeIfAbsent("${source.key}:${limits.first}:${limits.second}") {
             HostGate(limits.first, limits.second)
         }

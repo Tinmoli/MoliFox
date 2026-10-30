@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.io.EOFException
 import java.net.ConnectException
 import java.net.URI
@@ -12,10 +14,12 @@ import java.nio.file.Path
 import java.security.cert.CertificateException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
-import kotlin.io.path.*
-import kotlin.test.*
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
+import kotlin.io.path.name
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ActivityAndProgressTest {
     @TempDir lateinit var directory: Path
@@ -26,6 +30,7 @@ class ActivityAndProgressTest {
         val instance = GameInstance(name = "Activity", gameVersion = "fixture")
         store.mutate { it.copy(instances = listOf(instance)) }
         val tracker = GameActivityTracker(store, instance)
+
         fun log(text: String) = tracker.accept("[18:00:00] [Render thread/INFO]: $text")
         log("Connecting to play.example.test, 25565")
         assertNull(store.recentUsage.lastUsed(EntryKind.Server, instance.id, "play.example.test"))
@@ -35,7 +40,7 @@ class ActivityAndProgressTest {
         log("Connecting to play.example.test, 25565")
         log("Loaded 12 advancements")
         assertNotNull(
-            store.recentUsage.lastUsed(EntryKind.Server, instance.id, "play.example.test")
+            store.recentUsage.lastUsed(EntryKind.Server, instance.id, "play.example.test"),
         )
         val revision = store.state.value.recentUsageRevision
         log("[System] [CHAT] normal chat")
@@ -54,13 +59,13 @@ class ActivityAndProgressTest {
         tracker.accept("[18:00:00] [Render thread/INFO]: Connecting to [2001:db8::1], 25566")
         tracker.accept("[18:00:01] [Render thread/INFO]: [System] [CHAT] Welcome")
         assertNotNull(
-            store.recentUsage.lastUsed(EntryKind.Server, instance.id, "[2001:db8::1]:25566")
+            store.recentUsage.lastUsed(EntryKind.Server, instance.id, "[2001:db8::1]:25566"),
         )
         assertTrue(
             sameServerAddress(
                 parseServerAddress("EXAMPLE.test"),
                 parseServerAddress("example.test:25565"),
-            )
+            ),
         )
     }
 
@@ -73,14 +78,21 @@ class ActivityAndProgressTest {
         context.transfer("first", 80, 100)
         context.transfer("first", 100, 100, completed = true)
         context.transfer("second", 200, 200, completed = true)
-        val job = store.state.value.jobs.single()
+        val job =
+            store.state.value.jobs
+                .single()
         assertEquals(300L, job.downloadedBytes)
         assertEquals(300L, job.totalBytes)
         assertEquals(2, job.completedFiles)
         assertEquals(2, job.totalFiles)
         assertEquals(0L, job.bytesPerSecond)
         context.beginTransfers(1)
-        assertEquals(0L, store.state.value.jobs.single().downloadedBytes)
+        assertEquals(
+            0L,
+            store.state.value.jobs
+                .single()
+                .downloadedBytes,
+        )
     }
 
     @Test
@@ -96,7 +108,7 @@ class ActivityAndProgressTest {
                 SSLHandshakeException("bad certificate").apply {
                     initCause(CertificateException())
                 },
-            )
+            ),
         )
     }
 

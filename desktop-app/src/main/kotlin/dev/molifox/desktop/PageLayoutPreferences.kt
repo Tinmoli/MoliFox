@@ -5,17 +5,28 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import dev.molifox.core.*
+import dev.molifox.core.LauncherSettings
 
 @Composable
-fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
+fun PageLayoutPreferences(
+    settings: LauncherSettings,
+    apply: AppearanceChange,
+) {
     var page by remember { mutableIntStateOf(0) }
     val options = settings.pages
     SecondaryTabRow(page, containerColor = MaterialTheme.colorScheme.surface) {
@@ -29,7 +40,10 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                 PreferenceSwitch("游戏统计", "在页头显示版本和账户数量", options.home.showStatistics) { value ->
                     apply {
                         it.copy(
-                            pages = it.pages.copy(home = it.pages.home.copy(showStatistics = value))
+                            pages =
+                                it.pages.copy(
+                                    home = it.pages.home.copy(showStatistics = value),
+                                ),
                         )
                     }
                 }
@@ -42,7 +56,9 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     apply {
                         it.copy(
                             pages =
-                                it.pages.copy(home = it.pages.home.copy(recentPlayExpanded = value))
+                                it.pages.copy(
+                                    home = it.pages.home.copy(recentPlayExpanded = value),
+                                ),
                         )
                     }
                 }
@@ -58,8 +74,8 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                                 it.copy(
                                     pages =
                                         it.pages.copy(
-                                            versions = it.pages.versions.copy(view = value)
-                                        )
+                                            versions = it.pages.versions.copy(view = value),
+                                        ),
                                 )
                             }
                         },
@@ -76,8 +92,8 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                                 it.copy(
                                     pages =
                                         it.pages.copy(
-                                            versions = it.pages.versions.copy(sort = value)
-                                        )
+                                            versions = it.pages.versions.copy(sort = value),
+                                        ),
                                 )
                             }
                         },
@@ -85,14 +101,17 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     )
                 }
                 SettingDivider()
-                PreferenceSwitch("收藏优先", "按最近游玩排列时，将收藏版本放在前面", options.versions.favoritesFirst) {
-                    value ->
+                PreferenceSwitch(
+                    "收藏优先",
+                    "按最近游玩排列时，将收藏版本放在前面",
+                    options.versions.favoritesFirst,
+                ) { value ->
                     apply {
                         it.copy(
                             pages =
                                 it.pages.copy(
-                                    versions = it.pages.versions.copy(favoritesFirst = value)
-                                )
+                                    versions = it.pages.versions.copy(favoritesFirst = value),
+                                ),
                         )
                     }
                 }
@@ -101,21 +120,24 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     apply {
                         it.copy(
                             pages =
-                                it.pages.copy(versions = it.pages.versions.copy(showNotes = value))
+                                it.pages.copy(versions = it.pages.versions.copy(showNotes = value)),
                         )
                     }
                 }
             }
         2 ->
             SettingsSection("下载中心资源卡片", contentGap = 0.dp) {
-                PreferenceSwitch("紧凑卡片", "缩短资源卡片高度，显示更多结果", options.downloads.compactCards) { value
-                    ->
+                PreferenceSwitch(
+                    "紧凑卡片",
+                    "缩短资源卡片高度，显示更多结果",
+                    options.downloads.compactCards,
+                ) { value ->
                     apply {
                         it.copy(
                             pages =
                                 it.pages.copy(
-                                    downloads = it.pages.downloads.copy(compactCards = value)
-                                )
+                                    downloads = it.pages.downloads.copy(compactCards = value),
+                                ),
                         )
                     }
                 }
@@ -125,8 +147,8 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                         it.copy(
                             pages =
                                 it.pages.copy(
-                                    downloads = it.pages.downloads.copy(showAuthors = value)
-                                )
+                                    downloads = it.pages.downloads.copy(showAuthors = value),
+                                ),
                         )
                     }
                 }
@@ -136,8 +158,8 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                         it.copy(
                             pages =
                                 it.pages.copy(
-                                    downloads = it.pages.downloads.copy(showDescriptions = value)
-                                )
+                                    downloads = it.pages.downloads.copy(showDescriptions = value),
+                                ),
                         )
                     }
                 }
@@ -147,7 +169,7 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                 PreferenceSwitch("日志自动滚动", "新日志出现时自动跟随到末尾", options.logs.autoScroll) { value ->
                     apply {
                         it.copy(
-                            pages = it.pages.copy(logs = it.pages.logs.copy(autoScroll = value))
+                            pages = it.pages.copy(logs = it.pages.logs.copy(autoScroll = value)),
                         )
                     }
                 }
@@ -161,7 +183,7 @@ fun PageLayoutPreferences(settings: LauncherSettings, apply: AppearanceChange) {
                     apply {
                         it.copy(
                             pages =
-                                it.pages.copy(logs = it.pages.logs.copy(fontSize = value.toInt()))
+                                it.pages.copy(logs = it.pages.logs.copy(fontSize = value.toInt())),
                         )
                     }
                 }
