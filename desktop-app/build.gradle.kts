@@ -576,7 +576,7 @@ tasks.register("verifyDesktopPackages") {
         val report = rootProject.file("build/validation/desktop-packages.md")
         report.parentFile.mkdirs()
         report.writeText(
-            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: not executed on this Windows host\n",
+            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: structure checked here; launcher UI and Terracotta core start were executed separately in WSL Arch + Xvfb (software rendering), not on this Windows host\n",
         )
     }
 }
