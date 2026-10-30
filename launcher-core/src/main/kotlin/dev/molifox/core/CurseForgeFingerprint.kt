@@ -23,7 +23,9 @@ internal suspend fun curseForgeFingerprint(path: Path): Long {
                 if (count < 0) break
                 for (index in 0 until count) {
                     val value = buffer[index].toInt() and 255
-                    if (value != 9 && value != 10 && value != 13 && value != 32) consume(value)
+                    // 指纹算法要求跳过 ASCII 空白：TAB、LF、CR 与空格。
+                    val whitespace = value == 9 || value == 10 || value == 13 || value == 32
+                    if (!whitespace) consume(value)
                 }
             }
         }

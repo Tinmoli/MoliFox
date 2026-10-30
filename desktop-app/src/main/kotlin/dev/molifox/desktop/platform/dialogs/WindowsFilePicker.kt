@@ -19,7 +19,7 @@ import com.sun.jna.win32.StdCallLibrary
 internal object WindowsFilePicker {
     private interface ShellItems : StdCallLibrary {
         // JNA 按方法名查找 Windows 导出符号，必须保留系统定义的大小写。
-        @Suppress("ktlint:standard:function-naming")
+        @Suppress("ktlint:standard:function-naming", "FunctionNaming")
         fun SHCreateItemFromParsingName(
             path: WString,
             context: Pointer?,

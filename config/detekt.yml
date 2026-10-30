@@ -10,6 +10,9 @@ naming:
 complexity:
   LongMethod:
     allowedLines: 40
+    # Compose 界面函数是声明式树，拆成碎片或把每个 dp/sp 命名都会降低可读性；
+    # 与 .editorconfig 里 ktlint 对 Composable 命名豁免同一口径。业务逻辑仍按 40 行要求。
+    ignoreAnnotated: ['Composable']
   LargeClass:
     allowedLines: 400
   NestedBlockDepth:
@@ -20,3 +23,6 @@ style:
     maxLineLength: 100
   ReturnCount:
     excludeGuardClauses: true
+  MagicNumber:
+    ignoreNumbers: ['-1', '0', '1', '2']
+    ignoreAnnotated: ['Composable']

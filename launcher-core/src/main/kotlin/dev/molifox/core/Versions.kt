@@ -55,14 +55,12 @@ fun loaderUpgradeCandidates(
     instance: GameInstance,
     available: List<LoaderVersion>,
 ): List<LoaderVersion> {
-    if (
-        instance.loader == LoaderType.Vanilla ||
-        !instance.installed ||
-        instance.packFile.isNotBlank() ||
-        instance.loaderVersion.isBlank()
-    ) {
-        return emptyList()
-    }
+    val upgradeable =
+        instance.loader != LoaderType.Vanilla &&
+            instance.installed &&
+            instance.packFile.isBlank() &&
+            instance.loaderVersion.isNotBlank()
+    if (!upgradeable) return emptyList()
     return available
         .filter { compareLoaderVersions(it.version, instance.loaderVersion) > 0 }
         .sortedWith { left, right -> compareLoaderVersions(right.version, left.version) }

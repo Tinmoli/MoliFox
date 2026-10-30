@@ -33,7 +33,7 @@ class TokenVaultTest {
         object : LegacyTokenStore {
             override fun read(id: String): String? = null
 
-            override fun remove(id: String) {}
+            override fun remove(id: String) = Unit
         }
 
     private fun store(
@@ -96,7 +96,7 @@ class TokenVaultTest {
                     return "old-refresh"
                 }
 
-                override fun remove(id: String) {}
+                override fun remove(id: String) = Unit
             }
         assertNull(TokenVault(store, legacy).read(id))
         assertEquals(0, reads)

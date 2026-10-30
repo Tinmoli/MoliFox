@@ -263,7 +263,7 @@ private fun startLauncherController(startupMillis: () -> Long): LauncherControll
         created.store.log("启动：store ready，用时 ${startupMillis()} ms")
         created
     } catch (error: Exception) {
-        error.printStackTrace()
+        System.err.println("启动失败：${error.message}")
         System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
             runCatching {
                 java.nio.file.Files.writeString(

@@ -36,23 +36,7 @@ internal class SystemProxyResolver(
             return nativeSelection
         }
         val bypass = environment("no_proxy") ?: environment("NO_PROXY")
-        if (
-            bypass?.split(',')?.any { entry ->
-                val candidate = entry.trim().lowercase()
-                val hostname = candidate.trimStart('.')
-                candidate == "*" ||
-                    uri.host.equals(hostname, true) ||
-                    uri.host.endsWith(".$hostname", true) ||
-                    "${uri.host}:${if (uri.port > 0) {
-                        uri.port
-                    } else if (uri.scheme == "https") {
-                        443
-                    } else {
-                        80
-                    }}"
-                        .equals(candidate, true)
-            } == true
-        ) {
+        if (bypass?.split(',')?.any { entry -> matchesBypassEntry(uri, entry) } == true) {
             return listOf(Proxy.NO_PROXY)
         }
         val value =
@@ -99,3 +83,22 @@ internal class SystemProxyResolver(
         native?.connectFailed(uri, sa, error)
     }
 }
+
+/** `no_proxy` 的单条规则：`*`、域名后缀或 `host:port` 命中即直连。 */
+private fun matchesBypassEntry(
+    uri: URI,
+    entry: String,
+): Boolean {
+    val candidate = entry.trim().lowercase()
+    val hostname = candidate.trimStart('.')
+    val matchesHost = uri.host.equals(hostname, true) || uri.host.endsWith(".$hostname", true)
+    val hostWithPort = "${uri.host}:${bypassPort(uri)}"
+    return candidate == "*" || matchesHost || hostWithPort.equals(candidate, true)
+}
+
+private fun bypassPort(uri: URI): Int =
+    when {
+        uri.port > 0 -> uri.port
+        uri.scheme == "https" -> 443
+        else -> 80
+    }

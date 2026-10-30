@@ -65,13 +65,11 @@ object LauncherLocation {
         val directory = source.parent ?: return null
         // 打包布局：<启动器目录>/MoliFox/dependencies/launcher/MoliFox-<版本>.jar。
         val data = directory.parent?.parent
-        if (
-            directory.fileName?.toString() == "launcher" &&
-            directory.parent?.fileName?.toString() == "dependencies" &&
-            data != null &&
-            data.fileName?.toString().equals("MoliFox", ignoreCase = true)
-        ) {
-            return data.parent ?: directory
+        val packagedData = data?.takeIf { it.fileName?.toString().equals("MoliFox", true) }
+        val launcherFolder = directory.fileName?.toString() == "launcher"
+        val dependencyFolder = directory.parent?.fileName?.toString() == "dependencies"
+        if (packagedData != null && launcherFolder && dependencyFolder) {
+            return packagedData.parent ?: directory
         }
         return directory
     }

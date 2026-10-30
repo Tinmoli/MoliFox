@@ -554,24 +554,20 @@ class LauncherController
                 extraGameArgs = configuration.extraGameArgs,
                 totalMemoryMb = platform.totalMemoryMb,
             )
+            val inheritedAutoMemory =
+                configuration.autoMemory == null &&
+                    configuration.memoryMb == 0 &&
+                    store.data.settings.autoMemory
+            val autoMemoryRequested = configuration.autoMemory == true || inheritedAutoMemory
+            val maximumMemory =
+                if (autoMemoryRequested) {
+                    maxOf(512, platform.totalMemoryMb - 512)
+                } else {
+                    configuration.memoryMb.takeIf { it > 0 } ?: store.data.settings.memoryMb
+                }
             require(
                 configuration.initialMemoryMb == 0 ||
-                    configuration.initialMemoryMb in
-                    128..(
-                        if (
-                            configuration.autoMemory == true ||
-                            (
-                                configuration.autoMemory == null &&
-                                    configuration.memoryMb == 0 &&
-                                    store.data.settings.autoMemory
-                            )
-                        ) {
-                            maxOf(512, platform.totalMemoryMb - 512)
-                        } else {
-                            configuration.memoryMb.takeIf { it > 0 }
-                                ?: store.data.settings.memoryMb
-                        }
-                    ),
+                    configuration.initialMemoryMb in 128..maximumMemory,
             ) {
                 "初始内存需为 0（继承）或在 128 MB 到最大内存之间"
             }

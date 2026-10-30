@@ -796,12 +796,9 @@ class SaveManager(
                     file: Path,
                     attrs: BasicFileAttributes,
                 ): FileVisitResult {
-                    if (
-                        attrs.isRegularFile &&
-                        !attrs.isOther &&
-                        file.name.endsWith(".mca", true) &&
-                        attrs.size() > 0
-                    ) {
+                    val regionFile =
+                        attrs.isRegularFile && !attrs.isOther && file.name.endsWith(".mca", true)
+                    if (regionFile && attrs.size() > 0) {
                         regions++
                     }
                     return FileVisitResult.CONTINUE

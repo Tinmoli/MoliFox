@@ -51,6 +51,7 @@ import dev.molifox.core.ContentDetails
 import dev.molifox.core.ContentFilter
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentVersion
+import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
 import dev.molifox.core.SaveEntry
@@ -136,14 +137,7 @@ fun ContentProjectDialog(
     val recommendation = recommendedContentVersion(versions, target, hit.type)
     LaunchedEffect(hit.id, targetId, gameVersion, loader, channel, details) {
         val current = versions.find { it.id == versionId }
-        if (
-            current == null ||
-            (
-                target != null &&
-                    hit.type != "modpack" &&
-                    !compatibleContentVersion(current, target, hit.type)
-            )
-        ) {
+        if (current == null || isUnusableFor(current, target, hit.type)) {
             versionId = recommendation?.id.orEmpty()
         }
     }
@@ -652,3 +646,13 @@ private fun versionNumberSegments(value: String): List<Int> =
         .mapNotNull { it.value.toIntOrNull() }
         .take(4)
         .toList()
+
+/** 整合包自带整套组件，不按实例加载器筛选；其余类型才检查与实例的兼容性。 */
+private fun isUnusableFor(
+    version: ContentVersion,
+    target: GameInstance?,
+    kind: String,
+): Boolean {
+    if (target == null || kind == "modpack") return false
+    return !compatibleContentVersion(version, target, kind)
+}

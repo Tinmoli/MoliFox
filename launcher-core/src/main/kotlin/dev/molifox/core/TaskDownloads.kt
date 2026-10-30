@@ -55,14 +55,17 @@ internal class TaskDownloadJournal(
                                 NOFOLLOW_LINKS,
                             )
                         }.getOrNull()
-                    if (
+                    val unchanged =
                         current != null &&
-                        current.isRegularFile &&
-                        path.toRealPath() == path.toAbsolutePath().normalize() &&
-                        current.size() == owned.size &&
-                        current.lastModifiedTime() == owned.modified &&
-                        current.fileKey() == owned.key
-                    ) {
+                            current.isRegularFile &&
+                            current.size() == owned.size
+                    val sameEntry =
+                        current != null &&
+                            current.lastModifiedTime() == owned.modified &&
+                            current.fileKey() == owned.key
+                    val samePath =
+                        current != null && path.toRealPath() == path.toAbsolutePath().normalize()
+                    if (unchanged && sameEntry && samePath) {
                         Files.deleteIfExists(path)
                     }
                 }

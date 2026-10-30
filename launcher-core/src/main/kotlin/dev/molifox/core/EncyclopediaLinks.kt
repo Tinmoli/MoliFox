@@ -113,15 +113,11 @@ internal class EncyclopediaLinks(
 
 internal fun directEncyclopediaUrl(value: String): String? {
     val uri = runCatching { URI(value) }.getOrNull() ?: return null
-    return if (
-        uri.scheme == "https" &&
-        uri.host == "www.mcmod.cn" &&
-        uri.rawUserInfo == null &&
-        uri.port == -1 &&
-        uri.rawQuery == null &&
-        uri.rawFragment == null &&
-        uri.path.matches(Regex("/(class|modpack)/[1-9][0-9]*\\.html"))
-    ) {
+    val trustedOrigin = uri.scheme == "https" && uri.host == "www.mcmod.cn"
+    val plainUrl = uri.rawUserInfo == null && uri.port == -1
+    val withoutQuery = uri.rawQuery == null && uri.rawFragment == null
+    val entryPage = uri.path.matches(Regex("/(class|modpack)/[1-9][0-9]*\\.html"))
+    return if (trustedOrigin && plainUrl && withoutQuery && entryPage) {
         uri.toASCIIString()
     } else {
         null

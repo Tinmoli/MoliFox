@@ -114,14 +114,12 @@ class DesktopPlatform : PlatformServices {
     }
 
     override fun moveToTrash(file: Path) {
-        if (
-            !GraphicsEnvironment.isHeadless() &&
-            Desktop.isDesktopSupported() &&
-            Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH) &&
-            Desktop.getDesktop().moveToTrash(file.toFile())
-        ) {
-            return
-        }
+        val desktopAvailable = !GraphicsEnvironment.isHeadless() && Desktop.isDesktopSupported()
+        val trashed =
+            desktopAvailable &&
+                Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH) &&
+                Desktop.getDesktop().moveToTrash(file.toFile())
+        if (trashed) return
         // Linux desktops may not support AWT trash. Preserve files in the launcher's
         // own recovery folder rather than falling back to irreversible deletion.
         val trash =

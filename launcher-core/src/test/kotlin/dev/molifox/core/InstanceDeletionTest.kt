@@ -49,9 +49,9 @@ class InstanceDeletionTest {
         override val totalMemoryMb = 8192
         override val defaultDataDirectory: Path = bin.parent.resolve("data")
 
-        override fun openFolder(directory: Path) {}
+        override fun openFolder(directory: Path) = Unit
 
-        override fun openUrl(url: String) {}
+        override fun openUrl(url: String) = Unit
 
         override fun moveToTrash(file: Path) {
             trashCalls++

@@ -104,12 +104,13 @@ class ScreenshotManager(
                     reader.input = input
                     val width = reader.getWidth(0)
                     val height = reader.getHeight(0)
-                    if (
-                        reader.formatName.lowercase() in setOf("png", "jpeg", "jpg") &&
+                    val supportedFormat =
+                        reader.formatName.lowercase() in setOf("png", "jpeg", "jpg")
+                    val limitedSize =
                         width in 1..16384 &&
-                        height in 1..16384 &&
-                        width.toLong() * height <= 40_000_000
-                    ) {
+                            height in 1..16384 &&
+                            width.toLong() * height <= 40_000_000
+                    if (supportedFormat && limitedSize) {
                         width to height
                     } else {
                         0 to 0

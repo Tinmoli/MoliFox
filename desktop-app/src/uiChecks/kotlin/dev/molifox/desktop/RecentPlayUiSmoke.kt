@@ -179,7 +179,7 @@ fun main() {
             } catch (failure: Throwable) {
                 runCatching { screenshot(Robot(), "MoliFox-recent-failure.png") }
                 error.set(failure)
-                failure.printStackTrace()
+                System.err.println(failure.stackTraceToString())
             } finally {
                 EventQueue.invokeLater {
                     testWindow

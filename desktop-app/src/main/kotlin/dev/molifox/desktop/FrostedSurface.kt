@@ -285,7 +285,9 @@ private fun DrawScope.drawBackdropRegion(
     val rawTop = (panelTop - offsetY) / scaleY
     val rawBottom = (panelTop + panelSize.height - offsetY) / scaleY
     // 「完整显示」时图片两侧可能留白：面板完全落在留白里就不画，避免把边缘像素拉成一条色带。
-    if (rawRight <= 0f || rawLeft >= imageWidth || rawBottom <= 0f || rawTop >= imageHeight) return
+    val outsideImage =
+        rawRight <= 0f || rawLeft >= imageWidth || rawBottom <= 0f || rawTop >= imageHeight
+    if (outsideImage) return
     val left = rawLeft.coerceIn(0f, imageWidth)
     val right = rawRight.coerceIn(0f, imageWidth)
     val top = rawTop.coerceIn(0f, imageHeight)
@@ -335,13 +337,12 @@ fun FrostedPanel(
                 val image = snapshot
                 val coordinates = placed
                 // surface 不透明时模糊看不见，省掉一次贴图；其余情况用模糊快照替换背后画面。
-                if (
+                val hasBackdrop =
                     image != null &&
-                    colors.surface.alpha < 1f &&
-                    coordinates != null &&
-                    windowSize.width > 0 &&
-                    windowSize.height > 0
-                ) {
+                        coordinates != null &&
+                        windowSize.width > 0 &&
+                        windowSize.height > 0
+                if (hasBackdrop && colors.surface.alpha < 1f) {
                     val origin = coordinates.positionInWindow()
                     drawBackdropRegion(
                         bitmap = image,

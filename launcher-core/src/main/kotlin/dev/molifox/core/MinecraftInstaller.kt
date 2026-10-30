@@ -1218,14 +1218,10 @@ class MinecraftInstaller(
                         processor.obj("outputs").entrySet().map {
                             expand(it.key) to expand(it.value.asString)
                         }
-                    if (
+                    val reusedOutputs =
                         outputs.isNotEmpty() &&
-                        outputs.all { (file, hash) ->
-                            Path.of(file).exists() &&
-                                hash.matches(Regex("[0-9a-fA-F]{40}")) &&
-                                digest(Path.of(file)).equals(hash, true)
-                        }
-                    ) {
+                            outputs.all { (file, hash) -> isFreshOutput(file, hash) }
+                    if (reusedOutputs) {
                         continue
                     }
                     val artifact =
@@ -1320,3 +1316,13 @@ internal suspend fun runJavaProcess(
             output.cancel()
         }
     }
+
+/** 组件的输出文件已存在且哈希一致时直接复用，避免重复跑 processor。 */
+private fun isFreshOutput(
+    file: String,
+    hash: String,
+): Boolean {
+    val path = Path.of(file)
+    val validHash = hash.matches(Regex("[0-9a-fA-F]{40}"))
+    return path.exists() && validHash && digest(path).equals(hash, true)
+}

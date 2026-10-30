@@ -28,7 +28,7 @@ class SystemProxyTest {
                 uri: URI?,
                 sa: SocketAddress?,
                 error: IOException?,
-            ) {}
+            ) = Unit
         }
 
     @Test

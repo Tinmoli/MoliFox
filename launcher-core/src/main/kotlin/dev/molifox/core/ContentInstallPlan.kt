@@ -60,12 +60,9 @@ internal fun contentFileUrl(
     // The configured CurseForge mirror/proxy may serve files itself; official endpoints still
     // fall through to the CDN allow-list. Explicit local test servers are accepted as well.
     val configuredService = source.host !in setOf("api.modrinth.com", "api.curseforge.com")
-    if (
-        target.scheme == source.scheme &&
-        target.host == source.host &&
-        target.port == source.port &&
-        (configuredService || source.host == "127.0.0.1")
-    ) {
+    val sameOrigin =
+        target.scheme == source.scheme && target.host == source.host && target.port == source.port
+    if (sameOrigin && (configuredService || source.host == "127.0.0.1")) {
         return url
     }
     return validatePackUrl(url)

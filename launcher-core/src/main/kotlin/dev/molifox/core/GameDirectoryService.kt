@@ -72,12 +72,8 @@ class GameDirectoryService(
                 "启动时识别游戏目录 ${root.path}：${root.versions} 个版本" +
                     if (existing == null) "（新登记）" else "（已登记过，仅刷新实例）",
             )
-            if (
-                existing == null &&
-                added == null &&
-                instances > 0 &&
-                !sameDirectory(root.path, store.minecraftRoot)
-            ) {
+            val newDiscovery = existing == null && added == null && instances > 0
+            if (newDiscovery && !sameDirectory(root.path, store.minecraftRoot)) {
                 added = registered(root.path)
             }
         }
