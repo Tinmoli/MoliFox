@@ -25,6 +25,9 @@ internal interface LauncherRuntimeApi {
 
     fun downloadUpdate(): String
 
+    /** 用已下载的更新包自动替换当前启动器并重启；成功后本进程退出。 */
+    fun applyDownloadedUpdate()
+
     fun perform(action: suspend () -> Unit): Job
 
     fun requireIdle(vararg instanceIds: String)
@@ -72,6 +75,26 @@ internal abstract class LauncherRuntimeActions(
         return jobs.enqueue("更新 MoliFox ${release.version}", setOf("launcher-update")) {
             updater.download(release, this)
         }
+    }
+
+    override fun applyDownloadedUpdate() {
+        val downloaded =
+            state.value.update.downloadedFile
+                ?.let(Path::of)
+        if (downloaded == null) {
+            store.notify("请先下载更新包")
+            return
+        }
+        UpdateApplier(store)
+            .apply(downloaded)
+            .onSuccess {
+                store.log("已创建更新替换脚本，启动器即将退出并重启")
+                platform.exitLauncher()
+            }.onFailure { failure ->
+                val message = failure.message ?: "自动更新失败，请手动替换启动器文件"
+                store.log(message, true)
+                store.notify(message)
+            }
     }
 
     override fun perform(action: suspend () -> Unit): Job =

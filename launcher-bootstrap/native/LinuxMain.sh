@@ -6,6 +6,8 @@ applicationDirectory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 data="$applicationDirectory/MoliFox"
 mkdir -p "$data/dependencies/launcher" "$data/cache/tmp" "$data/cache/downloads/java" "$data/cache/metadata" "$data/logs" "$data/runtimes"
 export MOLIFOX_DATA_DIR="$data"
+export MOLIFOX_BUNDLE_PATH="$0"
+export MOLIFOX_WRAPPER_PID=$$
 runTemporary=$(mktemp -d "$data/cache/tmp/session-XXXXXX")
 export TMPDIR="$runTemporary"
 export XDG_CACHE_HOME="$data/cache"
@@ -57,7 +59,31 @@ fetch() {
     else fail "首次准备 Java 需要 curl 或 wget。"; fi
 }
 
+# 缺少系统 Java 时先征求同意；下载 Java 属于网络与磁盘操作，不能静默执行。
+confirmJavaDownload() {
+    message='没有找到可用的 Java 17 或更高版本。
+是否从 Eclipse Temurin 官方源下载 Java 21 JRE（约 40–60 MB）？
+文件会保存在旁边的 MoliFox/runtimes/，不会修改系统环境变量。
+选择「取消」将退出；你也可以先自行安装 Java 17+ 后重试。'
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --question --title='MoliFox · 需要 Java' --text="$message" \
+            --ok-label='下载 Java 21' --cancel-label='退出' 2>/dev/null
+    elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title 'MoliFox · 需要 Java' --yesno "$message" \
+            --yes-label '下载 Java 21' --no-label '退出' 2>/dev/null
+    elif [ -t 0 ]; then
+        printf '%s\n是否下载 Java 21？[y/N] ' "$message" >&2
+        read -r answer || answer=
+        case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+    else
+        return 1
+    fi
+}
+
 if [ -z "$javaExecutable" ]; then
+    if ! confirmJavaDownload; then
+        fail "未下载 Java，启动已取消。请先安装 Java 17 或更高版本，然后重试。"
+    fi
     case "$(uname -m)" in x86_64) architecture=x64 ;; aarch64|arm64) architecture=aarch64 ;; *) fail "暂不支持此 CPU 架构。" ;; esac
     printf '%s\n' 'MoliFox 正在首次准备 Java 21，文件将保存在旁边的 MoliFox 文件夹。'
     metadata="$data/cache/metadata/java21.json"

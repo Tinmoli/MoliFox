@@ -665,4 +665,9 @@ interface PlatformServices {
     fun openUrl(url: String)
 
     fun moveToTrash(file: Path)
+
+    /** 自动更新替换脚本已启动后退出启动器；测试环境可覆盖。 */
+    fun exitLauncher() {
+        kotlin.system.exitProcess(0)
+    }
 }

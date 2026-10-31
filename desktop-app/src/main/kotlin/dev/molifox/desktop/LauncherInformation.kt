@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -88,6 +89,7 @@ private fun LauncherReleaseDetails(
             Text(release.notes, style = MaterialTheme.typography.bodySmall)
         }
     }
+    var confirmInstall by remember { mutableStateOf(false) }
     if (update.available) {
         val hasPackage = release.asset?.sha256?.isNotBlank() == true
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -109,15 +111,34 @@ private fun LauncherReleaseDetails(
                 }) {
                     Text("查看下载文件")
                 }
+                PrimaryButton("安装更新并重启") { confirmInstall = true }
             }
         }
         MutedText(
             if (hasPackage) {
-                "下载后验证 SHA-256；退出启动器再替换原文件，保留 MoliFox 文件夹。"
+                "下载后验证 SHA-256；可自动替换并重启，数据目录 MoliFox/ 保留。"
             } else {
                 "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
             },
         )
+        if (confirmInstall) {
+            AlertDialog(
+                onDismissRequest = { confirmInstall = false },
+                title = { Text("安装更新并重启？") },
+                text = {
+                    Text("启动器会先退出；更新脚本等待退出后替换当前启动器文件并重新打开。MoliFox 数据目录和游戏不受影响。")
+                },
+                confirmButton = {
+                    TextButton({
+                        confirmInstall = false
+                        actions.controller.applyDownloadedUpdate()
+                    }) { Text("安装并重启") }
+                },
+                dismissButton = {
+                    TextButton({ confirmInstall = false }) { Text("取消") }
+                },
+            )
+        }
     }
 }
 
