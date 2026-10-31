@@ -14,11 +14,14 @@ import dev.molifox.multiplayer.common.PlayerKind
 import dev.molifox.multiplayer.common.RoomPlayer
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 import dev.molifox.multiplayer.protocol.RoomCode
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -49,6 +52,15 @@ internal class MultiplayerUiFixture(
     /** 可配置的本地导入结果；默认成功，需要验证失败提示时改成 failure。 */
     var importResult: Result<Unit> = Result.success(Unit)
 
+    /** 模拟下载耗时；调大后界面会停在下载阶段，便于验收「取消下载」按钮。 */
+    var downloadDelayMillis: Long = FIXTURE_DOWNLOAD_DELAY_MILLIS
+
+    /** 记录界面请求取消运行时安装的次数，验证「取消下载」确实调用 backend.cancelRuntimeInstall。 */
+    val cancelInstallCalls = AtomicInteger()
+
+    /** 当前挂起的模拟安装；cancelRuntimeInstall 用它结束安装，模拟后端取消后台任务。 */
+    private var pendingInstall: CompletableDeferred<Unit>? = null
+
     /** 记录界面传给 host 的世界端口，验证房主确实按选中的世界建房。 */
     var hostedPort: Int? = null
     private var installed = false
@@ -61,6 +73,8 @@ internal class MultiplayerUiFixture(
     private val mutableSettings = MutableStateFlow(MultiplayerSettings())
 
     val backend: MultiplayerBackend =
+        // 函数数量由 MultiplayerBackend 接口决定，匿名实现无法再拆分。
+        @Suppress("TooManyFunctions")
         object : MultiplayerBackend {
             override val state: StateFlow<MultiplayerState> = mutableState.asStateFlow()
             override val settings: StateFlow<MultiplayerSettings> = mutableSettings.asStateFlow()
@@ -101,7 +115,7 @@ internal class MultiplayerUiFixture(
                         error = null,
                     )
                 }
-                delay(FIXTURE_DOWNLOAD_DELAY_MILLIS)
+                awaitSimulatedInstall()
                 installed = true
                 mutableState.update {
                     it.copy(
@@ -111,6 +125,11 @@ internal class MultiplayerUiFixture(
                     )
                 }
                 return Result.success(Unit)
+            }
+
+            override fun cancelRuntimeInstall() {
+                cancelInstallCalls.incrementAndGet()
+                pendingInstall?.complete(Unit)
             }
 
             override suspend fun refreshWorlds(): Result<Unit> {
@@ -245,4 +264,22 @@ internal class MultiplayerUiFixture(
                     .resolve("runtimes/easytier/${MultiplayerPolicy.CORE_VERSION}/windows-x86_64")
                     .toString(),
         )
+
+    /**
+     * 模拟后台安装等待：到点算成功；cancelRuntimeInstall 触发取消时回大厅并按取消结束等待，
+     * 与真实后端“安装跑在 backend 作用域、取消后 await 抛 CancellationException”一致。
+     */
+    private suspend fun awaitSimulatedInstall() {
+        val cancellation = CompletableDeferred<Unit>()
+        pendingInstall = cancellation
+        try {
+            withTimeoutOrNull(downloadDelayMillis) { cancellation.await() }
+        } finally {
+            if (pendingInstall === cancellation) pendingInstall = null
+        }
+        if (cancellation.isCompleted) {
+            mutableState.update { it.copy(phase = LobbyPhase.Idle, progress = null) }
+            throw CancellationException("模拟用户取消运行时安装")
+        }
+    }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -84,6 +85,20 @@ private fun RoomRuntimeStatus(
     MutedText(RUNTIME_ARCHIVE_HINT)
     if (actions.runtime.downloadFailed) {
         MutedText("上次下载没有完成，点“重试下载”再试一次；也可以从本地 zip 安装。")
+    }
+    if (actions.runtime.cancelVisible && state.phase == LobbyPhase.DownloadingRuntime) {
+        // 下载慢或卡住时主动停止：取消不会留下未完成的安装包，也不会自动重新下载。
+        TextButton(
+            onClick = actions.runtime.cancelDownload,
+            enabled = !actions.runtime.cancelling,
+            colors =
+                ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+        ) {
+            Text(if (actions.runtime.cancelling) "正在取消…" else "取消下载")
+        }
+        MutedText("取消后不会保留未完成的安装包，可稍后重试或从本地 zip 安装。")
     }
 }
 

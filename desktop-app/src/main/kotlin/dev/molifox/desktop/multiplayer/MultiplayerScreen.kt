@@ -37,6 +37,7 @@ import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.domain.MultiplayerBackend
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private enum class MultiplayerSection(
@@ -62,6 +63,12 @@ private class MultiplayerPageState {
 
     /** 正在选择或安装本地 zip：按钮显示“正在安装…”，并阻止重复打开文件选择。 */
     var runtimeImporting by mutableStateOf(false)
+
+    /** 当前下载协程；下载阶段才显示“取消下载”，取消时直接 cancel 这个 Job。 */
+    var downloadJob by mutableStateOf<Job?>(null)
+
+    /** 已请求取消、等待后端回到 Idle：按钮显示“正在取消…”并禁用，避免重复取消。 */
+    var cancellingDownload by mutableStateOf(false)
 }
 
 @Composable
@@ -78,15 +85,28 @@ fun MultiplayerScreen(
     }
     // 下载单独走一条路径：先把“已发起”标记置位，自动下载逻辑就不会再启动第二次。
     val downloadRuntime: () -> Unit = {
-        page.runtimeDownloadRequested = true
-        scope.launch {
-            backend.prepareRuntime().fold(
-                onSuccess = { page.message = null },
-                onFailure = { failure ->
-                    page.runtimeDownloadFailed = true
-                    page.message = failure.message ?: "下载 EasyTier 失败，请检查网络后重试"
-                },
-            )
+        if (page.downloadJob?.isActive != true) {
+            page.runtimeDownloadRequested = true
+            page.runtimeDownloadFailed = false
+            page.cancellingDownload = false
+            page.downloadJob =
+                scope.launch {
+                    backend.prepareRuntime().fold(
+                        onSuccess = { page.message = null },
+                        onFailure = { failure ->
+                            page.runtimeDownloadFailed = true
+                            page.message = failure.message ?: "下载 EasyTier 失败，请检查网络后重试"
+                        },
+                    )
+                }
+        }
+    }
+    // 真正的停止由后端完成：安装任务在 backend 后台作用域里，取消后回到 Idle 且不显示失败错误。
+    // 这里只是让等待下载结果的协程随安装任务取消一起结束，不负责停止下载。
+    val cancelDownload: () -> Unit = {
+        if (!page.cancellingDownload) {
+            page.cancellingDownload = true
+            backend.cancelRuntimeInstall()
         }
     }
     // 文件选择与安装都在协程里：界面只拿路径字符串，不直接碰磁盘。
@@ -116,8 +136,11 @@ fun MultiplayerScreen(
         RuntimeInstallActions(
             download = downloadRuntime,
             importArchive = importRuntime,
+            cancelDownload = cancelDownload,
             downloadFailed = page.runtimeDownloadFailed,
             importing = page.runtimeImporting,
+            cancelling = page.cancellingDownload,
+            cancelVisible = page.downloadJob != null,
         )
     val acceptTerms: () -> Unit = {
         val consented = settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
@@ -132,6 +155,7 @@ fun MultiplayerScreen(
         }
     }
     MultiplayerStartup(backend, page)
+    MultiplayerDownloadState(backend, page)
     MultiplayerRuntimeAutoDownload(backend, page, downloadRuntime)
     Column(Modifier.fillMaxSize()) {
         val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
@@ -198,6 +222,24 @@ private fun MultiplayerStartup(
             .onFailure { page.message = "联机配置读取失败，请检查日志" }
         // 初始化失败也放开页面：否则同意入口会永久禁用；运行时报错仍会经提示与下载重试暴露。
         page.initialized = true
+    }
+}
+
+/**
+ * 下载阶段结束时清理 Job 与取消标记：这样「取消下载」只在 DownloadingRuntime 且确实有下载协程时出现，
+ * 建房/加入等其它 busy 阶段不会误显示。
+ */
+@Composable
+private fun MultiplayerDownloadState(
+    backend: MultiplayerBackend,
+    page: MultiplayerPageState,
+) {
+    val state by backend.state.collectAsState()
+    LaunchedEffect(state.phase) {
+        if (state.phase != LobbyPhase.DownloadingRuntime) {
+            page.cancellingDownload = false
+            page.downloadJob = null
+        }
     }
 }
 

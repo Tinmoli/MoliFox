@@ -30,8 +30,9 @@ private const val WINDOW_POLL_MILLIS = 50L
 private const val SETTINGS_SCROLL_ATTEMPTS = 16
 private const val SETTINGS_SCROLL_AMOUNT = 3
 
-/** 下载成功后观察一小段时间，确认没有自动重试导致下载次数继续增长。 */
-private const val POST_DOWNLOAD_SETTLE_MILLIS = 400L
+/** 取消场景把模拟下载放慢，保证界面停留在下载阶段能看到「取消下载」。 */
+private const val CANCEL_TEST_DOWNLOAD_MILLIS = 3_000L
+private const val NORMAL_DOWNLOAD_MILLIS = 150L
 
 fun main() {
     val root = Path.of(System.getProperty("molifox.test.dir")).toAbsolutePath().normalize()
@@ -46,8 +47,9 @@ fun main() {
                     val ui = UiProbe(awaitTestWindow(window), root.resolve("screenshots"))
                     runScenarios(ui, fixture)
                     println(
-                        "MULTIPLAYER_UI_PASSED: consent, auto runtime download, host, join, " +
-                            "guides, settings, advanced switches, nat diagnostics",
+                        "MULTIPLAYER_UI_PASSED: consent, download cancel, " +
+                            "runtime download, host, join, guides, settings, " +
+                            "advanced switches, nat diagnostics",
                     )
                 },
             )
@@ -114,7 +116,7 @@ private fun runScenarios(
 /**
  * 首次进入：拒绝后只留下说明入口；再次同意并勾选后直接开始下载运行时，不需要再点一次下载按钮。
  *
- * 先故意让第一次下载失败，验证界面只留下错误提示与“重试下载”，且不会自动无限重试。
+ * 先放慢模拟下载验证「取消下载」，再故意让下载失败，验证错误提示与“重试下载”，且不会自动无限重试。
  */
 private fun confirmConsent(
     ui: UiProbe,
@@ -135,45 +137,19 @@ private fun confirmConsent(
         if (!ui.exists("我已阅读并了解以上说明")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
     }
     ui.click("我已阅读并了解以上说明", role = AccessibleRole.CHECK_BOX)
-    fixture.failNextDownload = true
     check(fixture.downloads.get() == 0)
+    fixture.downloadDelayMillis = CANCEL_TEST_DOWNLOAD_MILLIS
     ui.click("同意并开始下载")
-    // 只需要点“同意”：下载已经自动开始并失败，界面给出错误与“重试下载”。
+    verifyDownloadCancel(ui, fixture)
+    fixture.downloadDelayMillis = NORMAL_DOWNLOAD_MILLIS
+    // 取消后手动再下载一次，并让它失败，验证错误提示与重试入口。
+    fixture.failNextDownload = true
+    ui.click("下载官方 EasyTier")
     ui.await("首次下载失败可重试") { ui.exists("重试下载") }
-    check(fixture.downloads.get() == 1)
+    check(fixture.downloads.get() == 2)
     check(ui.exists("模拟 EasyTier 下载失败"))
     verifyArchiveFallback(ui)
     verifyRetryAfterFailure(ui, fixture)
-}
-
-/** 失败后手动重试成功；之后观察一段时间，确认不会自动重复下载。 */
-private fun verifyRetryAfterFailure(
-    ui: UiProbe,
-    fixture: MultiplayerUiFixture,
-) {
-    ui.click("重试下载")
-    ui.await("重试后运行时就绪") {
-        val runtime = fixture.backend.state.value.runtime
-        runtime?.installed == true
-    }
-    check(fixture.downloads.get() == 2)
-    Thread.sleep(POST_DOWNLOAD_SETTLE_MILLIS)
-    check(fixture.downloads.get() == 2)
-    ui.await("错误提示随重试成功清除") { !ui.exists("模拟 EasyTier 下载失败") }
-    ui.await("进入联机大厅") { ui.exists("联机大厅") }
-    check(!ui.exists("下载官方 EasyTier"))
-    check(!ui.exists("重试下载"))
-}
-
-/** 下载失败区提供本地 zip 兜底入口与导入说明；冒烟里只验证入口存在，不弹系统选择器。 */
-private fun verifyArchiveFallback(ui: UiProbe) {
-    check(ui.exists("从本地 zip 安装…"))
-    check(
-        ui.exists(
-            "下载一直卡住时，可以用浏览器或下载工具下载官方 EasyTier 2.6.4 的 zip，" +
-                "再从这里导入；导入会校验大小与 SHA-256。",
-        ),
-    )
 }
 
 /** 刷新世界、创建房间、复制邀请码、关闭房间、用邀请码加入与退出房间。 */

@@ -11,10 +11,15 @@ internal typealias ExecuteMultiplayer = (suspend () -> Result<Unit>) -> Unit
 internal class RuntimeInstallActions(
     val download: () -> Unit,
     val importArchive: () -> Unit,
+    val cancelDownload: () -> Unit,
     /** 本次页面生命周期内下载已失败过：按钮改成“重试下载”，不会自动重试。 */
     val downloadFailed: Boolean,
     /** 正在选择或安装本地 zip：按钮显示“正在安装…”，并防止重复点击。 */
     val importing: Boolean,
+    /** 已请求取消、等待后端回到 Idle：按钮显示“正在取消…”并禁用。 */
+    val cancelling: Boolean,
+    /** 只有下载阶段且下载协程仍存在时才显示「取消下载」，建房/加入阶段不显示。 */
+    val cancelVisible: Boolean,
 )
 
 /** 大厅操作统一经过 [execute]：失败时由页面把可读原因展示在底部，技术细节留在后端日志。 */

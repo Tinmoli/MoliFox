@@ -1,6 +1,7 @@
 // 后端编排测试：初始化、世界发现、建房/加入、离开与会话异常回收。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.LobbyRole
@@ -17,8 +18,13 @@ import dev.molifox.multiplayer.easytier.RelayListFetcher
 import dev.molifox.multiplayer.protocol.RoomCode
 import dev.molifox.multiplayer.protocol.RoomCodeRandom
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.nio.file.Path
@@ -175,6 +181,68 @@ class PclLobbyBackendTest {
         }
 
     @Test
+    fun runtimeDownloadContinuesAfterCallerCancelled() =
+        runBlocking {
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                onProgress(0.2f)
+                delay(300)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val caller = launch(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                awaitUntil { harness.backend.state.value.phase == LobbyPhase.DownloadingRuntime }
+                caller.cancelAndJoin()
+                assertEquals(LobbyPhase.DownloadingRuntime, harness.backend.state.value.phase)
+                awaitUntil {
+                    val state = harness.backend.state.value
+                    state.phase == LobbyPhase.Idle && state.runtime?.installed == true
+                }
+            }
+        }
+
+    @Test
+    fun cancelRuntimeInstallReturnsToIdleWithoutError() =
+        runBlocking {
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                onProgress(0.1f)
+                delay(10_000)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val caller = launch(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                awaitUntil { harness.backend.state.value.phase == LobbyPhase.DownloadingRuntime }
+                harness.backend.cancelRuntimeInstall()
+                awaitUntil {
+                    val state = harness.backend.state.value
+                    state.phase == LobbyPhase.Idle && state.error == null
+                }
+                caller.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun duplicatePrepareWhileRunningStartsOnlyOneInstall() =
+        runBlocking {
+            var calls = 0
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                calls++
+                onProgress(0.3f)
+                delay(200)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val first = async(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                val second = async(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                first.await().getOrThrow()
+                second.await().getOrThrow()
+                assertEquals(1, calls)
+            }
+        }
+
+    @Test
     fun testNatReturnsInjectedDiagnostics() =
         runBlocking {
             withHarness { harness ->
@@ -216,10 +284,13 @@ class PclLobbyBackendTest {
             }
         }
 
-    private suspend fun withHarness(block: suspend (Harness) -> Unit) {
+    private suspend fun withHarness(
+        installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
+        block: suspend (Harness) -> Unit,
+    ) {
         val directory = Files.createTempDirectory(Path.of("..", ".work"), "lobby-backend-test")
         try {
-            val harness = Harness(directory)
+            val harness = Harness(directory, installRunner)
             block(harness)
             harness.backend.close()
         } finally {
@@ -229,6 +300,7 @@ class PclLobbyBackendTest {
 
     private class Harness(
         directory: Path,
+        installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
     ) {
         val repository = FakeSettingsRepository()
         val discovery = FakeDiscoveryFactory()
@@ -271,6 +343,7 @@ class PclLobbyBackendTest {
                         logger = { _, _ -> },
                     ),
                 natTester = natTester,
+                installRunner = installRunner,
                 scanCheckIntervalMillis = SCAN_INTERVAL_MILLIS,
             )
 
@@ -379,6 +452,7 @@ class PclLobbyBackendTest {
         const val GUEST_ADDRESS = "127.0.0.1:52341"
         const val LIVE_RELAY = "tcp://relay.example:11010"
         const val COMMUNITY_RELAY = "tcp://community.example:39409"
+        val INSTALLED_STATUS = CoreStatus(true, "2.6.4", "test", 0, "test-dir")
         const val ROOM_CODE_PATTERN = "U/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}"
         val WORLD = LanWorld(name = "测试世界", version = "1.21", port = 25_565)
     }

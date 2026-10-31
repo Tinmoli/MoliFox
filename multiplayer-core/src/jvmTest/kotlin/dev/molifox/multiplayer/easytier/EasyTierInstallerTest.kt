@@ -239,29 +239,20 @@ class EasyTierInstallerTest {
         }
 
     @Test
-    fun `abandons a slow source when alternatives remain`() =
+    fun `speed test runs once and ranking is reused`() =
         runBlocking {
             withWork { work ->
                 val archive = archive(includeCli = true)
-                val pkg =
-                    packageFor(
-                        archive,
-                        mirrors = listOf("https://fast.invalid/easytier.zip"),
-                    )
-                val downloader =
-                    RoutingDownloader(
-                        archive,
-                        slowUrls = setOf("https://fast.invalid/easytier.zip"),
-                    )
-                val probe =
-                    FakeProbe(
-                        mapOf(
-                            pkg.url to 1L,
-                            "https://fast.invalid/easytier.zip" to 99L,
-                        ),
-                    )
-                installer(work, downloader, pkg, probe).install { }.getOrThrow()
-                assertEquals(listOf("https://fast.invalid/easytier.zip", pkg.url), downloader.urls)
+                val fastSource = "https://fast.invalid/easytier.zip"
+                val pkg = packageFor(archive, mirrors = listOf(fastSource))
+                val probe = CountingProbe(mapOf(fastSource to 99L, pkg.url to 1L))
+                val downloader = FlakyDownloader(archive, failuresBeforeSuccess = 3)
+                val installer = installer(work, downloader, pkg, probe)
+
+                assertTrue(installer.install { }.isFailure)
+                assertEquals(2, probe.calls)
+                installer.install { }.getOrThrow()
+                assertEquals(2, probe.calls)
             }
         }
 
@@ -368,7 +359,6 @@ private class FakeDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
-        abortWhenSlow: Boolean,
     ) {
         calls++
         onProgress(PROGRESS_MIDDLE)
@@ -393,7 +383,6 @@ private class RoutingDownloader(
     private val defaultBody: ByteArray,
     private val failureUrls: Set<String> = emptySet(),
     private val badBodyUrls: Set<String> = emptySet(),
-    private val slowUrls: Set<String> = emptySet(),
 ) : EasyTierArchiveDownloader {
     val urls = mutableListOf<String>()
 
@@ -402,12 +391,43 @@ private class RoutingDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
-        abortWhenSlow: Boolean,
     ) {
         urls += url
         if (url in failureUrls) throw IOException("mirror down")
-        if (abortWhenSlow && url in slowUrls) throw IOException("当前来源下载过慢")
         val body = if (url in badBodyUrls) ByteArray(4) { 1 } else defaultBody
+        onProgress(0.5f)
+        Files.write(target, body)
+    }
+}
+
+/** 统计测速次数，用于验证排序只测一次。 */
+private class CountingProbe(
+    private val speeds: Map<String, Long?>,
+) : EasyTierSourceProbe {
+    var calls = 0
+        private set
+
+    override suspend fun measureSpeed(url: String): Long? {
+        calls++
+        return speeds[url]
+    }
+}
+
+/** 前 N 次下载失败，之后成功，用于验证失败换源与排序缓存。 */
+private class FlakyDownloader(
+    private val body: ByteArray,
+    private var failuresBeforeSuccess: Int,
+) : EasyTierArchiveDownloader {
+    override suspend fun download(
+        url: String,
+        target: Path,
+        expectedBytes: Long,
+        onProgress: (Float?) -> Unit,
+    ) {
+        if (failuresBeforeSuccess > 0) {
+            failuresBeforeSuccess--
+            throw IOException("simulated failure")
+        }
         onProgress(0.5f)
         Files.write(target, body)
     }

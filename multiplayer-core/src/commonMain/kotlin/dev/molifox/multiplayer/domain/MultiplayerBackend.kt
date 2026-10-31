@@ -7,6 +7,9 @@ import dev.molifox.multiplayer.common.MultiplayerState
 import dev.molifox.multiplayer.common.NatDiagnostics
 import kotlinx.coroutines.flow.StateFlow
 
+// 联机后端是完整领域门面：方法数由“初始化/发现/建房/加入/运行时安装/取消/设置/关闭”职责决定，
+// 再拆接口只会产生纯转发层；保持 12 个领域方法可读性更好。
+@Suppress("TooManyFunctions")
 interface MultiplayerBackend {
     val state: StateFlow<MultiplayerState>
     val settings: StateFlow<MultiplayerSettings>
@@ -37,6 +40,9 @@ interface MultiplayerBackend {
 
     /** 从本地 EasyTier zip 安装运行时（校验大小/SHA-256）；[archivePath] 为绝对路径。 */
     suspend fun importRuntime(archivePath: String): Result<Unit>
+
+    /** 取消正在进行的运行时下载/安装；没有进行中的任务时无副作用。 */
+    fun cancelRuntimeInstall()
 
     suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit>
 

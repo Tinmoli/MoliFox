@@ -89,6 +89,8 @@ private class TrackingBackend : MultiplayerBackend {
 
     override suspend fun importRuntime(archivePath: String) = Result.success(Unit)
 
+    override fun cancelRuntimeInstall() = Unit
+
     override suspend fun saveSettings(settings: MultiplayerSettings) = Result.success(Unit)
 
     override suspend fun close() {

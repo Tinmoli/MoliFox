@@ -18,8 +18,10 @@ import dev.molifox.multiplayer.easytier.EasyTierRuntime
 import dev.molifox.multiplayer.easytier.NatTester
 import dev.molifox.multiplayer.protocol.RoomCode
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +41,10 @@ import java.nio.file.Path
  * 一个实例同时只承载一个房间：房主或房客。所有会改变房间的操作在 [commandMutex]
  * 内串行执行；世界发现只在空闲阶段运行，建房/加入前先停掉，避免和房客的局域网
  * 广播抢占 4445 端口。
+ *
+ * 实现完整联机后端门面，方法数由接口与“后台安装/取消”编排决定；拆分类只会多一层转发。
  */
+@Suppress("TooManyFunctions")
 class PclLobbyBackend(
     private val settingsRepository: MultiplayerSettingsRepository,
     private val installer: EasyTierInstaller,
@@ -54,12 +59,16 @@ class PclLobbyBackend(
     guestSessionFactory: LobbyGuestSessionFactory = DefaultLobbyGuestSessionFactory,
     probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
     private val relayDirectory: EasyTierRelayDirectory = EasyTierRelayDirectory(logger = logger),
+    private val installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
+    private val importRunner: (suspend (String, (Float?) -> Unit) -> CoreStatus)? = null,
     private val natTester: NatTester = EasyTierNatTester(),
     scanCheckIntervalMillis: Long = DEFAULT_SCAN_CHECK_INTERVAL_MILLIS,
 ) : MultiplayerBackend {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val commandMutex = Mutex()
     private val runtimeMutex = Mutex()
+    private val installGuard = Any()
+    private var installTask: Deferred<Result<Unit>>? = null
     private val store = LobbyStateStore()
     private val mutableSettings = MutableStateFlow(MultiplayerSettings())
     private var machineId = ""
@@ -142,45 +151,42 @@ class PclLobbyBackend(
     override suspend fun testNat(): Result<NatDiagnostics> =
         withContext(Dispatchers.IO) { natTester.test(installer.cliExecutable()) }
 
-    /** 同一时间只允许一个下载任务：双击重试或自动下载与手动下载并发时排队执行。 */
+    /** 下载/安装统一在后台作用域执行：切换页面不会中断，只有显式取消或关闭启动器才会停。 */
     override suspend fun prepareRuntime(): Result<Unit> =
-        runtimeMutex.withLock {
-            store.update {
-                it.copy(
-                    phase = LobbyPhase.DownloadingRuntime,
-                    progress = null,
-                    error = null,
-                )
-            }
-            return runCatching {
-                withContext(Dispatchers.IO) {
-                    installer
-                        .install { progress -> store.update { it.copy(progress = progress) } }
-                        .getOrThrow()
+        startRuntimeInstall("下载 EasyTier 失败") { onProgress ->
+            installRunner?.invoke(onProgress)
+                ?: withContext(Dispatchers.IO) { installer.install(onProgress).getOrThrow() }
+        }.await()
+
+    override fun cancelRuntimeInstall() {
+        synchronized(installGuard) { installTask?.cancel() }
+    }
+
+    private fun startRuntimeInstall(
+        failurePrefix: String,
+        install: suspend ((Float?) -> Unit) -> CoreStatus,
+    ): Deferred<Result<Unit>> =
+        synchronized(installGuard) {
+            installTask?.takeIf { it.isActive }?.let { return it }
+            val task =
+                scope.async {
+                    runtimeMutex.withLock {
+                        performRuntimeInstall(
+                            store = store,
+                            scanner = scanner,
+                            discoveryEnabled = mutableSettings.value.enabled,
+                            failurePrefix = failurePrefix,
+                            install = install,
+                        )
+                    }
                 }
-            }.fold(
-                onSuccess = { status ->
-                    store.update {
-                        it.copy(
-                            phase = LobbyPhase.Idle,
-                            progress = null,
-                            runtime = status,
-                        )
-                    }
-                    scanner.sync(mutableSettings.value.enabled)
-                    Result.success(Unit)
-                },
-                onFailure = { failure ->
-                    store.update {
-                        it.copy(
-                            phase = LobbyPhase.Idle,
-                            progress = null,
-                            error = "下载 EasyTier 失败：${failure.message}",
-                        )
-                    }
-                    Result.failure(failure)
-                },
-            )
+            installTask = task
+            task.invokeOnCompletion {
+                synchronized(installGuard) {
+                    if (installTask === task) installTask = null
+                }
+            }
+            task
         }
 
     override suspend fun refreshWorlds(): Result<Unit> =
@@ -255,45 +261,12 @@ class PclLobbyBackend(
     }
 
     override suspend fun importRuntime(archivePath: String): Result<Unit> =
-        runtimeMutex.withLock {
-            store.update {
-                it.copy(
-                    phase = LobbyPhase.DownloadingRuntime,
-                    progress = null,
-                    error = null,
-                )
-            }
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    installer
-                        .installFromArchive(Path.of(archivePath)) { progress ->
-                            store.update { it.copy(progress = progress) }
-                        }.getOrThrow()
+        startRuntimeInstall("安装本地 EasyTier 安装包失败") { onProgress ->
+            importRunner?.invoke(archivePath, onProgress)
+                ?: withContext(Dispatchers.IO) {
+                    installer.installFromArchive(Path.of(archivePath), onProgress).getOrThrow()
                 }
-            }.fold(
-                onSuccess = { status ->
-                    store.update {
-                        it.copy(
-                            phase = LobbyPhase.Idle,
-                            progress = null,
-                            runtime = status,
-                        )
-                    }
-                    scanner.sync(mutableSettings.value.enabled)
-                    Result.success(Unit)
-                },
-                onFailure = { failure ->
-                    store.update {
-                        it.copy(
-                            phase = LobbyPhase.Idle,
-                            progress = null,
-                            error = "安装本地 EasyTier 安装包失败：${failure.message}",
-                        )
-                    }
-                    Result.failure(failure)
-                },
-            )
-        }
+        }.await()
 
     override suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit> =
         runCatching {

@@ -20,18 +20,12 @@ import kotlin.coroutines.coroutineContext
 
 /** 下载官方安装包；测试注入假实现，生产环境走 HTTP。 */
 interface EasyTierArchiveDownloader {
-    /**
-     * 下载单个来源。
-     *
-     * @param abortWhenSlow 还有其它来源可试时置 true：长时间明显偏慢会提前放弃当前源，
-     *        避免在慢速源上无谓等待；最后一个来源不启用，慢但能下完也比失败好。
-     */
+    /** 下载单个来源；失败（连接错误、超时、数据不完整）时由安装器换下一个源。 */
     suspend fun download(
         url: String,
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
-        abortWhenSlow: Boolean = false,
     )
 }
 
@@ -49,7 +43,10 @@ class EasyTierInstaller(
     private val packageProvider: () -> EasyTierPackage? = EasyTierCatalog::current,
     private val downloader: EasyTierArchiveDownloader = HttpArchiveDownloader(),
     private val probe: EasyTierSourceProbe = HttpEasyTierSourceProbe(),
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    private val rankingCache = SourceRankingCache()
+
     /** 当前平台的安装包信息；不支持的平台给出明确提示。 */
     fun packageInfo(): EasyTierPackage =
         packageProvider()
@@ -167,7 +164,7 @@ class EasyTierInstaller(
         target: Path,
         onProgress: (Float?) -> Unit,
     ) {
-        val sources = orderedSources(pkg, probe, logger)
+        val sources = orderedSources(pkg, probe, logger, rankingCache, clock())
         logger("EasyTier 下载源顺序：${sources.joinToString()}", false)
         var failure: Throwable? = null
         repeat(ATTEMPTS) { attempt ->
@@ -203,8 +200,7 @@ class EasyTierInstaller(
                     logger("EasyTier 下载进度 $percent%", false)
                 }
             }
-            val abortWhenSlow = attempt + 1 < ATTEMPTS && sourceCount > 1
-            downloader.download(source, target, pkg.downloadBytes, reportProgress, abortWhenSlow)
+            downloader.download(source, target, pkg.downloadBytes, reportProgress)
             verifyArchive(pkg, target)
             null
         } catch (cancelled: CancellationException) {
@@ -241,7 +237,6 @@ class HttpArchiveDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
-        abortWhenSlow: Boolean,
     ) {
         coroutineContext.ensureActive()
         withHttpConnection(url) { connection ->
@@ -251,10 +246,9 @@ class HttpArchiveDownloader(
             val code = connection.responseCode
             check(code in HTTP_OK) { "HTTP $code" }
             val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: expectedBytes
-            val pace = DownloadPaceGuard()
             connection.inputStream.use { input ->
                 Files.newOutputStream(target).use { output ->
-                    transfer(input, output, totalBytes, onProgress, pace, abortWhenSlow)
+                    transfer(input, output, totalBytes, onProgress)
                 }
             }
         }
@@ -265,8 +259,6 @@ class HttpArchiveDownloader(
         output: OutputStream,
         totalBytes: Long,
         onProgress: (Float?) -> Unit,
-        pace: DownloadPaceGuard,
-        abortWhenSlow: Boolean,
     ) {
         val buffer = ByteArray(BUFFER_BYTES)
         var received = 0L
@@ -277,9 +269,6 @@ class HttpArchiveDownloader(
             if (count < 0) break
             output.write(buffer, 0, count)
             received += count
-            if (abortWhenSlow && pace.tooSlow(received, totalBytes)) {
-                throw IOException("当前来源下载过慢，换用其它下载源")
-            }
             if (totalBytes > 0 && received - reported >= PROGRESS_STEP_BYTES) {
                 reported = received
                 onProgress((received.toFloat() / totalBytes).coerceIn(ZERO, ONE))
@@ -289,12 +278,24 @@ class HttpArchiveDownloader(
     }
 }
 
+/** 同一进程内复用测速排序，避免每次重试都重新测速；失败来源仍按顺序兜底。 */
+private class SourceRankingCache {
+    var order: List<String>? = null
+    var rankedAt = 0L
+}
+
 /** 纯按实测速度降序选择下载源，不偏向官方源；测速失败的来源保留在末尾兜底。 */
 private suspend fun orderedSources(
     pkg: EasyTierPackage,
     probe: EasyTierSourceProbe,
     logger: (message: String, error: Boolean) -> Unit,
+    cache: SourceRankingCache,
+    now: Long,
 ): List<String> {
+    cache.order?.takeIf { now - cache.rankedAt < RANKING_TTL_MILLIS }?.let { cached ->
+        logger("复用上次测速结果：${cached.joinToString()}", false)
+        return cached
+    }
     val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
     val measured =
         candidates.mapNotNull { source ->
@@ -309,7 +310,10 @@ private suspend fun orderedSources(
     val ranked = measured.sortedByDescending { it.second }.map { it.first }
     val unscored = candidates.filterNot { it in ranked }
     unscored.forEach { source -> logger("下载源未测速（作为兜底）：$source", false) }
-    return ranked + unscored
+    val order = ranked + unscored
+    cache.order = order
+    cache.rankedAt = now
+    return order
 }
 
 /** 校验安装包大小与 SHA-256。 */
@@ -394,6 +398,7 @@ private const val CONNECT_TIMEOUT_MILLIS = 20_000
 private const val READ_TIMEOUT_MILLIS = 30_000
 private const val BUFFER_BYTES = 64 * 1024
 private const val SIXTY = 0.6f
+private const val RANKING_TTL_MILLIS = 10 * 60 * 1_000L
 private const val PROGRESS_STEP_BYTES = 512L * 1024
 private const val PROGRESS_LOG_STEP = 10
 private const val PERCENT = 100
