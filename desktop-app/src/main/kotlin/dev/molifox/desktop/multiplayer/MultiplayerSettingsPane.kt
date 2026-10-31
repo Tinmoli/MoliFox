@@ -79,7 +79,7 @@ private fun IdentityGroup(
     }
 }
 
-/** 默认使用内置自建节点；自定义地址优先，按分号拆分并校验协议前缀。 */
+/** 默认使用内置中继；自定义地址优先，按分号拆分并校验协议前缀。 */
 @Composable
 private fun RelayGroup(
     draft: MultiplayerSettings,
@@ -88,7 +88,9 @@ private fun RelayGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = "中继节点",
-        detail = "默认使用内置的两台自建节点：优先 P2P 直连，打洞失败自动走中继；节点需允许转发 MoliFox*，否则会提示连接失败。自定义地址优先级更高，多个用分号分隔。",
+        detail =
+            "默认使用内置中继（xg-easytier.chior.top）：优先 P2P 直连，打洞失败自动走中继；" +
+                "中继需允许转发 MoliFox*。自定义中继优先，多个用分号分隔。",
     ) {
         CompactTextField(
             draft.relayServer,
@@ -96,7 +98,7 @@ private fun RelayGroup(
             Modifier.fillMaxWidth(),
             label = "自定义中继",
             placeholder = "tcp://public.easytier.top:11010",
-            hint = "留空即可；需要固定中继或自建节点时填写，必须带协议前缀，例如 tcp://host:11010。",
+            hint = "留空即可；使用你自己搭建的中继时填写，必须带协议前缀，例如 tcp://host:11010。",
         )
     }
 }

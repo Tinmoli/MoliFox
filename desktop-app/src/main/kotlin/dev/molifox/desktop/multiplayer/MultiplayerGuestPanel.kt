@@ -87,6 +87,6 @@ private fun normalizeInviteCode(text: String): String =
 internal fun connectionRouteLabel(route: ConnectionRoute): String =
     when (route) {
         ConnectionRoute.Direct -> "P2P 打洞直连"
-        ConnectionRoute.Relay -> "经自建中继转发"
+        ConnectionRoute.Relay -> "经中继转发"
         ConnectionRoute.Unknown -> "暂未识别（可稍后重进房间查看）"
     }

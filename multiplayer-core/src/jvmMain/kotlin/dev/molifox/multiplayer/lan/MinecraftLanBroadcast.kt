@@ -18,9 +18,9 @@ import java.net.MulticastSocket
 /**
  * 向本机 Minecraft 客户端广播一个“局域网世界”，让它出现在多人游戏列表里。
  *
- * 每 [intervalMillis] 毫秒发送一次 `[MOTD]<description>[/MOTD][AD]<localPort>[/AD]`：
- * 先无条件发到 127.0.0.1:[targetPort]（Minecraft 就是在这里收注入广播），再尽力向
- * 每个本机 IPv4 接口的组播地址发送；组播失败只记录日志，不影响回环发送。
+ * 每 [intervalMillis] 毫秒发送一次 `[MOTD]<description>[/MOTD][AD]<localPort>[/AD]`，
+ * 默认只发到 127.0.0.1:[targetPort]（Minecraft 在这里收注入广播）。组播会让同一世界
+ * 以另一个网卡源地址再出现一条，默认关闭。
  *
  * [start]/[stop] 幂等；[stop] 返回后不会再发出新报文，[close] 后不可再 start。
  *
@@ -36,7 +36,7 @@ class MinecraftLanBroadcast(
     private val localPort: Int,
     private val targetPort: Int = DEFAULT_LAN_PORT,
     private val intervalMillis: Long = DEFAULT_BROADCAST_INTERVAL_MILLIS,
-    private val multicastEnabled: Boolean = true,
+    private val multicastEnabled: Boolean = false,
     private val onError: (Throwable) -> Unit = { failure -> failure.printStackTrace() },
 ) : AutoCloseable {
     init {
