@@ -11,7 +11,7 @@ fun interface RoomCodeRandom {
 data class ScaffoldingCode(
     /** 21 字符房间码，如 `U/YNZE-U61D-2206-HXRG`，用于展示与复制。 */
     val code: String,
-    /** EasyTier 网络名称，如 `scaffolding-mc-YNZE-U61D`；EasyTier 区分大小写。 */
+    /** EasyTier 网络名称，如 `MoliFox-YNZE-U61D`；EasyTier 区分大小写。 */
     val networkName: String,
     /** EasyTier 网络密钥，如 `2206-HXRG`。 */
     val networkSecret: String,
@@ -43,7 +43,7 @@ object RoomCode {
     private const val BYTE_MASK = 0xFF
     private const val UNSIGNED_INT_MASK = 0xFFFFFFFFL
     private const val CHECK_MODULUS = 7
-    private const val NETWORK_NAME_PREFIX = "scaffolding-mc-"
+    private const val NETWORK_NAME_PREFIX = "MoliFox-"
 
     /** 用注入的随机源生成房间码；随机源必须返回 16 字节密码学安全随机数。 */
     fun generate(random: RoomCodeRandom): ScaffoldingCode {

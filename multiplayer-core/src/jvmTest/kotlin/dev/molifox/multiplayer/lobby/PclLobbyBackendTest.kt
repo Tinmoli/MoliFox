@@ -11,10 +11,8 @@ import dev.molifox.multiplayer.common.NatType
 import dev.molifox.multiplayer.data.MultiplayerSettingsRepository
 import dev.molifox.multiplayer.easytier.EasyTierCatalog
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
-import dev.molifox.multiplayer.easytier.EasyTierRelayDirectory
 import dev.molifox.multiplayer.easytier.EasyTierTuning
 import dev.molifox.multiplayer.easytier.NatTester
-import dev.molifox.multiplayer.easytier.RelayListFetcher
 import dev.molifox.multiplayer.protocol.RoomCode
 import dev.molifox.multiplayer.protocol.RoomCodeRandom
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
@@ -79,7 +77,7 @@ class PclLobbyBackendTest {
                     "邀请码：${state.roomCode}",
                 )
                 assertEquals(WORLD, harness.hostContext?.world)
-                assertEquals(listOf(LIVE_RELAY, COMMUNITY_RELAY), harness.hostContext?.extraRelays)
+                assertEquals(emptyList(), harness.hostContext?.extraRelays)
                 assertEquals(1, harness.discovery.latest.closes)
             }
         }
@@ -133,7 +131,7 @@ class PclLobbyBackendTest {
                 assertEquals(LobbyPhase.Connected, state.phase)
                 assertEquals(LobbyRole.Guest, state.role)
                 assertEquals(GUEST_ADDRESS, state.localAddress)
-                assertEquals(listOf(LIVE_RELAY, COMMUNITY_RELAY), harness.guestContext?.extraRelays)
+                assertEquals(emptyList(), harness.guestContext?.extraRelays)
                 assertEquals(code.networkName, harness.guestContext?.code?.networkName)
             }
         }
@@ -304,7 +302,6 @@ class PclLobbyBackendTest {
     ) {
         val repository = FakeSettingsRepository()
         val discovery = FakeDiscoveryFactory()
-        val relayFetcher = FakeRelayFetcher()
         val natTester = FakeNatTester()
         val nodes = mutableListOf<FakeEasyTierNode>()
         val hostSessions = mutableListOf<FakeHostSession>()
@@ -337,11 +334,6 @@ class PclLobbyBackendTest {
                         FakeGuestSession().also { guestSessions += it }
                     },
                 probe = { true },
-                relayDirectory =
-                    EasyTierRelayDirectory(
-                        fetcher = relayFetcher,
-                        logger = { _, _ -> },
-                    ),
                 natTester = natTester,
                 installRunner = installRunner,
                 scanCheckIntervalMillis = SCAN_INTERVAL_MILLIS,
@@ -356,24 +348,6 @@ class PclLobbyBackendTest {
         var result: Result<NatDiagnostics> = Result.failure(IllegalStateException("unused"))
 
         override suspend fun test(cliExecutable: Path): Result<NatDiagnostics> = result
-    }
-
-    private class FakeRelayFetcher : RelayListFetcher {
-        var calls = 0
-            private set
-
-        override suspend fun fetch(url: String): Result<String> {
-            calls++
-            return if (url == dev.molifox.multiplayer.easytier.EasyTierRelays.NODE_LIST_URL) {
-                Result.success(
-                    """{"success":true,"data":{"items":[
-                    {"address":"tcp://relay.example:11010","allow_relay":true,"is_active":true}
-                    ]}}""",
-                )
-            } else {
-                Result.success("tcp://community.example:39409")
-            }
-        }
     }
 
     private class FakeSettingsRepository : MultiplayerSettingsRepository {
@@ -450,8 +424,6 @@ class PclLobbyBackendTest {
         const val SCAFFOLDING_PORT = 25_565
         const val SCAN_INTERVAL_MILLIS = 50L
         const val GUEST_ADDRESS = "127.0.0.1:52341"
-        const val LIVE_RELAY = "tcp://relay.example:11010"
-        const val COMMUNITY_RELAY = "tcp://community.example:39409"
         val INSTALLED_STATUS = CoreStatus(true, "2.6.4", "test", 0, "test-dir")
         const val ROOM_CODE_PATTERN = "U/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}"
         val WORLD = LanWorld(name = "测试世界", version = "1.21", port = 25_565)

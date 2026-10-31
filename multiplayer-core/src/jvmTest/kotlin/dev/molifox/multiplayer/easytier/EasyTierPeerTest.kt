@@ -14,7 +14,7 @@ class EasyTierPeerTest {
             """
             INFO  using rpc portal 127.0.0.1:54321
             [
-              {"hostname":"scaffolding-mc-server-45678","ipv4":"10.114.51.41",
+              {"hostname":"MoliFox-server-45678","ipv4":"10.114.51.41",
                "lat_ms":"12.5","loss_rate":"0%","nat_type":"PortRestricted","version":"2.6.4"},
               {"hostname":"7c9f-guest","ipv4":"10.114.51.99","lat_ms":"-"}
             ]
@@ -22,7 +22,7 @@ class EasyTierPeerTest {
 
         val peers = EasyTierPeers.parse(output).getOrThrow()
 
-        assertEquals(listOf("scaffolding-mc-server-45678", "7c9f-guest"), peers.map { it.hostname })
+        assertEquals(listOf("MoliFox-server-45678", "7c9f-guest"), peers.map { it.hostname })
         assertEquals(12.5, peers.first().latencyMillis)
         assertNull(peers.last().latencyMillis)
     }
@@ -58,7 +58,7 @@ class EasyTierPeerTest {
         val peers =
             listOf(
                 EasyTierPeer("7c9f-guest", "10.114.51.99", 20.0),
-                EasyTierPeer("scaffolding-mc-server-45678", "10.114.51.41", 3.0),
+                EasyTierPeer("MoliFox-server-45678", "10.114.51.41", 3.0),
             )
 
         val host = EasyTierPeers.findHost(peers).getOrThrow()
@@ -75,19 +75,19 @@ class EasyTierPeerTest {
         )
         val duplicated =
             listOf(
-                EasyTierPeer("scaffolding-mc-server-1000", "10.0.0.1", null),
-                EasyTierPeer("scaffolding-mc-server-2000", "10.0.0.2", null),
+                EasyTierPeer("MoliFox-server-1000", "10.0.0.1", null),
+                EasyTierPeer("MoliFox-server-2000", "10.0.0.2", null),
             )
         assertTrue(EasyTierPeers.findHost(duplicated).isFailure)
     }
 
     @Test
     fun `parses only valid host ports`() {
-        assertEquals(45_678, EasyTierPeers.portFromHostname("scaffolding-mc-server-45678"))
-        assertNull(EasyTierPeers.portFromHostname("scaffolding-mc-server-"))
-        assertNull(EasyTierPeers.portFromHostname("scaffolding-mc-server-0"))
-        assertNull(EasyTierPeers.portFromHostname("scaffolding-mc-server-70000"))
+        assertEquals(45_678, EasyTierPeers.portFromHostname("MoliFox-server-45678"))
+        assertNull(EasyTierPeers.portFromHostname("MoliFox-server-"))
+        assertNull(EasyTierPeers.portFromHostname("MoliFox-server-0"))
+        assertNull(EasyTierPeers.portFromHostname("MoliFox-server-70000"))
         assertNull(EasyTierPeers.portFromHostname("other-host-25565"))
-        assertNotNull(EasyTierPeers.portFromHostname("scaffolding-mc-server-1"))
+        assertNotNull(EasyTierPeers.portFromHostname("MoliFox-server-1"))
     }
 }

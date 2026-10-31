@@ -79,7 +79,7 @@ private fun IdentityGroup(
     }
 }
 
-/** 中继列表由后端实时获取；自定义地址优先于自动节点，按分号拆分并校验协议前缀。 */
+/** 默认使用内置自建节点；自定义地址优先，按分号拆分并校验协议前缀。 */
 @Composable
 private fun RelayGroup(
     draft: MultiplayerSettings,
@@ -88,7 +88,7 @@ private fun RelayGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = "中继节点",
-        detail = "官方节点状态接口已停用，启动器会自动改用社区节点列表；都不可用时使用内置节点。这里的自定义地址优先级更高，多个用分号分隔。",
+        detail = "默认使用内置的两台自建节点，只协助 P2P 打洞和发现，游戏数据不经过中继；这里的自定义地址优先级更高，多个用分号分隔。",
     ) {
         CompactTextField(
             draft.relayServer,
@@ -125,7 +125,7 @@ private fun AdvancedGroup(
             ) { change(draft.copy(disableIpv6 = it)) }
             SwitchRow(
                 "关闭对称 NAT 打洞",
-                "部分网络打洞失败时可尝试；默认关，关闭后更依赖中继。",
+                "部分网络打洞失败时可尝试；默认关，关闭后更依赖 P2P 直连。",
                 draft.disableSymHolePunching,
             ) { change(draft.copy(disableSymHolePunching = it)) }
         }

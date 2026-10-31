@@ -30,7 +30,7 @@ import java.io.IOException
 /**
  * 房客侧联机流程（与 PCL CE 的 Scaffolding 房客一致）：
  * 1. 启动 EasyTier 房客节点（DHCP 获取虚拟 IP）；
- * 2. 等待 hostname 为 `scaffolding-mc-server-<端口>` 的房主节点；
+ * 2. 等待 hostname 为 `MoliFox-server-<端口>` 的房主节点；
  * 3. 把本机随机端口通过 EasyTier 转发到房主的 Scaffolding 端口，再连接房间；
  * 4. 读取房主真实的 Minecraft 端口并同样转发，最后用本地 TCP 转发 + 局域网
  *    广播让 Minecraft 客户端的多人游戏列表直接出现这个世界。

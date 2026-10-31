@@ -96,7 +96,7 @@ private const val RPC_PORT = 12345
 internal fun hostPeersJson(scaffoldingPort: Int): String =
     """
     [{"cidr":"10.114.51.41/24","ipv4":"127.0.0.1",
-      "hostname":"scaffolding-mc-server-$scaffoldingPort","lat_ms":"-"}]
+      "hostname":"MoliFox-server-$scaffoldingPort","lat_ms":"-"}]
     """.trimIndent()
 
 internal data class ForwardCall(

@@ -56,7 +56,7 @@ internal const val MULTIPLAYER_TECHNOLOGY_NOTICE =
         "EasyTier 是第三方开源软件（LGPL-3.0），首次使用时从官方渠道下载并按 SHA-256 校验。"
 
 internal const val MULTIPLAYER_NETWORK_NOTICE =
-    "联机双方都需要能连上 EasyTier 公共中继；中继不可用或网络受限时可能连接失败。" +
+    "联机双方都需要能连上内置自建节点来协助打洞；节点不可用或双方 NAT 打洞失败时会连不上（游戏数据不经过中继）。" +
         "邀请码包含网络密钥，等同于房间口令，请不要公开发布。房主必须保持游戏与启动器运行，" +
         "退出存档后房间会自动关闭。"
 

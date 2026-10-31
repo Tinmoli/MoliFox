@@ -23,34 +23,18 @@ data class EasyTierTuning(
 }
 
 /**
- * EasyTier 节点发现与保底中继。
+ * EasyTier 中继节点：只使用用户自建的两台共享节点。
  *
- * - [NODE_LIST_URL]：PCL CE 曾使用的活动节点接口（`uptime.easytier.cn`）。EasyTier Uptime
- *   已由官方关停，启动器仍会尝试一次，失败后改用社区 HTTP 节点列表，不阻断房间。
- * - [HTTP_NODE_LISTS]：社区维护的 HTTP 节点列表；启动器会优先自行解析成具体节点，
- *   解析失败时再把列表地址交给 EasyTier 自行拉取（EasyTier 原生支持 https 节点列表）。
- * - [DEFAULT]：已清空——官方公共中继 `public.easytier.top` / `public2.easytier.cn` 已随
- *   EasyTier Uptime 一起关停，保留在 `-p` 里只会让核心每秒重试 NXDOMAIN 并刷日志。
- *
- * 没有这些节点时跨 NAT 基本无法连通；用户可在设置里追加自定义中继。
+ * 客户端始终带 `--p2p-only`，中继只用于信令/帮助打洞，**游戏数据不经过中继**；
+ * 两台节点按顺序尝试，第一台连不上会试第二台。用户可在设置里追加自定义中继，
+ * 自定义地址排在前面、最多 6 个。
  */
 object EasyTierRelays {
-    const val NODE_LIST_URL =
-        "https://uptime.easytier.cn/api/nodes?page=1&per_page=50&is_active=true"
-
-    /** 官方公共中继已关停（NXDOMAIN）；恢复后再把地址加回来。 */
-    private val OFFICIAL: List<String> = emptyList()
-
-    /** 社区 HTTP 节点列表；启动器优先解析，失败时交给 EasyTier 自取。 */
-    val HTTP_NODE_LISTS: List<String> =
+    val DEFAULT: List<String> =
         listOf(
-            "https://etnode.zkitefly.eu.org/node1",
-            "https://etnode.zkitefly.eu.org/node2",
-            "https://etnode.zkitefly.eu.org/-node1",
-            "https://etnode.zkitefly.eu.org/-node2",
+            "tcp://sh-easytier.chior.top:11010",
+            "tcp://xg-easytier.chior.top:11010",
         )
-
-    val DEFAULT: List<String> = OFFICIAL
 }
 
 /** 启动一个 EasyTier 节点所需的全部业务参数；RPC 端口由运行时分配。 */
@@ -62,7 +46,7 @@ data class EasyTierNodeRequest(
     val networkSecret: String,
     /** 本机在虚拟网络里的稳定标识，避免多开时相互覆盖。 */
     val machineId: String,
-    /** EasyTier 主机名；房主必须是 `scaffolding-mc-server-<端口>`。 */
+    /** EasyTier 主机名；房主必须是 `MoliFox-server-<端口>`。 */
     val hostname: String,
     /** 房主需要放行的本机端口（Scaffolding 与 Minecraft）；房客为空。 */
     val whitelistedPorts: List<Int> = emptyList(),
@@ -115,8 +99,9 @@ data class EasyTierNodeRequest(
 /**
  * 把 [EasyTierNodeRequest] 转成 `easytier-core` 参数列表。
  *
- * 关键互通约定（与 PCL CE 一致，改动前必须核对）：
- * - 房主虚拟 IP 固定 `10.114.51.41`，hostname `scaffolding-mc-server-<Scaffolding 端口>`；
+ * 关键约定（基础流程沿用 PCL CE；网络名与 hostname 前缀改为 MoliFox，便于自建中继
+ * 用 `MoliFox*` 白名单匹配。代价是不能再和 PCL CE 直接互通，改动前必须核对）：
+ * - 房主虚拟 IP 固定 `10.114.51.41`，hostname `MoliFox-server-<Scaffolding 端口>`；
  * - 双方都 `--no-tun`，不安装驱动、不要求管理员；
  * - RPC 门户只绑 `127.0.0.1`，避免局域网内其他人控制本机 EasyTier。
  */
@@ -124,7 +109,7 @@ object EasyTierArguments {
     /** PCL CE 房主固定虚拟地址；房客从 peer 列表读取，不需要预置。 */
     const val HOST_INTERFACE = "10.114.51.41"
 
-    private const val HOST_HOSTNAME_PREFIX = "scaffolding-mc-server-"
+    private const val HOST_HOSTNAME_PREFIX = "MoliFox-server-"
     private const val LOOPBACK_ADDRESS = "127.0.0.1"
     private const val WILDCARD_LISTENER = "0.0.0.0"
     private const val ENCRYPTION_ALGORITHM = "aes-gcm"
@@ -211,8 +196,9 @@ object EasyTierArguments {
         }
     }
 
-    // 双方共用（与 PCL CE 一致）：不装 TUN、多线程收发；私有模式拒绝没有相同网络密钥的
-    // 外部网络；KCP/QUIC 代理提升部分网络的转发可用性；p2p-only 限制中继只做打洞信令。
+    // 双方共用：不装 TUN、多线程收发；私有模式拒绝没有相同网络密钥的外部网络；
+    // KCP/QUIC 代理提升部分网络的转发可用性；p2p-only 表示只与已建立 P2P 的节点
+    // 通信——自建中继只用来帮打洞/发现，游戏数据不经过中继。
     private val COMMON_FLAGS =
         listOf(
             "--no-tun",

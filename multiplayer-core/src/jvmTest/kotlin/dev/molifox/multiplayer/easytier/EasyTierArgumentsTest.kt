@@ -12,7 +12,7 @@ class EasyTierArgumentsTest {
     private val code =
         ScaffoldingCode(
             code = CODE,
-            networkName = "scaffolding-mc-YNZE-U61D",
+            networkName = "MoliFox-YNZE-U61D",
             networkSecret = "2206-HXRG",
         )
 
@@ -43,7 +43,7 @@ class EasyTierArgumentsTest {
         assertTrue(arguments.containsAll(listOf("--network-secret", code.networkSecret)))
         assertTrue(arguments.containsAll(listOf("--machine-id", MACHINE_ID)))
         assertTrue(
-            arguments.containsAll(listOf("--hostname", "scaffolding-mc-server-$SCAFFOLDING_PORT")),
+            arguments.containsAll(listOf("--hostname", "MoliFox-server-$SCAFFOLDING_PORT")),
         )
         assertTrue(arguments.containsAll(listOf("--rpc-portal", "127.0.0.1:$RPC_PORT")))
         assertTrue(arguments.containsAll(listOf("-i", EasyTierArguments.HOST_INTERFACE)))
@@ -63,7 +63,8 @@ class EasyTierArgumentsTest {
         assertFalse(arguments.contains("-i"))
         assertTrue(arguments.containsAll(listOf("--hostname", GUEST_HOSTNAME)))
         assertTrue(arguments.containsAll(listOf("--tcp-whitelist", "0")))
-        assertEquals(0, arguments.count { it == "-p" })
+        assertEquals(EasyTierRelays.DEFAULT.size, arguments.count { it == "-p" })
+        assertTrue(arguments.containsAll(listOf("-p", EasyTierRelays.DEFAULT.first())))
     }
 
     @Test
@@ -76,7 +77,11 @@ class EasyTierArgumentsTest {
             )
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
-        assertEquals(listOf("tcp://custom.example:11010", "udp://custom.example:11010"), relays)
+        assertEquals(
+            listOf("tcp://custom.example:11010", "udp://custom.example:11010") +
+                EasyTierRelays.DEFAULT,
+            relays,
+        )
     }
 
     @Test
@@ -90,8 +95,22 @@ class EasyTierArgumentsTest {
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
         assertEquals(
-            listOf("tcp://live.example:11010", "udp://live2.example:11010"),
+            listOf(
+                "tcp://live.example:11010",
+                "udp://live2.example:11010",
+            ) + EasyTierRelays.DEFAULT,
             relays,
+        )
+    }
+
+    @Test
+    fun `default relays are the two self-hosted nodes`() {
+        assertEquals(
+            listOf(
+                "tcp://sh-easytier.chior.top:11010",
+                "tcp://xg-easytier.chior.top:11010",
+            ),
+            EasyTierRelays.DEFAULT,
         )
     }
 
@@ -157,7 +176,7 @@ class EasyTierArgumentsTest {
     fun `host hostname is parseable by the guest rule`() {
         val hostname = EasyTierArguments.hostHostname(SCAFFOLDING_PORT)
 
-        assertEquals("scaffolding-mc-server-$SCAFFOLDING_PORT", hostname)
+        assertEquals("MoliFox-server-$SCAFFOLDING_PORT", hostname)
         assertEquals(SCAFFOLDING_PORT, EasyTierPeers.portFromHostname(hostname))
     }
 

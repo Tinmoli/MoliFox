@@ -163,11 +163,11 @@ internal fun phaseHint(phase: LobbyPhase): String? =
         LobbyPhase.StartingRuntime ->
             "正在启动 EasyTier 独立进程；首次运行 Windows 可能弹出防火墙提示。"
         LobbyPhase.DiscoveringWorld -> "正在监听并探测本机 Minecraft 局域网世界，请稍候。"
-        LobbyPhase.CreatingRoom -> "正在通过 Scaffolding 协议建立房间，需要能连上 EasyTier 中继。"
+        LobbyPhase.CreatingRoom -> "正在通过 Scaffolding 协议建立房间，需要能连上内置中继协助打洞。"
         LobbyPhase.RoomOpen -> "保持游戏与启动器运行；退出存档后房间会自动关闭。"
         LobbyPhase.JoiningRoom ->
             "加入依次进行：启动虚拟网络 → 等待房主上线 → 建立端口转发；" +
-                "中继较慢时可能需要一到两分钟。"
+                "打洞较慢时可能需要一到两分钟。"
         LobbyPhase.Connected -> "保持启动器运行；退出房间或关闭启动器会断开连接。"
         LobbyPhase.Failed -> null
     }

@@ -98,7 +98,7 @@ internal fun natAdvice(diagnostics: NatDiagnostics): String {
     return when {
         NatType.UdpBlocked in types -> "UDP 被封，联机可能不可用，请换网络或检查防火墙/安全软件。"
         types.any { it in symmetric } ->
-            "对称 NAT 下跨网络联机可能连不上，建议双方可连中继或换网络；同一局域网通常仍可直连。"
+            "对称 NAT 下打洞可能失败；内置中继只协助打洞、不转发数据，失败时请换网络、局域网直连或填可转发数据的自定义中继。"
         else -> "网络类型适合直连或打洞。"
     }
 }

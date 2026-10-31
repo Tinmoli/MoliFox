@@ -13,7 +13,6 @@ import dev.molifox.multiplayer.domain.MultiplayerBackend
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierNatTester
 import dev.molifox.multiplayer.easytier.EasyTierNode
-import dev.molifox.multiplayer.easytier.EasyTierRelayDirectory
 import dev.molifox.multiplayer.easytier.EasyTierRuntime
 import dev.molifox.multiplayer.easytier.NatTester
 import dev.molifox.multiplayer.protocol.RoomCode
@@ -58,7 +57,6 @@ class PclLobbyBackend(
     hostSessionFactory: LobbyHostSessionFactory = DefaultLobbyHostSessionFactory,
     guestSessionFactory: LobbyGuestSessionFactory = DefaultLobbyGuestSessionFactory,
     probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
-    private val relayDirectory: EasyTierRelayDirectory = EasyTierRelayDirectory(logger = logger),
     private val installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
     private val importRunner: (suspend (String, (Float?) -> Unit) -> CoreStatus)? = null,
     private val natTester: NatTester = EasyTierNatTester(),
@@ -123,7 +121,7 @@ class PclLobbyBackend(
             store = store,
             machineId = { machineId },
             playerName = { displayName(mutableSettings.value, playerName()) },
-            relays = { relayDirectory.resolve(mutableSettings.value.customRelays()) },
+            relays = { mutableSettings.value.customRelays() },
             tuning = { mutableSettings.value.toEasyTierTuning() },
             onSessionClosed = { message -> onSessionClosed(message) },
         )
@@ -138,7 +136,6 @@ class PclLobbyBackend(
             val status = withContext(Dispatchers.IO) { installer.inspect() }
             store.update { it.copy(runtime = status) }
             scanner.sync(mutableSettings.value.enabled)
-            scope.launch { relayDirectory.prefetch() }
         }
 
     override suspend fun inspectRuntime(): Result<CoreStatus> =

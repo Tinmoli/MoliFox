@@ -13,7 +13,7 @@ class RoomCodeTest {
     fun `parses documented code and derives network credentials`() {
         val parsed = RoomCode.parse("U/YNZE-U61D-2206-HXRG")
         assertEquals("U/YNZE-U61D-2206-HXRG", parsed?.code)
-        assertEquals("scaffolding-mc-YNZE-U61D", parsed?.networkName)
+        assertEquals("MoliFox-YNZE-U61D", parsed?.networkName)
         assertEquals("2206-HXRG", parsed?.networkSecret)
     }
 
@@ -54,7 +54,7 @@ class RoomCodeTest {
     fun `generates fixed vectors from injected random bytes`() {
         val seeded = RoomCode.generate(fixedRandom(bytesFromLong(123_456_789L)))
         assertEquals("U/0J2D-Q200-0000-0000", seeded.code)
-        assertEquals("scaffolding-mc-0J2D-Q200", seeded.networkName)
+        assertEquals("MoliFox-0J2D-Q200", seeded.networkName)
         assertEquals("0000-0000", seeded.networkSecret)
         assertEquals("U/0000-0000-0000-0000", RoomCode.generate(fixedRandom(ByteArray(16))).code)
         assertEquals(
@@ -68,7 +68,7 @@ class RoomCodeTest {
         val boundary = ByteArray(16).also { bytes -> bytes[5] = 1 }
         val generated = RoomCode.generate(fixedRandom(boundary))
         assertEquals("U/EF0E-NPXH-SSSC-K7WC", generated.code)
-        assertEquals("scaffolding-mc-EF0E-NPXH", generated.networkName)
+        assertEquals("MoliFox-EF0E-NPXH", generated.networkName)
         assertEquals("SSSC-K7WC", generated.networkSecret)
     }
 

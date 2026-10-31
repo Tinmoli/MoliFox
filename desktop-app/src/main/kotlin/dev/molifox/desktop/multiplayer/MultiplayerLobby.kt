@@ -76,7 +76,7 @@ private fun FailureGroup(
             color = MaterialTheme.colorScheme.error,
         )
         MutedText(
-            "常见原因：邀请码无效或房间已关闭、房主不在大厅、连不上 EasyTier 中继、虚拟网络超时。" +
+            "常见原因：邀请码无效或房间已关闭、房主不在大厅、连不上内置中继、双方打洞失败。" +
                 "修复后可在重新加入或创建房间。",
         )
         TextButton(onClick = actions.leave) { Text("返回大厅") }

@@ -222,13 +222,13 @@ class EasyTierRuntimeTest {
     private companion object {
         const val RPC_PORT = 54_321
         const val PEERS_JSON =
-            """[{"hostname":"scaffolding-mc-server-45678","ipv4":"10.114.51.41"}]"""
+            """[{"hostname":"MoliFox-server-45678","ipv4":"10.114.51.41"}]"""
         val HOST_REQUEST =
             EasyTierNodeRequest.host(
                 code =
                     ScaffoldingCode(
                         code = "U/YNZE-U61D-2206-HXRG",
-                        networkName = "scaffolding-mc-YNZE-U61D",
+                        networkName = "MoliFox-YNZE-U61D",
                         networkSecret = "2206-HXRG",
                     ),
                 machineId = "machine-0001",

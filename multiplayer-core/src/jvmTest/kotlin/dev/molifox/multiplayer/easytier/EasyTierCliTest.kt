@@ -19,7 +19,7 @@ class EasyTierCliTest {
             listOf("--rpc-portal", "127.0.0.1:$RPC_PORT", "-o", "json", "peer"),
             runner.commands.single(),
         )
-        assertEquals("scaffolding-mc-server-45678", peers.single().hostname)
+        assertEquals("MoliFox-server-45678", peers.single().hostname)
     }
 
     @Test
@@ -101,7 +101,7 @@ class EasyTierCliTest {
         const val RPC_PORT = 54_321
         const val HOST_IP = "10.114.51.41"
         const val PEERS_JSON =
-            """[{"hostname":"scaffolding-mc-server-45678","ipv4":"10.114.51.41"}]"""
+            """[{"hostname":"MoliFox-server-45678","ipv4":"10.114.51.41"}]"""
         val TCP_FORWARD_COMMAND =
             listOf(
                 "--rpc-portal",

@@ -8,7 +8,7 @@ import java.io.IOException
 
 /** `easytier-cli -o json peer` 中本项目需要的一个节点。 */
 data class EasyTierPeer(
-    /** EasyTier 主机名；房主固定为 `scaffolding-mc-server-<Scaffolding 端口>`。 */
+    /** EasyTier 主机名；房主固定为 `MoliFox-server-<Scaffolding 端口>`。 */
     val hostname: String,
     /** 节点虚拟 IPv4；房客用它做端口转发的目标地址。 */
     val ipv4: String,
@@ -25,7 +25,7 @@ data class EasyTierHost(
 /** peer 列表解析与房主定位；纯函数，便于用固定 JSON 向量测试。 */
 object EasyTierPeers {
     /** PCL CE 房主 hostname 前缀；互通硬约定，不能改。 */
-    const val HOST_HOSTNAME_PREFIX = "scaffolding-mc-server-"
+    const val HOST_HOSTNAME_PREFIX = "MoliFox-server-"
 
     private const val FIELD_HOSTNAME = "hostname"
     private const val FIELD_IPV4 = "ipv4"
