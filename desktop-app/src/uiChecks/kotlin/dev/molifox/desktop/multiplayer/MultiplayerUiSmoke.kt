@@ -84,6 +84,8 @@ private fun showTestWindow(
                         MultiplayerScreen(
                             backend = fixture.backend,
                             onCopy = { copied -> check(copied.isNotBlank()) },
+                            // 冒烟里不真选文件，只验证入口存在；导入由 fixture 的单测路径覆盖。
+                            chooseArchive = { null },
                         )
                     }
                 }
@@ -140,19 +142,38 @@ private fun confirmConsent(
     ui.await("首次下载失败可重试") { ui.exists("重试下载") }
     check(fixture.downloads.get() == 1)
     check(ui.exists("模拟 EasyTier 下载失败"))
+    verifyArchiveFallback(ui)
+    verifyRetryAfterFailure(ui, fixture)
+}
+
+/** 失败后手动重试成功；之后观察一段时间，确认不会自动重复下载。 */
+private fun verifyRetryAfterFailure(
+    ui: UiProbe,
+    fixture: MultiplayerUiFixture,
+) {
     ui.click("重试下载")
     ui.await("重试后运行时就绪") {
         val runtime = fixture.backend.state.value.runtime
         runtime?.installed == true
     }
     check(fixture.downloads.get() == 2)
-    // 失败后不再自动重试：成功之后再观察一段时间，下载次数不应增长。
     Thread.sleep(POST_DOWNLOAD_SETTLE_MILLIS)
     check(fixture.downloads.get() == 2)
     ui.await("错误提示随重试成功清除") { !ui.exists("模拟 EasyTier 下载失败") }
     ui.await("进入联机大厅") { ui.exists("联机大厅") }
     check(!ui.exists("下载官方 EasyTier"))
     check(!ui.exists("重试下载"))
+}
+
+/** 下载失败区提供本地 zip 兜底入口与导入说明；冒烟里只验证入口存在，不弹系统选择器。 */
+private fun verifyArchiveFallback(ui: UiProbe) {
+    check(ui.exists("从本地 zip 安装…"))
+    check(
+        ui.exists(
+            "下载一直卡住时，可以用浏览器或下载工具下载官方 EasyTier 2.6.4 的 zip，" +
+                "再从这里导入；导入会校验大小与 SHA-256。",
+        ),
+    )
 }
 
 /** 刷新世界、创建房间、复制邀请码、关闭房间、用邀请码加入与退出房间。 */

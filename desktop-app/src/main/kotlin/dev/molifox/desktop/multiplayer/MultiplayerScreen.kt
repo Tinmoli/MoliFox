@@ -59,12 +59,16 @@ private class MultiplayerPageState {
 
     /** 下载失败过：状态栏按钮改成“重试下载”，用户必须显式点才会再次下载。 */
     var runtimeDownloadFailed by mutableStateOf(false)
+
+    /** 正在选择或安装本地 zip：按钮显示“正在安装…”，并阻止重复打开文件选择。 */
+    var runtimeImporting by mutableStateOf(false)
 }
 
 @Composable
 fun MultiplayerScreen(
     backend: MultiplayerBackend,
     onCopy: (String) -> Unit,
+    chooseArchive: suspend () -> String?,
 ) {
     val settings by backend.settings.collectAsState()
     val scope = rememberCoroutineScope()
@@ -85,6 +89,36 @@ fun MultiplayerScreen(
             )
         }
     }
+    // 文件选择与安装都在协程里：界面只拿路径字符串，不直接碰磁盘。
+    val importRuntime: () -> Unit = {
+        if (!page.runtimeImporting) {
+            page.runtimeImporting = true
+            scope.launch {
+                val archive =
+                    runCatching { chooseArchive() }.getOrElse { failure ->
+                        page.message = failure.message ?: "选择 EasyTier 安装包失败，请重试"
+                        null
+                    }
+                if (archive != null) {
+                    backend.importRuntime(archive).fold(
+                        onSuccess = { page.message = null },
+                        onFailure = { failure ->
+                            page.message =
+                                failure.message ?: "安装本地 EasyTier 安装包失败，请检查文件"
+                        },
+                    )
+                }
+                page.runtimeImporting = false
+            }
+        }
+    }
+    val runtimeInstall =
+        RuntimeInstallActions(
+            download = downloadRuntime,
+            importArchive = importRuntime,
+            downloadFailed = page.runtimeDownloadFailed,
+            importing = page.runtimeImporting,
+        )
     val acceptTerms: () -> Unit = {
         val consented = settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
         page.runtimeDownloadRequested = true
@@ -102,7 +136,7 @@ fun MultiplayerScreen(
     Column(Modifier.fillMaxSize()) {
         val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
         if (page.initialized && agreed) {
-            MultiplayerContent(backend, page, execute, onCopy, downloadRuntime)
+            MultiplayerContent(backend, page, execute, onCopy, runtimeInstall)
         } else {
             MultiplayerConsentGate(page)
         }
@@ -117,12 +151,12 @@ private fun ColumnScope.MultiplayerContent(
     page: MultiplayerPageState,
     execute: ExecuteMultiplayer,
     onCopy: (String) -> Unit,
-    downloadRuntime: () -> Unit,
+    runtimeInstall: RuntimeInstallActions,
 ) {
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         MultiplayerSidebar(page.section) { page.section = it }
         FrostedPanel(Modifier.weight(1f).fillMaxHeight()) {
-            MultiplayerBody(backend, page, execute, onCopy, downloadRuntime)
+            MultiplayerBody(backend, page, execute, onCopy, runtimeInstall)
         }
     }
 }
@@ -227,7 +261,7 @@ private fun MultiplayerBody(
     page: MultiplayerPageState,
     execute: ExecuteMultiplayer,
     onCopy: (String) -> Unit,
-    downloadRuntime: () -> Unit,
+    runtimeInstall: RuntimeInstallActions,
 ) {
     val state by backend.state.collectAsState()
     val settings by backend.settings.collectAsState()
@@ -236,13 +270,7 @@ private fun MultiplayerBody(
             MultiplayerLobby(
                 state = state,
                 settings = settings,
-                actions =
-                    multiplayerLobbyActions(
-                        backend = backend,
-                        execute = execute,
-                        downloadRuntime = downloadRuntime,
-                        runtimeDownloadFailed = page.runtimeDownloadFailed,
-                    ),
+                actions = multiplayerLobbyActions(backend, execute, runtimeInstall),
                 copy = onCopy,
             )
         MultiplayerSection.HostGuide -> MultiplayerGuide(host = true)

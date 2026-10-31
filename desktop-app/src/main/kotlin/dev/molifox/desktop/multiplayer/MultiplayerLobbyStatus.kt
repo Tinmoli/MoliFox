@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.MutedText
+import dev.molifox.desktop.SecondaryButton
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
@@ -56,7 +57,7 @@ internal fun RoomProgress(state: MultiplayerState) {
     }
 }
 
-/** 缺少运行时时给出体积与校验方式，并保留显式下载入口；失败后改成“重试下载”。 */
+/** 缺少运行时时给出体积与校验方式，并保留下载/本地导入两个入口；下载失败后改成“重试下载”。 */
 @Composable
 private fun RoomRuntimeStatus(
     state: MultiplayerState,
@@ -70,13 +71,26 @@ private fun RoomRuntimeStatus(
     }
     if (!settings.enabled) return
     Text(MULTIPLAYER_RUNTIME_DOWNLOAD_NOTICE, style = MaterialTheme.typography.bodySmall)
-    TextButton(onClick = actions.downloadRuntime, enabled = !state.busy) {
-        Text(if (actions.runtimeDownloadFailed) "重试下载" else "下载官方 EasyTier")
+    TextButton(onClick = actions.runtime.download, enabled = !state.busy) {
+        Text(if (actions.runtime.downloadFailed) "重试下载" else "下载官方 EasyTier")
     }
-    if (actions.runtimeDownloadFailed) {
-        MutedText("上次下载没有完成，点“重试下载”再试一次；确认能上网后再重试。")
+    // 网络慢或下载一直卡住时的兜底：让用户自己下载 zip 再导入，导入仍会校验大小与 SHA-256。
+    SecondaryButton(
+        onClick = actions.runtime.importArchive,
+        enabled = !state.busy && !actions.runtime.importing,
+    ) {
+        Text(if (actions.runtime.importing) "正在安装…" else "从本地 zip 安装…")
+    }
+    MutedText(RUNTIME_ARCHIVE_HINT)
+    if (actions.runtime.downloadFailed) {
+        MutedText("上次下载没有完成，点“重试下载”再试一次；也可以从本地 zip 安装。")
     }
 }
+
+/** 导入说明随 EasyTier 版本变化，所以用拼接而不是常量字符串。 */
+private val RUNTIME_ARCHIVE_HINT =
+    "下载一直卡住时，可以用浏览器或下载工具下载官方 EasyTier " +
+        "${MultiplayerPolicy.CORE_VERSION} 的 zip，再从这里导入；导入会校验大小与 SHA-256。"
 
 /** 只有房间相关阶段才显示退出入口；创建/加入过程中不允许打断，避免后端状态竞争。 */
 @Composable

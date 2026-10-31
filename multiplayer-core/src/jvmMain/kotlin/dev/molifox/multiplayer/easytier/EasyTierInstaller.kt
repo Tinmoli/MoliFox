@@ -103,6 +103,42 @@ class EasyTierInstaller(
             }
         }
 
+    /**
+     * 从本地 zip 安装（用户手动下载或通过代理下载后导入）。
+     *
+     * 与在线安装走同一套校验与解包流程：大小、SHA-256、必需文件，失败不留下半成品。
+     */
+    suspend fun installFromArchive(
+        archive: Path,
+        onProgress: (Float?) -> Unit = {},
+    ): Result<CoreStatus> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val pkg = packageInfo()
+                require(Files.isRegularFile(archive)) { "找不到安装包：$archive" }
+                logger("从本地安装包安装 EasyTier：$archive", false)
+                val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
+                try {
+                    verifyArchive(pkg, archive)
+                    onProgress(null)
+                    val staging = work.resolve(STAGING_DIRECTORY)
+                    ZipExtractor.extract(archive, staging, pkg.rootPrefix)
+                    onProgress(SIXTY)
+                    requireRequiredFiles(pkg, staging)
+                    moveIntoPlace(staging, directory(pkg))
+                    val status = inspect(pkg)
+                    require(status.installed) { "EasyTier 安装完成后仍缺少必需文件，请检查安装包。" }
+                    logger("EasyTier ${pkg.version} 已从本地安装包安装到 ${status.directory}", false)
+                    onProgress(ONE)
+                    status
+                } finally {
+                    deleteRecursively(work, logger)
+                }
+            }.onFailure { failure ->
+                if (failure is CancellationException) throw failure
+            }
+        }
+
     /** 在临时目录内完成下载、校验、解包与落盘；失败时由 [install] 清理临时目录。 */
     private suspend fun installInto(
         pkg: EasyTierPackage,
@@ -131,7 +167,7 @@ class EasyTierInstaller(
         target: Path,
         onProgress: (Float?) -> Unit,
     ) {
-        val sources = orderedSources(pkg)
+        val sources = orderedSources(pkg, probe, logger)
         logger("EasyTier 下载源顺序：${sources.joinToString()}", false)
         var failure: Throwable? = null
         repeat(ATTEMPTS) { attempt ->
@@ -180,25 +216,6 @@ class EasyTierInstaller(
             logger("EasyTier 来源校验失败（$source）：${downloadFailure.message}", true)
             downloadFailure
         }
-
-    /** 纯按实测速度降序选择，不偏向官方源；测速失败的来源保留在末尾兜底。 */
-    private suspend fun orderedSources(pkg: EasyTierPackage): List<String> {
-        val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
-        val measured =
-            candidates.mapNotNull { source ->
-                probe.measureSpeed(source)?.let {
-                    source to
-                        it
-                }
-            }
-        measured.forEach { (source, speed) ->
-            logger("下载源测速：${speed / KIB} KiB/s  $source", false)
-        }
-        val ranked = measured.sortedByDescending { it.second }.map { it.first }
-        val unscored = candidates.filterNot { it in ranked }
-        unscored.forEach { source -> logger("下载源未测速（作为兜底）：$source", false) }
-        return ranked + unscored
-    }
 
     /** 解包结果整体替换目标目录，并补上 Linux 可执行权限。 */
     private fun moveIntoPlace(
@@ -270,6 +287,29 @@ class HttpArchiveDownloader(
         }
         onProgress(ONE)
     }
+}
+
+/** 纯按实测速度降序选择下载源，不偏向官方源；测速失败的来源保留在末尾兜底。 */
+private suspend fun orderedSources(
+    pkg: EasyTierPackage,
+    probe: EasyTierSourceProbe,
+    logger: (message: String, error: Boolean) -> Unit,
+): List<String> {
+    val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
+    val measured =
+        candidates.mapNotNull { source ->
+            probe.measureSpeed(source)?.let {
+                source to
+                    it
+            }
+        }
+    measured.forEach { (source, speed) ->
+        logger("下载源测速：${speed / KIB} KiB/s  $source", false)
+    }
+    val ranked = measured.sortedByDescending { it.second }.map { it.first }
+    val unscored = candidates.filterNot { it in ranked }
+    unscored.forEach { source -> logger("下载源未测速（作为兜底）：$source", false) }
+    return ranked + unscored
 }
 
 /** 校验安装包大小与 SHA-256。 */
@@ -351,10 +391,11 @@ private const val STAGING_DIRECTORY = "staging"
 private const val ARCHIVE_NAME = "easytier.zip"
 private const val ATTEMPTS = 3
 private const val CONNECT_TIMEOUT_MILLIS = 20_000
-private const val READ_TIMEOUT_MILLIS = 20_000
+private const val READ_TIMEOUT_MILLIS = 30_000
 private const val BUFFER_BYTES = 64 * 1024
+private const val SIXTY = 0.6f
 private const val PROGRESS_STEP_BYTES = 512L * 1024
-private const val PROGRESS_LOG_STEP = 25
+private const val PROGRESS_LOG_STEP = 10
 private const val PERCENT = 100
 private const val KIB = 1024L
 private val HTTP_OK = 200..299

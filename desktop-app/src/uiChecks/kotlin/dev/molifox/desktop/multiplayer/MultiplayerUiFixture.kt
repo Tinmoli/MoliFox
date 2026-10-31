@@ -43,6 +43,12 @@ internal class MultiplayerUiFixture(
     /** 置为 true 时下一次 prepareRuntime 只模拟失败，用于验收“失败后重试下载”入口。 */
     var failNextDownload = false
 
+    /** 记录界面导入的本地 zip 路径，验证“从本地 zip 安装”入口把路径交给了后端。 */
+    var lastImportedArchive: String? = null
+
+    /** 可配置的本地导入结果；默认成功，需要验证失败提示时改成 failure。 */
+    var importResult: Result<Unit> = Result.success(Unit)
+
     /** 记录界面传给 host 的世界端口，验证房主确实按选中的世界建房。 */
     var hostedPort: Int? = null
     private var installed = false
@@ -162,11 +168,42 @@ internal class MultiplayerUiFixture(
                 mutableState.update { it.idleAfterLeave() }
             }
 
-            override suspend fun reset() = leave()
-
             override suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit> {
                 mutableSettings.value = settings
                 return Result.success(Unit)
+            }
+
+            override suspend fun importRuntime(archivePath: String): Result<Unit> {
+                lastImportedArchive = archivePath
+                // 与真实后端一致：导入期间处于下载阶段（busy），结束后回大厅并更新运行时。
+                mutableState.update {
+                    it.copy(phase = LobbyPhase.DownloadingRuntime, progress = null, error = null)
+                }
+                delay(FIXTURE_DOWNLOAD_DELAY_MILLIS)
+                return importResult.fold(
+                    onSuccess = {
+                        installed = true
+                        mutableState.update {
+                            it.copy(
+                                phase = LobbyPhase.Idle,
+                                progress = null,
+                                runtime = runtimeStatus(true),
+                                error = null,
+                            )
+                        }
+                        Result.success(Unit)
+                    },
+                    onFailure = { failure ->
+                        mutableState.update {
+                            it.copy(
+                                phase = LobbyPhase.Idle,
+                                progress = null,
+                                error = "安装本地 EasyTier 安装包失败：${failure.message}",
+                            )
+                        }
+                        Result.failure(failure)
+                    },
+                )
             }
 
             override suspend fun testNat(): Result<NatDiagnostics> {

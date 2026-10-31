@@ -254,10 +254,46 @@ class PclLobbyBackend(
         }
     }
 
-    override suspend fun reset() {
-        leave()
-        store.update { it.copy(worlds = emptyList()) }
-    }
+    override suspend fun importRuntime(archivePath: String): Result<Unit> =
+        runtimeMutex.withLock {
+            store.update {
+                it.copy(
+                    phase = LobbyPhase.DownloadingRuntime,
+                    progress = null,
+                    error = null,
+                )
+            }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    installer
+                        .installFromArchive(Path.of(archivePath)) { progress ->
+                            store.update { it.copy(progress = progress) }
+                        }.getOrThrow()
+                }
+            }.fold(
+                onSuccess = { status ->
+                    store.update {
+                        it.copy(
+                            phase = LobbyPhase.Idle,
+                            progress = null,
+                            runtime = status,
+                        )
+                    }
+                    scanner.sync(mutableSettings.value.enabled)
+                    Result.success(Unit)
+                },
+                onFailure = { failure ->
+                    store.update {
+                        it.copy(
+                            phase = LobbyPhase.Idle,
+                            progress = null,
+                            error = "安装本地 EasyTier 安装包失败：${failure.message}",
+                        )
+                    }
+                    Result.failure(failure)
+                },
+            )
+        }
 
     override suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit> =
         runCatching {

@@ -55,6 +55,54 @@ class EasyTierInstallerTest {
         }
 
     @Test
+    fun `installs from a local zip after verification`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val zip = work.resolve("local-easytier.zip")
+                Files.write(zip, archive)
+                val installer = installer(work, FakeDownloader(ByteArray(0)), packageFor(archive))
+                val status = installer.installFromArchive(zip).getOrThrow()
+                assertTrue(status.installed)
+                assertEquals("core", Files.readString(installer.executable()))
+            }
+        }
+
+    @Test
+    fun `rejects local zip with wrong checksum`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val zip = work.resolve("broken-easytier.zip")
+                Files.write(zip, archive)
+                val installer =
+                    installer(
+                        work,
+                        FakeDownloader(ByteArray(0)),
+                        packageFor(archive, digest = "0".repeat(64)),
+                    )
+                val failure = installer.installFromArchive(zip).exceptionOrNull()
+                assertTrue(failure?.message.orEmpty().contains("校验失败"), "实际：${failure?.message}")
+                assertFalse(Files.exists(work.resolve("easytier")))
+            }
+        }
+
+    @Test
+    fun `reports missing local zip`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val installer = installer(work, FakeDownloader(ByteArray(0)), packageFor(archive))
+                val failure =
+                    installer
+                        .installFromArchive(
+                            work.resolve("absent.zip"),
+                        ).exceptionOrNull()
+                assertTrue(failure?.message.orEmpty().contains("找不到安装包"), "实际：${failure?.message}")
+            }
+        }
+
+    @Test
     fun `rejects archive missing required files`() =
         runBlocking {
             withWork { work ->

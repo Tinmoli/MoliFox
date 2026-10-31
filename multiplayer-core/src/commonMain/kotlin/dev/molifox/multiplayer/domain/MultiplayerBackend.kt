@@ -35,8 +35,8 @@ interface MultiplayerBackend {
     /** 关闭房间或退出房间，回到可发现世界的空闲阶段。 */
     suspend fun leave()
 
-    /** 清空房间信息并停止运行时，用于恢复默认状态。 */
-    suspend fun reset()
+    /** 从本地 EasyTier zip 安装运行时（校验大小/SHA-256）；[archivePath] 为绝对路径。 */
+    suspend fun importRuntime(archivePath: String): Result<Unit>
 
     suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit>
 

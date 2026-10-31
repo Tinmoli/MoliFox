@@ -21,5 +21,15 @@ fun MultiplayerPage(actions: UiActions) {
                 actions.controller.store.notify("已复制到剪贴板")
             }
         },
+        // 文件选择交给应用统一的 actions.choose：界面只拿路径字符串，不自己调 AWT 选择器。
+        chooseArchive = {
+            actions
+                .choose(
+                    title = "选择 EasyTier 安装包",
+                    extensions = listOf("zip"),
+                    multiple = false,
+                ).firstOrNull()
+                ?.toString()
+        },
     )
 }

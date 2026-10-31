@@ -254,7 +254,7 @@ internal class DownloadPaceGuard(
     }
 
     private companion object {
-        const val DEFAULT_WINDOW_MILLIS = 45_000L
-        const val DEFAULT_MIN_RATIO = 0.05
+        const val DEFAULT_WINDOW_MILLIS = 90_000L
+        const val DEFAULT_MIN_RATIO = 0.02
     }
 }
