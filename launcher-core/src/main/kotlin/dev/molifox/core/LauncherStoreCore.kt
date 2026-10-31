@@ -11,6 +11,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.listDirectoryEntries
@@ -50,6 +52,12 @@ internal class LauncherStoreCore(
 
     /** 推断日志每个实例只写一次；重扫时证据不变就不重复刷屏。 */
     internal val inferenceLogged = mutableSetOf<String>()
+
+    /** 游戏日志量大，界面列表按固定间隔批量刷新，避免每行都触发整页重组。 */
+    internal val logFlusher: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "molifox-log-flush").apply { isDaemon = true }
+        }
 
     /** 界面在窗口尺寸变化时上报的当前窗口大小，供「与启动器一样大」的游戏窗口模式使用。 */
     @Volatile internal var launcherWindowSize: Pair<Int, Int>? = null

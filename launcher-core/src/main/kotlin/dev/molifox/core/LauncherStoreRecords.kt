@@ -14,6 +14,8 @@ import kotlin.io.path.isRegularFile
 
 private const val MAX_VISIBLE_LOG_LINES = 600
 private const val LOG_ROTATION_BYTES = 8 * 1024 * 1024
+private const val GAME_LOG_FLUSH_INTERVAL_MILLIS = 100L
+private const val GAME_LOG_FLUSH_INTERVAL_NANOS = GAME_LOG_FLUSH_INTERVAL_MILLIS * 1_000_000L
 
 /** 配置与实例记录的读写：所有保存都串行执行。 */
 internal interface StoreRecordApi {
@@ -209,6 +211,9 @@ internal abstract class StoreLogActions(
 ) : StoreRecordActions(core),
     StoreLogApi {
     private var nextLogId = 0L
+    private val pendingGameLogs = mutableListOf<LogLine>()
+    private var lastGameLogFlushNanos = 0L
+    private var gameLogFlushScheduled = false
 
     @Synchronized
     override fun log(
@@ -226,10 +231,7 @@ internal abstract class StoreLogActions(
                 isGame = game,
                 level = resolved,
             )
-        core.mutableState.value =
-            core.mutableState.value.copy(
-                logs = (core.mutableState.value.logs + line).takeLast(MAX_VISIBLE_LOG_LINES),
-            )
+        appendLogToUi(line)
         runCatching {
             val file = core.directories.launcherLog
             if (file.exists() && file.fileSize() > LOG_ROTATION_BYTES) {
@@ -248,9 +250,56 @@ internal abstract class StoreLogActions(
         }
     }
 
+    /** 游戏日志按 ~100ms 合并刷新；非游戏日志保持即时可见。 */
+    private fun appendLogToUi(line: LogLine) {
+        if (!line.isGame) {
+            flushPendingGameLogs()
+            flushLogs(listOf(line))
+            return
+        }
+        pendingGameLogs += line
+        val now = System.nanoTime()
+        if (now - lastGameLogFlushNanos >= GAME_LOG_FLUSH_INTERVAL_NANOS) {
+            flushPendingGameLogs()
+        } else {
+            scheduleGameLogFlush()
+        }
+    }
+
+    private fun flushPendingGameLogs() {
+        if (pendingGameLogs.isEmpty()) return
+        val batch = pendingGameLogs.toList()
+        pendingGameLogs.clear()
+        lastGameLogFlushNanos = System.nanoTime()
+        flushLogs(batch)
+    }
+
+    private fun scheduleGameLogFlush() {
+        if (gameLogFlushScheduled) return
+        gameLogFlushScheduled = true
+        core.logFlusher.schedule(
+            {
+                synchronized(this) {
+                    gameLogFlushScheduled = false
+                    flushPendingGameLogs()
+                }
+            },
+            GAME_LOG_FLUSH_INTERVAL_MILLIS,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun flushLogs(batch: List<LogLine>) {
+        core.mutableState.value =
+            core.mutableState.value.copy(
+                logs = (core.mutableState.value.logs + batch).takeLast(MAX_VISIBLE_LOG_LINES),
+            )
+    }
+
     /** 只清空界面列表；`logs/launcher.log` 保留，诊断包仍能拿到完整历史。 */
     @Synchronized
     override fun clearLogs() {
+        pendingGameLogs.clear()
         updateState { it.copy(logs = emptyList()) }
     }
 

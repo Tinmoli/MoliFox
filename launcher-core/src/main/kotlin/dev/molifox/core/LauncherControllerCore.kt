@@ -184,6 +184,7 @@ internal class LauncherControllerCore(
         accounts.cancelLogin()
         jobs.cancelAll()
         network.close()
+        store.core.logFlusher.shutdownNow()
         scope.cancel()
         lock.release()
         lockChannel.close()
