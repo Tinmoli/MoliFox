@@ -37,6 +37,13 @@ internal interface LauncherContentApi {
         worldName: String,
     ): String
 
+    /** 在后台任务里下载世界包并安装到实例 `saves/`；重名、游戏运行与任务冲突都会拒绝。 */
+    fun installWorld(
+        hit: ContentHit,
+        versionId: String,
+        instanceId: String,
+    ): String
+
     fun importPack(
         file: Path,
         optionalFiles: Set<String>? = null,
@@ -134,6 +141,23 @@ internal abstract class LauncherContentActions(
             taskResourcesForInstances(store, instanceId),
         ) {
             content.installDatapack(hit, versionId, instanceId, worldName, this)
+        }
+    }
+
+    override fun installWorld(
+        hit: ContentHit,
+        versionId: String,
+        instanceId: String,
+    ): String {
+        require(hit.type == "world") { "所选项目不是世界" }
+        require(versionId.isNotBlank()) { "请选择要安装的世界版本" }
+        require(!game.isRunning(instanceId)) { "游戏正在运行，请先退出游戏再安装世界" }
+        requireIdle(instanceId)
+        return jobs.enqueue(
+            "安装世界 ${hit.title}",
+            taskResourcesForInstances(store, instanceId),
+        ) {
+            content.installWorld(hit, versionId, instanceId, this)
         }
     }
 

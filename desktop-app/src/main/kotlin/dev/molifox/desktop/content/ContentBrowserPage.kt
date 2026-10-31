@@ -101,6 +101,8 @@ fun ColumnScope.ContentBrowser(
     var loadedOnce by remember(kind) { mutableStateOf(false) }
     val selected = state.data.instances.find { it.id == state.data.selectedInstanceId }
     val source = state.data.settings.contentDownloadSource
+    // 世界只有 CurseForge 提供：固定按 CurseForge 加载分类，界面不提供来源切换。
+    val effectiveSource = contentSourceFor(kind, source)
     // 实例的版本目录名可能是整合包标识（TwilightMC-26.3v1.0），只把能识别的真实版本用于筛选。
     val instanceVersion =
         minecraftVersionTag(selected?.gameVersion.orEmpty())?.takeIf { it.isNotBlank() }
@@ -115,15 +117,15 @@ fun ColumnScope.ContentBrowser(
             mutableStateOf(selected?.loader.takeIf { kind == "mod" })
         }
     // 分类：Modrinth 用内置 slug，CurseForge 用镜像自己的数字编号，换来源/类型都重新取。
-    var categories by remember(kind, source) { mutableStateOf(emptySet<String>()) }
-    var sourceCategories by remember(kind, source) {
+    var categories by remember(kind, effectiveSource) { mutableStateOf(emptySet<String>()) }
+    var sourceCategories by remember(kind, effectiveSource) {
         mutableStateOf(emptyList<ContentCategoryOption>())
     }
-    LaunchedEffect(kind, source) {
-        sourceCategories = loadSourceCategories(actions, kind, source)
+    LaunchedEffect(kind, effectiveSource) {
+        sourceCategories = loadSourceCategories(actions, kind, effectiveSource)
     }
     val categoryOptions =
-        if (source == "curseforge") {
+        if (effectiveSource == "curseforge") {
             sourceCategories.map { it.id to it.name }
         } else {
             categoriesFor(kind)
@@ -269,18 +271,8 @@ fun ColumnScope.ContentBrowser(
                     )
                 }
                 SimpleDropdown(sort, contentSortOptions, { sort = it }, Modifier.width(105.dp))
-                // 下载源：点一下就能换。
-                SimpleDropdown(
-                    state.data.settings.contentDownloadSource,
-                    listOf(
-                        "modrinth" to contentSourceName("modrinth"),
-                        "curseforge" to contentSourceName("curseforge"),
-                    ),
-                    { picked ->
-                        actions.run { actions.controller.setContentDownloadSource(picked) }
-                    },
-                    Modifier.width(150.dp),
-                )
+                // 下载源：点一下就能换；世界只提供 CurseForge，显示固定说明。
+                ContentSourceControl(kind, state.data.settings.contentDownloadSource, actions)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
             if (kind == "modpack") {
@@ -362,6 +354,7 @@ private fun contentHint(
         kind == "modpack" -> ""
         target == null -> "先安装并选择游戏实例，即可下载兼容的资源。"
         kind == "mod" && target.loader == LoaderType.Vanilla -> "当前是原版实例，安装模组需要 Fabric、Forge 等加载器。"
+        kind == "world" -> "世界会安装到所选实例的 saves/；同名世界不会覆盖。"
         kind == "shader" -> "光影会安装至 shaderpacks；请先在实例中准备兼容的 Iris 或 OptiFine。"
         else ->
             "已按 Minecraft " +

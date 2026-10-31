@@ -24,6 +24,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -84,6 +86,8 @@ data class LaunchPlan(
     val summary: String = "",
     /** 启动时被回退的实例设置；只记警告，不阻止启动。 */
     val warnings: List<String> = emptyList(),
+    /** 启动后要写入游戏窗口的自定义标题；空串表示保持游戏默认标题。 */
+    val windowTitle: String = "",
 )
 
 /** 一次启动计划解析出的路径：游戏目录、natives、主文件与依赖 classpath。 */
@@ -111,6 +115,8 @@ private class LaunchArguments(
     val features: Map<String, Boolean>,
     val gameArguments: List<String>,
     val targetArguments: List<String>,
+    /** 已替换占位符的自定义窗口标题；空串表示不改窗口标题。 */
+    val windowTitle: String = "",
 )
 
 /** 实例设置与占位符：把实例配置和版本模板解析成能拼进启动命令的值。 */
@@ -154,14 +160,33 @@ private class LaunchParameterResolver(
         requireLaunchWorld(target, files.game)
         val features = launchFeatures(quickPlay, recording, target)
         val values =
-            accountArgumentValues(credentials, parameters.settings, profile) +
+            accountArgumentValues(
+                credentials,
+                parameters.settings,
+                profile,
+                parameters.advanced,
+            ) +
                 directoryArgumentValues(files) +
                 windowArgumentValues(parameters.options, recording, target)
+        val windowTitle =
+            if (parameters.advanced.windowTitle.isBlank()) {
+                ""
+            } else {
+                resolveLaunchText(
+                    parameters.advanced.windowTitle,
+                    instance.name,
+                    credentials.name,
+                    profile.id,
+                    LocalDate.now().toString(),
+                    LocalTime.now().withNano(0).toString(),
+                )
+            }
         return LaunchArguments(
             values,
             features,
             resolveGameArguments(profile, values, store.platform, features),
             targetArguments,
+            windowTitle,
         )
     }
 
@@ -182,6 +207,7 @@ private class LaunchParameterResolver(
         credentials: GameCredentials,
         settings: LauncherSettings,
         profile: ResolvedProfile,
+        advanced: AdvancedLaunchSettings,
     ): Map<String, String> =
         mapOf(
             "auth_player_name" to credentials.name,
@@ -193,7 +219,8 @@ private class LaunchParameterResolver(
             "auth_xuid" to "",
             "clientid" to settings.microsoftClientId,
             "version_name" to profile.id,
-            "version_type" to profile.json.string("type", "release"),
+            "version_type" to
+                effectiveVersionType(advanced, profile.json.string("type", "release")),
             "launcher_name" to "MoliFox",
             "launcher_version" to LAUNCHER_VERSION,
         )
@@ -426,6 +453,7 @@ private class LaunchCommandAssembler(
             parameters.advanced.environmentVariables.toMap(),
             summary = parameters.options.summary,
             warnings = parameters.options.warnings,
+            windowTitle = arguments.windowTitle,
         )
     }
 
@@ -796,6 +824,53 @@ private class RunMark(
     val event: GameRunEvent,
 )
 
+/** Windows 显卡偏好只是尽力而为：成功或失败都只写日志。 */
+private fun applyGpuPreference(
+    store: LauncherStore,
+    run: LaunchRun,
+    plan: LaunchPlan,
+) {
+    applyHighPerformanceGpu(
+        store.platform.osName,
+        plan.executable,
+        run.settings.highPerformanceGpu,
+    )?.let(store::log)
+}
+
+/** 游戏窗口出现后替换标题；其他平台或超时只记一条警告。 */
+private fun watchGameWindowTitle(
+    store: LauncherStore,
+    scope: CoroutineScope,
+    plan: LaunchPlan,
+    process: Process,
+) {
+    if (plan.windowTitle.isBlank()) return
+    scope.launch(Dispatchers.IO) {
+        val applied = applyWindowTitle(process, plan.windowTitle, store.platform.osName)
+        if (!applied && process.isAlive) {
+            store.log(
+                "自定义窗口标题未生效：仅支持 Windows，且游戏窗口需在 15 秒内出现",
+                level = LogLevel.Warn,
+            )
+        }
+    }
+}
+
+/** 进程优先级尽力而为：失败只记一条警告。 */
+private fun applyProcessPriority(
+    store: LauncherStore,
+    process: Process,
+) {
+    val priority =
+        applyGameProcessPriority(store.data.settings.processPriority, process.pid())
+    priority.message?.let { message ->
+        store.log(
+            message,
+            level = if (priority.warning) LogLevel.Warn else LogLevel.Info,
+        )
+    }
+}
+
 /** 一局游戏的进程与输出：登记进程、监视输出、启动后命令与收尾写回。 */
 private class GameRunSupervisor(
     private val store: LauncherStore,
@@ -810,6 +885,7 @@ private class GameRunSupervisor(
         prepared: PreparedLaunch,
     ): Process {
         val plan = prepared.plan
+        applyGpuPreference(store, run, plan)
         val process =
             ProcessBuilder(listOf(plan.executable) + plan.arguments)
                 .directory(plan.gameDirectory.toFile())
@@ -830,15 +906,8 @@ private class GameRunSupervisor(
                 }.start()
         processes[run.runId] = run.instanceId to process
         runners[run.runId] = run.commands
-        // 进程已经跑起来，优先级只是尽力而为：失败也只记一条警告。
-        val priority =
-            applyGameProcessPriority(store.data.settings.processPriority, process.pid())
-        priority.message?.let { message ->
-            store.log(
-                message,
-                level = if (priority.warning) LogLevel.Warn else LogLevel.Info,
-            )
-        }
+        watchGameWindowTitle(store, scope, plan, process)
+        applyProcessPriority(store, process)
         runCatching { runtimes.attach(run.runtimeDirectory, process) }
             .onFailure {
                 store.log(

@@ -95,6 +95,52 @@ class AdvancedLaunchTest {
     }
 
     @Test
+    fun `window title and custom info resolve placeholders`() {
+        val settings =
+            AdvancedLaunchSettings(
+                windowTitle = "{name} | {user} | {version}",
+                customInfo = "MoliFox 服务器",
+            )
+        validateAdvancedLaunchSettings(settings, "windows")
+        assertEquals(
+            "整合包 | Alice | 1.20.1 | 2026-11-01 | 12:30",
+            resolveLaunchText(
+                "{name} | {user} | {version} | {date} | {time}",
+                "整合包",
+                "Alice",
+                "1.20.1",
+                "2026-11-01",
+                "12:30",
+            ),
+        )
+        assertEquals(
+            "{unknown} 保持原样",
+            resolveLaunchText("{unknown} 保持原样", "a", "b", "c", "d", "e"),
+        )
+        assertEquals("MoliFox 服务器", effectiveVersionType(settings, "release"))
+        assertEquals("release", effectiveVersionType(AdvancedLaunchSettings(), "release"))
+        assertEquals(
+            "release",
+            effectiveVersionType(AdvancedLaunchSettings(customInfo = "  "), "release"),
+        )
+    }
+
+    @Test
+    fun `window title and custom info reject invalid values`() {
+        for (
+        invalid in
+        listOf(
+            AdvancedLaunchSettings(windowTitle = "line\nbreak"),
+            AdvancedLaunchSettings(windowTitle = "x".repeat(129)),
+            AdvancedLaunchSettings(customInfo = "line\rbreak"),
+            AdvancedLaunchSettings(customInfo = "x".repeat(65)),
+        )
+        ) {
+            assertFails { validateAdvancedLaunchSettings(invalid, "windows") }
+        }
+    }
+
+    @Test
     fun `preview does not download create directories extract natives or write argument files`() =
         runBlocking {
             val platform = DesktopPlatform()

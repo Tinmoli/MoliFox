@@ -67,7 +67,7 @@ internal class CurseForgeBackend(
         val raw = transport.rawProject(id)
         val index = transport.classIndex()
         val kind =
-            index.kinds[raw.intOrNull("classId") ?: 0]
+            transport.kindOfClassId(index, raw.intOrNull("classId"))
                 ?: transport.fail("项目分类映射", "项目 classId 不在镜像分类表内", raw)
         val hit = browsing.hit(raw, kind)
         val description = transport.optionalText("mods/${curseForgeProjectId(id)}/description")

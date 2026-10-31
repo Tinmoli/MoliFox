@@ -56,6 +56,37 @@ fun AdvancedLaunchEditor(
         }
     }
     OutlinedTextField(
+        value.windowTitle,
+        { onChange(value.copy(windowTitle = it.take(128))) },
+        Modifier.fillMaxWidth(),
+        label = { Text("游戏窗口标题") },
+        placeholder = { Text("留空使用游戏默认标题") },
+        singleLine = true,
+    )
+    MutedText(
+        "支持 {name} 实例名、{user} 玩家名、{version} 版本、{date}、{time}。" +
+            "仅 Windows 支持修改窗口标题，且游戏窗口出现后生效。",
+    )
+    OutlinedTextField(
+        value.customInfo,
+        { onChange(value.copy(customInfo = it.take(64))) },
+        Modifier.fillMaxWidth(),
+        label = { Text("自定义信息") },
+        placeholder = { Text("显示在游戏主界面左下角与 F3 调试页") },
+        singleLine = true,
+    )
+    if (os == "windows") {
+        SettingRow(
+            "使用高性能显卡",
+            "把本次使用的 Java 加入 Windows 显卡偏好；关闭后若曾设置过会恢复默认。",
+        ) {
+            CompactSwitch(
+                value.highPerformanceGpu,
+                { onChange(value.copy(highPerformanceGpu = it)) },
+            )
+        }
+    }
+    OutlinedTextField(
         value.extraGameArgs,
         { onChange(value.copy(extraGameArgs = it)) },
         Modifier.fillMaxWidth(),

@@ -7,6 +7,8 @@ package dev.molifox.core
 
 private const val MAX_EXTRA_JVM_ARGUMENT_CHARS = 4096
 private const val MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS = 3600
+private const val MAX_WINDOW_TITLE_CHARS = 128
+private const val MAX_CUSTOM_INFO_CHARS = 64
 private const val REDACTION_LENGTH_THRESHOLD = 5
 
 /**
@@ -22,7 +24,35 @@ data class AdvancedLaunchSettings(
     val closeLauncherAfterGameExit: Boolean = false,
     val verifyFileHashes: Boolean = true,
     val useJavaConsoleExecutable: Boolean = false,
+    /** 游戏窗口标题模板；支持 `{name}`、`{user}`、`{version}`、`{date}`、`{time}`，留空不修改。 */
+    val windowTitle: String = "",
+    /** 显示在游戏主界面左下角与 F3 的信息，写入 `--versionType`；留空沿用版本类型。 */
+    val customInfo: String = "",
+    /** Windows：把本次使用的 Java 设为「高性能」显卡偏好；其他平台忽略。 */
+    val highPerformanceGpu: Boolean = false,
 )
+
+/** 解析窗口标题里的替换标记；未知标记保持原样，避免用户内容被意外吞掉。 */
+internal fun resolveLaunchText(
+    template: String,
+    instanceName: String,
+    playerName: String,
+    versionId: String,
+    date: String,
+    time: String,
+): String =
+    template
+        .replace("{name}", instanceName)
+        .replace("{user}", playerName)
+        .replace("{version}", versionId)
+        .replace("{date}", date)
+        .replace("{time}", time)
+
+/** 自定义信息优先于版本 JSON 的 `type`；空串表示不覆盖。 */
+internal fun effectiveVersionType(
+    settings: AdvancedLaunchSettings,
+    fallback: String,
+): String = settings.customInfo.trim().ifBlank { fallback }
 
 fun effectiveLaunchSettings(
     settings: LauncherSettings,
@@ -96,6 +126,18 @@ fun validateAdvancedLaunchSettings(
         "命令超时需为 1–3600 秒"
     }
     require(settings.launcherVisibility in setOf("", "keep", "minimize", "hide")) { "启动器显示方式无效" }
+    require(settings.windowTitle.length <= MAX_WINDOW_TITLE_CHARS) {
+        "游戏窗口标题最多 $MAX_WINDOW_TITLE_CHARS 字"
+    }
+    require(settings.customInfo.length <= MAX_CUSTOM_INFO_CHARS) {
+        "自定义信息最多 $MAX_CUSTOM_INFO_CHARS 字"
+    }
+    for (label in listOf("游戏窗口标题", "自定义信息")) {
+        val value = if (label == "游戏窗口标题") settings.windowTitle else settings.customInfo
+        require('\u0000' !in value && '\r' !in value && '\n' !in value) {
+            "$label 必须是单行文本"
+        }
+    }
     for (
     (label, command) in
     listOf("启动前" to settings.preLaunchCommand, "退出后" to settings.postExitCommand)

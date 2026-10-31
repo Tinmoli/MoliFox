@@ -99,6 +99,7 @@ fun contentWebsite(hit: ContentHit): String {
             "resourcepack" -> "texture-packs"
             "shader" -> "shaders"
             "datapack" -> "data-packs"
+            "world" -> "worlds"
             else -> "mc-mods"
         }
     return if (hit.id.startsWith("curseforge:")) {

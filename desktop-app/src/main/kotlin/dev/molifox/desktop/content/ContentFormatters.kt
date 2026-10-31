@@ -16,6 +16,7 @@ internal fun contentKindLabel(type: String): String =
         "resourcepack" -> "资源包"
         "shader" -> "光影"
         "datapack" -> "数据包"
+        "world" -> "世界"
         else -> "模组"
     }
 

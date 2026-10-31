@@ -31,6 +31,9 @@ private const val LOADER_ID_NEOFORGE = 6
 /** 项目介绍转纯文本时保留的最大字符数。 */
 private const val PLAIN_DESCRIPTION_MAX_LENGTH = 250000
 
+/** 世界在 CurseForge 的固定分类编号；镜像分类表省略 worlds 时按此兜底。 */
+internal const val CURSE_FORGE_WORLD_CLASS_ID = 17
+
 /** 资源类型 → 镜像分类 slug；镜像新增的分类只有在表内才被识别。 */
 internal val curseForgeClassSlugs =
     mapOf(
@@ -39,6 +42,13 @@ internal val curseForgeClassSlugs =
         "resourcepack" to "texture-packs",
         "shader" to "shaders",
         "datapack" to "data-packs",
+        "world" to "worlds",
+    )
+
+/** 官方分类编号的固定兜底：部分社区镜像的分类表不返回这些顶层类型。 */
+private val curseForgeClassIds =
+    mapOf(
+        "world" to CURSE_FORGE_WORLD_CLASS_ID,
     )
 
 /** 顶层资源类型（游戏 ID 432 的 class 分类）；[payload] 用于失败时回带响应片段。 */
@@ -129,7 +139,17 @@ internal class CurseForgeApi(
         index.kinds.entries
             .find { it.value == kind }
             ?.key
+            ?: curseForgeClassIds[kind]
             ?: fail(stage, "镜像没有 $kind 对应的资源类型", index.payload)
+
+    /** 项目 classId → 资源类型：镜像分类表缺失时使用固定编号兜底，避免世界项目无法打开详情。 */
+    fun kindOfClassId(
+        index: CurseForgeClassIndex,
+        classId: Int?,
+    ): String? =
+        classId?.let { id ->
+            index.kinds[id] ?: curseForgeClassIds.entries.find { it.value == id }?.key
+        }
 
     /** 社区镜像不提供介绍/更新日志端点（404）；它们只是可选展示内容，不影响安装。 */
     suspend fun optionalText(path: String): String =

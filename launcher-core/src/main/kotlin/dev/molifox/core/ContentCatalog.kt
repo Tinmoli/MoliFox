@@ -14,6 +14,10 @@ private const val DISABLED_FILE_SUFFIX_CHARS = 9
 private const val MAX_PROJECT_DESCRIPTION_CHARS = 60000
 private const val MAX_CHANGELOG_CHARS = 40000
 
+/** 项目详情允许的资源类型；与搜索、安装入口使用同一套字符串标识。 */
+private val supportedContentKinds =
+    setOf("mod", "modpack", "resourcepack", "shader", "datapack", "world")
+
 data class ContentVersion(
     val id: String,
     val name: String,
@@ -144,9 +148,7 @@ class ContentCatalog
         suspend fun browse(projectId: String): ContentDetails {
             val project = backend.project(projectId)
             val kind = project.string("project_type")
-            require(kind in setOf("mod", "modpack", "resourcepack", "shader", "datapack")) {
-                "不支持的资源类型"
-            }
+            require(kind in supportedContentKinds) { "不支持的资源类型" }
             val hit =
                 ContentHit(
                     projectId,

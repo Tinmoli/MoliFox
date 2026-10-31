@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Storage
@@ -76,6 +77,7 @@ private val downloadKinds =
         DownloadKind("resourcepack", "资源包", Icons.Outlined.Palette),
         DownloadKind("shader", "光影", Icons.Outlined.AutoAwesome),
         DownloadKind("datapack", "数据包", Icons.Outlined.Storage),
+        DownloadKind("world", "世界", Icons.Outlined.Public),
     )
 
 @Composable

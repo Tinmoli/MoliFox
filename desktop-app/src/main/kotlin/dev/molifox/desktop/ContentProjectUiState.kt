@@ -37,6 +37,7 @@ internal class ContentProjectUiState(
     var worldName by mutableStateOf("")
     var worldError by mutableStateOf<String?>(null)
     var confirmDatapack by mutableStateOf(false)
+    var confirmWorld by mutableStateOf(false)
     var changelog by mutableStateOf<ContentVersion?>(null)
     var changelogError by mutableStateOf<String?>(null)
     var changelogLoading by mutableStateOf(false)

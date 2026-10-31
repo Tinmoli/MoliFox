@@ -57,12 +57,13 @@ internal abstract class ContentSearchActions(
     ): ContentSearch {
         require(
             query.length <= SEARCH_QUERY_MAX_LENGTH &&
-                kind in listOf("mod", "modpack", "resourcepack", "shader", "datapack") &&
+                kind in listOf("mod", "modpack", "resourcepack", "shader", "datapack", "world") &&
                 offset in 0..SEARCH_OFFSET_MAX,
         ) {
             "搜索参数无效"
         }
-        if (store.data.settings.contentDownloadSource == "curseforge") {
+        // 世界只有 CurseForge 提供：即使设置里选了 Modrinth，世界分类也固定走 CurseForge。
+        if (kind == "world" || store.data.settings.contentDownloadSource == "curseforge") {
             return curseForge.search(query, kind, instanceId?.let(store::instance), offset, filter)
         }
         val selection = filter ?: defaultContentFilter(kind, instanceId)
@@ -77,7 +78,7 @@ internal abstract class ContentSearchActions(
 
     /** 内容源的分类列表：CurseForge 用镜像自己的编号与名称，Modrinth 由界面内置的 slug 列表提供。 */
     override suspend fun contentCategories(kind: String): List<ContentCategoryOption> =
-        if (store.data.settings.contentDownloadSource == "curseforge") {
+        if (kind == "world" || store.data.settings.contentDownloadSource == "curseforge") {
             curseForge.categories(kind)
         } else {
             emptyList()

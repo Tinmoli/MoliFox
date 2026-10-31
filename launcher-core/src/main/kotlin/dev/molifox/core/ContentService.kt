@@ -47,6 +47,14 @@ class ContentService
             gameDirectoryId: String? = core.store.data.activeGameDirectoryId,
         ) = core.actions.installContent(hit, instanceId, context, gameDirectoryId)
 
+        /** 下载世界包并解压到实例的 `saves/`：世界目录名取自包内包装目录或 `level.dat`。 */
+        suspend fun installWorld(
+            hit: ContentHit,
+            versionId: String,
+            instanceId: String,
+            context: JobContext,
+        ) = core.actions.installWorld(hit, versionId, instanceId, context)
+
         /**
          * 导入整合包：[repairId] 非空时修复既有实例，否则新建实例；[optionalFiles] 为空表示按
          * 整合包记录的默认选择，[expectedHash] 用于确认归档未被替换。

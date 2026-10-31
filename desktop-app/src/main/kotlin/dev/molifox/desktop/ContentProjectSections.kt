@@ -313,6 +313,7 @@ internal fun ContentProjectFooter(
                     instanceRoot = instanceRoot,
                     onDestination = { ui.destination = it },
                     onConfirmDatapack = { ui.confirmDatapack = true },
+                    onConfirmWorld = { ui.confirmWorld = true },
                     onInstallVersion = { ui.installVersion = version },
                     onInstallStarted = onInstallStarted,
                 )

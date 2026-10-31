@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** 模组/资源包/光影/数据包：先让用户确认目标文件夹，再把确认结果交给对话框。 */
+/** 模组/资源包/光影/数据包/世界：先让用户确认安装位置，再把确认结果交给对话框。 */
 internal fun contentDownload(
     actions: UiActions,
     hit: ContentHit,
@@ -40,6 +40,7 @@ internal fun contentDownload(
     instanceRoot: Path?,
     onDestination: (Path) -> Unit,
     onConfirmDatapack: () -> Unit,
+    onConfirmWorld: () -> Unit,
     onInstallVersion: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
@@ -48,6 +49,11 @@ internal fun contentDownload(
             actions.controller.preparePack(hit, version.id) { actions.pendingPack = it }
         }
         onInstallStarted()
+        return
+    }
+    // 世界落点由包内世界目录决定，不需要用户再挑文件夹，只确认安装到哪个实例。
+    if (hit.type == "world") {
+        onConfirmWorld()
         return
     }
     actions.run {

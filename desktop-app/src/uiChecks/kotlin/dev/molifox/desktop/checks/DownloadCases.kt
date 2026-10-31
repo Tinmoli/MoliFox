@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 用固定清单验收下载页的版本展示和六类资源入口，不下载真实游戏。
+// 用固定清单验收下载页的版本展示和七类资源入口，不下载真实游戏。
 
 package dev.molifox.desktop.checks
 
@@ -17,6 +17,7 @@ internal fun checkDownloads(
         ui.tab(category)
         ui.capture("download-" + categoryName(category))
     }
+    check(ui.exists("世界")) { "下载页缺少世界分类" }
     ui.tab("联机", navigation = true)
     ui.await("首次联机说明") { ui.exists("暂不使用") }
     ui.click("暂不使用")

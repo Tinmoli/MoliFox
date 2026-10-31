@@ -77,31 +77,41 @@ fun ContentProjectDialog(
     // 数据包落到所选存档的 datapacks；没有实例时由用户从数据目录里自己挑。
     val defaultDestination = contentDefaultDestination(instanceRoot, hit.type, ui.worldName)
     ContentProjectWorldEffect(ui, hit, target, actions)
-    if (ui.confirmDatapack && target != null && chosen != null) {
-        ContentDatapackConfirmDialog(
-            hit,
-            ui,
-            target,
-            chosen,
-            defaultDestination,
-            actions,
-            onInstallStarted,
-        )
-        return
-    }
     val installing = ui.installVersion
-    if (installing != null && target != null) {
-        ContentInstallDialog(
-            hit,
-            target.id,
-            actions,
-            { ui.installVersion = null },
-            onInstallStarted,
-            initialVersionId = installing.id,
-            destination = ui.destination,
-        )
-        return
-    }
+    // 数据包确认、世界确认与安装进度共用一层覆盖层：同一时间只显示其中一个。
+    val overlayShown =
+        when {
+            ui.confirmDatapack && target != null && chosen != null -> {
+                ContentDatapackConfirmDialog(
+                    hit,
+                    ui,
+                    target,
+                    chosen,
+                    defaultDestination,
+                    actions,
+                    onInstallStarted,
+                )
+                true
+            }
+            ui.confirmWorld && target != null && chosen != null -> {
+                ContentWorldConfirmDialog(hit, ui, target, chosen, actions, onInstallStarted)
+                true
+            }
+            installing != null && target != null -> {
+                ContentInstallDialog(
+                    hit,
+                    target.id,
+                    actions,
+                    { ui.installVersion = null },
+                    onInstallStarted,
+                    initialVersionId = installing.id,
+                    destination = ui.destination,
+                )
+                true
+            }
+            else -> false
+        }
+    if (overlayShown) return
     Modal(
         hit.title,
         "项目详情 · 先选游戏与资源版本，再安装",
