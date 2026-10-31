@@ -78,6 +78,9 @@ class DesktopNavigationState(
     var editing by androidx.compose.runtime.mutableStateOf<String?>(null)
     var downloadKind by androidx.compose.runtime.mutableStateOf("minecraft")
 
+    /** 导出整合包是实例详情/列表上的子页面；返回时回到原页面，顶部导航切换则退出。 */
+    var exporting by androidx.compose.runtime.mutableStateOf<String?>(null)
+
     // 「账户列表」是开始页的子页：记住进入前的页面，返回时回到来源，而不是固定回开始页。
     private var accountReturnTo by androidx.compose.runtime.mutableStateOf(Page.Home)
 
@@ -92,12 +95,14 @@ class DesktopNavigationState(
         destination: Page,
         resources: Boolean = false,
     ) {
+        exporting = null
         editing = null
         if (destination == Page.Discover && resources) downloadKind = "mod"
         page = destination
     }
 
     fun install() {
+        exporting = null
         editing = null
         downloadKind = "minecraft"
         page = Page.Discover
@@ -105,6 +110,7 @@ class DesktopNavigationState(
 
     /** 打开账户列表：记下来源页；已经在账户列表时不覆盖来源。 */
     fun openAccounts() {
+        exporting = null
         editing = null
         if (page != Page.Accounts) accountReturnTo = page
         page = Page.Accounts
@@ -127,8 +133,18 @@ class DesktopNavigationState(
 
     /** 关闭实例详情：回到打开它的那一页；从开始页进来就直接回开始，不再先落到实例列表。 */
     fun closeInstance() {
+        exporting = null
         editing = null
         page = detailReturnTo
+    }
+
+    /** 从实例详情或列表打开导出页；不清空来源，返回时原页面原样恢复。 */
+    fun openExport(id: String) {
+        exporting = id
+    }
+
+    fun closeExport() {
+        exporting = null
     }
 }
 

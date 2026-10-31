@@ -35,7 +35,7 @@ internal fun checkInstance(
     ui.await("导出内容预览") { ui.exists("选择内容") }
     ui.capture("export-preview")
     ui.click("取消")
-    ui.await("导出对话框关闭") { !ui.exists("导出整合包 / 完整备份") }
+    ui.await("导出页关闭") { !ui.exists("选择内容") }
 }
 
 internal fun checkMove(

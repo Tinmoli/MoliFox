@@ -54,6 +54,8 @@ internal suspend fun loadExportPreview(
     instanceId: String,
     stem: String,
     format: PackExportFormat,
+    remoteResources: Boolean,
+    uploadMode: Boolean,
     includeLogs: Boolean,
     onPlan: (MrpackExportPlan) -> Unit,
     onError: (String?) -> Unit,
@@ -64,8 +66,11 @@ internal suspend fun loadExportPreview(
                 actions.controller.content.previewMrpackExport(
                     instanceId,
                     MrpackExportMetadata(stem, "1.0.0"),
-                    resolveDownloads = format == PackExportFormat.Modrinth,
-                    resolveCurseForge = format == PackExportFormat.CurseForge,
+                    resolveDownloads = format == PackExportFormat.Modrinth && remoteResources,
+                    resolveCurseForge =
+                        format == PackExportFormat.Modrinth &&
+                            remoteResources &&
+                            !uploadMode,
                     includeLogs = includeLogs,
                 )
             },
@@ -90,20 +95,46 @@ internal suspend fun freshExportPlan(
     current: MrpackExportPlan,
     metadata: MrpackExportMetadata,
     format: PackExportFormat,
+    remoteResources: Boolean,
+    uploadMode: Boolean,
     includeLogs: Boolean,
 ): MrpackExportPlan =
-    if (current.metadata == metadata && current.includesLogs == includeLogs) {
+    if (current.metadata == metadata &&
+        current.includesLogs == includeLogs &&
+        current.matchesRemoteMode(format, remoteResources, uploadMode)
+    ) {
         current
     } else {
         withContext(Dispatchers.IO) {
             actions.controller.content.previewMrpackExport(
                 instanceId,
                 metadata,
-                resolveDownloads = format == PackExportFormat.Modrinth,
-                resolveCurseForge = format == PackExportFormat.CurseForge,
+                resolveDownloads = format == PackExportFormat.Modrinth && remoteResources,
+                resolveCurseForge =
+                    format == PackExportFormat.Modrinth &&
+                        remoteResources &&
+                        !uploadMode,
                 includeLogs = includeLogs,
             )
         }
+    }
+
+/** 快照里的远程来源是否与当前开关一致；不一致就重新预览，避免导出旧远程快照。 */
+private fun MrpackExportPlan.matchesRemoteMode(
+    format: PackExportFormat,
+    remoteResources: Boolean,
+    uploadMode: Boolean,
+): Boolean =
+    when (format) {
+        PackExportFormat.Modrinth ->
+            if (!remoteResources) {
+                files.none { it.downloadUrl != null || it.curseForgeProjectId != null }
+            } else {
+                !uploadMode || files.none { it.curseForgeProjectId != null }
+            }
+        PackExportFormat.CurseForge ->
+            remoteResources || files.none { it.curseForgeProjectId != null }
+        else -> true
     }
 
 /** 真正的写文件仍由任务队列执行，失败交给界面提示。 */
@@ -130,6 +161,8 @@ internal fun startMrpackExport(
                     current,
                     metadata,
                     format,
+                    options.remoteResources,
+                    options.modrinthUploadMode,
                     includeLogs,
                 )
             val chosen = exportEffectiveOptions(options, selectedEntries, includeLogs)
@@ -138,7 +171,7 @@ internal fun startMrpackExport(
                 fresh,
                 destination,
                 exportSelectedPaths(fresh, format, chosen, selectedEntries),
-                if (chosen.includeLocalResources) local else emptySet(),
+                local,
                 format,
                 chosen,
             )

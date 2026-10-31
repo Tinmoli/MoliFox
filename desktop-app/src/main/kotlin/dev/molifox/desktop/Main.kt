@@ -585,9 +585,15 @@ fun MoliApp(
                 ),
         ) {
             val current = state.data.instances.find { it.id == navigation.editing }
-            // 实例详情与主页面共用一次切换动画；key 语义保持不变。
+            val exportInstance =
+                state.data.instances.find { it.id == navigation.exporting }
+            // 导出页是独立内容页：优先于实例详情，返回后原页面原样恢复。
             val target =
-                if (current != null) "instance:" + current.id else "page:" + navigation.page.name
+                when {
+                    exportInstance != null -> "export:" + exportInstance.id
+                    current != null -> "instance:" + current.id
+                    else -> "page:" + navigation.page.name
+                }
             // 120ms 淡入 + 4dp 上移；关闭动画时直接呈现，不做过渡。
             if (LocalReducedMotion.current) {
                 Column(Modifier.fillMaxSize()) {
@@ -701,6 +707,23 @@ private fun ColumnScope.LauncherContent(
     onMoveTarget: (Pair<GameInstance, Path>) -> Unit,
 ) {
     val navigation = actions.navigation
+    val exportInstance =
+        if (targetKey.startsWith("export:")) {
+            state.data.instances.find { it.id == targetKey.removePrefix("export:") }
+        } else {
+            null
+        }
+    if (exportInstance != null) {
+        key(exportInstance.id) {
+            ExportMrpackPage(
+                instance = exportInstance,
+                actions = actions,
+                onDismiss = { navigation.closeExport() },
+                onStarted = { actions.taskQueued() },
+            )
+        }
+        return
+    }
     val instance =
         if (targetKey.startsWith("instance:")) {
             state.data.instances.find { it.id == targetKey.removePrefix("instance:") }

@@ -130,7 +130,14 @@ internal fun allowedMrpackDownload(value: String): Boolean =
         val uri = URI(value)
         uri.scheme == "https" &&
             uri.host?.lowercase(Locale.ROOT) in
-            setOf("cdn.modrinth.com", "github.com", "raw.githubusercontent.com", "gitlab.com") &&
+            setOf(
+                "cdn.modrinth.com",
+                "github.com",
+                "raw.githubusercontent.com",
+                "gitlab.com",
+                "edge.forgecdn.net",
+                "mediafilez.forgecdn.net",
+            ) &&
             uri.userInfo == null &&
             uri.fragment == null &&
             uri.port in setOf(-1, HTTPS_PORT)

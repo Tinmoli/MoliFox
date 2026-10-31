@@ -56,16 +56,16 @@ enum class PackExportFormat(
     val purpose: String,
 ) {
     Modrinth(
-        "Modrinth · .mrpack（可导入）",
+        "Modrinth · .mrpack",
         "mrpack",
         true,
-        "只写下载链接的标准包；Modrinth App、Prism、HMCL 都能导入，包体最小。",
+        "标准整合包；可从 Modrinth 下载资源，未命中的文件自动打包。",
     ),
     CurseForge(
-        "CurseForge · .zip（可导入）",
+        "ZIP · 通用整合包",
         "zip",
         true,
-        "能匹配到 projectID/fileID 的文件写入受管清单，其余放进 overrides/；CurseForge App 与 Prism 可导入。",
+        "全量打包；PCL CE、HMCL、Prism、CurseForge App 均可导入。",
     ),
     MultiMc(
         "MultiMC / Prism · .zip（可导入）",
@@ -90,11 +90,10 @@ enum class PackExportFormat(
 
     companion object {
         /**
-         * 导出界面只保留最常用的两种：可被 Modrinth App / Prism / HMCL 导入的标准包，
-         * 以及不能当整合包导入的完整备份。其余格式的导出代码保留给旧配置与测试，
-         * 不再出现在选择列表；导入端继续支持全部格式。
+         * 导出界面只保留两种：Modrinth 与通用 ZIP。其余枚举保留用于旧包识别与回退。
          */
-        val offeredForExport: List<PackExportFormat> = listOf(Modrinth, Backup)
+        val offeredForExport: List<PackExportFormat> =
+            listOf(Modrinth, CurseForge)
     }
 }
 
@@ -104,8 +103,12 @@ enum class PackExportFormat(
  * 日志与崩溃报告只属于完整备份，且默认关闭。
  */
 data class PackExportOptions(
-    /** 确认有权分发本地模组/资源包/光影；关闭时这些未走下载清单的文件不写入。 */
-    val includeLocalResources: Boolean = false,
+    /** 优先写入远程来源（Modrinth/CurseForge 下载链接），默认开启。 */
+    val remoteResources: Boolean = true,
+    /** Modrinth 上传模式：只使用 Modrinth 来源，仅 CurseForge 有的文件改为本地打包。 */
+    val modrinthUploadMode: Boolean = false,
+    /** 未命中下载来源的本地模组/资源包/光影一并打包，默认开启。 */
+    val includeLocalResources: Boolean = true,
     val includeSaves: Boolean = false,
     val includeScreenshots: Boolean = false,
     /** options.txt / optionsof.txt / optionsshaders.txt：默认不含，需显式勾选。 */
@@ -394,8 +397,8 @@ internal class MrpackExporter(
         files: List<MrpackExportFile>,
         warnings: MutableList<String>,
         enabled: Boolean,
-    ): Map<String, Pair<Long, Long>> {
-        val matchedIds = mutableMapOf<String, Pair<Long, Long>>()
+    ): Map<String, CurseForgeSource> {
+        val matchedIds = mutableMapOf<String, CurseForgeSource>()
         if (!enabled) return matchedIds
         val candidates = files.filter { curseForgeCandidate(it.path) }
         if (candidates.isEmpty()) return matchedIds
@@ -408,8 +411,8 @@ internal class MrpackExporter(
             val matched = backend.fingerprints(candidates.map { safePath(root, it.path) })
             for (file in candidates) {
                 val info = matched[safePath(root, file.path)]
-                val projectId = if (info == null) null else curseForgeIds(info)
-                if (projectId != null) matchedIds[file.path] = projectId
+                val source = if (info == null) null else curseForgeSource(info)
+                if (source != null) matchedIds[file.path] = source
             }
             val unmatched = candidates.size - matchedIds.size
             if (unmatched > 0) {
@@ -468,28 +471,54 @@ private fun validatePackMetadata(metadata: MrpackExportMetadata) {
     }
 }
 
-/** 应用远程来源：匹配到 CurseForge 编号或可信下载链接后改为默认选中、无需授权。 */
+/** 应用远程来源：Modrinth 链接优先，CurseForge 匹配作为下载地址回退与受管清单。 */
 private fun withResolvedSource(
     file: MrpackExportFile,
     remoteUrl: String?,
-    curseForgeId: Pair<Long, Long>?,
+    curseForge: CurseForgeSource?,
 ): MrpackExportFile =
     when {
-        curseForgeId != null ->
-            file.copy(
-                curseForgeProjectId = curseForgeId.first,
-                curseForgeFileId = curseForgeId.second,
-                selectedByDefault = true,
-                requiresPermission = false,
-            )
         remoteUrl != null ->
             file.copy(
                 downloadUrl = remoteUrl,
+                curseForgeProjectId = curseForge?.projectId,
+                curseForgeFileId = curseForge?.fileId,
+                selectedByDefault = true,
+                requiresPermission = false,
+            )
+        curseForge?.downloadUrl != null ->
+            file.copy(
+                downloadUrl = curseForge.downloadUrl,
+                curseForgeProjectId = curseForge.projectId,
+                curseForgeFileId = curseForge.fileId,
+                selectedByDefault = true,
+                requiresPermission = false,
+            )
+        curseForge != null ->
+            file.copy(
+                curseForgeProjectId = curseForge.projectId,
+                curseForgeFileId = curseForge.fileId,
                 selectedByDefault = true,
                 requiresPermission = false,
             )
         else -> file
     }
+
+/** CurseForge 匹配结果：编号用于受管清单，下载地址用于 Modrinth 的 files[]。 */
+private data class CurseForgeSource(
+    val projectId: Long,
+    val fileId: Long,
+    val downloadUrl: String?,
+)
+
+private fun curseForgeSource(info: com.google.gson.JsonObject): CurseForgeSource? {
+    val ids = curseForgeIds(info) ?: return null
+    val url =
+        info.string("downloadUrl").takeIf {
+            it.isNotBlank() && allowedMrpackDownload(it)
+        }
+    return CurseForgeSource(ids.first, ids.second, url)
+}
 
 /** 在 Modrinth 返回的候选里找到哈希、大小与下载链接都可信的那一项。 */
 private fun matchingRemoteFile(
@@ -535,8 +564,7 @@ private fun selectExportFiles(
     ) {
         "日志与崩溃报告只随完整备份导出"
     }
-    // 日志只属于完整备份；禁用模组按选项排除，不改名为启用。
-    val files =
+    val filtered =
         plan.files
             .filter { it.path in selected }
             .filter {
@@ -544,9 +572,28 @@ private fun selectExportFiles(
                     (!backupOnlyExportPath(it.path) || options.includeLogs) ||
                     format != PackExportFormat.Backup && !backupOnlyExportPath(it.path)
             }.filter { !(options.enabledModsOnly && disabledModExportPath(it.path)) }
+    // 关闭远程时强制改为本地写入；即使调用方传入带下载地址的旧快照也不会写出远程清单。
+    val files =
+        if (!options.remoteResources &&
+            (format == PackExportFormat.Modrinth || format == PackExportFormat.CurseForge)
+        ) {
+            filtered.map(::withoutRemoteSource)
+        } else {
+            filtered
+        }
     require(files.isNotEmpty()) { "勾选的内容没有可写入的文件，请重新选择" }
     return files
 }
+
+/** 去掉远程来源并标记为需授权打包，避免关闭远程后仍写下载链接或受管清单。 */
+private fun withoutRemoteSource(file: MrpackExportFile): MrpackExportFile =
+    file.copy(
+        downloadUrl = null,
+        curseForgeProjectId = null,
+        curseForgeFileId = null,
+        selectedByDefault = true,
+        requiresPermission = true,
+    )
 
 /** 完整备份只留在本机，不需要授权；其它格式要求先确认可分发。 */
 private fun requireExportPermissions(

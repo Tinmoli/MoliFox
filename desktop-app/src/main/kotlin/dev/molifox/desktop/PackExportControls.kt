@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,33 +33,6 @@ internal fun exportFileStem(name: String): String =
         .trim()
         .trim('.')
         .ifBlank { "instance" }
-
-/** 一行导出开关：标题、说明与复选框，点整行都能切换。 */
-@Composable
-internal fun ExportOptionRow(
-    title: String,
-    detail: String,
-    checked: Boolean,
-    enabled: Boolean = true,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Metrics.innerRadius))
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(checked, { onCheckedChange(it) }, enabled = enabled)
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            if (detail.isNotBlank()) {
-                Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
 
 /** 「选择内容」的一行：复选框 + 顶层条目名 + 文件数与磁盘体积；扫描中显示 `…`。 */
 @Composable

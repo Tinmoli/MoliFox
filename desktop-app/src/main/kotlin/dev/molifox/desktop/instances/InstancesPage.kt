@@ -60,7 +60,6 @@ fun ColumnScope.InstancesPage(
     // 行内「更多操作」打开的对话框：重命名 / 复制 / 导出都复用现有实现，本页只保留选择结果。
     var renaming by remember { mutableStateOf<GameInstance?>(null) }
     var copying by remember { mutableStateOf<GameInstance?>(null) }
-    var exporting by remember { mutableStateOf<GameInstance?>(null) }
     var sizeRevision by remember { mutableIntStateOf(0) }
     // 进入/回到实例列表时做一次廉价的目录签名检查；新增、删除或 JSON 改坏都会在这里出现。
     LaunchedEffect(Unit) {
@@ -186,18 +185,15 @@ fun ColumnScope.InstancesPage(
         onDelete = onDelete,
         onRename = { renaming = it },
         onCopy = { copying = it },
-        onExport = { exporting = it },
+        onExport = { actions.navigation.openExport(it.id) },
         navigate = navigate,
     )
     InstancePageDialogs(
         renaming = renaming,
         copying = copying,
-        exporting = exporting,
         actions = actions,
         onRenameDismiss = { renaming = null },
         onCopyDismiss = { copying = null },
-        onExportDismiss = { exporting = null },
-        onExportStarted = { actions.taskQueued() },
     )
 }
 

@@ -1,21 +1,33 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责导出对话框的内容与底部按钮：只做渲染，读写由调用方提供。
+// 负责导出页面的内容与底部按钮：只做渲染，读写由调用方提供。
 
 package dev.molifox.desktop
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
@@ -27,12 +39,13 @@ import dev.molifox.core.PackExportOptions
 import dev.molifox.core.PackExportScan
 
 @Composable
-internal fun ExportMrpackDialogBody(
+internal fun ExportMrpackPageBody(
     instance: GameInstance,
     actions: UiActions,
     format: PackExportFormat,
     stem: String,
     target: String,
+    packName: String,
     version: String,
     loading: Boolean,
     exporting: Boolean,
@@ -49,6 +62,7 @@ internal fun ExportMrpackDialogBody(
     options: PackExportOptions,
     canConfirm: Boolean,
     onTargetChange: (String) -> Unit,
+    onPackNameChange: (String) -> Unit,
     onVersionChange: (String) -> Unit,
     onFormatChosen: (String) -> Unit,
     onRetryScan: () -> Unit,
@@ -60,82 +74,97 @@ internal fun ExportMrpackDialogBody(
     onStarted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Modal(
-        "导出整合包 / 完整备份",
-        "${instance.name} · ${format.title}",
-        width = 640.dp,
-        onDismiss = onDismiss,
-    ) {
-        ExportMrpackInputs(
-            format = format,
-            stem = stem,
-            target = target,
-            version = version,
-            exporting = exporting,
-            fileName = view.fileName,
-            actions = actions,
-            onTargetChange = onTargetChange,
-            onVersionChange = onVersionChange,
-            onFormatChosen = onFormatChosen,
-        )
-        // 中间区域单独滚动，底部按钮始终可见；顶层条目很多时也只在这里滚动。
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
         ) {
-            ExportEntriesSection(
-                ExportEntriesState(
-                    loaded = scan != null,
-                    scanError = scanError,
-                    selectableEntries = selectableEntries,
-                    selectedEntries = selectedEntries,
-                    exporting = exporting,
-                    omitted = scan?.omitted.orEmpty(),
-                ),
-                onRetry = onRetryScan,
-                onToggle = onToggleEntry,
-            )
-            ExportPreviewSection(
-                ExportPreviewState(
-                    loading = loading,
-                    error = error,
-                    totalFiles = prepared?.files?.size,
-                    selectedFiles = selection.size,
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HeaderIconButton(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        "返回实例",
+                        onClick = onDismiss,
+                    )
+                    Text(
+                        "导出整合包",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(start = 10.dp),
+                    )
+                }
+                ExportMrpackInputs(
                     format = format,
-                    options = options,
-                    localResources = localPaths.size,
-                    downloads = view.downloads,
-                    managedFiles = view.managedFiles,
-                    disabledMods = view.disabledMods,
+                    stem = stem,
+                    target = target,
+                    packName = packName,
+                    version = version,
                     exporting = exporting,
-                    warnings = prepared?.warnings.orEmpty(),
-                ),
-                onRetry = onRetryPreview,
-                onOptionsChange = onOptionsChange,
+                    fileName = view.fileName,
+                    options = options,
+                    actions = actions,
+                    onTargetChange = onTargetChange,
+                    onPackNameChange = onPackNameChange,
+                    onVersionChange = onVersionChange,
+                    onFormatChosen = onFormatChosen,
+                    onOptionsChange = onOptionsChange,
+                )
+                ExportEntriesSection(
+                    ExportEntriesState(
+                        loaded = scan != null,
+                        scanError = scanError,
+                        selectableEntries = selectableEntries,
+                        selectedEntries = selectedEntries,
+                        exporting = exporting,
+                        omitted = scan?.omitted.orEmpty(),
+                    ),
+                    onRetry = onRetryScan,
+                    onToggle = onToggleEntry,
+                )
+                ExportPreviewSection(
+                    ExportPreviewState(
+                        loading = loading,
+                        error = error,
+                        totalFiles = prepared?.files?.size,
+                        selectedFiles = selection.size,
+                        format = format,
+                        options = options,
+                        localResources = localPaths.size,
+                        downloads = view.downloads,
+                        warnings = prepared?.warnings.orEmpty(),
+                    ),
+                    onRetry = onRetryPreview,
+                )
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            ExportMrpackActions(
+                actions = actions,
+                instance = instance,
+                prepared = prepared,
+                view = view,
+                format = format,
+                options = options,
+                selectedEntries = selectedEntries,
+                includeLogs = includeLogs,
+                loading = loading,
+                exporting = exporting,
+                canConfirm = canConfirm,
+                onExportStart = onExportStart,
+                onExportFailure = onExportFailure,
+                onStarted = onStarted,
+                onDismiss = onDismiss,
             )
         }
-        if (prepared != null) {
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-        }
-        ExportMrpackActions(
-            actions = actions,
-            instance = instance,
-            prepared = prepared,
-            view = view,
-            format = format,
-            options = options,
-            selectedEntries = selectedEntries,
-            includeLogs = includeLogs,
-            selectionSize = selection.size,
-            loading = loading,
-            exporting = exporting,
-            busy = actions.controller.busy,
-            canConfirm = canConfirm,
-            onExportStart = onExportStart,
-            onExportFailure = onExportFailure,
-            onStarted = onStarted,
-            onDismiss = onDismiss,
-        )
     }
 }
 
@@ -144,30 +173,50 @@ private fun ExportMrpackInputs(
     format: PackExportFormat,
     stem: String,
     target: String,
+    packName: String,
     version: String,
     exporting: Boolean,
     fileName: String,
+    options: PackExportOptions,
     actions: UiActions,
     onTargetChange: (String) -> Unit,
+    onPackNameChange: (String) -> Unit,
     onVersionChange: (String) -> Unit,
     onFormatChosen: (String) -> Unit,
+    onOptionsChange: (PackExportOptions) -> Unit,
 ) {
-    SimpleDropdown(
-        format.name,
-        PackExportFormat.offeredForExport.map { it.name to it.title },
-        onFormatChosen,
-        Modifier.fillMaxWidth(),
-        enabled = !exporting,
-    )
-    Text(
-        format.purpose,
-        fontSize = 11.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
     Row(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Bottom,
+    ) {
+        CompactTextField(
+            packName,
+            { onPackNameChange(it.take(200)) },
+            Modifier.weight(2f),
+            label = "整合包名称",
+            enabled = !exporting,
+        )
+        CompactTextField(
+            version,
+            { onVersionChange(it.take(100)) },
+            Modifier.width(150.dp),
+            label = "整合包版本",
+            placeholder = "1.0.0",
+            enabled = !exporting,
+        )
+        SimpleDropdown(
+            format.name,
+            PackExportFormat.offeredForExport.map { it.name to it.title },
+            onFormatChosen,
+            Modifier.width(210.dp),
+            enabled = !exporting,
+        )
+    }
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         CompactTextField(
             target,
@@ -188,22 +237,73 @@ private fun ExportMrpackInputs(
             },
             enabled = !exporting,
         ) {
-            Text("选择目录…", fontSize = 12.sp)
+            Text("选择文件夹…", fontSize = 12.sp)
+        }
+        if (format == PackExportFormat.Modrinth) {
+            ExportCompactToggle(
+                title = "打包资源文件",
+                checked = !options.remoteResources,
+                enabled = !exporting,
+                onCheckedChange = { checked ->
+                    onOptionsChange(
+                        options.copy(
+                            remoteResources = !checked,
+                            modrinthUploadMode = false,
+                        ),
+                    )
+                },
+            )
+            ExportCompactToggle(
+                title = "Modrinth 上传模式",
+                checked = options.modrinthUploadMode,
+                enabled = !exporting && options.remoteResources,
+                onCheckedChange = { checked ->
+                    onOptionsChange(
+                        options.copy(
+                            remoteResources = true,
+                            modrinthUploadMode = checked,
+                        ),
+                    )
+                },
+            )
         }
     }
-    CompactTextField(
-        version,
-        { onVersionChange(it.take(100)) },
-        Modifier.fillMaxWidth(),
-        label = "整合包版本",
-        placeholder = "1.0.0",
-        enabled = !exporting,
-    )
-    Text(
-        "导出文件需放在游戏目录与启动器数据目录之外；导出在后台任务中写入，进度在日志页。",
-        fontSize = 11.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+}
+
+/** 高级选项和选择文件夹同一行：只保留标题，点整行切换。 */
+@Composable
+private fun ExportCompactToggle(
+    title: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(Metrics.innerRadius))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked,
+            { onCheckedChange(it) },
+            enabled = enabled,
+            modifier = Modifier.padding(end = 2.dp),
+        )
+        Text(
+            title,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color =
+                if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+        )
+    }
 }
 
 @Composable
@@ -216,10 +316,8 @@ private fun ExportMrpackActions(
     options: PackExportOptions,
     selectedEntries: Set<String>,
     includeLogs: Boolean,
-    selectionSize: Int,
     loading: Boolean,
     exporting: Boolean,
-    busy: Boolean,
     canConfirm: Boolean,
     onExportStart: () -> Unit,
     onExportFailure: (String?) -> Unit,
@@ -253,16 +351,6 @@ private fun ExportMrpackActions(
                 )
             }
         },
-        hint =
-            exportHint(
-                loading,
-                prepared,
-                view.validTarget,
-                view.validVersion,
-                busy,
-                selectionSize,
-                selectedEntries.isNotEmpty(),
-                format,
-            ),
+        hint = if (loading) "正在读取导出内容…" else "",
     )
 }

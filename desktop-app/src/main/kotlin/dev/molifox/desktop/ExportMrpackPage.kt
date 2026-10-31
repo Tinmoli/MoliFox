@@ -21,12 +21,12 @@ import dev.molifox.core.retainExportSelection
 import java.nio.file.Path
 
 /**
- * 导出整合包或完整备份：先只读预览，再由任务队列写文件，进度与取消都在日志页。
+ * 导出整合包的独立页面：先只读预览，再由任务队列写文件，进度与取消都在日志页。
  * 「选择内容」按实例目录的真实顶层条目勾选（文件夹整段写入或整段排除），
- * 默认只勾 mods/config/resourcepacks/shaderpacks/options.txt；取消不会留下半写文件。
+ * 默认只勾 mods/config/resourcepacks/shaderpacks；取消不会留下半写文件。
  */
 @Composable
-fun ExportMrpackDialog(
+fun ExportMrpackPage(
     instance: GameInstance,
     actions: UiActions,
     onDismiss: () -> Unit,
@@ -50,6 +50,7 @@ fun ExportMrpackDialog(
             }.getOrDefault(fileName)
         }
     var target by remember(instance.id) { mutableStateOf(defaultTarget) }
+    var packName by remember(instance.id) { mutableStateOf(instance.name) }
     var version by remember(instance.id) { mutableStateOf("1.0.0") }
     var plan by remember(instance.id) { mutableStateOf<MrpackExportPlan?>(null) }
     var loading by remember(instance.id) { mutableStateOf(true) }
@@ -78,12 +79,29 @@ fun ExportMrpackDialog(
     val selectableKeys = rememberSelectableExportKeys(selectableEntries)
     val selectedEntries = checked.filterTo(mutableSetOf()) { it in selectableKeys }
     val includeLogs = exportIncludeLogs(format, scan, selectedEntries)
-    // 打开即预览：只读扫描实例目录，并按哈希查询可用的下载来源（网络失败只记为警告）。
-    LaunchedEffect(instance.id, attempt, format, includeLogs) {
+    // 打开即预览：只读扫描实例目录；远程开关决定是否联网解析下载来源。
+    LaunchedEffect(
+        instance.id,
+        attempt,
+        format,
+        options.remoteResources,
+        options.modrinthUploadMode,
+        packName,
+        includeLogs,
+    ) {
         loading = true
         error = null
         try {
-            loadExportPreview(actions, instance.id, stem, format, includeLogs, { plan = it }) {
+            loadExportPreview(
+                actions,
+                instance.id,
+                packName,
+                format,
+                options.remoteResources,
+                options.modrinthUploadMode,
+                includeLogs,
+                { plan = it },
+            ) {
                 error = it
             }
         } finally {
@@ -91,7 +109,7 @@ fun ExportMrpackDialog(
         }
     }
     val prepared = plan
-    val view = ExportMrpackView(target, format, version, prepared)
+    val view = ExportMrpackView(target, format, version, packName, prepared)
     val localPaths = rememberExportLocalPaths(prepared, format)
     val selection = rememberExportSelection(prepared, format, options, selectedEntries)
 
@@ -112,12 +130,13 @@ fun ExportMrpackDialog(
             view.validTarget,
             view.validVersion,
         )
-    ExportMrpackDialogBody(
+    ExportMrpackPageBody(
         instance = instance,
         actions = actions,
         format = format,
         stem = stem,
         target = target,
+        packName = packName,
         version = version,
         loading = loading,
         exporting = exporting,
@@ -134,11 +153,22 @@ fun ExportMrpackDialog(
         options = options,
         canConfirm = canConfirm,
         onTargetChange = { target = it },
+        onPackNameChange = { packName = it },
         onVersionChange = { version = it },
         onFormatChosen = { name ->
             val chosen = PackExportFormat.valueOf(name)
             target = exportTargetWithExtension(target, chosen.extension)
-            // 默认勾选与格式无关：保留用户当前选择，只丢弃已不存在的条目；选项也不重置。
+            // ZIP 固定全量打包；Modrinth 保留用户当前的下载/上传选项。
+            options =
+                if (chosen == PackExportFormat.Modrinth) {
+                    options
+                } else {
+                    PackExportOptions(
+                        remoteResources = false,
+                        modrinthUploadMode = false,
+                    )
+                }
+            // 默认勾选与格式无关：保留用户当前选择，只丢弃已不存在的条目。
             checked = scan?.let { retainExportSelection(it.entries, checked) } ?: checked
             format = chosen
         },

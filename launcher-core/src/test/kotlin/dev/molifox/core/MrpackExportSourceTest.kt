@@ -73,7 +73,6 @@ class MrpackExportSourceTest : MrpackExportTestBase() {
             "https://cdn.modrinth.com:8443/a.jar",
             "https://cdn.modrinth.com/a b.jar",
             "https://cdn.modrinth.com/a.jar#fragment",
-            "https://edge.forgecdn.net/a.jar",
         ).map { remote(file, it) } +
             listOf(
                 remote(file).apply {

@@ -91,7 +91,6 @@ fun ColumnScope.InstanceDetailsPage(
         instance.id,
     ) { mutableStateOf(instanceLaunchNumberField(instance.height)) }
     var renaming by remember { mutableStateOf(false) }
-    var exportingMrpack by remember { mutableStateOf(false) }
     var editingIcon by remember(instance.id) { mutableStateOf(false) }
     var screenshotGallery by remember(instance.id) { mutableStateOf(false) }
     // 每次进入页面自动检查一次模组、资源包与光影更新；离开页面取消未完成的请求。
@@ -181,7 +180,7 @@ fun ColumnScope.InstanceDetailsPage(
             selectedTab = tab,
             onSelectTab = { tab = it },
             jobStates = state.jobs.map { it.id to it.status },
-            onExport = { exportingMrpack = true },
+            onExport = { actions.navigation.openExport(instance.id) },
             onScreenshots = { screenshotGallery = true },
             onTidy = { onTidyInstance(instance) },
             onMove = { onMoveInstance(instance) },
@@ -241,10 +240,7 @@ fun ColumnScope.InstanceDetailsPage(
         instance = instance,
         actions = actions,
         renaming = renaming,
-        exporting = exportingMrpack,
         onDismissRename = { renaming = false },
-        onDismissExport = { exportingMrpack = false },
-        onTaskQueued = { actions.taskQueued() },
     )
     if (javaSheetOpen) {
         InstanceJavaPicker(
@@ -475,19 +471,15 @@ private fun InstanceDetailsOverlays(
     if (editingIcon) InstanceIconDialog(instance, actions, onDismissIcon)
 }
 
-/** 重命名与整合包导出对话框；对话框内部状态自持，关闭时只回调外部。 */
+/** 重命名对话框；导出改为根级独立页面，不再占一个系统窗口。 */
 @Composable
 private fun InstanceDetailsDialogs(
     instance: GameInstance,
     actions: UiActions,
     renaming: Boolean,
-    exporting: Boolean,
     onDismissRename: () -> Unit,
-    onDismissExport: () -> Unit,
-    onTaskQueued: () -> Unit,
 ) {
     if (renaming) InstanceRenameDialog(instance, actions, onDismissRename)
-    if (exporting) ExportMrpackDialog(instance, actions, onDismissExport, onTaskQueued)
 }
 
 /** Java 选择抽屉：选中后立即写入实例配置，失败原因内联显示。 */
