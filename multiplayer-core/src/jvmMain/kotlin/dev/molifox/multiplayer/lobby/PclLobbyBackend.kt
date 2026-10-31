@@ -5,14 +5,17 @@ import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.NatDiagnostics
 import dev.molifox.multiplayer.common.customRelays
 import dev.molifox.multiplayer.common.normalized
 import dev.molifox.multiplayer.data.MultiplayerSettingsRepository
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
+import dev.molifox.multiplayer.easytier.EasyTierNatTester
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierRelayDirectory
 import dev.molifox.multiplayer.easytier.EasyTierRuntime
+import dev.molifox.multiplayer.easytier.NatTester
 import dev.molifox.multiplayer.protocol.RoomCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,16 +54,39 @@ class PclLobbyBackend(
     guestSessionFactory: LobbyGuestSessionFactory = DefaultLobbyGuestSessionFactory,
     probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
     private val relayDirectory: EasyTierRelayDirectory = EasyTierRelayDirectory(logger = logger),
+    private val natTester: NatTester = EasyTierNatTester(),
     scanCheckIntervalMillis: Long = DEFAULT_SCAN_CHECK_INTERVAL_MILLIS,
 ) : MultiplayerBackend {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val commandMutex = Mutex()
+    private val runtimeMutex = Mutex()
     private val store = LobbyStateStore()
     private val mutableSettings = MutableStateFlow(MultiplayerSettings())
     private var machineId = ""
 
     @Volatile
     private var closed = false
+
+    /** 会话异常关闭（存档退出、房主断开、EasyTier 退出）：统一清理并回到空闲。 */
+    private val onSessionClosed: (String) -> Unit = { message ->
+        scope.launch {
+            commandMutex.withLock {
+                if (closed || store.current.role == null) return@withLock
+                coordinator.teardown()
+                store.update {
+                    it.copy(
+                        phase = LobbyPhase.Idle,
+                        role = null,
+                        roomCode = null,
+                        localAddress = null,
+                        players = emptyList(),
+                        error = message,
+                    )
+                }
+                scanner.sync(mutableSettings.value.enabled)
+            }
+        }
+    }
 
     private val scanner =
         LobbyWorldScanner(
@@ -89,7 +115,8 @@ class PclLobbyBackend(
             machineId = { machineId },
             playerName = { displayName(mutableSettings.value, playerName()) },
             relays = { relayDirectory.resolve(mutableSettings.value.customRelays()) },
-            onSessionClosed = ::handleSessionClosed,
+            tuning = { mutableSettings.value.toEasyTierTuning() },
+            onSessionClosed = { message -> onSessionClosed(message) },
         )
 
     override val state: StateFlow<MultiplayerState> = store.state
@@ -112,38 +139,49 @@ class PclLobbyBackend(
             status
         }
 
-    override suspend fun prepareRuntime(): Result<Unit> {
-        store.update {
-            it.copy(
-                phase = LobbyPhase.DownloadingRuntime,
-                progress = null,
-                error = null,
+    override suspend fun testNat(): Result<NatDiagnostics> =
+        withContext(Dispatchers.IO) { natTester.test(installer.cliExecutable()) }
+
+    /** 同一时间只允许一个下载任务：双击重试或自动下载与手动下载并发时排队执行。 */
+    override suspend fun prepareRuntime(): Result<Unit> =
+        runtimeMutex.withLock {
+            store.update {
+                it.copy(
+                    phase = LobbyPhase.DownloadingRuntime,
+                    progress = null,
+                    error = null,
+                )
+            }
+            return runCatching {
+                withContext(Dispatchers.IO) {
+                    installer
+                        .install { progress -> store.update { it.copy(progress = progress) } }
+                        .getOrThrow()
+                }
+            }.fold(
+                onSuccess = { status ->
+                    store.update {
+                        it.copy(
+                            phase = LobbyPhase.Idle,
+                            progress = null,
+                            runtime = status,
+                        )
+                    }
+                    scanner.sync(mutableSettings.value.enabled)
+                    Result.success(Unit)
+                },
+                onFailure = { failure ->
+                    store.update {
+                        it.copy(
+                            phase = LobbyPhase.Idle,
+                            progress = null,
+                            error = "下载 EasyTier 失败：${failure.message}",
+                        )
+                    }
+                    Result.failure(failure)
+                },
             )
         }
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                installer
-                    .install { progress -> store.update { it.copy(progress = progress) } }
-                    .getOrThrow()
-            }
-        }.fold(
-            onSuccess = { status ->
-                store.update { it.copy(phase = LobbyPhase.Idle, progress = null, runtime = status) }
-                scanner.sync(mutableSettings.value.enabled)
-                Result.success(Unit)
-            },
-            onFailure = { failure ->
-                store.update {
-                    it.copy(
-                        phase = LobbyPhase.Idle,
-                        progress = null,
-                        error = "下载 EasyTier 失败：${failure.message}",
-                    )
-                }
-                Result.failure(failure)
-            },
-        )
-    }
 
     override suspend fun refreshWorlds(): Result<Unit> =
         runCatching {
@@ -237,27 +275,6 @@ class PclLobbyBackend(
         scanner.close()
         commandMutex.withLock { coordinator.close() }
         scope.cancel()
-    }
-
-    /** 会话异常关闭（存档退出、房主断开、EasyTier 退出）：统一清理并回到空闲。 */
-    private fun handleSessionClosed(message: String) {
-        scope.launch {
-            commandMutex.withLock {
-                if (closed || store.current.role == null) return@withLock
-                coordinator.teardown()
-                store.update {
-                    it.copy(
-                        phase = LobbyPhase.Idle,
-                        role = null,
-                        roomCode = null,
-                        localAddress = null,
-                        players = emptyList(),
-                        error = message,
-                    )
-                }
-                scanner.sync(mutableSettings.value.enabled)
-            }
-        }
     }
 
     private companion object {

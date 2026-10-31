@@ -4,6 +4,7 @@ package dev.molifox.multiplayer.lobby
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierNodeRequest
+import dev.molifox.multiplayer.easytier.EasyTierTuning
 import dev.molifox.multiplayer.protocol.ScaffoldingCode
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayerKind
@@ -39,6 +40,7 @@ class LobbyHostSession(
     private val logger: (message: String, error: Boolean) -> Unit,
     private val onClosed: (String) -> Unit,
     private val extraRelays: List<String> = emptyList(),
+    private val tuning: EasyTierTuning = EasyTierTuning(),
     private val probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
     private val serverFactory: (ScaffoldingPlayer) -> ScaffoldingServer = { host ->
         ScaffoldingServer(hostProfile = host)

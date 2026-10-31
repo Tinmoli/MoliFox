@@ -1,4 +1,4 @@
-// 展示联机说明；勾选后点击“同意并下载”才会保存同意并立即开始下载 EasyTier 运行时。
+// 展示联机说明；勾选后点击“同意并开始下载”会保存同意并立即开始下载 EasyTier 运行时。
 package dev.molifox.desktop.multiplayer
 
 import androidx.compose.foundation.layout.Column
@@ -59,15 +59,18 @@ internal fun MultiplayerTermsDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onAccept, enabled = checked) { Text("同意并下载") } },
+        confirmButton = {
+            TextButton(onClick = onAccept, enabled = checked) { Text("同意并开始下载") }
+        },
         dismissButton = { TextButton(onClick = onDecline) { Text("暂不使用") } },
     )
 }
 
 /** 下载与许可说明：只承诺启动器确实会做的事，不暗示安装驱动或提权。 */
 private val RUNTIME_CONSENT =
-    "点击“同意并下载”后会立即下载官方 EasyTier ${MultiplayerPolicy.CORE_VERSION} 独立进程（约 31 MB），" +
-        "下载完成后按 SHA-256 校验；它以 LGPL-3.0 许可单独发布，由启动器作为独立进程运行。" +
+    "点击“同意并开始下载”后会立即下载官方 EasyTier ${MultiplayerPolicy.CORE_VERSION} 独立进程" +
+        "（约 31 MB，官方源失败会自动换镜像），下载完成后按 SHA-256 校验；" +
+        "它以 LGPL-3.0 许可单独发布，由启动器作为独立进程运行。" +
         "启动器不安装 TUN 驱动，也不需要管理员权限。"
 
 /** 防火墙与进程生命周期说明：启动器不替用户改系统安全设置。 */

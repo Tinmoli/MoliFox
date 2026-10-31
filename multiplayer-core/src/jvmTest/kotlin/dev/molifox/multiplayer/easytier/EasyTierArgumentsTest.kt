@@ -96,6 +96,40 @@ class EasyTierArgumentsTest {
     }
 
     @Test
+    fun `applies tuning flags only when enabled`() {
+        val base = EasyTierNodeRequest.guest(code, MACHINE_ID)
+        val baseArgs = EasyTierArguments.build(base, RPC_PORT)
+        assertFalse(baseArgs.contains("--latency-first"))
+        assertFalse(baseArgs.contains("--disable-ipv6"))
+        assertFalse(baseArgs.contains("--disable-sym-hole-punching"))
+
+        val partial =
+            EasyTierArguments.build(
+                base.copy(tuning = EasyTierTuning(disableIpv6 = true)),
+                RPC_PORT,
+            )
+        assertTrue(partial.contains("--disable-ipv6"))
+        assertFalse(partial.contains("--latency-first"))
+        assertFalse(partial.contains("--disable-sym-hole-punching"))
+
+        val all =
+            EasyTierArguments.build(
+                base.copy(
+                    tuning =
+                        EasyTierTuning(
+                            latencyFirst = true,
+                            disableIpv6 = true,
+                            disableSymHolePunching = true,
+                        ),
+                ),
+                RPC_PORT,
+            )
+        assertTrue(all.contains("--latency-first"))
+        assertTrue(all.contains("--disable-ipv6"))
+        assertTrue(all.contains("--disable-sym-hole-punching"))
+    }
+
+    @Test
     fun `rejects incomplete or invalid requests`() {
         val guest = EasyTierNodeRequest.guest(code, MACHINE_ID, hostname = GUEST_HOSTNAME)
         assertFailsWith<IllegalArgumentException> { EasyTierArguments.build(guest, 0) }

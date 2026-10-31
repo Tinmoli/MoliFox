@@ -3,6 +3,7 @@ package dev.molifox.multiplayer.lobby
 
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.MultiplayerSettings
+import dev.molifox.multiplayer.easytier.EasyTierTuning
 
 /** 房间内显示名：优先联机昵称，其次账户名，最后匿名。 */
 internal fun displayName(
@@ -13,6 +14,14 @@ internal fun displayName(
         .ifBlank { accountName }
         .trim()
         .ifEmpty { ANONYMOUS_PLAYER }
+
+/** 把界面设置里的附加开关映射成 EasyTier 参数；未知字段保持默认关闭。 */
+internal fun MultiplayerSettings.toEasyTierTuning(): EasyTierTuning =
+    EasyTierTuning(
+        latencyFirst = latencyFirst,
+        disableIpv6 = disableIpv6,
+        disableSymHolePunching = disableSymHolePunching,
+    )
 
 /** 按端口选中世界；[worldPort] 为 null 时要求当前只有一个世界。 */
 internal fun resolveWorld(

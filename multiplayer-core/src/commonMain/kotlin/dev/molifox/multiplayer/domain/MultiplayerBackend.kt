@@ -4,6 +4,7 @@ package dev.molifox.multiplayer.domain
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.NatDiagnostics
 import kotlinx.coroutines.flow.StateFlow
 
 interface MultiplayerBackend {
@@ -15,6 +16,9 @@ interface MultiplayerBackend {
 
     /** 检查本地 EasyTier 运行时是否已安装且完整。 */
     suspend fun inspectRuntime(): Result<CoreStatus>
+
+    /** 用本机 EasyTier CLI 做 NAT 类型测试；未安装运行时时返回可读失败。 */
+    suspend fun testNat(): Result<NatDiagnostics>
 
     /** 下载并安装 EasyTier 运行时；进度通过 [state] 的 `progress` 上报。 */
     suspend fun prepareRuntime(): Result<Unit>

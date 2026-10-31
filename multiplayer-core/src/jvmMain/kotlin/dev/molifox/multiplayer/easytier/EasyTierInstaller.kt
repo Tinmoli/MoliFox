@@ -9,8 +9,6 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -43,6 +41,7 @@ class EasyTierInstaller(
     private val logger: (message: String, error: Boolean) -> Unit = { _, _ -> },
     private val packageProvider: () -> EasyTierPackage? = EasyTierCatalog::current,
     private val downloader: EasyTierArchiveDownloader = HttpArchiveDownloader(),
+    private val probe: EasyTierSourceProbe = HttpEasyTierSourceProbe(),
 ) {
     /** 当前平台的安装包信息；不支持的平台给出明确提示。 */
     fun packageInfo(): EasyTierPackage =
@@ -116,31 +115,51 @@ class EasyTierInstaller(
         return status
     }
 
-    /** 带重试地下载并校验；只有校验通过才返回。 */
+    /**
+     * 按测速结果依次尝试官方与镜像来源；来源来自不同 CDN 但文件完全相同。
+     * 总尝试次数固定为 [ATTEMPTS]，来源不足时循环使用，避免无上限重试。
+     */
     private suspend fun downloadVerified(
         pkg: EasyTierPackage,
         target: Path,
         onProgress: (Float?) -> Unit,
     ) {
+        val sources = orderedSources(pkg)
+        logger("EasyTier 下载源顺序：${sources.joinToString()}", false)
         var failure: Throwable? = null
         repeat(ATTEMPTS) { attempt ->
+            val source = sources[attempt % sources.size]
             try {
-                logger("下载 EasyTier（第 ${attempt + 1} 次）：${pkg.url}", false)
-                downloader.download(pkg.url, target, pkg.downloadBytes, onProgress)
+                logger("下载 EasyTier（第 ${attempt + 1}/$ATTEMPTS 次）：$source", false)
+                onProgress(null)
+                downloader.download(source, target, pkg.downloadBytes, onProgress)
                 verifyArchive(pkg, target)
                 return
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (downloadFailure: IOException) {
                 failure = downloadFailure
-                logger("EasyTier 下载失败：${downloadFailure.message}", true)
+                logger("EasyTier 来源失败（$source）：${downloadFailure.message}", true)
             } catch (downloadFailure: IllegalStateException) {
                 failure = downloadFailure
-                logger("EasyTier 校验失败：${downloadFailure.message}", true)
+                logger("EasyTier 来源校验失败（$source）：${downloadFailure.message}", true)
             }
         }
         val reason = failure?.message.orEmpty()
-        throw IOException("下载 EasyTier 失败：$reason。请检查网络后重试。", failure)
+        throw IOException("下载 EasyTier 失败：$reason。已尝试 ${sources.size} 个下载源，请检查网络后重试。", failure)
+    }
+
+    /** 官方优先，其余镜像按实测速度降序；探测失败的来源保留在末尾继续尝试。 */
+    private suspend fun orderedSources(pkg: EasyTierPackage): List<String> {
+        val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
+        val ranked =
+            candidates
+                .mapNotNull { source ->
+                    probe.measureSpeed(source)?.let { speed -> source to speed }
+                }.sortedByDescending { it.second }
+                .map { it.first }
+        val unscored = candidates.filterNot { it in ranked }
+        return ranked + unscored
     }
 
     /** 解包结果整体替换目标目录，并补上 Linux 可执行权限。 */
@@ -169,12 +188,10 @@ class HttpArchiveDownloader(
         onProgress: (Float?) -> Unit,
     ) {
         coroutineContext.ensureActive()
-        val connection = URI(url).toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = connectTimeoutMillis
-        connection.readTimeout = readTimeoutMillis
-        connection.instanceFollowRedirects = true
-        connection.setRequestProperty("User-Agent", USER_AGENT)
-        try {
+        withHttpConnection(url) { connection ->
+            connection.connectTimeout = connectTimeoutMillis
+            connection.readTimeout = readTimeoutMillis
+            connection.setRequestProperty("User-Agent", EASY_TIER_USER_AGENT)
             val code = connection.responseCode
             check(code in HTTP_OK) { "HTTP $code" }
             val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: expectedBytes
@@ -183,8 +200,6 @@ class HttpArchiveDownloader(
                     transfer(input, output, totalBytes, onProgress)
                 }
             }
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -289,7 +304,6 @@ private const val RUNTIME_DIRECTORY = "easytier"
 private const val WORK_PREFIX = "easytier-install-"
 private const val STAGING_DIRECTORY = "staging"
 private const val ARCHIVE_NAME = "easytier.zip"
-private const val USER_AGENT = "MoliFox-Launcher"
 private const val ATTEMPTS = 3
 private const val CONNECT_TIMEOUT_MILLIS = 20_000
 private const val READ_TIMEOUT_MILLIS = 60_000

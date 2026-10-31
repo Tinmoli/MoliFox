@@ -7,6 +7,21 @@ import java.util.UUID
 /** EasyTier 节点角色；决定是否设置固定虚拟 IP、端口白名单与 DHCP。 */
 enum class EasyTierRole { HOST, GUEST }
 
+/** 与 PCL CE 一致的附加开关；全部关闭时保持默认行为，不额外传参数。 */
+data class EasyTierTuning(
+    val latencyFirst: Boolean = false,
+    val disableIpv6: Boolean = false,
+    val disableSymHolePunching: Boolean = false,
+) {
+    /** 追加到双方共用参数里的开关；关闭的不出现，避免改变 EasyTier 默认值。 */
+    fun flags(): List<String> =
+        buildList {
+            if (latencyFirst) add("--latency-first")
+            if (disableIpv6) add("--disable-ipv6")
+            if (disableSymHolePunching) add("--disable-sym-hole-punching")
+        }
+}
+
 /**
  * EasyTier 节点发现与保底中继。
  *
@@ -56,6 +71,8 @@ data class EasyTierNodeRequest(
     val whitelistedPorts: List<Int> = emptyList(),
     /** 叠加在默认节点之后的自定义中继。 */
     val extraRelays: List<String> = emptyList(),
+    /** 用户附加开关；默认全部关闭。 */
+    val tuning: EasyTierTuning = EasyTierTuning(),
 ) {
     companion object {
         /** 房主节点：固定虚拟 IP 与 hostname，白名单只放 Scaffolding 和 MC 端口。 */
@@ -65,6 +82,7 @@ data class EasyTierNodeRequest(
             scaffoldingPort: Int,
             minecraftPort: Int,
             extraRelays: List<String> = emptyList(),
+            tuning: EasyTierTuning = EasyTierTuning(),
         ): EasyTierNodeRequest =
             EasyTierNodeRequest(
                 role = EasyTierRole.HOST,
@@ -74,6 +92,7 @@ data class EasyTierNodeRequest(
                 hostname = EasyTierArguments.hostHostname(scaffoldingPort),
                 whitelistedPorts = listOf(scaffoldingPort, minecraftPort),
                 extraRelays = extraRelays,
+                tuning = tuning,
             )
 
         /** 房客节点：随机 hostname，避免与房主的固定格式冲突。 */
@@ -82,6 +101,7 @@ data class EasyTierNodeRequest(
             machineId: String,
             hostname: String = UUID.randomUUID().toString(),
             extraRelays: List<String> = emptyList(),
+            tuning: EasyTierTuning = EasyTierTuning(),
         ): EasyTierNodeRequest =
             EasyTierNodeRequest(
                 role = EasyTierRole.GUEST,
@@ -90,6 +110,7 @@ data class EasyTierNodeRequest(
                 machineId = machineId,
                 hostname = hostname,
                 extraRelays = extraRelays,
+                tuning = tuning,
             )
     }
 }
@@ -138,6 +159,7 @@ object EasyTierArguments {
         arguments += listOf("--hostname", request.hostname)
         arguments += listOf("--rpc-portal", rpcPortal(rpcPort))
         arguments += COMMON_TUNING
+        arguments += request.tuning.flags()
         when (request.role) {
             EasyTierRole.HOST -> arguments += hostArguments(request)
             EasyTierRole.GUEST -> arguments += GUEST_ARGUMENTS

@@ -6,6 +6,7 @@ import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.LobbyRole
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierNode
+import dev.molifox.multiplayer.easytier.EasyTierTuning
 import dev.molifox.multiplayer.protocol.RoomCode
 import dev.molifox.multiplayer.protocol.RoomCodeRandom
 import dev.molifox.multiplayer.protocol.ScaffoldingCode
@@ -34,6 +35,7 @@ internal class LobbyRoomCoordinator(
     private val playerName: () -> String,
     /** 建房/加入前解析中继：自定义优先，其次实时活动节点。 */
     private val relays: suspend () -> List<String>,
+    private val tuning: () -> EasyTierTuning,
     private val onSessionClosed: (String) -> Unit,
 ) : AutoCloseable {
     private val secureRandom = SecureRandom()
@@ -115,6 +117,7 @@ internal class LobbyRoomCoordinator(
                         playerName = playerName(),
                         runtime = node,
                         extraRelays = relays(),
+                        tuning = tuning(),
                         logger = logger,
                         probe = probe,
                         onClosed = onSessionClosed,
@@ -139,6 +142,7 @@ internal class LobbyRoomCoordinator(
                         playerName = playerName(),
                         runtime = node,
                         extraRelays = relays(),
+                        tuning = tuning(),
                         logger = logger,
                         onClosed = onSessionClosed,
                     ),

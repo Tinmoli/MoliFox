@@ -11,12 +11,16 @@ internal class MultiplayerLobbyActions(
     val join: (String) -> Unit,
     val leave: () -> Unit,
     val refreshWorlds: () -> Unit,
-    val prepareRuntime: () -> Unit,
+    val downloadRuntime: () -> Unit,
+    /** 本次页面生命周期内下载已失败过：按钮改成“重试下载”，不会自动重试。 */
+    val runtimeDownloadFailed: Boolean,
 )
 
 internal fun multiplayerLobbyActions(
     backend: MultiplayerBackend,
     execute: ExecuteMultiplayer,
+    downloadRuntime: () -> Unit,
+    runtimeDownloadFailed: Boolean,
 ): MultiplayerLobbyActions =
     MultiplayerLobbyActions(
         host = { port -> execute { backend.host(port) } },
@@ -28,5 +32,6 @@ internal fun multiplayerLobbyActions(
             }
         },
         refreshWorlds = { execute { backend.refreshWorlds() } },
-        prepareRuntime = { execute { backend.prepareRuntime() } },
+        downloadRuntime = downloadRuntime,
+        runtimeDownloadFailed = runtimeDownloadFailed,
     )

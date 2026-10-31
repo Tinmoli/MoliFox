@@ -27,8 +27,11 @@ import kotlin.concurrent.thread
 
 private const val WINDOW_POLL_LIMIT = 200
 private const val WINDOW_POLL_MILLIS = 50L
-private const val SETTINGS_SCROLL_ATTEMPTS = 12
+private const val SETTINGS_SCROLL_ATTEMPTS = 16
 private const val SETTINGS_SCROLL_AMOUNT = 3
+
+/** 下载成功后观察一小段时间，确认没有自动重试导致下载次数继续增长。 */
+private const val POST_DOWNLOAD_SETTLE_MILLIS = 400L
 
 fun main() {
     val root = Path.of(System.getProperty("molifox.test.dir")).toAbsolutePath().normalize()
@@ -43,8 +46,8 @@ fun main() {
                     val ui = UiProbe(awaitTestWindow(window), root.resolve("screenshots"))
                     runScenarios(ui, fixture)
                     println(
-                        "MULTIPLAYER_UI_PASSED: consent, runtime download, host, join, " +
-                            "guides, settings",
+                        "MULTIPLAYER_UI_PASSED: consent, auto runtime download, host, join, " +
+                            "guides, settings, advanced switches, nat diagnostics",
                     )
                 },
             )
@@ -106,13 +109,17 @@ private fun runScenarios(
     verifySettings(ui, fixture)
 }
 
-/** 首次进入：拒绝后只留下说明入口；再次同意会在保存说明后直接开始下载运行时。 */
+/**
+ * 首次进入：拒绝后只留下说明入口；再次同意并勾选后直接开始下载运行时，不需要再点一次下载按钮。
+ *
+ * 先故意让第一次下载失败，验证界面只留下错误提示与“重试下载”，且不会自动无限重试。
+ */
 private fun confirmConsent(
     ui: UiProbe,
     fixture: MultiplayerUiFixture,
 ) {
-    ui.await("首次联机说明") { ui.exists("同意并下载") }
-    check(!ui.enabled("同意并下载"))
+    ui.await("首次联机说明") { ui.exists("同意并开始下载") }
+    check(!ui.enabled("同意并开始下载"))
     check(!ui.exists("联机设置"))
     ui.click("暂不使用")
     ui.await("拒绝后仅显示说明入口") { ui.exists("阅读并同意联机说明") }
@@ -126,30 +133,39 @@ private fun confirmConsent(
         if (!ui.exists("我已阅读并了解以上说明")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
     }
     ui.click("我已阅读并了解以上说明", role = AccessibleRole.CHECK_BOX)
-    // 先模拟一次下载失败，确认状态栏提供重试入口。
     fixture.failNextDownload = true
-    ui.click("同意并下载")
-    ui.await("首次下载失败可重试") { ui.exists("下载官方 EasyTier") }
+    check(fixture.downloads.get() == 0)
+    ui.click("同意并开始下载")
+    // 只需要点“同意”：下载已经自动开始并失败，界面给出错误与“重试下载”。
+    ui.await("首次下载失败可重试") { ui.exists("重试下载") }
     check(fixture.downloads.get() == 1)
-    ui.click("下载官方 EasyTier")
-    ui.await("同意后直接下载运行时") {
-        fixture.backend.state.value.runtime
-            ?.installed == true
+    check(ui.exists("模拟 EasyTier 下载失败"))
+    ui.click("重试下载")
+    ui.await("重试后运行时就绪") {
+        val runtime = fixture.backend.state.value.runtime
+        runtime?.installed == true
     }
     check(fixture.downloads.get() == 2)
+    // 失败后不再自动重试：成功之后再观察一段时间，下载次数不应增长。
+    Thread.sleep(POST_DOWNLOAD_SETTLE_MILLIS)
+    check(fixture.downloads.get() == 2)
+    ui.await("错误提示随重试成功清除") { !ui.exists("模拟 EasyTier 下载失败") }
     ui.await("进入联机大厅") { ui.exists("联机大厅") }
     check(!ui.exists("下载官方 EasyTier"))
+    check(!ui.exists("重试下载"))
 }
 
-/** 创建房间、复制邀请码、关闭房间、用邀请码加入与退出房间。 */
+/** 刷新世界、创建房间、复制邀请码、关闭房间、用邀请码加入与退出房间。 */
 private fun verifyRoomFlow(
     ui: UiProbe,
     fixture: MultiplayerUiFixture,
 ) {
     ui.capture("multiplayer-lobby")
-    ui.await("房主入口可用") { ui.exists("创建房间") }
-    check(ui.exists("刷新世界"))
-    check(ui.exists("茉狐的小屋"))
+    ui.await("房主入口可用") { ui.exists("刷新世界") }
+    check(ui.exists("创建房间"))
+    check(ui.exists("还没有发现局域网世界；开放后点“刷新世界”。"))
+    ui.click("刷新世界")
+    ui.await("发现局域网世界") { ui.exists("茉狐的小屋") }
     ui.click("创建房间")
     ui.await("房主已启动房间") { ui.exists("房间已开启") && ui.exists(FIXTURE_ROOM_CODE) }
     check(fixture.hostedPort == FIXTURE_FIRST_WORLD_PORT)
@@ -166,7 +182,7 @@ private fun verifyRoomFlow(
     ui.await("退出后回到大厅") { ui.exists("创建房间") }
 }
 
-/** 教程页可切换；联机昵称与自定义中继保存后写入后端设置。 */
+/** 教程页可切换；网络诊断、高级开关与昵称/中继保存在设置页内完成。 */
 private fun verifySettings(
     ui: UiProbe,
     fixture: MultiplayerUiFixture,
@@ -180,12 +196,53 @@ private fun verifySettings(
     ui.type("联机昵称", "小狐")
     ui.await("中继设置可见") { ui.exists("自定义中继") }
     ui.type("自定义中继", "tcp://relay.example.com:11010")
-    ui.capture("multiplayer-settings")
+    verifyNatDiagnostics(ui, fixture)
+    verifyAdvancedSettings(ui, fixture)
+}
+
+/** 网络诊断：按钮存在、点击后按中文映射展示 UDP/TCP/IPv6 与建议，且防抖只调用一次。 */
+private fun verifyNatDiagnostics(
+    ui: UiProbe,
+    fixture: MultiplayerUiFixture,
+) {
+    repeat(SETTINGS_SCROLL_ATTEMPTS) {
+        if (!ui.exists("测试网络类型（NAT）")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
+    }
+    ui.click("测试网络类型（NAT）")
+    ui.await("网络诊断结果") { ui.exists("UDP 类型：对称 NAT") }
+    check(ui.exists("TCP 类型：端口受限锥形"))
+    check(ui.exists("IPv6：不支持"))
+    check(
+        ui.exists(
+            "对称 NAT 下跨网络联机可能连不上，建议双方可连中继或换网络；同一局域网通常仍可直连。",
+        ),
+    )
+    check(fixture.natTests.get() == 1)
+    ui.capture("multiplayer-settings-diagnostics")
+}
+
+/** 高级开关默认关，打开“低延迟优先”后与昵称、中继一起保存写回后端设置。 */
+private fun verifyAdvancedSettings(
+    ui: UiProbe,
+    fixture: MultiplayerUiFixture,
+) {
+    repeat(SETTINGS_SCROLL_ATTEMPTS) {
+        if (!ui.exists("低延迟优先 开关")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
+    }
+    check(ui.exists("高级联机开关"))
+    check(ui.exists("关闭 IPv6 开关"))
+    check(ui.exists("关闭对称 NAT 打洞 开关"))
+    ui.click("低延迟优先 开关")
+    ui.capture("multiplayer-settings-advanced")
     repeat(SETTINGS_SCROLL_ATTEMPTS) {
         if (!ui.exists("保存联机设置")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
     }
     ui.click("保存联机设置")
     ui.await("设置保存提示") { ui.exists("已保存。昵称与自定义中继在下次创建或加入房间时生效。") }
-    check(fixture.backend.settings.value.nickname == "小狐")
-    check(fixture.backend.settings.value.relayServer == "tcp://relay.example.com:11010")
+    val saved = fixture.backend.settings.value
+    check(saved.nickname == "小狐")
+    check(saved.relayServer == "tcp://relay.example.com:11010")
+    check(saved.latencyFirst)
+    check(!saved.disableIpv6)
+    check(!saved.disableSymHolePunching)
 }

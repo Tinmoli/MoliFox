@@ -16,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.CompactSwitch
 import dev.molifox.desktop.CompactTextField
@@ -24,6 +26,7 @@ import dev.molifox.desktop.PrimaryButton
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
+import dev.molifox.multiplayer.common.NatDiagnostics
 
 @Composable
 internal fun MultiplayerSettingsPane(
@@ -31,6 +34,7 @@ internal fun MultiplayerSettingsPane(
     runtime: CoreStatus?,
     execute: ExecuteMultiplayer,
     save: suspend (MultiplayerSettings) -> Result<Unit>,
+    testNat: suspend () -> Result<NatDiagnostics>,
 ) {
     var draft by remember(settings) { mutableStateOf(settings) }
     var saved by remember { mutableStateOf(false) }
@@ -41,6 +45,8 @@ internal fun MultiplayerSettingsPane(
     LazyColumn(Modifier.fillMaxSize()) {
         item("identity") { IdentityGroup(draft, runtime, change) }
         item("relay") { RelayGroup(draft, change) }
+        item("diagnostics") { MultiplayerNatDiagnosticsGroup(runtime, testNat) }
+        item("advanced") { AdvancedGroup(draft, change) }
         item("save") {
             SaveGroup(
                 canSave = draft != settings,
@@ -59,7 +65,7 @@ private fun IdentityGroup(
 ) {
     MultiplayerGroup(Modifier.fillMaxWidth(), title = "基本设置") {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SwitchRow("启用联机", draft.enabled) { change(draft.copy(enabled = it)) }
+            SwitchRow("启用联机", checked = draft.enabled) { change(draft.copy(enabled = it)) }
             CompactTextField(
                 draft.nickname,
                 { change(draft.copy(nickname = it)) },
@@ -95,6 +101,37 @@ private fun RelayGroup(
     }
 }
 
+/** 高级开关直接透传给 EasyTier 启动参数；不确定的用户保持默认即可，因此默认全部关闭。 */
+@Composable
+private fun AdvancedGroup(
+    draft: MultiplayerSettings,
+    change: (MultiplayerSettings) -> Unit,
+) {
+    MultiplayerGroup(
+        Modifier.fillMaxWidth(),
+        title = "高级联机开关",
+        detail = "不确定就保持默认；改动随保存写入，下次创建或加入房间时生效。",
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SwitchRow(
+                "低延迟优先",
+                "优先选择延迟更低的线路，网络波动大时可开；默认关。",
+                draft.latencyFirst,
+            ) { change(draft.copy(latencyFirst = it)) }
+            SwitchRow(
+                "关闭 IPv6",
+                "只走 IPv4；本机 IPv6 不稳定或连不上时再开，默认关。",
+                draft.disableIpv6,
+            ) { change(draft.copy(disableIpv6 = it)) }
+            SwitchRow(
+                "关闭对称 NAT 打洞",
+                "部分网络打洞失败时可尝试；默认关，关闭后更依赖中继。",
+                draft.disableSymHolePunching,
+            ) { change(draft.copy(disableSymHolePunching = it)) }
+        }
+    }
+}
+
 @Composable
 private fun SaveGroup(
     canSave: Boolean,
@@ -120,14 +157,26 @@ private fun runtimeSummary(runtime: CoreStatus?): String {
     return "联机运行时：官方 EasyTier $version$suffix · $installed；当前仅支持 Windows / Linux x86_64。"
 }
 
+/**
+ * 开关行：说明写在标题下方；开关自带“<标题> 开关”的无障碍名称，
+ * 便于 GUI 检查按名字点击且不会误点到旁边的说明文字。
+ */
 @Composable
 private fun SwitchRow(
     label: String,
+    detail: String = "",
     checked: Boolean,
     change: (Boolean) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f))
-        CompactSwitch(checked, change)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label)
+            if (detail.isNotBlank()) MutedText(detail)
+        }
+        CompactSwitch(
+            checked,
+            change,
+            Modifier.semantics { contentDescription = "$label 开关" },
+        )
     }
 }

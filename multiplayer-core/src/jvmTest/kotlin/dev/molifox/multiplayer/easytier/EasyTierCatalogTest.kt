@@ -65,6 +65,18 @@ class EasyTierCatalogTest {
     }
 
     @Test
+    fun `mirrors proxy the same official asset`() {
+        listOf("windows-x86_64", "linux-x86_64").forEach { classifier ->
+            val pkg = assertNotNull(EasyTierCatalog.packageFor(classifier))
+            assertTrue(pkg.mirrors.size >= 2, "$classifier 至少要有两个镜像")
+            pkg.mirrors.forEach { mirror ->
+                assertTrue(mirror.startsWith("https://"), "镜像必须是 HTTPS：$mirror")
+                assertTrue(mirror.endsWith(pkg.url), "镜像必须指向同一官方文件：$mirror")
+            }
+        }
+    }
+
+    @Test
     fun `classifies only desktop x86_64 platforms`() {
         assertEquals("windows-x86_64", EasyTierCatalog.classify("Windows 11", "amd64"))
         assertEquals("windows-x86_64", EasyTierCatalog.classify("Windows 10", "x86_64"))

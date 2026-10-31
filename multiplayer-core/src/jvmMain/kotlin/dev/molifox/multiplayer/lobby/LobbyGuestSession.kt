@@ -6,6 +6,7 @@ import dev.molifox.multiplayer.easytier.EasyTierHost
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierNodeRequest
 import dev.molifox.multiplayer.easytier.EasyTierPeers
+import dev.molifox.multiplayer.easytier.EasyTierTuning
 import dev.molifox.multiplayer.easytier.FreeLoopbackPortAllocator
 import dev.molifox.multiplayer.easytier.LoopbackPortAllocator
 import dev.molifox.multiplayer.lan.MinecraftLanBroadcast
@@ -45,6 +46,7 @@ class LobbyGuestSession(
     private val logger: (message: String, error: Boolean) -> Unit,
     private val onClosed: (String) -> Unit,
     private val extraRelays: List<String> = emptyList(),
+    private val tuning: EasyTierTuning = EasyTierTuning(),
     private val portAllocator: LoopbackPortAllocator = FreeLoopbackPortAllocator,
     private val hostWaitTimeoutMillis: Long = DEFAULT_HOST_WAIT_TIMEOUT_MILLIS,
     private val pollIntervalMillis: Long = DEFAULT_POLL_INTERVAL_MILLIS,
@@ -98,7 +100,13 @@ class LobbyGuestSession(
         }
 
     private suspend fun startRuntime(): EasyTierCli {
-        val request = EasyTierNodeRequest.guest(code, machineId, extraRelays = extraRelays)
+        val request =
+            EasyTierNodeRequest.guest(
+                code,
+                machineId,
+                extraRelays = extraRelays,
+                tuning = tuning,
+            )
         return runtime.start(request, ::onRuntimeExit).getOrElse { failure ->
             throw IOException("无法启动 EasyTier：${failure.message}", failure)
         }

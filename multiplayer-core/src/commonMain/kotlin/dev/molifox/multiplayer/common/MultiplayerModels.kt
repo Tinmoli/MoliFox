@@ -97,6 +97,12 @@ data class MultiplayerSettings(
     val nickname: String = "",
     val acceptedTermsRevision: String = "",
     val relayServer: String = "",
+    /** 优先低延迟链路；对应 EasyTier `--latency-first`。 */
+    val latencyFirst: Boolean = false,
+    /** 关闭 IPv6；对应 EasyTier `--disable-ipv6`，网络不支持 IPv6 时可减少干扰。 */
+    val disableIpv6: Boolean = false,
+    /** 关闭对称 NAT 打洞；对应 EasyTier `--disable-sym-hole-punching`。 */
+    val disableSymHolePunching: Boolean = false,
 )
 
 /** 昵称与自定义中继只影响展示与网络配置，保存前统一规范化并校验。 */

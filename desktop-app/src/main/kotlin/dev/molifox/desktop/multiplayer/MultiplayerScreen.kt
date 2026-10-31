@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.FrostedPanel
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SettingsNavItem
+import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.domain.MultiplayerBackend
@@ -53,8 +54,11 @@ private class MultiplayerPageState {
     var declined by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
 
-    /** 本次页面生命周期内是否已经发起过运行时下载，避免失败后自动重复下载。 */
+    /** 本次页面生命周期内是否已经自动发起过下载；无论成功失败都只自动发起一次。 */
     var runtimeDownloadRequested by mutableStateOf(false)
+
+    /** 下载失败过：状态栏按钮改成“重试下载”，用户必须显式点才会再次下载。 */
+    var runtimeDownloadFailed by mutableStateOf(false)
 }
 
 @Composable
@@ -68,18 +72,43 @@ fun MultiplayerScreen(
     val execute: ExecuteMultiplayer = { action ->
         scope.launch { action().onFailure { page.message = it.message ?: "操作失败，请重试" } }
     }
+    // 下载单独走一条路径：先把“已发起”标记置位，自动下载逻辑就不会再启动第二次。
+    val downloadRuntime: () -> Unit = {
+        page.runtimeDownloadRequested = true
+        scope.launch {
+            backend.prepareRuntime().fold(
+                onSuccess = { page.message = null },
+                onFailure = { failure ->
+                    page.runtimeDownloadFailed = true
+                    page.message = failure.message ?: "下载 EasyTier 失败，请检查网络后重试"
+                },
+            )
+        }
+    }
+    val acceptTerms: () -> Unit = {
+        val consented = settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
+        page.runtimeDownloadRequested = true
+        scope.launch {
+            backend.saveSettings(consented).fold(
+                onSuccess = { downloadRuntime() },
+                onFailure = { failure ->
+                    page.message = failure.message ?: "保存联机说明失败，请重试"
+                },
+            )
+        }
+    }
     MultiplayerStartup(backend, page)
-    MultiplayerRuntimeAutoDownload(backend, page, execute)
+    MultiplayerRuntimeAutoDownload(backend, page, downloadRuntime)
     Column(Modifier.fillMaxSize()) {
         val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
         if (page.initialized && agreed) {
-            MultiplayerContent(backend, page, execute, onCopy)
+            MultiplayerContent(backend, page, execute, onCopy, downloadRuntime)
         } else {
             MultiplayerConsentGate(page)
         }
         PageMessage(page)
     }
-    MultiplayerModals(backend, settings, page, execute)
+    MultiplayerModals(settings, page, acceptTerms)
 }
 
 @Composable
@@ -88,11 +117,12 @@ private fun ColumnScope.MultiplayerContent(
     page: MultiplayerPageState,
     execute: ExecuteMultiplayer,
     onCopy: (String) -> Unit,
+    downloadRuntime: () -> Unit,
 ) {
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         MultiplayerSidebar(page.section) { page.section = it }
         FrostedPanel(Modifier.weight(1f).fillMaxHeight()) {
-            MultiplayerBody(backend, page, execute, onCopy)
+            MultiplayerBody(backend, page, execute, onCopy, downloadRuntime)
         }
     }
 }
@@ -131,20 +161,23 @@ private fun MultiplayerStartup(
     LaunchedEffect(backend) {
         backend
             .initialize()
-            .onSuccess { page.initialized = true }
             .onFailure { page.message = "联机配置读取失败，请检查日志" }
+        // 初始化失败也放开页面：否则同意入口会永久禁用；运行时报错仍会经提示与下载重试暴露。
+        page.initialized = true
     }
 }
 
 /**
- * 已同意说明但本地没有 EasyTier 运行时时，进入页面就直接下载；只在本次页面生命周期内自动触发一次，
- * 失败后由大厅状态栏的下载按钮显式重试，避免失败后反复下载。
+ * 已同意说明且本地没有 EasyTier 运行时时，进入联机页自动开始一次下载，不需要再点一次按钮。
+ *
+ * 只在空闲阶段触发，不打断房间流程；[MultiplayerPageState.runtimeDownloadRequested] 保证成功或失败后
+ * 都不会自动重试，失败后只保留状态栏里的“重试下载”入口。
  */
 @Composable
 private fun MultiplayerRuntimeAutoDownload(
     backend: MultiplayerBackend,
     page: MultiplayerPageState,
-    execute: ExecuteMultiplayer,
+    downloadRuntime: () -> Unit,
 ) {
     val state by backend.state.collectAsState()
     val settings by backend.settings.collectAsState()
@@ -152,6 +185,7 @@ private fun MultiplayerRuntimeAutoDownload(
         page.initialized,
         settings.enabled,
         settings.acceptedTermsRevision,
+        state.phase,
         state.runtime?.installed,
         state.busy,
     ) {
@@ -159,10 +193,10 @@ private fun MultiplayerRuntimeAutoDownload(
         if (settings.acceptedTermsRevision != MultiplayerPolicy.TERMS_REVISION) {
             return@LaunchedEffect
         }
-        if (state.busy || state.runtime?.installed != false) return@LaunchedEffect
+        if (state.busy || state.phase != LobbyPhase.Idle) return@LaunchedEffect
+        if (state.runtime?.installed == true) return@LaunchedEffect
         if (page.runtimeDownloadRequested) return@LaunchedEffect
-        page.runtimeDownloadRequested = true
-        execute { backend.prepareRuntime() }
+        downloadRuntime()
     }
 }
 
@@ -193,6 +227,7 @@ private fun MultiplayerBody(
     page: MultiplayerPageState,
     execute: ExecuteMultiplayer,
     onCopy: (String) -> Unit,
+    downloadRuntime: () -> Unit,
 ) {
     val state by backend.state.collectAsState()
     val settings by backend.settings.collectAsState()
@@ -201,7 +236,13 @@ private fun MultiplayerBody(
             MultiplayerLobby(
                 state = state,
                 settings = settings,
-                actions = multiplayerLobbyActions(backend, execute),
+                actions =
+                    multiplayerLobbyActions(
+                        backend = backend,
+                        execute = execute,
+                        downloadRuntime = downloadRuntime,
+                        runtimeDownloadFailed = page.runtimeDownloadFailed,
+                    ),
                 copy = onCopy,
             )
         MultiplayerSection.HostGuide -> MultiplayerGuide(host = true)
@@ -212,32 +253,21 @@ private fun MultiplayerBody(
                 runtime = state.runtime,
                 execute = execute,
                 save = backend::saveSettings,
+                testNat = backend::testNat,
             )
     }
 }
 
 @Composable
 private fun MultiplayerModals(
-    backend: MultiplayerBackend,
     settings: MultiplayerSettings,
     page: MultiplayerPageState,
-    execute: ExecuteMultiplayer,
+    acceptTerms: () -> Unit,
 ) {
     val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
     if (page.initialized && !agreed && !page.declined) {
         MultiplayerTermsDialog(
-            onAccept = {
-                val consented =
-                    settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
-                // 先标记已发起下载，避免同意状态刷新后自动下载逻辑再启动一次。
-                page.runtimeDownloadRequested = true
-                execute {
-                    backend.saveSettings(consented).fold(
-                        onSuccess = { backend.prepareRuntime() },
-                        onFailure = { failure -> Result.failure(failure) },
-                    )
-                }
-            },
+            onAccept = acceptTerms,
             onDecline = { page.declined = true },
         )
     }

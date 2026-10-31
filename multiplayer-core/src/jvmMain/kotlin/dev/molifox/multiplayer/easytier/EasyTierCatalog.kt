@@ -11,6 +11,8 @@ data class EasyTierPackage(
     val rootPrefix: String,
     val coreFile: String,
     val cliFile: String,
+    /** 与官方文件完全相同的镜像地址；下载器会先测速再决定顺序。 */
+    val mirrors: List<String> = emptyList(),
 ) {
     /** 解包并剥离 [rootPrefix] 后必须存在的文件；第一个是主程序。 */
     val requiredFiles: List<String>
@@ -20,7 +22,8 @@ data class EasyTierPackage(
 /**
  * EasyTier 官方发布信息（v2.6.4）。
  *
- * 只使用官方 GitHub Release 链接：不提供第三方镜像，避免把来源不明的二进制装进用户目录。
+ * 主地址始终是官方 GitHub Release；镜像只是对同一文件的加速代理（不重新打包），
+ * 下载后仍按官方 SHA-256 校验，因此镜像损坏或内容不符时会被拒绝。
  * 许可为 LGPL-3.0；分发安装包时需保留上游许可与源码获取方式。
  */
 object EasyTierCatalog {
@@ -30,6 +33,22 @@ object EasyTierCatalog {
     private const val RELEASE_BASE = "https://github.com/EasyTier/EasyTier/releases/download"
     private const val WINDOWS_X86_64 = "windows-x86_64"
     private const val LINUX_X86_64 = "linux-x86_64"
+
+    /**
+     * GitHub Release 加速代理；两者都实测返回官方文件的完整内容（Content-Range 与官方大小一致）。
+     * 用户网络环境不同，下载器会测速后选择最快的一个，失败再换下一个。
+     */
+    private val MIRROR_PREFIXES =
+        listOf(
+            "https://gh-proxy.com/",
+            "https://ghproxy.net/",
+        )
+
+    private fun mirrorsOf(officialUrl: String): List<String> =
+        MIRROR_PREFIXES.map { prefix ->
+            prefix +
+                officialUrl
+        }
 
     private val packages =
         mapOf(
@@ -43,6 +62,10 @@ object EasyTierCatalog {
                     rootPrefix = "easytier-$WINDOWS_X86_64",
                     coreFile = "easytier-core.exe",
                     cliFile = "easytier-cli.exe",
+                    mirrors =
+                        mirrorsOf(
+                            "$RELEASE_BASE/v$VERSION/easytier-$WINDOWS_X86_64-v$VERSION.zip",
+                        ),
                 ),
             LINUX_X86_64 to
                 EasyTierPackage(
@@ -54,6 +77,10 @@ object EasyTierCatalog {
                     rootPrefix = "easytier-$LINUX_X86_64",
                     coreFile = "easytier-core",
                     cliFile = "easytier-cli",
+                    mirrors =
+                        mirrorsOf(
+                            "$RELEASE_BASE/v$VERSION/easytier-$LINUX_X86_64-v$VERSION.zip",
+                        ),
                 ),
         )
 

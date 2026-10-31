@@ -5,10 +5,14 @@ import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.LobbyRole
 import dev.molifox.multiplayer.common.MultiplayerSettings
+import dev.molifox.multiplayer.common.NatDiagnostics
+import dev.molifox.multiplayer.common.NatType
 import dev.molifox.multiplayer.data.MultiplayerSettingsRepository
 import dev.molifox.multiplayer.easytier.EasyTierCatalog
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierRelayDirectory
+import dev.molifox.multiplayer.easytier.EasyTierTuning
+import dev.molifox.multiplayer.easytier.NatTester
 import dev.molifox.multiplayer.easytier.RelayListFetcher
 import dev.molifox.multiplayer.protocol.RoomCode
 import dev.molifox.multiplayer.protocol.RoomCodeRandom
@@ -89,6 +93,28 @@ class PclLobbyBackendTest {
         }
 
     @Test
+    fun hostPassesAdvancedTogglesToEasyTier() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.backend
+                    .saveSettings(
+                        MultiplayerSettings(latencyFirst = true, disableSymHolePunching = true),
+                    ).getOrThrow()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil {
+                    harness.backend.state.value.worlds
+                        .isNotEmpty()
+                }
+                harness.backend.host(WORLD.port).getOrThrow()
+                assertEquals(
+                    EasyTierTuning(latencyFirst = true, disableSymHolePunching = true),
+                    harness.hostContext?.tuning,
+                )
+            }
+        }
+
+    @Test
     fun joinConnectsGuestAndRejectsInvalidCode() =
         runBlocking {
             withHarness { harness ->
@@ -149,6 +175,25 @@ class PclLobbyBackendTest {
         }
 
     @Test
+    fun testNatReturnsInjectedDiagnostics() =
+        runBlocking {
+            withHarness { harness ->
+                val expected =
+                    NatDiagnostics(
+                        udpNatType = NatType.Symmetric,
+                        tcpNatType = NatType.PortRestricted,
+                        supportsIpv6 = false,
+                        publicIps = listOf("1.2.3.4"),
+                    )
+                harness.natTester.result = Result.success(expected)
+                assertEquals(expected, harness.backend.testNat().getOrThrow())
+                val failure = IllegalStateException("stun timeout")
+                harness.natTester.result = Result.failure(failure)
+                assertEquals(failure, harness.backend.testNat().exceptionOrNull())
+            }
+        }
+
+    @Test
     fun saveSettingsValidatesRelayAndPersists() =
         runBlocking {
             withHarness { harness ->
@@ -188,6 +233,7 @@ class PclLobbyBackendTest {
         val repository = FakeSettingsRepository()
         val discovery = FakeDiscoveryFactory()
         val relayFetcher = FakeRelayFetcher()
+        val natTester = FakeNatTester()
         val nodes = mutableListOf<FakeEasyTierNode>()
         val hostSessions = mutableListOf<FakeHostSession>()
         val guestSessions = mutableListOf<FakeGuestSession>()
@@ -224,12 +270,19 @@ class PclLobbyBackendTest {
                         fetcher = relayFetcher,
                         logger = { _, _ -> },
                     ),
+                natTester = natTester,
                 scanCheckIntervalMillis = SCAN_INTERVAL_MILLIS,
             )
 
         init {
             check(installed) { "无法为测试准备 EasyTier 安装目录" }
         }
+    }
+
+    private class FakeNatTester : NatTester {
+        var result: Result<NatDiagnostics> = Result.failure(IllegalStateException("unused"))
+
+        override suspend fun test(cliExecutable: Path): Result<NatDiagnostics> = result
     }
 
     private class FakeRelayFetcher : RelayListFetcher {

@@ -97,6 +97,113 @@ class EasyTierInstallerTest {
         }
 
     @Test
+    fun `downloads from the fastest measured source`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val pkg =
+                    packageFor(
+                        archive,
+                        mirrors =
+                            listOf(
+                                "https://fast.invalid/easytier.zip",
+                                "https://slow.invalid/easytier.zip",
+                            ),
+                    )
+                val downloader = RoutingDownloader(archive)
+                val probe =
+                    FakeProbe(
+                        mapOf(
+                            pkg.url to 10L,
+                            "https://fast.invalid/easytier.zip" to 99L,
+                            "https://slow.invalid/easytier.zip" to 1L,
+                        ),
+                    )
+                installer(work, downloader, pkg, probe).install { }.getOrThrow()
+                assertEquals("https://fast.invalid/easytier.zip", downloader.urls.first())
+                assertEquals(1, downloader.urls.size)
+            }
+        }
+
+    @Test
+    fun `falls back to next source when the fastest fails`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val pkg =
+                    packageFor(
+                        archive,
+                        mirrors =
+                            listOf(
+                                "https://fast.invalid/easytier.zip",
+                                "https://slow.invalid/easytier.zip",
+                            ),
+                    )
+                val downloader =
+                    RoutingDownloader(
+                        archive,
+                        failureUrls = setOf("https://fast.invalid/easytier.zip"),
+                    )
+                val probe =
+                    FakeProbe(
+                        mapOf(
+                            pkg.url to 10L,
+                            "https://fast.invalid/easytier.zip" to 99L,
+                            "https://slow.invalid/easytier.zip" to 1L,
+                        ),
+                    )
+                installer(work, downloader, pkg, probe).install { }.getOrThrow()
+                assertEquals(
+                    listOf("https://fast.invalid/easytier.zip", pkg.url),
+                    downloader.urls,
+                )
+            }
+        }
+
+    @Test
+    fun `falls back to next source when the first archive fails checksum`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val pkg =
+                    packageFor(
+                        archive,
+                        mirrors = listOf("https://fast.invalid/easytier.zip"),
+                    )
+                val downloader =
+                    RoutingDownloader(
+                        archive,
+                        badBodyUrls = setOf("https://fast.invalid/easytier.zip"),
+                    )
+                val probe =
+                    FakeProbe(
+                        mapOf(
+                            pkg.url to 1L,
+                            "https://fast.invalid/easytier.zip" to 99L,
+                        ),
+                    )
+                installer(work, downloader, pkg, probe).install { }.getOrThrow()
+                assertEquals(
+                    listOf("https://fast.invalid/easytier.zip", pkg.url),
+                    downloader.urls,
+                )
+            }
+        }
+
+    @Test
+    fun `keeps official source first when probing finds nothing`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val pkg =
+                    packageFor(archive, mirrors = listOf("https://mirror.invalid/easytier.zip"))
+                val downloader = RoutingDownloader(archive)
+                installer(work, downloader, pkg, FakeProbe(emptyMap())).install { }.getOrThrow()
+                assertEquals(pkg.url, downloader.urls.first())
+            }
+        }
+
+    @Test
     fun `reports unsupported platform`() =
         runBlocking {
             withWork { work ->
@@ -120,11 +227,13 @@ class EasyTierInstallerTest {
         work: Path,
         downloader: EasyTierArchiveDownloader,
         pkg: EasyTierPackage,
+        probe: EasyTierSourceProbe = FakeProbe(emptyMap()),
     ): EasyTierInstaller =
         EasyTierInstaller(
             runtimesRoot = work,
             packageProvider = { pkg },
             downloader = downloader,
+            probe = probe,
         )
 
     private fun archive(includeCli: Boolean): ByteArray =
@@ -138,6 +247,7 @@ class EasyTierInstallerTest {
     private fun packageFor(
         archive: ByteArray,
         digest: String = sha256(archive),
+        mirrors: List<String> = emptyList(),
     ): EasyTierPackage =
         EasyTierPackage(
             version = "0.0.test",
@@ -148,6 +258,7 @@ class EasyTierInstallerTest {
             rootPrefix = "easytier-test",
             coreFile = "core.bin",
             cliFile = "cli.bin",
+            mirrors = mirrors,
         )
 
     private fun sha256(bytes: ByteArray): String =
@@ -191,5 +302,34 @@ private class FakeDownloader(
 
     private companion object {
         const val PROGRESS_MIDDLE = 0.25f
+    }
+}
+
+/** 按 URL 返回固定测速结果；未列出的 URL 视为不可用。 */
+private class FakeProbe(
+    private val speeds: Map<String, Long?>,
+) : EasyTierSourceProbe {
+    override suspend fun measureSpeed(url: String): Long? = speeds[url]
+}
+
+/** 记录下载顺序，并可按 URL 模拟网络失败或错误内容。 */
+private class RoutingDownloader(
+    private val defaultBody: ByteArray,
+    private val failureUrls: Set<String> = emptySet(),
+    private val badBodyUrls: Set<String> = emptySet(),
+) : EasyTierArchiveDownloader {
+    val urls = mutableListOf<String>()
+
+    override suspend fun download(
+        url: String,
+        target: Path,
+        expectedBytes: Long,
+        onProgress: (Float?) -> Unit,
+    ) {
+        urls += url
+        if (url in failureUrls) throw IOException("mirror down")
+        val body = if (url in badBodyUrls) ByteArray(4) { 1 } else defaultBody
+        onProgress(0.5f)
+        Files.write(target, body)
     }
 }

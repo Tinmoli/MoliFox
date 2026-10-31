@@ -5,6 +5,7 @@ import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.NatDiagnostics
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -74,6 +75,9 @@ private class TrackingBackend : MultiplayerBackend {
         Result.failure(IllegalStateException("unused"))
 
     override suspend fun prepareRuntime() = Result.success(Unit)
+
+    override suspend fun testNat(): Result<NatDiagnostics> =
+        Result.failure(IllegalStateException("unused"))
 
     override suspend fun refreshWorlds() = Result.success(Unit)
 

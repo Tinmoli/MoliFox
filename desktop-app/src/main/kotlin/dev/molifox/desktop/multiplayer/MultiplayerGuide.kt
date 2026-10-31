@@ -1,10 +1,10 @@
-// 展示房主与房客的操作教程，步骤与 EasyTier + Scaffolding 的实际流程一致。
+// 展示房主与房客的“人话”教程：只讲操作顺序和常见问题，不堆协议术语。
 package dev.molifox.desktop.multiplayer
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -12,52 +12,68 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.molifox.multiplayer.common.MultiplayerPolicy
+import dev.molifox.desktop.MutedText
 
 @Composable
 internal fun MultiplayerGuide(host: Boolean) {
     val steps = if (host) HOST_STEPS else GUEST_STEPS
-    MultiplayerGroup(Modifier.fillMaxWidth(), title = if (host) "房主教程" else "房客教程") {
-        Column(
-            Modifier.verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            steps.forEachIndexed { index, step ->
-                Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        MultiplayerGroup(Modifier.fillMaxWidth(), title = if (host) "房主教程" else "房客教程") {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                steps.forEachIndexed { index, step ->
+                    Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+                }
             }
-            Text(
-                if (host) HOST_BOUNDARY else GUEST_BOUNDARY,
-                Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.bodySmall,
-            )
+        }
+        MultiplayerGroup(Modifier.fillMaxWidth(), title = "常见问题") {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                FAQ_ITEMS.forEach { (question, answer) ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(question, style = MaterialTheme.typography.bodyMedium)
+                        MutedText(answer)
+                    }
+                }
+            }
+        }
+        MultiplayerGroup(Modifier.fillMaxWidth(), title = "这些情况要知道") {
+            Text(BOUNDARY_NOTICE, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
-private val EASYTIER_VERSION = MultiplayerPolicy.CORE_VERSION
-
 private val HOST_STEPS =
     listOf(
-        "进入联机大厅阅读联机说明；首次使用会下载官方 EasyTier $EASYTIER_VERSION 并按 SHA-256 校验。",
-        "启动 Minecraft 并进入要分享的存档，按 Esc → 对局域网开放，确定后回到启动器。",
-        "在联机大厅点“刷新世界”，选中刚开放的世界，再点“创建房间”。",
-        "房间开启后复制邀请码发给朋友；邀请码包含网络密钥，不要公开发布。",
-        "保持游戏与启动器运行。退出存档后房间会自动关闭，房客也会断开。",
+        "在游戏里进入要分享的存档，按 Esc → 对局域网开放，记下游戏显示的端口号。",
+        "回到启动器的联机页，点“刷新世界”，选中你刚开放的那个世界。",
+        "点“创建房间”，把生成的邀请码复制发给朋友。",
+        "保持游戏和启动器都开着，朋友才能进来。",
+        "退出存档或关闭启动器，房间就关了，朋友会断开。",
     )
 
 private val GUEST_STEPS =
     listOf(
-        "确认游戏版本与必要模组和房主一致，并准备好自己的 Minecraft 客户端。",
-        "在联机大厅粘贴房主发来的 21 字符邀请码；空格会被去掉并自动转成大写。",
-        "点“加入房间”，等待启动虚拟网络、等到房主上线、建立端口转发；中继较慢时可能需要一到两分钟。",
-        "显示“已加入房间”后，打开游戏 → 多人游戏 → 刷新局域网世界，也可以直接添加界面上的本地地址。",
-        "退出房间或关闭启动器会断开连接；失败时确认房主房间仍在、邀请码完整、双方能连上中继。",
+        "问房主要 21 位邀请码，形如 U/XXXX-XXXX-XXXX-XXXX。",
+        "在联机页粘贴邀请码并点“加入房间”；启动器会建一条私人通道，有时要等 1-2 分钟。",
+        "打开游戏 → 多人游戏 → 刷新，出现朋友的世界就进去；没出现就手动添加界面给出的本地地址。",
+        "保持启动器运行，联机期间别关。",
+        "退出房间或关闭启动器就断开。",
     )
 
-private const val HOST_BOUNDARY =
-    "启动器会在创建或加入房间前自动获取 EasyTier 活跃公共节点；都不可用时可在联机设置里填写自定义中继。" +
-        "MoliFox 不会自动启动游戏，也不提供账号好友邀请；联机不替换 Minecraft 登录验证，也不会同步模组。"
+/** 常见问题：覆盖最容易卡住用户的几件事，答案只描述启动器确实会做的事。 */
+private val FAQ_ITEMS =
+    listOf(
+        "邀请码无效或房间不存在？" to
+            "确认邀请码完整（21 位）且房主的房间还开着；房主退出存档后房间会自动关闭。",
+        "一直连不上？" to
+            "换一个网络（例如手机热点）再试；仍然不行就在联机设置里填自定义中继。",
+        "弹出防火墙提示怎么办？" to
+            "点“允许访问”即可。启动器不会替你修改防火墙设置。",
+        "要装一样的模组吗？" to
+            "要。启动器不同步模组，双方的游戏版本和模组需要一致。",
+        "启动器会自动打开游戏或邀请账号好友吗？" to
+            "不会。游戏要自己启动，邀请码也要自己发给朋友。",
+    )
 
-private const val GUEST_BOUNDARY =
-    "首次运行 EasyTier 时 Windows 可能弹出防火墙提示，启动器不会自动修改防火墙设置。" +
-        "MoliFox 不会自动启动游戏，也不提供账号好友邀请；联机不替换 Minecraft 登录验证，也不会同步模组。"
+private const val BOUNDARY_NOTICE =
+    "启动器会在创建或加入房间前自动获取 EasyTier 活跃公共节点，都不可用时可在联机设置里填写自定义中继。" +
+        "联机不替换 Minecraft 登录验证，也不会同步模组；房主退出存档会关房，双方都要保持启动器运行。"

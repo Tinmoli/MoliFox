@@ -3,6 +3,7 @@ package dev.molifox.multiplayer.lobby
 
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.easytier.EasyTierNode
+import dev.molifox.multiplayer.easytier.EasyTierTuning
 import dev.molifox.multiplayer.lan.MinecraftLanDiscovery
 import dev.molifox.multiplayer.protocol.ScaffoldingCode
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
@@ -41,6 +42,7 @@ data class LobbyHostContext(
     val playerName: String,
     val runtime: EasyTierNode,
     val extraRelays: List<String>,
+    val tuning: EasyTierTuning = EasyTierTuning(),
     val logger: (message: String, error: Boolean) -> Unit,
     val probe: MinecraftWorldProbe,
     /** 房间因存档退出、进程退出等原因被关闭时回调一次可读原因。 */
@@ -54,6 +56,7 @@ data class LobbyGuestContext(
     val playerName: String,
     val runtime: EasyTierNode,
     val extraRelays: List<String>,
+    val tuning: EasyTierTuning = EasyTierTuning(),
     val logger: (message: String, error: Boolean) -> Unit,
     val onClosed: (String) -> Unit,
 )
@@ -78,6 +81,7 @@ object DefaultLobbyHostSessionFactory : LobbyHostSessionFactory {
             logger = context.logger,
             onClosed = context.onClosed,
             extraRelays = context.extraRelays,
+            tuning = context.tuning,
             probe = context.probe,
         )
 }
@@ -92,6 +96,7 @@ object DefaultLobbyGuestSessionFactory : LobbyGuestSessionFactory {
             logger = context.logger,
             onClosed = context.onClosed,
             extraRelays = context.extraRelays,
+            tuning = context.tuning,
         )
 }
 

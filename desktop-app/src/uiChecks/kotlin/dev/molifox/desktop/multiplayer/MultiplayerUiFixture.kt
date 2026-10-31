@@ -8,6 +8,8 @@ import dev.molifox.multiplayer.common.LobbyRole
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.NatDiagnostics
+import dev.molifox.multiplayer.common.NatType
 import dev.molifox.multiplayer.common.PlayerKind
 import dev.molifox.multiplayer.common.RoomPlayer
 import dev.molifox.multiplayer.domain.MultiplayerBackend
@@ -35,6 +37,9 @@ internal class MultiplayerUiFixture(
 ) {
     val downloads = AtomicInteger()
 
+    /** 网络诊断调用次数，用于确认防抖没有重复触发。 */
+    val natTests = AtomicInteger()
+
     /** 置为 true 时下一次 prepareRuntime 只模拟失败，用于验收“失败后重试下载”入口。 */
     var failNextDownload = false
 
@@ -55,10 +60,7 @@ internal class MultiplayerUiFixture(
             override val settings: StateFlow<MultiplayerSettings> = mutableSettings.asStateFlow()
 
             override suspend fun initialize(): Result<Unit> {
-                mutableState.update {
-                    it.copy(phase = LobbyPhase.DiscoveringWorld, worlds = worlds)
-                }
-                delay(FIXTURE_STEP_DELAY_MILLIS)
+                // 真实后端初始化只读取配置并探测运行时，局域网世界由扫描器随后异步发现。
                 mutableState.update {
                     it.copy(phase = LobbyPhase.Idle, runtime = runtimeStatus(installed))
                 }
@@ -76,11 +78,12 @@ internal class MultiplayerUiFixture(
                 if (failNextDownload) {
                     failNextDownload = false
                     val failure = IllegalStateException("模拟 EasyTier 下载失败")
+                    // 与真实后端一致：整个安装失败后回到大厅并留下可读错误，由界面提供“重试下载”。
                     mutableState.update {
                         it.copy(
-                            phase = LobbyPhase.Failed,
+                            phase = LobbyPhase.Idle,
                             progress = null,
-                            error = failure.message,
+                            error = "下载 EasyTier 失败：${failure.message}",
                         )
                     }
                     return Result.failure(failure)
@@ -164,6 +167,19 @@ internal class MultiplayerUiFixture(
             override suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit> {
                 mutableSettings.value = settings
                 return Result.success(Unit)
+            }
+
+            override suspend fun testNat(): Result<NatDiagnostics> {
+                natTests.incrementAndGet()
+                delay(FIXTURE_STEP_DELAY_MILLIS)
+                return Result.success(
+                    NatDiagnostics(
+                        udpNatType = NatType.Symmetric,
+                        tcpNatType = NatType.PortRestricted,
+                        supportsIpv6 = false,
+                        publicIps = emptyList(),
+                    ),
+                )
             }
 
             override suspend fun close() = Unit

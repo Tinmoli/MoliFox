@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.MutedText
 import dev.molifox.multiplayer.common.LobbyPhase
+import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
 import dev.molifox.multiplayer.common.PlayerKind
@@ -55,7 +56,7 @@ internal fun RoomProgress(state: MultiplayerState) {
     }
 }
 
-/** 缺少运行时时给出体积与校验方式，并保留显式下载入口；下载失败后可在这里重试。 */
+/** 缺少运行时时给出体积与校验方式，并保留显式下载入口；失败后改成“重试下载”。 */
 @Composable
 private fun RoomRuntimeStatus(
     state: MultiplayerState,
@@ -69,8 +70,11 @@ private fun RoomRuntimeStatus(
     }
     if (!settings.enabled) return
     Text(MULTIPLAYER_RUNTIME_DOWNLOAD_NOTICE, style = MaterialTheme.typography.bodySmall)
-    TextButton(onClick = actions.prepareRuntime, enabled = !state.busy) {
-        Text("下载官方 EasyTier")
+    TextButton(onClick = actions.downloadRuntime, enabled = !state.busy) {
+        Text(if (actions.runtimeDownloadFailed) "重试下载" else "下载官方 EasyTier")
+    }
+    if (actions.runtimeDownloadFailed) {
+        MutedText("上次下载没有完成，点“重试下载”再试一次；确认能上网后再重试。")
     }
 }
 
@@ -124,7 +128,9 @@ internal fun phaseTitle(phase: LobbyPhase): String =
 internal fun phaseHint(phase: LobbyPhase): String? =
     when (phase) {
         LobbyPhase.Idle -> "创建或加入房间前会先检查 EasyTier 运行时；首次使用会自动下载。"
-        LobbyPhase.DownloadingRuntime -> "正在下载并校验官方 EasyTier，完成后自动继续。"
+        LobbyPhase.DownloadingRuntime ->
+            "正在从官方或镜像下载 EasyTier ${MultiplayerPolicy.CORE_VERSION}（约 31 MB），" +
+                "完成后自动校验并继续。"
         LobbyPhase.StartingRuntime ->
             "正在启动 EasyTier 独立进程；首次运行 Windows 可能弹出防火墙提示。"
         LobbyPhase.DiscoveringWorld -> "正在监听并探测本机 Minecraft 局域网世界，请稍候。"
