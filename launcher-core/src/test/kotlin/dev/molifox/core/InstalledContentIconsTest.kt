@@ -19,6 +19,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -50,6 +51,9 @@ class InstalledContentIconsTest {
                 .also {
                     ImageIO.write(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), "png", it)
                 }.toByteArray()
+
+        /** 模拟 CDN 返回的图标格式；Modrinth 实际常用 WebP。 */
+        var remoteIcon: ByteArray? = null
         private val backend =
             object : ContentBackend {
                 override suspend fun project(id: String): JsonObject {
@@ -81,7 +85,7 @@ class InstalledContentIconsTest {
                             requests += request
                             val bytes =
                                 if (request.url.host == "cdn.modrinth.com") {
-                                    icon
+                                    remoteIcon ?: icon
                                 } else {
                                     check(request.url.encodedPath.startsWith("/v2/version_file/"))
                                     val hash =
@@ -232,6 +236,39 @@ class InstalledContentIconsTest {
         }
 
     @Test
+    fun `lossless webp project icons are accepted for shader avatars`(): Unit =
+        runBlocking {
+            Fixture().use { fixture ->
+                fixture.remoteIcon = WEBP_LOSSLESS_ICON
+                val file = fixture.zip()
+                assertContentEquals(
+                    WEBP_LOSSLESS_ICON,
+                    fixture
+                        .reader(true)
+                        .read(fixture.instance.id, file, PackFolder.ShaderPacks)
+                        .getOrThrow(),
+                )
+                assertEquals(2, fixture.requests.size)
+            }
+        }
+
+    @Test
+    fun `lossy webp project icons are accepted for shader avatars`(): Unit =
+        runBlocking {
+            Fixture().use { fixture ->
+                fixture.remoteIcon = WEBP_LOSSY_ICON
+                val file = fixture.zip()
+                assertContentEquals(
+                    WEBP_LOSSY_ICON,
+                    fixture
+                        .reader(true)
+                        .read(fixture.instance.id, file, PackFolder.ShaderPacks)
+                        .getOrThrow(),
+                )
+            }
+        }
+
+    @Test
     fun `unrelated fingerprint replies do not produce an avatar`(): Unit =
         runBlocking {
             Fixture().use { fixture ->
@@ -308,5 +345,12 @@ class InstalledContentIconsTest {
 
     private companion object {
         const val ICON_URL = "https://cdn.modrinth.com/data/fixture-project/icon.png"
+        val WEBP_LOSSY_ICON: ByteArray = Base64.getDecoder().decode(WEBP_LOSSY_BASE64)
+        val WEBP_LOSSLESS_ICON: ByteArray = Base64.getDecoder().decode(WEBP_LOSSLESS_BASE64)
+        const val WEBP_LOSSY_BASE64 =
+            "UklGRlgAAABXRUJQVlA4IEwAAAAwBACdASpgADAAPm02mEkkIyKhIcgAgA2JaQB2APwAAB3gvxVY0Huy4AAA" +
+                "/vCbQ//+QXLC65Gv//yA/5Af8gP/498W46FOdCAAAAAA"
+        const val WEBP_LOSSLESS_BASE64 =
+            "UklGRiIAAABXRUJQVlA4TBUAAAAvX8ALAAcQ/Y/+B4CE8H++FNH/1AcA"
     }
 }

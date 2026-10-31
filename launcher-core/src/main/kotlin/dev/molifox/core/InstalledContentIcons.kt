@@ -23,6 +23,33 @@ import kotlin.io.path.name
 private const val MAX_CONTENT_RECORD_BYTES = 8 * 1024 * 1024
 private const val MAX_CONTENT_ICON_DIMENSION = 2048
 
+/** WebP 容器头：RIFF 头、WEBP 标记、块名与各块内的宽高偏移。 */
+private const val WEBP_MIN_HEADER_BYTES = 30
+private const val WEBP_MAGIC_OFFSET = 0
+private const val WEBP_FORMAT_OFFSET = 8
+private const val WEBP_CHUNK_OFFSET = 12
+private const val FOURCC_BYTES = 4
+private const val WEBP_LOSSY_START_CODE_OFFSET = 23
+private const val WEBP_LOSSY_WIDTH_OFFSET = 26
+private const val WEBP_LOSSY_HEIGHT_OFFSET = 28
+private const val WEBP_LOSSLESS_SIGNATURE_OFFSET = 20
+private const val WEBP_LOSSLESS_SIGNATURE = 0x2f
+private const val WEBP_LOSSLESS_BITS_OFFSET = 21
+private const val WEBP_EXTENDED_WIDTH_OFFSET = 24
+private const val WEBP_EXTENDED_HEIGHT_OFFSET = 27
+private const val WEBP_DIMENSION_MASK = 0x3fff
+private const val WEBP_HEIGHT_SHIFT = 14
+private const val WEBP_LOSSY_START_CODE_0 = 0x9d.toByte()
+private const val WEBP_LOSSY_START_CODE_1 = 0x01.toByte()
+private const val WEBP_LOSSY_START_CODE_2 = 0x2a.toByte()
+
+/** 小端字节读取。 */
+private const val BYTE_MASK = 0xff
+private const val BYTE_SHIFT = 8
+private const val TWO_BYTE_SHIFT = 16
+private const val THREE_BYTE_SHIFT = 24
+private const val THREE_BYTE_INDEX = 3
+
 internal class InstalledContentIcons(
     private val store: LauncherStore,
     private val network: NetworkClient,
@@ -81,11 +108,9 @@ internal class InstalledContentIcons(
     private suspend fun thumbnailWithinLimit(url: String): ByteArray? {
         if (url.isBlank()) return null
         val bytes = network.thumbnail(url)
-        val image = ImageIO.read(ByteArrayInputStream(bytes))
+        val (width, height) = imageDimensions(bytes) ?: return null
         return bytes.takeIf {
-            image != null &&
-                image.width in 1..MAX_CONTENT_ICON_DIMENSION &&
-                image.height in 1..MAX_CONTENT_ICON_DIMENSION
+            width in 1..MAX_CONTENT_ICON_DIMENSION && height in 1..MAX_CONTENT_ICON_DIMENSION
         }
     }
 
@@ -157,3 +182,74 @@ internal class InstalledContentIcons(
         }
     }
 }
+
+/**
+ * 读取图片像素尺寸。ImageIO 覆盖 PNG / JPEG / GIF，但读不了 Modrinth 图标常用的 WebP，
+ * 因此对 WebP 容器头单独取宽高；尺寸只用于拦截异常大图，实际解码仍交给 Skia。
+ */
+private fun imageDimensions(bytes: ByteArray): Pair<Int, Int>? =
+    ImageIO.read(ByteArrayInputStream(bytes))?.let { it.width to it.height }
+        ?: webpDimensions(bytes)
+
+private fun webpDimensions(bytes: ByteArray): Pair<Int, Int>? {
+    if (bytes.size < WEBP_MIN_HEADER_BYTES ||
+        bytes.ascii(WEBP_MAGIC_OFFSET, FOURCC_BYTES) != "RIFF" ||
+        bytes.ascii(WEBP_FORMAT_OFFSET, FOURCC_BYTES) != "WEBP"
+    ) {
+        return null
+    }
+    return when (bytes.ascii(WEBP_CHUNK_OFFSET, FOURCC_BYTES)) {
+        "VP8 " -> lossyWebpDimensions(bytes)
+        "VP8L" -> losslessWebpDimensions(bytes)
+        "VP8X" -> extendedWebpDimensions(bytes)
+        else -> null
+    }
+}
+
+/** 有损 WebP：2 字节小端宽高，各取低 14 位。 */
+private fun lossyWebpDimensions(bytes: ByteArray): Pair<Int, Int>? {
+    val startCode =
+        byteArrayOf(WEBP_LOSSY_START_CODE_0, WEBP_LOSSY_START_CODE_1, WEBP_LOSSY_START_CODE_2)
+    val codeOffset = WEBP_LOSSY_START_CODE_OFFSET
+    if (!bytes.copyOfRange(codeOffset, codeOffset + startCode.size).contentEquals(startCode)) {
+        return null
+    }
+    val width = bytes.littleEndianShort(WEBP_LOSSY_WIDTH_OFFSET) and WEBP_DIMENSION_MASK
+    val height = bytes.littleEndianShort(WEBP_LOSSY_HEIGHT_OFFSET) and WEBP_DIMENSION_MASK
+    return if (width > 0 && height > 0) width to height else null
+}
+
+/** 无损 WebP：签名 0x2f 后 4 字节小端，宽、高各占 14 位。 */
+private fun losslessWebpDimensions(bytes: ByteArray): Pair<Int, Int>? {
+    if (bytes.u8(WEBP_LOSSLESS_SIGNATURE_OFFSET) != WEBP_LOSSLESS_SIGNATURE) return null
+    val bits = bytes.littleEndianInt(WEBP_LOSSLESS_BITS_OFFSET)
+    val width = (bits and WEBP_DIMENSION_MASK) + 1
+    val height = ((bits ushr WEBP_HEIGHT_SHIFT) and WEBP_DIMENSION_MASK) + 1
+    return width to height
+}
+
+/** 扩展 WebP（VP8X）：画布宽高各为 24 位小端值减一。 */
+private fun extendedWebpDimensions(bytes: ByteArray): Pair<Int, Int> {
+    val width = bytes.u24(WEBP_EXTENDED_WIDTH_OFFSET) + 1
+    val height = bytes.u24(WEBP_EXTENDED_HEIGHT_OFFSET) + 1
+    return width to height
+}
+
+private fun ByteArray.ascii(
+    offset: Int,
+    length: Int,
+): String = String(this, offset, length, Charsets.US_ASCII)
+
+private fun ByteArray.u8(offset: Int): Int = this[offset].toInt() and BYTE_MASK
+
+private fun ByteArray.littleEndianShort(offset: Int): Int =
+    u8(offset) or (u8(offset + 1) shl BYTE_SHIFT)
+
+private fun ByteArray.u24(offset: Int): Int =
+    u8(offset) or (u8(offset + 1) shl BYTE_SHIFT) or (u8(offset + 2) shl TWO_BYTE_SHIFT)
+
+private fun ByteArray.littleEndianInt(offset: Int): Int =
+    u8(offset) or
+        (u8(offset + 1) shl BYTE_SHIFT) or
+        (u8(offset + 2) shl TWO_BYTE_SHIFT) or
+        (u8(offset + THREE_BYTE_INDEX) shl THREE_BYTE_SHIFT)
