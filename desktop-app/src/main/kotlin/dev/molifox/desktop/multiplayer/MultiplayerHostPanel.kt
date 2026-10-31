@@ -123,6 +123,6 @@ internal fun RoomCodeCard(
         state.roomCode?.let { code ->
             CopyableValue("邀请码", code, "复制邀请码", copy)
         }
-        MutedText("邀请码是 Scaffolding 标准格式，PCL CE 等使用同一协议的启动器也能加入（跨启动器尚未实测）。")
+        MutedText("邀请码仅适用于 MoliFox 启动器：网络名已改为 MoliFox 前缀，PCL CE / HMCL 等其它启动器无法加入；建议双方使用相同版本。")
     }
 }

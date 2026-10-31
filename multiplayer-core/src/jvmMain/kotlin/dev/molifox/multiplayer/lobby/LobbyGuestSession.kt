@@ -174,13 +174,13 @@ class LobbyGuestSession(
             if (System.nanoTime() >= deadline) break
             if (!waitingLogged) {
                 waitingLogged = true
-                logger("房主已发现，正在等待 P2P 直连（当前设置为不经过中继）…", false)
+                logger("房主已发现，正在等待 P2P 直连（当前设置为不经过中继，最多等 3 分钟）…", false)
             }
             delay(p2pRetryIntervalMillis)
         }
         throw IOException(
-            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_SECOND} 秒内没有建立 P2P 直连" +
-                "（当前设置为不经过中继），请重试、换网络，或让中继允许转发数据。",
+            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_MINUTE} 分钟内没有建立 P2P 直连" +
+                "（当前设置为不经过中继）。请重试、换网络，或让中继允许转发数据。",
             lastFailure,
         )
     }
@@ -277,7 +277,8 @@ class LobbyGuestSession(
         const val NANOS_PER_MILLI = 1_000_000L
         const val DEFAULT_HOST_WAIT_TIMEOUT_MILLIS = 60_000L
         const val DEFAULT_POLL_INTERVAL_MILLIS = 1_000L
-        const val DEFAULT_P2P_WAIT_TIMEOUT_MILLIS = 30_000L
+        const val DEFAULT_P2P_WAIT_TIMEOUT_MILLIS = 180_000L
+        const val MILLIS_PER_MINUTE = 60_000L
         const val DEFAULT_P2P_RETRY_INTERVAL_MILLIS = 1_500L
         const val MILLIS_PER_SECOND = 1_000L
         const val PLAYER_REFRESH_INTERVAL_MILLIS = 10_000L
