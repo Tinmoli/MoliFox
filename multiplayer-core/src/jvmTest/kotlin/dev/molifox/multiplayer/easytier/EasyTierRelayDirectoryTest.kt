@@ -129,8 +129,8 @@ class EasyTierRelayDirectoryTest {
         }
 
     @Test
-    fun `built-in fallback keeps official nodes and community lists separate`() {
-        assertTrue(EasyTierRelays.DEFAULT.contains("tcp://public.easytier.top:11010"))
+    fun `official fallback is empty after upstream shutdown`() {
+        assertTrue(EasyTierRelays.DEFAULT.isEmpty())
         assertTrue(EasyTierRelays.HTTP_NODE_LISTS.contains("https://etnode.zkitefly.eu.org/node1"))
         assertTrue(EasyTierRelays.NODE_LIST_URL.startsWith("https://"))
     }

@@ -344,9 +344,9 @@ private fun ColumnScope.LogConsolePanel(
                     }
                     items(
                         count = logs.size,
-                        // 日志行没有全局 id：用「时间戳 + 下标」做稳定 key。
-                        // 追加新行时下标不变，同一毫秒写入相同正文也不会撞 key。
-                        key = { index -> logs[index].time + "#" + index },
+                        // 用日志行自身的递增 id 做 key：600 行上限会从头裁掉旧行，
+                        // 用「时间戳/下标」会在裁剪后整体错位，看起来像自己滚动。
+                        key = { index -> logs[index].id.toString() },
                     ) { index ->
                         LogRow(logs[index], fontSize)
                     }

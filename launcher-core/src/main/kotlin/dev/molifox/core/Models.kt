@@ -509,6 +509,8 @@ enum class LogLevel(
 }
 
 data class LogLine(
+    /** 界面临时列表的稳定 key；不参与日志文件与导出。 */
+    val id: Long = 0,
     val time: String = Instant.now().toString(),
     val message: String,
     val isError: Boolean = false,

@@ -29,7 +29,8 @@ data class EasyTierTuning(
  *   已由官方关停，启动器仍会尝试一次，失败后改用社区 HTTP 节点列表，不阻断房间。
  * - [HTTP_NODE_LISTS]：社区维护的 HTTP 节点列表；启动器会优先自行解析成具体节点，
  *   解析失败时再把列表地址交给 EasyTier 自行拉取（EasyTier 原生支持 https 节点列表）。
- * - [DEFAULT]：官方固定节点，仅作为最后兜底；官方域名当前可能失效，保留用于服务恢复。
+ * - [DEFAULT]：已清空——官方公共中继 `public.easytier.top` / `public2.easytier.cn` 已随
+ *   EasyTier Uptime 一起关停，保留在 `-p` 里只会让核心每秒重试 NXDOMAIN 并刷日志。
  *
  * 没有这些节点时跨 NAT 基本无法连通；用户可在设置里追加自定义中继。
  */
@@ -37,12 +38,8 @@ object EasyTierRelays {
     const val NODE_LIST_URL =
         "https://uptime.easytier.cn/api/nodes?page=1&per_page=50&is_active=true"
 
-    /** 官方固定节点；保留以便官方服务恢复后继续生效。 */
-    private val OFFICIAL: List<String> =
-        listOf(
-            "tcp://public.easytier.top:11010",
-            "tcp://public2.easytier.cn:54321",
-        )
+    /** 官方公共中继已关停（NXDOMAIN）；恢复后再把地址加回来。 */
+    private val OFFICIAL: List<String> = emptyList()
 
     /** 社区 HTTP 节点列表；启动器优先解析，失败时交给 EasyTier 自取。 */
     val HTTP_NODE_LISTS: List<String> =

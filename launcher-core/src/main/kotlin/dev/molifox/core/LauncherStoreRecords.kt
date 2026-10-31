@@ -208,6 +208,8 @@ internal abstract class StoreLogActions(
     core: LauncherStoreCore,
 ) : StoreRecordActions(core),
     StoreLogApi {
+    private var nextLogId = 0L
+
     @Synchronized
     override fun log(
         message: String,
@@ -218,6 +220,7 @@ internal abstract class StoreLogActions(
         val resolved = level ?: if (error) LogLevel.Error else LogLevel.Info
         val line =
             LogLine(
+                id = ++nextLogId,
                 message = redactSecrets(message).take(8000),
                 isError = error || resolved.ordinal >= LogLevel.Error.ordinal,
                 isGame = game,

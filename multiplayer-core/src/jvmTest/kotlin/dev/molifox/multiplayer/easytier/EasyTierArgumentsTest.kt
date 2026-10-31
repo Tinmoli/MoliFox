@@ -63,36 +63,36 @@ class EasyTierArgumentsTest {
         assertFalse(arguments.contains("-i"))
         assertTrue(arguments.containsAll(listOf("--hostname", GUEST_HOSTNAME)))
         assertTrue(arguments.containsAll(listOf("--tcp-whitelist", "0")))
-        assertEquals(minOf(EasyTierRelays.DEFAULT.size, MAX_RELAYS), arguments.count { it == "-p" })
+        assertEquals(0, arguments.count { it == "-p" })
     }
 
     @Test
-    fun `relays deduplicate default nodes and keep custom ones`() {
+    fun `relays deduplicate custom nodes`() {
         val request =
             EasyTierNodeRequest.guest(
                 code = code,
                 machineId = MACHINE_ID,
-                extraRelays = listOf(EasyTierRelays.DEFAULT.first(), "udp://custom.example:11010"),
+                extraRelays = listOf("tcp://custom.example:11010", "udp://custom.example:11010"),
             )
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
-        assertEquals(EasyTierRelays.DEFAULT.size + 1, relays.size)
-        assertEquals(1, relays.count { it == EasyTierRelays.DEFAULT.first() })
-        assertTrue(relays.contains("udp://custom.example:11010"))
+        assertEquals(listOf("tcp://custom.example:11010", "udp://custom.example:11010"), relays)
     }
 
     @Test
-    fun `dynamic relays precede fixed fallback nodes`() {
+    fun `dynamic relays are kept in order`() {
         val request =
             EasyTierNodeRequest.guest(
                 code = code,
                 machineId = MACHINE_ID,
-                extraRelays = listOf("tcp://live.example:11010"),
+                extraRelays = listOf("tcp://live.example:11010", "udp://live2.example:11010"),
             )
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
-        assertEquals("tcp://live.example:11010", relays.first())
-        assertEquals(EasyTierRelays.DEFAULT.size + 1, relays.size)
+        assertEquals(
+            listOf("tcp://live.example:11010", "udp://live2.example:11010"),
+            relays,
+        )
     }
 
     @Test
