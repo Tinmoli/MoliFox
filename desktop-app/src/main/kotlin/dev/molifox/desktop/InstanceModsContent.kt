@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.GameInstance
 import dev.molifox.core.ModFile
 import dev.molifox.core.ModUpdateItem
 import dev.molifox.core.ModUpdateStatus
@@ -42,6 +43,7 @@ internal fun ModsStatusBar(
     checking: Boolean,
     instanceBusy: Boolean,
     onCheckUpdates: () -> Unit,
+    onOpenJarInJar: () -> Unit,
     onOpenUpdates: () -> Unit,
 ) {
     Row(
@@ -81,6 +83,12 @@ internal fun ModsStatusBar(
             enabled = !instanceBusy && !checking,
         ) {
             Text(if (checking) "正在检查…" else "检查更新", fontSize = 12.sp)
+        }
+        TextButton(
+            { onOpenJarInJar() },
+            enabled = !instanceBusy,
+        ) {
+            Text("嵌入依赖", fontSize = 12.sp)
         }
         TextButton(
             { onOpenUpdates() },
@@ -249,12 +257,15 @@ private fun ModsNoMatchState(
 @Composable
 internal fun ModsDialogs(
     updatesOpen: Boolean,
-    instanceId: String,
+    jarInJarOpen: Boolean,
+    instance: GameInstance,
     actions: UiActions,
+    mods: List<ModFile>,
     detailMod: ModFile?,
     confirmingUpdate: ModUpdateItem?,
     deletingMod: ModFile?,
     onCloseUpdates: () -> Unit,
+    onCloseJarInJar: () -> Unit,
     onCloseDetail: () -> Unit,
     onConfirmUpdate: (ModUpdateItem) -> Unit,
     onDismissConfirm: () -> Unit,
@@ -262,7 +273,10 @@ internal fun ModsDialogs(
     onDismissDelete: () -> Unit,
 ) {
     if (updatesOpen) {
-        ContentUpdatesDialog(instanceId, actions) { onCloseUpdates() }
+        ContentUpdatesDialog(instance.id, actions) { onCloseUpdates() }
+    }
+    if (jarInJarOpen) {
+        JarInJarDialog(instance, mods, actions) { onCloseJarInJar() }
     }
     detailMod?.let { mod -> ModDetailsDialog(mod) { onCloseDetail() } }
     // 名称搜索得到的匹配先确认来源项目，避免把同名模组替换掉。

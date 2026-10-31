@@ -54,6 +54,7 @@ internal fun InstanceMods(
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var updatesOpen by remember { mutableStateOf(false) }
+    var jarInJarOpen by remember { mutableStateOf(false) }
     var detailMod by remember { mutableStateOf<ModFile?>(null) }
     var deletingMod by remember { mutableStateOf<ModFile?>(null) }
     var chip by remember(instance.id) { mutableStateOf(ContentChip.All) }
@@ -75,8 +76,10 @@ internal fun InstanceMods(
     }
     ModsDialogs(
         updatesOpen = updatesOpen,
-        instanceId = instance.id,
+        jarInJarOpen = jarInJarOpen,
+        instance = instance,
         actions = actions,
+        mods = mods,
         detailMod = detailMod,
         confirmingUpdate = confirmingUpdate,
         deletingMod = deletingMod,
@@ -84,6 +87,7 @@ internal fun InstanceMods(
             updatesOpen = false
             refresh++
         },
+        onCloseJarInJar = { jarInJarOpen = false },
         onCloseDetail = { detailMod = null },
         onConfirmUpdate = { item ->
             confirmingUpdate = null
@@ -162,6 +166,7 @@ internal fun InstanceMods(
             checking = checking,
             instanceBusy = busy,
             onCheckUpdates = { updates.checkAll(checkScope, refresh = true) },
+            onOpenJarInJar = { jarInJarOpen = true },
             onOpenUpdates = { updatesOpen = true },
         )
         ModsThinProgress(checking)
