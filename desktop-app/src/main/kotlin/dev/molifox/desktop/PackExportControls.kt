@@ -19,9 +19,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,16 +86,16 @@ internal fun ExportEntryRow(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(Metrics.innerRadius))
                 .clickable(enabled = enabled) { onCheckedChange(!checked) }
-                .padding(vertical = 1.dp),
+                .padding(vertical = 0.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             ExportExpandArrow(
                 expanded = expanded,
                 visible = entry.children.isNotEmpty(),
                 onClick = { expanded = !expanded },
             )
-            Checkbox(checked, { onCheckedChange(it) }, enabled = enabled)
+            CompactCheckbox(checked, enabled) { onCheckedChange(it) }
             Column(Modifier.weight(1f)) {
                 Text(
                     exportEntryTitle(entry.name),
@@ -152,7 +154,7 @@ private fun ExportNodeRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = (depth * 18).dp, top = 1.dp, bottom = 1.dp),
+                .padding(start = (depth * 14).dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -161,11 +163,7 @@ private fun ExportNodeRow(
                 visible = node.children.isNotEmpty(),
                 onClick = { expanded = !expanded },
             )
-            Checkbox(
-                checked,
-                { onToggle(node.path, it) },
-                enabled = parentChecked,
-            )
+            CompactCheckbox(checked, parentChecked) { onToggle(node.path, it) }
             Text(
                 node.name,
                 fontSize = 12.sp,
@@ -186,6 +184,22 @@ private fun ExportNodeRow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CompactCheckbox(
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Checkbox(
+            checked,
+            onCheckedChange,
+            enabled = enabled,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

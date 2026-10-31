@@ -5,13 +5,16 @@
 
 package dev.molifox.desktop
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,10 +82,18 @@ internal fun ExportEntriesSection(
                     "打包内容",
                     "已选 ${selectedEntries.size}/${selectableEntries.size}",
                     action = {
-                        TextButton({ expanded = !expanded }) {
-                            Text(if (expanded) "收起" else "展开")
-                        }
+                        Text(
+                            if (expanded) "收起" else "展开",
+                            modifier =
+                                Modifier
+                                    .clickable { expanded = !expanded }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     },
+                    contentGap = 2.dp,
+                    compact = true,
                 ) {
                     if (expanded) {
                         selectableEntries.forEach { entry ->

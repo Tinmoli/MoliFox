@@ -123,6 +123,7 @@ fun SettingsSection(
     detail: String = "",
     action: @Composable RowScope.() -> Unit = {},
     contentGap: Dp = Metrics.rowGap,
+    compact: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -138,8 +139,8 @@ fun SettingsSection(
                     .padding(
                         start = Metrics.cardPadding,
                         end = Metrics.cardPadding,
-                        top = 11.dp,
-                        bottom = 10.dp,
+                        top = if (compact) 6.dp else 11.dp,
+                        bottom = if (compact) 6.dp else 10.dp,
                     ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
