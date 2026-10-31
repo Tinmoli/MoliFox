@@ -9,6 +9,8 @@ MoliFox-linux-*.run
 MoliFox-*-linux-x86_64.run
 MoliFox-*-windows-x86_64.exe
 .gradle-home/
+# 本机构建密钥（Microsoft Client ID 等），不提交。
+local.properties
 .kotlin/
 **/build/
 .idea/

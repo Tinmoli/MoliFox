@@ -4,6 +4,7 @@
 // 负责配置核心模块依赖、测试和功能验收任务。
 
 import java.time.Duration
+import java.util.Properties
 
 plugins { kotlin("jvm") }
 
@@ -13,6 +14,38 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
 }
+
+// Microsoft OAuth Client ID 不进仓库：优先环境变量，其次本机 local.properties。
+val microsoftClientId =
+    providers
+        .environmentVariable("MOLIFOX_MS_CLIENT_ID")
+        .orElse(providers.environmentVariable("MICROSOFT_CLIENT_ID"))
+        .orElse(
+            providers.provider {
+                val local = rootProject.file("local.properties")
+                if (!local.isFile) {
+                    ""
+                } else {
+                    Properties()
+                        .apply { local.inputStream().use(::load) }
+                        .getProperty("microsoft.client.id", "")
+                }
+            },
+        )
+val microsoftIdentityDir = layout.buildDirectory.dir("generated/microsoftIdentity")
+val writeMicrosoftIdentity =
+    tasks.register("writeMicrosoftIdentity") {
+        val destination = microsoftIdentityDir
+        val clientId = microsoftClientId
+        inputs.property("microsoftClientId", clientId)
+        outputs.dir(destination)
+        doLast {
+            val file = destination.get().asFile.resolve("microsoft-identity.properties")
+            file.parentFile.mkdirs()
+            file.writeText("microsoft.client.id=" + clientId.get().trim() + "\n")
+        }
+    }
+sourceSets.main { resources.srcDir(writeMicrosoftIdentity.map { microsoftIdentityDir }) }
 
 dependencies {
     // 资源目录模型把 JsonObject 暴露在公开签名里，界面层需要能引用 Gson 的解析异常类型。

@@ -41,7 +41,8 @@ internal fun MultiplayerTermsDialog(
                 Text(MULTIPLAYER_NETWORK_NOTICE, Modifier.padding(top = 12.dp))
                 Text(
                     "你在房间中使用的显示名称、随机设备标识与客户端版本会发送给同房间的玩家，" +
-                        "用于房间内展示与识别；内置自建节点只协助 P2P 打洞与发现，游戏数据不经过中继。" +
+                        "用于房间内展示与识别；优先 P2P 直连，打洞失败时会自动经自建中继转发。" +
+                        "中继不支持转发或不可用时会提示连接失败。" +
                         "联机目前仅支持 MoliFox 启动器之间使用，PCL CE / HMCL 等其它启动器无法加入。" +
                         "邀请码包含网络密钥，等同于房间口令，请只分享给要一起玩的朋友。",
                     Modifier.padding(top = 12.dp),

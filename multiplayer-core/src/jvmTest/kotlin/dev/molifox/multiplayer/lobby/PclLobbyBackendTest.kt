@@ -1,6 +1,7 @@
 // 后端编排测试：初始化、世界发现、建房/加入、离开与会话异常回收。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
@@ -411,6 +412,7 @@ class PclLobbyBackendTest {
         override val players: StateFlow<List<ScaffoldingPlayer>> = mutablePlayers
         override val localAddress: String = GUEST_ADDRESS
         override val hostName: String = "Alice"
+        override val connectionRoute: ConnectionRoute = ConnectionRoute.Relay
 
         override suspend fun start(): Result<Unit> = Result.success(Unit)
 

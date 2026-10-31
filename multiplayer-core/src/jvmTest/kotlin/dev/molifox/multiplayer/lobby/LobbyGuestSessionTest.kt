@@ -1,6 +1,7 @@
 // 房客会话：等待房主、Scaffolding 握手、端口转发链条与局域网广播。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.easytier.EasyTierForwardProtocol
 import dev.molifox.multiplayer.lan.MinecraftLanBroadcast
 import dev.molifox.multiplayer.protocol.RoomCode
@@ -37,6 +38,7 @@ class LobbyGuestSessionTest {
             val session = guestSession(node, loopbackForwarder, listener)
             try {
                 session.start().getOrThrow()
+                assertEquals(ConnectionRoute.Direct, session.connectionRoute)
                 val localPort = session.localAddress.substringAfterLast(':').toInt()
                 assertForwardChain(loopbackForwarder.calls, scaffolding.port, minecraft.port)
                 assertEquals(listOf("Alice", "Bob"), awaitPlayers(scaffolding))

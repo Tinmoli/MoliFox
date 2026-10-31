@@ -178,7 +178,7 @@ data class LauncherSettings(
     val windowTransparent: Boolean = false,
     /** 界面语言，当前仅提供 zh-CN。 */
     val language: String = "zh-CN",
-    val gameLanguageFollowsLauncher: Boolean = false,
+    val gameLanguageFollowsLauncher: Boolean = true,
     /** 启动时检查 GitHub 上已发布的正式版本。 */
     val autoCheckUpdates: Boolean = false,
     /** 版本列表源：official / bmclapi，独立于游戏文件下载源。 */

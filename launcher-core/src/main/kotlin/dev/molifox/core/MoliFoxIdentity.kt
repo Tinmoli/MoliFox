@@ -5,11 +5,34 @@
 
 package dev.molifox.core
 
-/** OAuth 公共应用标识随客户端分发，不包含客户端密钥。 */
+import java.util.Properties
+
+/**
+ * OAuth 公共应用标识随客户端分发，不包含客户端密钥。
+ *
+ * Microsoft Client ID 不写进仓库源码：构建时从环境变量 `MOLIFOX_MS_CLIENT_ID`
+ * （或 `MICROSOFT_CLIENT_ID`、本机 `local.properties`）生成 `microsoft-identity.properties`，
+ * 运行时读资源。取不到时为空串，用户仍可在设置里填写自定义 UUID。
+ */
 object MoliFoxIdentity {
-    const val MICROSOFT_CLIENT_ID = "f7a97d7c-8dc7-42eb-81bb-5bf19c29d213"
+    val MICROSOFT_CLIENT_ID: String = loadClientId()
+
     const val REPOSITORY = "https://github.com/Tinmoli/MoliFox"
     const val RELEASES = "$REPOSITORY/releases"
     const val ISSUES = "$REPOSITORY/issues"
     const val LICENSE = "GPL-3.0-only · 保留署名与修改版区分"
+
+    private const val RESOURCE = "/microsoft-identity.properties"
+    private const val CLIENT_ID_KEY = "microsoft.client.id"
+
+    private fun loadClientId(): String =
+        runCatching {
+            val stream = MoliFoxIdentity::class.java.getResourceAsStream(RESOURCE) ?: return ""
+            stream.use { input ->
+                Properties()
+                    .apply { load(input) }
+                    .getProperty(CLIENT_ID_KEY, "")
+                    .trim()
+            }
+        }.getOrDefault("")
 }

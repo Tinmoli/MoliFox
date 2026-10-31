@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.CompactTextField
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.PrimaryButton
+import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
 import dev.molifox.multiplayer.protocol.RoomCode
@@ -71,6 +72,9 @@ internal fun LocalAddressCard(
         state.localAddress?.let { address ->
             CopyableValue("本地地址", address, "复制地址", copy)
         }
+        state.connectionRoute?.let { route ->
+            MutedText("连接方式：" + connectionRouteLabel(route))
+        }
         MutedText("首次运行 EasyTier 时 Windows 可能弹出防火墙提示，启动器不会自动修改防火墙。")
     }
 }
@@ -78,3 +82,11 @@ internal fun LocalAddressCard(
 /** 粘贴文本常带空格、换行或小写字母；统一规范后再显示，也直接作为加入参数提交。 */
 private fun normalizeInviteCode(text: String): String =
     text.filterNot { it.isWhitespace() }.uppercase()
+
+/** 打洞/中继/未知三种路径的用户文案；未知时不让用户误以为走了中继。 */
+internal fun connectionRouteLabel(route: ConnectionRoute): String =
+    when (route) {
+        ConnectionRoute.Direct -> "P2P 打洞直连"
+        ConnectionRoute.Relay -> "经自建中继转发"
+        ConnectionRoute.Unknown -> "暂未识别（可稍后重进房间查看）"
+    }

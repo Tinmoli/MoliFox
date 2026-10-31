@@ -25,14 +25,15 @@ data class EasyTierTuning(
 /**
  * EasyTier 中继节点：只使用用户自建的两台共享节点。
  *
- * 客户端始终带 `--p2p-only`，中继只用于信令/帮助打洞，**游戏数据不经过中继**；
- * 两台节点按顺序尝试，第一台连不上会试第二台。用户可在设置里追加自定义中继，
- * 自定义地址排在前面、最多 6 个。
+ * 客户端优先走 P2P 直连，打洞失败时 EasyTier 会自动改用中继转发数据；
+ * 中继是否允许转发由节点的 `relay-network-whitelist` 决定（MoliFox 房间匹配
+ * `MoliFox*`）。两台节点按顺序尝试；用户可在设置里追加自定义中继，自定义地址
+ * 排在前面、最多 6 个。
  */
 object EasyTierRelays {
     val DEFAULT: List<String> =
         listOf(
-            "tcp://sh-easytier.chior.top:11010",
+            // sh 节点长期不可用，先移除；恢复后再加回来。
             "tcp://xg-easytier.chior.top:11010",
         )
 }
@@ -197,15 +198,14 @@ object EasyTierArguments {
     }
 
     // 双方共用：不装 TUN、多线程收发；私有模式拒绝没有相同网络密钥的外部网络；
-    // KCP/QUIC 代理提升部分网络的转发可用性；p2p-only 表示只与已建立 P2P 的节点
-    // 通信——自建中继只用来帮打洞/发现，游戏数据不经过中继。
+    // KCP/QUIC 代理提升部分网络的转发可用性。不传 --p2p-only：优先 P2P 直连，
+    // 打洞失败时允许 EasyTier 自动走中继转发。
     private val COMMON_FLAGS =
         listOf(
             "--no-tun",
             "--multi-thread",
             "--enable-kcp-proxy",
             "--enable-quic-proxy",
-            "--p2p-only",
             "--private-mode",
             PRIVATE_MODE_ENABLED,
         )

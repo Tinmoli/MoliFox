@@ -88,7 +88,7 @@ private fun RelayGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = "中继节点",
-        detail = "默认使用内置的两台自建节点，只协助 P2P 打洞和发现，游戏数据不经过中继；这里的自定义地址优先级更高，多个用分号分隔。",
+        detail = "默认使用内置的两台自建节点：优先 P2P 直连，打洞失败自动走中继；节点需允许转发 MoliFox*，否则会提示连接失败。自定义地址优先级更高，多个用分号分隔。",
     ) {
         CompactTextField(
             draft.relayServer,

@@ -248,6 +248,7 @@ class PclLobbyBackend(
                     role = null,
                     roomCode = null,
                     localAddress = null,
+                    connectionRoute = null,
                     players = emptyList(),
                     error = null,
                     progress = null,

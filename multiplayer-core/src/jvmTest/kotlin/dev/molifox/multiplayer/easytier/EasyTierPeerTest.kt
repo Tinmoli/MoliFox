@@ -15,7 +15,7 @@ class EasyTierPeerTest {
             INFO  using rpc portal 127.0.0.1:54321
             [
               {"hostname":"MoliFox-server-45678","ipv4":"10.114.51.41",
-               "lat_ms":"12.5","loss_rate":"0%","nat_type":"PortRestricted","version":"2.6.4"},
+               "cost":"p2p","lat_ms":"12.5","loss_rate":"0%","nat_type":"PortRestricted","version":"2.6.4"},
               {"hostname":"7c9f-guest","ipv4":"10.114.51.99","lat_ms":"-"}
             ]
             """.trimIndent()
@@ -23,6 +23,7 @@ class EasyTierPeerTest {
         val peers = EasyTierPeers.parse(output).getOrThrow()
 
         assertEquals(listOf("MoliFox-server-45678", "7c9f-guest"), peers.map { it.hostname })
+        assertEquals("p2p", peers.first().cost)
         assertEquals(12.5, peers.first().latencyMillis)
         assertNull(peers.last().latencyMillis)
     }

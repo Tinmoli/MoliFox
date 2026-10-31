@@ -35,6 +35,9 @@ enum class LobbyPhase {
     Failed,
 }
 
+/** 房客到房主的实际数据路径；用于连接成功后展示“打洞直连/中继转发”。 */
+enum class ConnectionRoute { Direct, Relay, Unknown }
+
 /** 本次联机中本机的角色。 */
 enum class LobbyRole { Host, Guest }
 
@@ -67,6 +70,8 @@ data class MultiplayerState(
     val roomCode: String? = null,
     /** 房客本地可加入地址（`127.0.0.1:<端口>`），广播之外的兜底入口。 */
     val localAddress: String? = null,
+    /** 房客连接成功后的实际路径；房主或未连接时为 null。 */
+    val connectionRoute: ConnectionRoute? = null,
     /** 本机 Minecraft 局域网世界；发现流程结束后仍可保留到开始建房。 */
     val worlds: List<LanWorld> = emptyList(),
     val players: List<RoomPlayer> = emptyList(),

@@ -83,6 +83,7 @@ internal class LobbyRoomCoordinator(
                 role = LobbyRole.Guest,
                 roomCode = code.code,
                 localAddress = null,
+                connectionRoute = null,
                 players = emptyList(),
                 error = null,
             )
@@ -152,7 +153,11 @@ internal class LobbyRoomCoordinator(
             session.start().getOrElse { failure -> throw failure }
             watchPlayers(session.players)
             store.update {
-                it.copy(phase = LobbyPhase.Connected, localAddress = session.localAddress)
+                it.copy(
+                    phase = LobbyPhase.Connected,
+                    localAddress = session.localAddress,
+                    connectionRoute = session.connectionRoute,
+                )
             }
         }
 

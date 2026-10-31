@@ -1,6 +1,7 @@
 // 房主/房客会话的对外契约与可注入工厂；后端只依赖这里，测试可替换为假会话。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierTuning
@@ -29,6 +30,9 @@ interface LobbyGuestSessionApi : AutoCloseable {
 
     /** 房主显示名；用于本机局域网广播的描述。 */
     val hostName: String
+
+    /** 到房主的实际数据路径；[start] 成功后才有意义。 */
+    val connectionRoute: ConnectionRoute
 
     /** 启动节点、等待房主、建立转发并开始广播；失败时调用方负责 [close]。 */
     suspend fun start(): Result<Unit>

@@ -124,6 +124,8 @@ class DesktopRefinementsTest {
     @Test
     fun `language follows launcher only when enabled and preserves unrelated options`() {
         val store = store()
+        // 新装默认开启“跟随启动器”；本用例先验证关闭分支，再显式开启。
+        store.mutate { it.copy(settings = it.settings.copy(gameLanguageFollowsLauncher = false)) }
         val instance = instance(store)
         val options =
             store.instancePath(instance.id).resolve("options.txt").apply {

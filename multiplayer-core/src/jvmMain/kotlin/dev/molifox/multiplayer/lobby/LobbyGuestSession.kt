@@ -1,6 +1,7 @@
 // 房客会话：等待房主 → 转发 Scaffolding → 连接房间 → 转发 Minecraft → 广播本地世界。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.easytier.EasyTierCli
 import dev.molifox.multiplayer.easytier.EasyTierHost
 import dev.molifox.multiplayer.easytier.EasyTierNode
@@ -69,8 +70,12 @@ class LobbyGuestSession(
     private var client: ScaffoldingClient? = null
     private var closed = false
     private var reported = false
+    private var route = ConnectionRoute.Unknown
 
     override val players: StateFlow<List<ScaffoldingPlayer>> = mutablePlayers.asStateFlow()
+
+    override val connectionRoute: ConnectionRoute
+        get() = route
 
     override var localAddress: String = ""
         private set
@@ -93,6 +98,17 @@ class LobbyGuestSession(
             ports.forwardTcp(scaffoldingLocalPort, host.peer.ipv4, host.scaffoldingPort)
             ports.forwardUdpBestEffort(scaffoldingLocalPort, host.peer.ipv4, host.scaffoldingPort)
             val created = connectRoom(scaffoldingLocalPort)
+            var routeAttempts = 0
+            while (routeAttempts < ROUTE_ATTEMPTS) {
+                val hostPeer =
+                    cli.peers().getOrNull()?.firstOrNull { peer ->
+                        peer.hostname == host.peer.hostname
+                    }
+                route = routeFromCost(hostPeer?.cost)
+                routeAttempts++
+                if (route == ConnectionRoute.Direct || routeAttempts >= ROUTE_ATTEMPTS) break
+                delay(ROUTE_RETRY_MILLIS)
+            }
             startPlayerRefresh(created)
             val minecraftPort = resolveMinecraftPort(created)
             val minecraftLocalPort = portAllocator.allocate()
@@ -139,10 +155,10 @@ class LobbyGuestSession(
     }
 
     /**
-     * 连接房主；p2p-only 下数据只能走 P2P，发现房主不等于已经直连成功。
+     * 连接房主；发现房主不等于数据面已经可用。
      *
      * 首次连不上时继续重试 [p2pWaitTimeoutMillis] 毫秒，给 EasyTier 打洞留时间；
-     * 全部失败再给出“未建立 P2P 直连”的明确提示，避免几秒内就误判失败。
+     * 打洞失败后 EasyTier 会自动尝试中继转发，因此超时说明“P2P 与中继都没成功”。
      */
     private suspend fun connectRoom(scaffoldingLocalPort: Int): ScaffoldingClient {
         val deadline = System.nanoTime() + p2pWaitTimeoutMillis * NANOS_PER_MILLI
@@ -174,13 +190,13 @@ class LobbyGuestSession(
             if (System.nanoTime() >= deadline) break
             if (!waitingLogged) {
                 waitingLogged = true
-                logger("房主已发现，正在等待 P2P 直连（当前设置为不经过中继，最多等 3 分钟）…", false)
+                logger("房主已发现，正在建立连接（优先 P2P，失败自动走中继，最多等 3 分钟）…", false)
             }
             delay(p2pRetryIntervalMillis)
         }
         throw IOException(
-            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_MINUTE} 分钟内没有建立 P2P 直连" +
-                "（当前设置为不经过中继）。请重试、换网络，或让中继允许转发数据。",
+            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_MINUTE} 分钟内 P2P 与中继转发都失败。" +
+                "请确认自建节点开启转发（relay-network-whitelist=\"MoliFox*\"），或让双方在同一局域网后重试。",
             lastFailure,
         )
     }
@@ -282,5 +298,17 @@ class LobbyGuestSession(
         const val DEFAULT_P2P_RETRY_INTERVAL_MILLIS = 1_500L
         const val MILLIS_PER_SECOND = 1_000L
         const val PLAYER_REFRESH_INTERVAL_MILLIS = 10_000L
+        const val ROUTE_ATTEMPTS = 4
+        const val ROUTE_RETRY_MILLIS = 500L
     }
 }
+
+/** 把 EasyTier 的 cost 转成用户能理解的数据路径。 */
+private fun routeFromCost(cost: String?): ConnectionRoute =
+    when {
+        cost == null -> ConnectionRoute.Unknown
+        cost.contains("relay", ignoreCase = true) -> ConnectionRoute.Relay
+        cost.equals("p2p", ignoreCase = true) || cost.equals("direct", ignoreCase = true) ->
+            ConnectionRoute.Direct
+        else -> ConnectionRoute.Unknown
+    }

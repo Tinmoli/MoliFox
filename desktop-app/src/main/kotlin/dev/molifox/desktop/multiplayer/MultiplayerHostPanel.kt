@@ -55,7 +55,7 @@ internal fun HostRoomPanel(
             PrimaryButton("创建房间", enabled = ready && selectedPort != null) {
                 actions.host(selectedPort)
             }
-            MutedText("房间需要房主保持游戏与启动器运行，并要求能连上内置中继完成打洞。")
+            MutedText("房间需要房主保持游戏与启动器运行；双方优先 P2P 直连，打洞失败会自动走自建中继。")
         }
     }
 }

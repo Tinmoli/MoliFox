@@ -14,6 +14,8 @@ data class EasyTierPeer(
     val ipv4: String,
     /** 延迟毫秒；`-` 或无法解析时为 null。 */
     val latencyMillis: Double?,
+    /** EasyTier 的 `cost`：`Local`/`p2p`/`relay(...)`，用于判断打洞还是中继。 */
+    val cost: String? = null,
 )
 
 /** 已定位到的房主：虚拟 IP 与 hostname 末尾的 Scaffolding 端口。 */
@@ -30,6 +32,7 @@ object EasyTierPeers {
     private const val FIELD_HOSTNAME = "hostname"
     private const val FIELD_IPV4 = "ipv4"
     private const val FIELD_LATENCY = "lat_ms"
+    private const val FIELD_COST = "cost"
     private const val MIN_PORT = 1
     private const val MAX_PORT = 65_535
 
@@ -84,7 +87,12 @@ object EasyTierPeers {
         val json = element.asJsonObject
         val hostname = json.stringOrNull(FIELD_HOSTNAME)?.takeIf(String::isNotBlank) ?: return null
         val ipv4 = json.stringOrNull(FIELD_IPV4)?.takeIf(String::isNotBlank) ?: return null
-        return EasyTierPeer(hostname, ipv4, latencyMillis = latency(json))
+        return EasyTierPeer(
+            hostname,
+            ipv4,
+            latencyMillis = latency(json),
+            cost = json.stringOrNull(FIELD_COST),
+        )
     }
 
     /** `lat_ms` 在 CLI 里既是数字字符串也可能是 `-`；无法解析按未知处理。 */

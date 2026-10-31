@@ -34,7 +34,6 @@ class EasyTierArgumentsTest {
                     "--multi-thread",
                     "--enable-kcp-proxy",
                     "--enable-quic-proxy",
-                    "--p2p-only",
                 ),
             ),
         )
@@ -106,10 +105,7 @@ class EasyTierArgumentsTest {
     @Test
     fun `default relays are the two self-hosted nodes`() {
         assertEquals(
-            listOf(
-                "tcp://sh-easytier.chior.top:11010",
-                "tcp://xg-easytier.chior.top:11010",
-            ),
+            listOf("tcp://xg-easytier.chior.top:11010"),
             EasyTierRelays.DEFAULT,
         )
     }
