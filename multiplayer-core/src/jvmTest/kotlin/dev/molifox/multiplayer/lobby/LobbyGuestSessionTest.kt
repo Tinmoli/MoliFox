@@ -64,6 +64,7 @@ class LobbyGuestSessionTest {
             val listener = DatagramSocket(0, InetAddress.getLoopbackAddress())
             val loopbackForwarder = LoopbackForwarder()
             val node = FakeEasyTierNode(fakeCli { hostPeersJson(port) }.first)
+            val closed = mutableListOf<String>()
             val session =
                 guestSession(
                     node,
@@ -71,6 +72,7 @@ class LobbyGuestSessionTest {
                     listener,
                     p2pWaitTimeoutMillis = 5_000L,
                     p2pRetryIntervalMillis = 100L,
+                    onClosed = closed::add,
                 )
             // 先让连接失败几次，再启动 Scaffolding 服务端，模拟“房主已发现但 P2P 刚打通”。
             val starter =
@@ -82,6 +84,7 @@ class LobbyGuestSessionTest {
                 session.start().getOrThrow()
                 starter.join()
                 assertTrue(session.localAddress.isNotBlank())
+                assertTrue(closed.isEmpty(), "重试期间不应误报与房主断开：$closed")
                 assertForwardChain(loopbackForwarder.calls, port, minecraft.port)
             } finally {
                 session.close()
@@ -131,6 +134,7 @@ class LobbyGuestSessionTest {
         listener: DatagramSocket,
         p2pWaitTimeoutMillis: Long = 30_000L,
         p2pRetryIntervalMillis: Long = 1_500L,
+        onClosed: (String) -> Unit = {},
     ): LobbyGuestSession =
         LobbyGuestSession(
             code = code,
@@ -138,7 +142,7 @@ class LobbyGuestSessionTest {
             playerName = "Bob",
             runtime = node,
             logger = { _, _ -> },
-            onClosed = { },
+            onClosed = onClosed,
             hostWaitTimeoutMillis = WAIT_TIMEOUT_MILLIS,
             pollIntervalMillis = POLL_INTERVAL_MILLIS,
             p2pWaitTimeoutMillis = p2pWaitTimeoutMillis,

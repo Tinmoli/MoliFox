@@ -163,8 +163,10 @@ class LobbyGuestSession(
     private suspend fun connectRoom(scaffoldingLocalPort: Int): ScaffoldingClient {
         val deadline = System.nanoTime() + p2pWaitTimeoutMillis * NANOS_PER_MILLI
         var lastFailure: Throwable? = null
-        var waitingLogged = false
+        logger("房主已发现，正在建立连接（优先 P2P，失败自动走中继，最多等 3 分钟）…", false)
         while (true) {
+            // 重试失败的客户端会触发 onDisconnected；只有真正连上时才上报。
+            var established = false
             val created =
                 ScaffoldingClient(
                     host = LOOPBACK,
@@ -175,23 +177,20 @@ class LobbyGuestSession(
                             playerName,
                             kind = ScaffoldingPlayerKind.GUEST,
                         ),
-                    onDisconnected = ::onClientDisconnected,
+                    onDisconnected = { failure -> if (established) onClientDisconnected(failure) },
                     onError = { failure ->
-                        logger("Scaffolding 连接错误：${failure.message}", true)
+                        if (established) logger("Scaffolding 连接错误：${failure.message}", true)
                     },
                 )
             val result = created.connect()
             if (result.isSuccess) {
+                established = true
                 synchronized(lock) { client = created }
                 return created
             }
             created.close()
             lastFailure = result.exceptionOrNull()
             if (System.nanoTime() >= deadline) break
-            if (!waitingLogged) {
-                waitingLogged = true
-                logger("房主已发现，正在建立连接（优先 P2P，失败自动走中继，最多等 3 分钟）…", false)
-            }
             delay(p2pRetryIntervalMillis)
         }
         throw IOException(
