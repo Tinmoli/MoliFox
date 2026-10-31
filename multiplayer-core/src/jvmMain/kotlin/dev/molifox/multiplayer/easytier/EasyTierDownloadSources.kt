@@ -196,3 +196,39 @@ private object SystemTrust {
 
 /** 下载与测速共用的 UA；不包含用户标识。 */
 internal const val EASY_TIER_USER_AGENT = "MoliFox-Launcher"
+
+/**
+ * 下载速度守卫：当前来源在 [windowMillis] 内明显偏慢时建议放弃。
+ *
+ * 只在前 [windowMillis] 判断，避免误伤后续提速；[clock] 可注入测试。
+ */
+internal class DownloadPaceGuard(
+    private val windowMillis: Long = DEFAULT_WINDOW_MILLIS,
+    private val minRatio: Double = DEFAULT_MIN_RATIO,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    private var startedAt: Long? = null
+
+    /** [received] 为当前已收字节；返回 true 表示应换源。 */
+    fun tooSlow(
+        received: Long,
+        expectedBytes: Long,
+    ): Boolean {
+        if (expectedBytes <= 0) return false
+        val now = clock()
+        val started =
+            startedAt
+                ?: run {
+                    startedAt = now
+                    return false
+                }
+        val elapsed = now - started
+        if (elapsed < windowMillis) return false
+        return received < (expectedBytes * minRatio).toLong()
+    }
+
+    private companion object {
+        const val DEFAULT_WINDOW_MILLIS = 45_000L
+        const val DEFAULT_MIN_RATIO = 0.05
+    }
+}

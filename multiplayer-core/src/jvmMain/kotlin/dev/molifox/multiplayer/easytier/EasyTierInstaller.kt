@@ -19,12 +19,19 @@ import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 /** 下载官方安装包；测试注入假实现，生产环境走 HTTP。 */
-fun interface EasyTierArchiveDownloader {
+interface EasyTierArchiveDownloader {
+    /**
+     * 下载单个来源。
+     *
+     * @param abortWhenSlow 还有其它来源可试时置 true：长时间明显偏慢会提前放弃当前源，
+     *        避免在慢速源上无谓等待；最后一个来源不启用，慢但能下完也比失败好。
+     */
     suspend fun download(
         url: String,
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
+        abortWhenSlow: Boolean = false,
     )
 }
 
@@ -129,25 +136,50 @@ class EasyTierInstaller(
         var failure: Throwable? = null
         repeat(ATTEMPTS) { attempt ->
             val source = sources[attempt % sources.size]
-            try {
-                logger("下载 EasyTier（第 ${attempt + 1}/$ATTEMPTS 次）：$source", false)
-                onProgress(null)
-                downloader.download(source, target, pkg.downloadBytes, onProgress)
-                verifyArchive(pkg, target)
-                return
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (downloadFailure: IOException) {
-                failure = downloadFailure
-                logger("EasyTier 来源失败（$source）：${downloadFailure.message}", true)
-            } catch (downloadFailure: IllegalStateException) {
-                failure = downloadFailure
-                logger("EasyTier 来源校验失败（$source）：${downloadFailure.message}", true)
-            }
+            failure = tryDownloadSource(source, attempt, sources.size, pkg, target, onProgress)
+            if (failure == null) return
         }
         val reason = failure?.message.orEmpty()
         throw IOException("下载 EasyTier 失败：$reason。已尝试 ${sources.size} 个下载源，请检查网络后重试。", failure)
     }
+
+    /** 尝试一个来源；成功返回 null，失败返回异常并记录可读日志。 */
+    private suspend fun tryDownloadSource(
+        source: String,
+        attempt: Int,
+        sourceCount: Int,
+        pkg: EasyTierPackage,
+        target: Path,
+        onProgress: (Float?) -> Unit,
+    ): Throwable? =
+        try {
+            logger(
+                "下载 EasyTier（第 ${attempt + 1}/$ATTEMPTS 次，${attempt + 1}/$sourceCount 个源）：$source",
+                false,
+            )
+            onProgress(null)
+            var lastLoggedPercent = -1
+            val reportProgress: (Float?) -> Unit = { progress ->
+                onProgress(progress)
+                val percent = progress?.let { (it * PERCENT).toInt().coerceIn(0, PERCENT) }
+                if (percent != null && percent >= lastLoggedPercent + PROGRESS_LOG_STEP) {
+                    lastLoggedPercent = percent
+                    logger("EasyTier 下载进度 $percent%", false)
+                }
+            }
+            val abortWhenSlow = attempt + 1 < ATTEMPTS && sourceCount > 1
+            downloader.download(source, target, pkg.downloadBytes, reportProgress, abortWhenSlow)
+            verifyArchive(pkg, target)
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (downloadFailure: IOException) {
+            logger("EasyTier 来源失败（$source）：${downloadFailure.message}", true)
+            downloadFailure
+        } catch (downloadFailure: IllegalStateException) {
+            logger("EasyTier 来源校验失败（$source）：${downloadFailure.message}", true)
+            downloadFailure
+        }
 
     /** 官方优先，其余镜像按实测速度降序；探测失败的来源保留在末尾继续尝试。 */
     private suspend fun orderedSources(pkg: EasyTierPackage): List<String> {
@@ -186,6 +218,7 @@ class HttpArchiveDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
+        abortWhenSlow: Boolean,
     ) {
         coroutineContext.ensureActive()
         withHttpConnection(url) { connection ->
@@ -195,9 +228,10 @@ class HttpArchiveDownloader(
             val code = connection.responseCode
             check(code in HTTP_OK) { "HTTP $code" }
             val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: expectedBytes
+            val pace = DownloadPaceGuard()
             connection.inputStream.use { input ->
                 Files.newOutputStream(target).use { output ->
-                    transfer(input, output, totalBytes, onProgress)
+                    transfer(input, output, totalBytes, onProgress, pace, abortWhenSlow)
                 }
             }
         }
@@ -208,6 +242,8 @@ class HttpArchiveDownloader(
         output: OutputStream,
         totalBytes: Long,
         onProgress: (Float?) -> Unit,
+        pace: DownloadPaceGuard,
+        abortWhenSlow: Boolean,
     ) {
         val buffer = ByteArray(BUFFER_BYTES)
         var received = 0L
@@ -218,6 +254,9 @@ class HttpArchiveDownloader(
             if (count < 0) break
             output.write(buffer, 0, count)
             received += count
+            if (abortWhenSlow && pace.tooSlow(received, totalBytes)) {
+                throw IOException("当前来源下载过慢，换用其它下载源")
+            }
             if (totalBytes > 0 && received - reported >= PROGRESS_STEP_BYTES) {
                 reported = received
                 onProgress((received.toFloat() / totalBytes).coerceIn(ZERO, ONE))
@@ -306,9 +345,11 @@ private const val STAGING_DIRECTORY = "staging"
 private const val ARCHIVE_NAME = "easytier.zip"
 private const val ATTEMPTS = 3
 private const val CONNECT_TIMEOUT_MILLIS = 20_000
-private const val READ_TIMEOUT_MILLIS = 60_000
+private const val READ_TIMEOUT_MILLIS = 20_000
 private const val BUFFER_BYTES = 64 * 1024
 private const val PROGRESS_STEP_BYTES = 512L * 1024
+private const val PROGRESS_LOG_STEP = 25
+private const val PERCENT = 100
 private val HTTP_OK = 200..299
 private const val ONE = 1f
 private const val ZERO = 0f

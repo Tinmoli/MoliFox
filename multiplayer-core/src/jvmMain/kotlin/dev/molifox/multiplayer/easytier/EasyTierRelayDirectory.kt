@@ -10,8 +10,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URI
+import java.net.UnknownHostException
 
 /** 拉取节点列表文本；测试注入假实现，避免单测访问网络。 */
 fun interface RelayListFetcher {
@@ -171,8 +174,17 @@ class EasyTierRelayDirectory(
             )
 
     private fun logFailure(failure: Throwable) {
-        logger("获取 EasyTier 活动节点失败，将使用内置节点：${failure.message}", true)
+        logger("获取 EasyTier 活动节点失败（${describeFailure(failure)}），将使用内置节点", true)
     }
+
+    /** 常见网络异常给出人话说明，避免日志里只剩一个域名。 */
+    private fun describeFailure(failure: Throwable): String =
+        when (failure) {
+            is UnknownHostException -> "域名无法解析：${failure.message}"
+            is SocketTimeoutException -> "连接超时"
+            is ConnectException -> "无法连接服务器"
+            else -> failure.message ?: failure::class.simpleName ?: "未知错误"
+        }
 
     private companion object {
         const val DEFAULT_CACHE_VALIDITY_MILLIS = 10 * 60 * 1_000L

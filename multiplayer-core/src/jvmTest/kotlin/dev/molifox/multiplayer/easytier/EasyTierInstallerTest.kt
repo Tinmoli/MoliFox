@@ -191,6 +191,33 @@ class EasyTierInstallerTest {
         }
 
     @Test
+    fun `abandons a slow source when alternatives remain`() =
+        runBlocking {
+            withWork { work ->
+                val archive = archive(includeCli = true)
+                val pkg =
+                    packageFor(
+                        archive,
+                        mirrors = listOf("https://fast.invalid/easytier.zip"),
+                    )
+                val downloader =
+                    RoutingDownloader(
+                        archive,
+                        slowUrls = setOf("https://fast.invalid/easytier.zip"),
+                    )
+                val probe =
+                    FakeProbe(
+                        mapOf(
+                            pkg.url to 1L,
+                            "https://fast.invalid/easytier.zip" to 99L,
+                        ),
+                    )
+                installer(work, downloader, pkg, probe).install { }.getOrThrow()
+                assertEquals(listOf("https://fast.invalid/easytier.zip", pkg.url), downloader.urls)
+            }
+        }
+
+    @Test
     fun `keeps official source first when probing finds nothing`() =
         runBlocking {
             withWork { work ->
@@ -293,6 +320,7 @@ private class FakeDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
+        abortWhenSlow: Boolean,
     ) {
         calls++
         onProgress(PROGRESS_MIDDLE)
@@ -317,6 +345,7 @@ private class RoutingDownloader(
     private val defaultBody: ByteArray,
     private val failureUrls: Set<String> = emptySet(),
     private val badBodyUrls: Set<String> = emptySet(),
+    private val slowUrls: Set<String> = emptySet(),
 ) : EasyTierArchiveDownloader {
     val urls = mutableListOf<String>()
 
@@ -325,9 +354,11 @@ private class RoutingDownloader(
         target: Path,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
+        abortWhenSlow: Boolean,
     ) {
         urls += url
         if (url in failureUrls) throw IOException("mirror down")
+        if (abortWhenSlow && url in slowUrls) throw IOException("当前来源下载过慢")
         val body = if (url in badBodyUrls) ByteArray(4) { 1 } else defaultBody
         onProgress(0.5f)
         Files.write(target, body)
