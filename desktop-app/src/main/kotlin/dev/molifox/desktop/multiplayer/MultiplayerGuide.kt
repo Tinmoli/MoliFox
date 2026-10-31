@@ -55,7 +55,7 @@ private val GUEST_STEPS =
     )
 
 private const val HOST_BOUNDARY =
-    "房主需要能连上 EasyTier 公共中继，中继不可用时可在联机设置里填写自定义中继。" +
+    "启动器会在创建或加入房间前自动获取 EasyTier 活跃公共节点；都不可用时可在联机设置里填写自定义中继。" +
         "MoliFox 不会自动启动游戏，也不提供账号好友邀请；联机不替换 Minecraft 登录验证，也不会同步模组。"
 
 private const val GUEST_BOUNDARY =

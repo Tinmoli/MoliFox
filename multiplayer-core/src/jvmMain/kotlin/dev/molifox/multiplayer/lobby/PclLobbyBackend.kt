@@ -5,11 +5,13 @@ import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.customRelays
 import dev.molifox.multiplayer.common.normalized
 import dev.molifox.multiplayer.data.MultiplayerSettingsRepository
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierNode
+import dev.molifox.multiplayer.easytier.EasyTierRelayDirectory
 import dev.molifox.multiplayer.easytier.EasyTierRuntime
 import dev.molifox.multiplayer.protocol.RoomCode
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +50,7 @@ class PclLobbyBackend(
     hostSessionFactory: LobbyHostSessionFactory = DefaultLobbyHostSessionFactory,
     guestSessionFactory: LobbyGuestSessionFactory = DefaultLobbyGuestSessionFactory,
     probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
+    private val relayDirectory: EasyTierRelayDirectory = EasyTierRelayDirectory(logger = logger),
     scanCheckIntervalMillis: Long = DEFAULT_SCAN_CHECK_INTERVAL_MILLIS,
 ) : MultiplayerBackend {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -85,7 +88,7 @@ class PclLobbyBackend(
             store = store,
             machineId = { machineId },
             playerName = { displayName(mutableSettings.value, playerName()) },
-            settings = { mutableSettings.value },
+            relays = { relayDirectory.resolve(mutableSettings.value.customRelays()) },
             onSessionClosed = ::handleSessionClosed,
         )
 
@@ -99,6 +102,7 @@ class PclLobbyBackend(
             val status = withContext(Dispatchers.IO) { installer.inspect() }
             store.update { it.copy(runtime = status) }
             scanner.sync(mutableSettings.value.enabled)
+            scope.launch { relayDirectory.prefetch() }
         }
 
     override suspend fun inspectRuntime(): Result<CoreStatus> =

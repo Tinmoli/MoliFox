@@ -73,7 +73,7 @@ private fun IdentityGroup(
     }
 }
 
-/** 中继留空表示使用 EasyTier 默认公共中继；自定义地址由后端按分号拆分并校验协议前缀。 */
+/** 中继列表由后端实时获取；自定义地址优先于自动节点，按分号拆分并校验协议前缀。 */
 @Composable
 private fun RelayGroup(
     draft: MultiplayerSettings,
@@ -82,7 +82,7 @@ private fun RelayGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = "中继节点",
-        detail = "留空时使用 EasyTier 默认公共中继；自定义地址必须带协议前缀，多个地址用分号分隔。",
+        detail = "创建或加入房间前会自动获取 EasyTier 活跃公共节点，失败时使用内置节点；这里的自定义地址优先级更高，多个用分号分隔。",
     ) {
         CompactTextField(
             draft.relayServer,
@@ -90,7 +90,7 @@ private fun RelayGroup(
             Modifier.fillMaxWidth(),
             label = "自定义中继",
             placeholder = "tcp://public.easytier.top:11010",
-            hint = "需要能连上中继才能建立虚拟网络；中继不可用时会连接失败。",
+            hint = "留空即可；需要固定中继或自建节点时填写，必须带协议前缀，例如 tcp://host:11010。",
         )
     }
 }

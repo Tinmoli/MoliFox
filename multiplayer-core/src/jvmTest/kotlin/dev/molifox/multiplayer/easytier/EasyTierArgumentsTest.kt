@@ -63,7 +63,7 @@ class EasyTierArgumentsTest {
         assertFalse(arguments.contains("-i"))
         assertTrue(arguments.containsAll(listOf("--hostname", GUEST_HOSTNAME)))
         assertTrue(arguments.containsAll(listOf("--tcp-whitelist", "0")))
-        assertEquals(EasyTierRelays.DEFAULT.size, arguments.count { it == "-p" })
+        assertEquals(minOf(EasyTierRelays.DEFAULT.size, MAX_RELAYS), arguments.count { it == "-p" })
     }
 
     @Test
@@ -76,9 +76,23 @@ class EasyTierArgumentsTest {
             )
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
-        assertEquals(3, relays.size)
+        assertEquals(MAX_RELAYS, relays.size)
         assertEquals(1, relays.count { it == EasyTierRelays.DEFAULT.first() })
         assertTrue(relays.contains("udp://custom.example:11010"))
+    }
+
+    @Test
+    fun `dynamic relays precede fixed fallback nodes`() {
+        val request =
+            EasyTierNodeRequest.guest(
+                code = code,
+                machineId = MACHINE_ID,
+                extraRelays = listOf("tcp://live.example:11010"),
+            )
+        val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
+
+        assertEquals("tcp://live.example:11010", relays.first())
+        assertEquals(MAX_RELAYS, relays.size)
     }
 
     @Test
@@ -126,3 +140,6 @@ class EasyTierArgumentsTest {
         const val GUEST_HOSTNAME = "8c5d6f2a-guest"
     }
 }
+
+/** 与 PCL CE `Take(6)` 对齐的最大中继数。 */
+private const val MAX_RELAYS = 6

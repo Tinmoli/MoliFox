@@ -4,8 +4,6 @@ package dev.molifox.multiplayer.lobby
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.LobbyRole
-import dev.molifox.multiplayer.common.MultiplayerSettings
-import dev.molifox.multiplayer.common.customRelays
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.protocol.RoomCode
@@ -34,7 +32,8 @@ internal class LobbyRoomCoordinator(
     private val store: LobbyStateStore,
     private val machineId: () -> String,
     private val playerName: () -> String,
-    private val settings: () -> MultiplayerSettings,
+    /** 建房/加入前解析中继：自定义优先，其次实时活动节点。 */
+    private val relays: suspend () -> List<String>,
     private val onSessionClosed: (String) -> Unit,
 ) : AutoCloseable {
     private val secureRandom = SecureRandom()
@@ -115,7 +114,7 @@ internal class LobbyRoomCoordinator(
                         machineId = machineId(),
                         playerName = playerName(),
                         runtime = node,
-                        extraRelays = settings().customRelays(),
+                        extraRelays = relays(),
                         logger = logger,
                         probe = probe,
                         onClosed = onSessionClosed,
@@ -139,7 +138,7 @@ internal class LobbyRoomCoordinator(
                         machineId = machineId(),
                         playerName = playerName(),
                         runtime = node,
-                        extraRelays = settings().customRelays(),
+                        extraRelays = relays(),
                         logger = logger,
                         onClosed = onSessionClosed,
                     ),

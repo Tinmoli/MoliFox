@@ -7,13 +7,38 @@ import java.util.UUID
 /** EasyTier 节点角色；决定是否设置固定虚拟 IP、端口白名单与 DHCP。 */
 enum class EasyTierRole { HOST, GUEST }
 
-/** 官方公开中继节点；没有这些节点时跨 NAT 基本无法连通，允许设置里覆盖。 */
+/**
+ * EasyTier 节点发现与保底中继。
+ *
+ * - [NODE_LIST_URL]：PCL CE 使用的活动节点接口；启动器在创建/加入房间前实时拉取，
+ *   只取 `is_active && allow_relay` 的地址（字段名见 PCL CE `PublicNodeDto`）。
+ * - [HTTP_NODE_LISTS]：EasyTier 原生支持的 HTTP 节点列表入口，由核心在连接时实时解析；
+ *   启动器只把它们当作 `-p` 兜底，不自己解析。
+ * - [DEFAULT]：前面两项都不可用时仍会尝试的固定节点，保证参数列表不为空。
+ *
+ * 没有这些节点时跨 NAT 基本无法连通；用户可在设置里追加自定义中继。
+ */
 object EasyTierRelays {
-    val DEFAULT: List<String> =
+    const val NODE_LIST_URL =
+        "https://uptime.easytier.cn/api/nodes?page=1&per_page=50&is_active=true"
+
+    /** 官方固定节点；域名或网络不可用时由 EasyTier 自行重试，不会阻断房间创建。 */
+    private val OFFICIAL: List<String> =
         listOf(
             "tcp://public.easytier.top:11010",
             "tcp://public2.easytier.cn:54321",
         )
+
+    /** EasyTier 自己支持 HTTP 节点列表；内容变化会在连接时重新拉取。 */
+    private val HTTP_NODE_LISTS: List<String> =
+        listOf(
+            "https://etnode.zkitefly.eu.org/node1",
+            "https://etnode.zkitefly.eu.org/node2",
+            "https://etnode.zkitefly.eu.org/-node1",
+            "https://etnode.zkitefly.eu.org/-node2",
+        )
+
+    val DEFAULT: List<String> = OFFICIAL + HTTP_NODE_LISTS
 }
 
 /** 启动一个 EasyTier 节点所需的全部业务参数；RPC 端口由运行时分配。 */
@@ -91,6 +116,7 @@ object EasyTierArguments {
     private const val PRIVATE_MODE_ENABLED = "true"
     private const val MIN_PORT = 1
     private const val MAX_PORT = 65_535
+    private const val MAX_RELAYS = 6
 
     /** 房主 hostname：Scaffolding 端口写在末尾，供房客解析。 */
     fun hostHostname(scaffoldingPort: Int): String = "$HOST_HOSTNAME_PREFIX$scaffoldingPort"
@@ -138,9 +164,13 @@ object EasyTierArguments {
             "udp://$WILDCARD_LISTENER:0",
         )
 
-    /** 默认中继 + 用户自定义中继；完全相同的地址只保留一个。 */
+    /**
+     * 自定义/实时节点优先于固定兜底，完全相同的地址只保留第一次出现。
+     *
+     * 与 PCL CE 一样最多保留 6 个对端：中继过多会拖慢握手，且 PCL CE 同样 `Take(6)`。
+     */
     private fun relaysOf(request: EasyTierNodeRequest): List<String> =
-        (EasyTierRelays.DEFAULT + request.extraRelays).distinct()
+        (request.extraRelays + EasyTierRelays.DEFAULT).distinct().take(MAX_RELAYS)
 
     private fun validate(
         request: EasyTierNodeRequest,
