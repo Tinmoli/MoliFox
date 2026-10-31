@@ -55,7 +55,6 @@ internal suspend fun loadExportPreview(
     stem: String,
     format: PackExportFormat,
     remoteResources: Boolean,
-    uploadMode: Boolean,
     includeLogs: Boolean,
     onPlan: (MrpackExportPlan) -> Unit,
     onError: (String?) -> Unit,
@@ -67,10 +66,7 @@ internal suspend fun loadExportPreview(
                     instanceId,
                     MrpackExportMetadata(stem, "1.0.0"),
                     resolveDownloads = format == PackExportFormat.Modrinth && remoteResources,
-                    resolveCurseForge =
-                        format == PackExportFormat.Modrinth &&
-                            remoteResources &&
-                            !uploadMode,
+                    resolveCurseForge = false,
                     includeLogs = includeLogs,
                 )
             },
@@ -96,12 +92,11 @@ internal suspend fun freshExportPlan(
     metadata: MrpackExportMetadata,
     format: PackExportFormat,
     remoteResources: Boolean,
-    uploadMode: Boolean,
     includeLogs: Boolean,
 ): MrpackExportPlan =
     if (current.metadata == metadata &&
         current.includesLogs == includeLogs &&
-        current.matchesRemoteMode(format, remoteResources, uploadMode)
+        current.matchesRemoteMode(format, remoteResources)
     ) {
         current
     } else {
@@ -110,10 +105,7 @@ internal suspend fun freshExportPlan(
                 instanceId,
                 metadata,
                 resolveDownloads = format == PackExportFormat.Modrinth && remoteResources,
-                resolveCurseForge =
-                    format == PackExportFormat.Modrinth &&
-                        remoteResources &&
-                        !uploadMode,
+                resolveCurseForge = false,
                 includeLogs = includeLogs,
             )
         }
@@ -123,14 +115,13 @@ internal suspend fun freshExportPlan(
 private fun MrpackExportPlan.matchesRemoteMode(
     format: PackExportFormat,
     remoteResources: Boolean,
-    uploadMode: Boolean,
 ): Boolean =
     when (format) {
         PackExportFormat.Modrinth ->
             if (!remoteResources) {
                 files.none { it.downloadUrl != null || it.curseForgeProjectId != null }
             } else {
-                !uploadMode || files.none { it.curseForgeProjectId != null }
+                files.none { it.curseForgeProjectId != null }
             }
         PackExportFormat.CurseForge ->
             remoteResources || files.none { it.curseForgeProjectId != null }
@@ -162,7 +153,6 @@ internal fun startMrpackExport(
                     metadata,
                     format,
                     options.remoteResources,
-                    options.modrinthUploadMode,
                     includeLogs,
                 )
             val chosen = exportEffectiveOptions(options, selectedEntries, includeLogs)

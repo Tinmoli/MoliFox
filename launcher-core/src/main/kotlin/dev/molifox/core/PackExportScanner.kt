@@ -29,6 +29,47 @@ private class ExportEntryState(
     var fileCount = 0L
     var totalBytes = 0L
     var scanning = true
+    val tree = ExportTreeNode(name, directory)
+
+    /** 扫描过程中按相对路径补全实际子项树；界面只在展开时读取。 */
+    fun addNode(
+        relative: String,
+        directory: Boolean,
+    ) {
+        val parts = relative.split('/')
+        if (parts.size < 2) return
+        tree.add(parts.drop(1), directory)
+    }
+}
+
+/** 可变的内容树；对外快照转成不可变的 `PackExportNode`。 */
+private class ExportTreeNode(
+    private val name: String,
+    private val directory: Boolean,
+) {
+    private val children = linkedMapOf<String, ExportTreeNode>()
+
+    fun add(
+        parts: List<String>,
+        directory: Boolean,
+    ) {
+        if (parts.isEmpty()) return
+        val childDirectory = directory || parts.size > 1
+        val child =
+            children.getOrPut(parts.first()) { ExportTreeNode(parts.first(), childDirectory) }
+        child.add(parts.drop(1), directory)
+    }
+
+    fun toPublic(): List<PackExportNode> = sortedChildren().map { it.toPublicNode() }
+
+    private fun toPublicNode(): PackExportNode =
+        PackExportNode(name, directory, sortedChildren().map { it.toPublicNode() })
+
+    private fun sortedChildren(): List<ExportTreeNode> =
+        children.values.sortedWith(
+            compareByDescending<ExportTreeNode> { it.directory }
+                .thenBy { it.name.lowercase(Locale.ROOT) },
+        )
 }
 
 /** 实例目录的只读扫描：边统计边按节流发送快照。 */
@@ -158,8 +199,10 @@ internal class PackExportScanner(
         // 日志目录按“显式勾选才写入”统计；普通目录不计嵌套日志。
         if (excludedExportPath(relative, allowLogs = track.backupOnly)) return
         if (Files.isDirectory(file, NOFOLLOW_LINKS)) {
+            track.addNode(relative, directory = true)
             pending.add(file)
         } else if (Files.isRegularFile(file, NOFOLLOW_LINKS)) {
+            track.addNode(relative, directory = false)
             track.fileCount++
             track.totalBytes += runCatching { Files.size(file) }.getOrDefault(0L)
             snapshots.onFile()
@@ -197,6 +240,7 @@ private class SnapshotEmitter(
                         it.scanning,
                         it.backupOnly,
                         it.unavailable,
+                        it.tree.toPublic(),
                     )
                 },
                 omitted.toList(),

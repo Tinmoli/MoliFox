@@ -182,6 +182,8 @@ data class PackExportEntry(
     val backupOnly: Boolean,
     /** 共用游戏目录中不属于标准内容的条目：不会写入导出包。 */
     val unavailable: Boolean = false,
+    /** 文件夹内的实际子项树，供界面展开；文件条目为空。 */
+    val children: List<PackExportNode> = emptyList(),
 ) {
     /** 勾选状态使用的稳定键：Windows 上大小写不敏感。 */
     val key: String
@@ -190,6 +192,13 @@ data class PackExportEntry(
     val selectable: Boolean
         get() = !unavailable
 }
+
+/** 导出内容树中的一个实际文件或文件夹；文件夹可继续展开。 */
+data class PackExportNode(
+    val name: String,
+    val directory: Boolean,
+    val children: List<PackExportNode> = emptyList(),
+)
 
 /** 顶层条目扫描结果：可勾选条目 + 明确不导出的启动器数据/实例元数据。 */
 data class PackExportScan(

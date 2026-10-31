@@ -139,6 +139,7 @@ class PackExportSelectionTest : PackExportTestSupport() {
         val mods = scan.entries.single { it.name == "mods" }
         assertEquals(2L, mods.fileCount)
         assertEquals(("jar-bytes".length + "jar2".length).toLong(), mods.totalBytes)
+        assertEquals(setOf("a.jar", "1.12.2"), mods.children.map { it.name }.toSet())
         val options = scan.entries.single { it.name == "options.txt" }
         assertFalse(options.directory)
         assertEquals("opt".length.toLong(), options.totalBytes)

@@ -72,7 +72,7 @@ internal fun exportEffectiveOptions(
     includeLogs: Boolean,
 ): PackExportOptions =
     options.copy(
-        includeLocalResources = true,
+        includeLocalResources = options.includeLocalResources && !options.modrinthUploadMode,
         includeSaves = "saves" in selectedEntries,
         includeScreenshots = "screenshots" in selectedEntries,
         includeOptionsTxt =

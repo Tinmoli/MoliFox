@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,7 +32,6 @@ internal data class ExportEntriesState(
     val selectableEntries: List<PackExportEntry>,
     val selectedEntries: Set<String>,
     val exporting: Boolean,
-    val omitted: List<String>,
 )
 
 internal data class ExportPreviewState(
@@ -45,7 +43,6 @@ internal data class ExportPreviewState(
     val options: PackExportOptions,
     val localResources: Int,
     val downloads: Int,
-    val warnings: List<String>,
 )
 
 @Composable
@@ -95,12 +92,6 @@ internal fun ExportEntriesSection(
                         }
                     }
                 }
-                if (omitted.isNotEmpty()) {
-                    MutedText(
-                        "不导出：${omitted.take(8).joinToString("、")}" +
-                            if (omitted.size > 8) " 等 ${omitted.size} 项" else "",
-                    )
-                }
             }
         }
     }
@@ -134,13 +125,6 @@ internal fun ExportPreviewSection(
                 }
             else -> {
                 ExportPreviewStatistics(state)
-                warnings.forEach { warning ->
-                    Text(
-                        warning,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }

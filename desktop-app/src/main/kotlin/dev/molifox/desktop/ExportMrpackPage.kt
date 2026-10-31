@@ -85,7 +85,6 @@ fun ExportMrpackPage(
         attempt,
         format,
         options.remoteResources,
-        options.modrinthUploadMode,
         packName,
         includeLogs,
     ) {
@@ -98,7 +97,6 @@ fun ExportMrpackPage(
                 packName,
                 format,
                 options.remoteResources,
-                options.modrinthUploadMode,
                 includeLogs,
                 { plan = it },
             ) {

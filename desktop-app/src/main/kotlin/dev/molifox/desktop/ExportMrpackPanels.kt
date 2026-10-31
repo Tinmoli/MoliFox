@@ -76,14 +76,14 @@ internal fun ExportMrpackPageBody(
 ) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
+            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
             Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     HeaderIconButton(
@@ -120,7 +120,6 @@ internal fun ExportMrpackPageBody(
                         selectableEntries = selectableEntries,
                         selectedEntries = selectedEntries,
                         exporting = exporting,
-                        omitted = scan?.omitted.orEmpty(),
                     ),
                     onRetry = onRetryScan,
                     onToggle = onToggleEntry,
@@ -135,7 +134,6 @@ internal fun ExportMrpackPageBody(
                         options = options,
                         localResources = localPaths.size,
                         downloads = view.downloads,
-                        warnings = prepared?.warnings.orEmpty(),
                     ),
                     onRetry = onRetryPreview,
                 )
@@ -216,7 +214,7 @@ private fun ExportMrpackInputs(
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
         CompactTextField(
             target,
@@ -246,27 +244,15 @@ private fun ExportMrpackInputs(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 ExportCompactToggle(
-                    title = "打包资源文件",
-                    checked = !options.remoteResources,
-                    enabled = !exporting,
-                    onCheckedChange = { checked ->
-                        onOptionsChange(
-                            options.copy(
-                                remoteResources = !checked,
-                                modrinthUploadMode = false,
-                            ),
-                        )
-                    },
-                )
-                ExportCompactToggle(
                     title = "Modrinth 上传模式",
                     checked = options.modrinthUploadMode,
-                    enabled = !exporting && options.remoteResources,
+                    enabled = !exporting,
                     onCheckedChange = { checked ->
                         onOptionsChange(
                             options.copy(
                                 remoteResources = true,
                                 modrinthUploadMode = checked,
+                                includeLocalResources = !checked,
                             ),
                         )
                     },
