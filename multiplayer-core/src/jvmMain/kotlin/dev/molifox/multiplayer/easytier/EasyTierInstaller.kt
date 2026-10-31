@@ -181,16 +181,22 @@ class EasyTierInstaller(
             downloadFailure
         }
 
-    /** 官方优先，其余镜像按实测速度降序；探测失败的来源保留在末尾继续尝试。 */
+    /** 纯按实测速度降序选择，不偏向官方源；测速失败的来源保留在末尾兜底。 */
     private suspend fun orderedSources(pkg: EasyTierPackage): List<String> {
         val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
-        val ranked =
-            candidates
-                .mapNotNull { source ->
-                    probe.measureSpeed(source)?.let { speed -> source to speed }
-                }.sortedByDescending { it.second }
-                .map { it.first }
+        val measured =
+            candidates.mapNotNull { source ->
+                probe.measureSpeed(source)?.let {
+                    source to
+                        it
+                }
+            }
+        measured.forEach { (source, speed) ->
+            logger("下载源测速：${speed / KIB} KiB/s  $source", false)
+        }
+        val ranked = measured.sortedByDescending { it.second }.map { it.first }
         val unscored = candidates.filterNot { it in ranked }
+        unscored.forEach { source -> logger("下载源未测速（作为兜底）：$source", false) }
         return ranked + unscored
     }
 
@@ -350,6 +356,7 @@ private const val BUFFER_BYTES = 64 * 1024
 private const val PROGRESS_STEP_BYTES = 512L * 1024
 private const val PROGRESS_LOG_STEP = 25
 private const val PERCENT = 100
+private const val KIB = 1024L
 private val HTTP_OK = 200..299
 private const val ONE = 1f
 private const val ZERO = 0f

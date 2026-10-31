@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
@@ -18,18 +19,22 @@ import javax.net.ssl.TrustManagerFactory
 
 /** 探测下载源速度；测试注入假实现，生产走真实 Range 请求。 */
 fun interface EasyTierSourceProbe {
-    /** 返回探测到的速度（字节/毫秒）；不可用时返回 null。 */
+    /** 返回实测下载速度（字节/秒）；不可用或样本不足返回 null。 */
     suspend fun measureSpeed(url: String): Long?
 }
 
 /**
- * 用小段 Range 请求估算下载速度：只读 [sampleBytes] 字节，避免每次探测都拉完整安装包。
- * 返回 null 表示该来源不可用（超时、HTTP 错误、TLS 失败等）。
+ * 真实测速：对每个下载源发一个 Range 请求，在固定时间预算内尽量多读，
+ * 用「读到的字节数 / 实际耗时」作为速度。这样不会因为只看前 64 KiB 的首包突发
+ * 而把实际已经限速的源选成最快。
+ *
+ * 时间预算默认 5 秒、最多读 1 MiB；预算内读完 1 MiB 也算完成。
  */
 class HttpEasyTierSourceProbe(
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val readTimeoutMillis: Int = DEFAULT_READ_TIMEOUT_MILLIS,
     private val sampleBytes: Int = DEFAULT_SAMPLE_BYTES,
+    private val timeBudgetMillis: Long = DEFAULT_TIME_BUDGET_MILLIS,
 ) : EasyTierSourceProbe {
     override suspend fun measureSpeed(url: String): Long? =
         runCatching {
@@ -42,36 +47,57 @@ class HttpEasyTierSourceProbe(
                 val startedNanos = System.nanoTime()
                 val received =
                     connection.inputStream.use { input ->
-                        readSample(input, sampleBytes)
+                        readWithinBudget(input, startedNanos)
                     }
-                val elapsedMillis = (System.nanoTime() - startedNanos) / NANOS_PER_MILLI
-                if (received <= 0) throw IOException("空响应")
-                if (elapsedMillis <= 0) received.toLong() else received / elapsedMillis
+                val elapsedMillis =
+                    maxOf(
+                        MIN_ELAPSED_MILLIS,
+                        (System.nanoTime() - startedNanos) / NANOS_PER_MILLI,
+                    )
+                if (received < MIN_SAMPLE_BYTES) throw IOException("测速样本不足")
+                received * MILLIS_PER_SECOND / elapsedMillis
             }
         }.onFailure { failure ->
             if (failure is CancellationException) throw failure
         }.getOrNull()
 
-    private fun readSample(
+    private fun readWithinBudget(
         input: InputStream,
-        limit: Int,
+        startedNanos: Long,
     ): Int {
         val buffer = ByteArray(BUFFER_BYTES)
         var total = 0
-        while (total < limit) {
-            val count = input.read(buffer, 0, minOf(buffer.size, limit - total))
-            if (count < 0) break
-            total += count
+        var stopped = false
+        while (!stopped && total < sampleBytes && elapsedMillis(startedNanos) < timeBudgetMillis) {
+            val count =
+                try {
+                    input.read(buffer, 0, minOf(buffer.size, sampleBytes - total))
+                } catch (failure: SocketTimeoutException) {
+                    if (total == 0) throw failure
+                    -1
+                }
+            if (count < 0) {
+                stopped = true
+            } else {
+                total += count
+            }
         }
         return total
     }
 
+    private fun elapsedMillis(startedNanos: Long): Long =
+        (System.nanoTime() - startedNanos) / NANOS_PER_MILLI
+
     private companion object {
         const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 4_000
-        const val DEFAULT_READ_TIMEOUT_MILLIS = 8_000
-        const val DEFAULT_SAMPLE_BYTES = 64 * 1024
+        const val DEFAULT_READ_TIMEOUT_MILLIS = 3_000
+        const val DEFAULT_SAMPLE_BYTES = 1024 * 1024
+        const val DEFAULT_TIME_BUDGET_MILLIS = 5_000L
         const val BUFFER_BYTES = 16 * 1024
+        const val MIN_SAMPLE_BYTES = 8 * 1024
+        const val MIN_ELAPSED_MILLIS = 1L
         const val NANOS_PER_MILLI = 1_000_000L
+        const val MILLIS_PER_SECOND = 1_000L
         val HTTP_OK = 200..299
     }
 }
