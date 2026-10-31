@@ -513,7 +513,7 @@ tasks.register("verifyDesktopPackages") {
             ZipFile(file).use { zip ->
                 for (entry in listOf(
                     "dev/molifox/multiplayer/domain/MultiplayerBackend.class",
-                    "dev/molifox/multiplayer/data/TerracottaInstaller.class",
+                    "dev/molifox/multiplayer/lobby/PclLobbyBackend.class",
                 )) {
                     check(zip.getEntry(entry) != null) { "$platform 包缺少联机入口 $entry" }
                 }

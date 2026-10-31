@@ -2,7 +2,7 @@
 package dev.molifox.desktop.platform.multiplayer
 
 import dev.molifox.multiplayer.common.CoreStatus
-import dev.molifox.multiplayer.common.MultiplayerPhase
+import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
 import dev.molifox.multiplayer.domain.MultiplayerBackend
@@ -55,10 +55,10 @@ class DesktopMultiplayerOwnerTest {
             assertSame(backend, owner.backend)
             assertEquals(false, owner.active)
             backend.state.value =
-                backend.state.value.copy(phase = MultiplayerPhase.HostReady)
+                backend.state.value.copy(phase = LobbyPhase.RoomOpen)
             assertEquals(true, owner.active)
             backend.state.value =
-                backend.state.value.copy(phase = MultiplayerPhase.Waiting)
+                backend.state.value.copy(phase = LobbyPhase.Idle)
             assertEquals(false, owner.active)
         }
 }
@@ -70,12 +70,14 @@ private class TrackingBackend : MultiplayerBackend {
 
     override suspend fun initialize() = Result.success(Unit)
 
-    override suspend fun inspectCore(): Result<CoreStatus> =
+    override suspend fun inspectRuntime(): Result<CoreStatus> =
         Result.failure(IllegalStateException("unused"))
 
-    override suspend fun prepareCore() = Result.success(Unit)
+    override suspend fun prepareRuntime() = Result.success(Unit)
 
-    override suspend fun host() = Result.success(Unit)
+    override suspend fun refreshWorlds() = Result.success(Unit)
+
+    override suspend fun host(worldPort: Int?) = Result.success(Unit)
 
     override suspend fun join(roomCode: String) = Result.success(Unit)
 

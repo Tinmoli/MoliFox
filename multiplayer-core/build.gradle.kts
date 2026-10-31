@@ -19,16 +19,3 @@ kotlin {
         }
     }
 }
-
-// 手动集成验收需要显式执行此任务；普通单测不下载组件、不访问外部网络。
-tasks.register<JavaExec>("terracottaOnlineSmoke") {
-    dependsOn("jvmTestClasses")
-    val compilation =
-        kotlin.targets
-            .getByName("jvm")
-            .compilations
-            .getByName("test")
-    classpath = compilation.output.allOutputs + files(compilation.runtimeDependencyFiles)
-    mainClass.set("dev.molifox.multiplayer.TerracottaOnlineSmoke")
-    args(rootProject.file(".work/terracotta-online").absolutePath)
-}

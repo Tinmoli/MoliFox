@@ -1,8 +1,9 @@
-// 提供联机侧栏、页面状态绑定和确认弹窗，所有业务操作调用统一后端。
+// 提供联机侧栏、页面状态绑定和说明弹窗，所有业务操作调用统一后端。
 package dev.molifox.desktop.multiplayer
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.FrostedPanel
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SettingsNavItem
-import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.domain.MultiplayerBackend
@@ -52,10 +52,10 @@ private class MultiplayerPageState {
     var initialized by mutableStateOf(false)
     var declined by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
-    var downloadPrompt by mutableStateOf<CoreStatus?>(null)
-}
 
-private typealias ExecuteMultiplayer = (suspend () -> Result<Unit>) -> Unit
+    /** 本次页面生命周期内是否已经发起过运行时下载，避免失败后自动重复下载。 */
+    var runtimeDownloadRequested by mutableStateOf(false)
+}
 
 @Composable
 fun MultiplayerScreen(
@@ -69,36 +69,58 @@ fun MultiplayerScreen(
         scope.launch { action().onFailure { page.message = it.message ?: "操作失败，请重试" } }
     }
     MultiplayerStartup(backend, page)
+    MultiplayerRuntimeAutoDownload(backend, page, execute)
     Column(Modifier.fillMaxSize()) {
-        if (page.initialized &&
-            settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
-        ) {
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MultiplayerSidebar(page.section) { page.section = it }
-                FrostedPanel(Modifier.weight(1f).fillMaxHeight()) {
-                    MultiplayerBody(backend, page, execute, onCopy)
-                }
-            }
+        val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
+        if (page.initialized && agreed) {
+            MultiplayerContent(backend, page, execute, onCopy)
         } else {
-            FrostedPanel(
-                Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(16.dp),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("先阅读联机说明", style = MaterialTheme.typography.titleMedium)
-                    Text("同意说明后才能使用联机大厅、教程和联机设置。")
-                    PrimaryButton("阅读联机说明", enabled = page.initialized) { page.declined = false }
-                }
-            }
+            MultiplayerConsentGate(page)
         }
-        page.message?.let { message ->
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = { page.message = null }) { Text("关闭") }
+        PageMessage(page)
+    }
+    MultiplayerModals(backend, settings, page, execute)
+}
+
+@Composable
+private fun ColumnScope.MultiplayerContent(
+    backend: MultiplayerBackend,
+    page: MultiplayerPageState,
+    execute: ExecuteMultiplayer,
+    onCopy: (String) -> Unit,
+) {
+    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        MultiplayerSidebar(page.section) { page.section = it }
+        FrostedPanel(Modifier.weight(1f).fillMaxHeight()) {
+            MultiplayerBody(backend, page, execute, onCopy)
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.MultiplayerConsentGate(page: MultiplayerPageState) {
+    FrostedPanel(
+        Modifier.weight(1f).fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("先阅读联机说明", style = MaterialTheme.typography.titleMedium)
+            Text("同意说明后才能使用联机大厅、教程和联机设置。")
+            PrimaryButton("阅读并同意联机说明", enabled = page.initialized) {
+                page.declined = false
             }
         }
     }
-    MultiplayerModals(backend, settings, page, execute)
+}
+
+@Composable
+private fun PageMessage(page: MultiplayerPageState) {
+    page.message?.let { message ->
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = { page.message = null }) { Text("关闭") }
+        }
+    }
 }
 
 @Composable
@@ -111,6 +133,36 @@ private fun MultiplayerStartup(
             .initialize()
             .onSuccess { page.initialized = true }
             .onFailure { page.message = "联机配置读取失败，请检查日志" }
+    }
+}
+
+/**
+ * 已同意说明但本地没有 EasyTier 运行时时，进入页面就直接下载；只在本次页面生命周期内自动触发一次，
+ * 失败后由大厅状态栏的下载按钮显式重试，避免失败后反复下载。
+ */
+@Composable
+private fun MultiplayerRuntimeAutoDownload(
+    backend: MultiplayerBackend,
+    page: MultiplayerPageState,
+    execute: ExecuteMultiplayer,
+) {
+    val state by backend.state.collectAsState()
+    val settings by backend.settings.collectAsState()
+    LaunchedEffect(
+        page.initialized,
+        settings.enabled,
+        settings.acceptedTermsRevision,
+        state.runtime?.installed,
+        state.busy,
+    ) {
+        if (!page.initialized || !settings.enabled) return@LaunchedEffect
+        if (settings.acceptedTermsRevision != MultiplayerPolicy.TERMS_REVISION) {
+            return@LaunchedEffect
+        }
+        if (state.busy || state.runtime?.installed != false) return@LaunchedEffect
+        if (page.runtimeDownloadRequested) return@LaunchedEffect
+        page.runtimeDownloadRequested = true
+        execute { backend.prepareRuntime() }
     }
 }
 
@@ -149,20 +201,17 @@ private fun MultiplayerBody(
             MultiplayerLobby(
                 state = state,
                 settings = settings,
-                execute = execute,
-                host = backend::host,
-                join = backend::join,
-                leave = backend::leave,
-                requestDownload = { page.downloadPrompt = state.core },
+                actions = multiplayerLobbyActions(backend, execute),
                 copy = onCopy,
             )
         MultiplayerSection.HostGuide -> MultiplayerGuide(host = true)
         MultiplayerSection.GuestGuide -> MultiplayerGuide(host = false)
         MultiplayerSection.Settings ->
             MultiplayerSettingsPane(
-                settings,
-                execute,
-                backend::saveSettings,
+                settings = settings,
+                runtime = state.runtime,
+                execute = execute,
+                save = backend::saveSettings,
             )
     }
 }
@@ -174,27 +223,22 @@ private fun MultiplayerModals(
     page: MultiplayerPageState,
     execute: ExecuteMultiplayer,
 ) {
-    val accepted = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
-    if (page.initialized && !accepted && !page.declined) {
+    val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
+    if (page.initialized && !agreed && !page.declined) {
         MultiplayerTermsDialog(
             onAccept = {
+                val consented =
+                    settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
+                // 先标记已发起下载，避免同意状态刷新后自动下载逻辑再启动一次。
+                page.runtimeDownloadRequested = true
                 execute {
-                    backend.saveSettings(
-                        settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION),
+                    backend.saveSettings(consented).fold(
+                        onSuccess = { backend.prepareRuntime() },
+                        onFailure = { failure -> Result.failure(failure) },
                     )
                 }
             },
             onDecline = { page.declined = true },
-        )
-    }
-    page.downloadPrompt?.takeIf { accepted }?.let { status ->
-        CoreDownloadDialog(
-            status,
-            onDownload = {
-                page.downloadPrompt = null
-                execute(backend::prepareCore)
-            },
-            onCancel = { page.downloadPrompt = null },
         )
     }
 }

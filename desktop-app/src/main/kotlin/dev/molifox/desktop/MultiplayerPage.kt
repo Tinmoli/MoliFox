@@ -18,7 +18,7 @@ fun MultiplayerPage(actions: UiActions) {
                     StringSelection(address),
                     null,
                 )
-                actions.controller.store.notify("邀请码已复制")
+                actions.controller.store.notify("已复制到剪贴板")
             }
         },
     )

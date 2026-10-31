@@ -51,9 +51,15 @@ removed. The backup is excluded from the Gradle build and distributions.
 
 ## Optional multiplayer runtime
 
-- Terracotta 0.4.2 (upstream AGPL-3.0): downloaded on explicit user confirmation
-  from the official release page or its CN mirrors, verified against the SHA-512
-  recorded by the upstream metadata, and run as a separate process through its
-  local HTTP control interface. MoliFox does not bundle its binaries, source or
-  assets, and does not link against it. Upstream project and license:
-  https://github.com/burningtnt/Terracotta
+- EasyTier 2.6.4 (upstream LGPL-3.0): downloaded on explicit user confirmation
+  from the official GitHub release, verified against the SHA-256 and byte size
+  recorded in `EasyTierCatalog`, installed under the launcher data directory and
+  run as a separate sidecar process with `--no-tun` (no TUN driver installed and
+  no administrator rights required). MoliFox does not bundle, modify or link
+  against EasyTier binaries, source or assets; the sidecar is stopped when the
+  launcher exits. Upstream project and license:
+  https://github.com/EasyTier/EasyTier
+- The EasyTier Windows archive also contains WinDivert, Packet and wintun files.
+  MoliFox installs the archive as shipped but never loads those drivers; their
+  redistribution terms have not been independently verified, so distributions
+  that embed the sidecar must review them separately.

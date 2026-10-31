@@ -1,11 +1,12 @@
-// 组装桌面联机依赖：配置放在启动器数据目录，运行数据放在 runtimes/ 下。
+// 组装桌面联机依赖：配置放在启动器数据目录，EasyTier 运行时放在 runtimes/ 下。
 package dev.molifox.desktop.platform.multiplayer
 
 import dev.molifox.core.LauncherController
 import dev.molifox.multiplayer.data.FileMultiplayerSettings
-import dev.molifox.multiplayer.data.JvmTerracottaBackend
-import dev.molifox.multiplayer.data.TerracottaInstaller
 import dev.molifox.multiplayer.domain.MultiplayerBackend
+import dev.molifox.multiplayer.easytier.EasyTierInstaller
+import dev.molifox.multiplayer.lobby.MachineIdStore
+import dev.molifox.multiplayer.lobby.PclLobbyBackend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -15,11 +16,12 @@ fun createDesktopMultiplayer(controller: LauncherController): MultiplayerBackend
     val dataRoot = controller.store.dataDirectory
     val log = DesktopMultiplayerLog(controller.scope, controller)
     val report: (String, Boolean) -> Unit = { message, error -> log.report(message, error) }
-    return JvmTerracottaBackend(
+    return PclLobbyBackend(
         settingsRepository = FileMultiplayerSettings(dataRoot.resolve("config/multiplayer.json")),
+        installer = EasyTierInstaller(dataRoot.resolve("runtimes"), report),
+        machineIdStore = MachineIdStore(dataRoot.resolve("config/machine-id")),
         logger = report,
         playerName = { currentNickname(controller) },
-        installer = TerracottaInstaller(dataRoot.resolve("runtimes"), report),
     )
 }
 

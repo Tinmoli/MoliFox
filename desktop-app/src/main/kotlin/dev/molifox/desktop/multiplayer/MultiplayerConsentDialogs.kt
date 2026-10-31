@@ -1,9 +1,8 @@
-// 展示联机说明与联机核心下载确认；未点击确认时不记录同意，也不启动下载。
+// 展示联机说明；勾选后点击“同意并下载”才会保存同意并立即开始下载 EasyTier 运行时。
 package dev.molifox.desktop.multiplayer
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -25,7 +24,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import dev.molifox.multiplayer.common.CoreStatus
+import dev.molifox.multiplayer.common.MultiplayerPolicy
 
 @Composable
 internal fun MultiplayerTermsDialog(
@@ -40,18 +39,15 @@ internal fun MultiplayerTermsDialog(
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 Text(MULTIPLAYER_TECHNOLOGY_NOTICE)
                 Text(MULTIPLAYER_NETWORK_NOTICE, Modifier.padding(top = 12.dp))
+                Text(
+                    "你在房间中使用的显示名称、随机设备标识与客户端版本会发送给同房间的玩家，" +
+                        "用于房间内展示与识别；EasyTier 中继节点参与网络发现与转发。" +
+                        "邀请码包含网络密钥，等同于房间口令，请只分享给要一起玩的朋友。",
+                    Modifier.padding(top = 12.dp),
+                )
+                Text(RUNTIME_CONSENT, Modifier.padding(top = 12.dp))
+                Text(FIREWALL_CONSENT, Modifier.padding(top = 12.dp))
                 Text(MULTIPLAYER_LEGAL_NOTICE, Modifier.padding(top = 12.dp))
-                Text(
-                    "你在房间中使用的显示名称、随机设备标识与客户端版本会发送给同房间的玩家，用于房间内展示与识别；" +
-                        "公共中继节点参与网络发现或转发。邀请码包含入网凭据，请只分享给要一起玩的朋友。",
-                    Modifier.padding(top = 12.dp),
-                )
-                Text(
-                    "首次使用需要另外确认下载联机核心（约 8 MiB），下载完成后按官方清单校验 SHA-512；" +
-                        "联机核心采用 AGPL-3.0 许可，随启动器一起分发的是其官方发布包。" +
-                        "关闭房间或退出启动器会停止本次联机进程。",
-                    Modifier.padding(top = 12.dp),
-                )
                 Row(
                     Modifier
                         .toggleable(checked, role = Role.Checkbox, onValueChange = { checked = it })
@@ -63,40 +59,18 @@ internal fun MultiplayerTermsDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onAccept, enabled = checked) { Text("同意并继续") } },
+        confirmButton = { TextButton(onClick = onAccept, enabled = checked) { Text("同意并下载") } },
         dismissButton = { TextButton(onClick = onDecline) { Text("暂不使用") } },
     )
 }
 
-@Composable
-internal fun CoreDownloadDialog(
-    status: CoreStatus,
-    onDownload: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("下载联机核心") },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
-                Text("首次使用需要下载陶瓦联机核心；确认后才会开始下载，失败会换源重试并保留进度提示。")
-                Text(
-                    "版本：${status.version}\n平台：${status.platform}\n下载大小：${"%.1f".format(
-                        status.downloadBytes / MEBIBYTE,
-                    )} MiB",
-                    Modifier.padding(top = 12.dp),
-                )
-                Text(
-                    "保存位置：${status.directory}",
-                    Modifier.padding(top = 12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("取消不会下载或启动联机核心。", Modifier.padding(top = 12.dp))
-            }
-        },
-        confirmButton = { TextButton(onClick = onDownload) { Text("下载联机核心") } },
-        dismissButton = { TextButton(onClick = onCancel) { Text("取消") } },
-    )
-}
+/** 下载与许可说明：只承诺启动器确实会做的事，不暗示安装驱动或提权。 */
+private val RUNTIME_CONSENT =
+    "点击“同意并下载”后会立即下载官方 EasyTier ${MultiplayerPolicy.CORE_VERSION} 独立进程（约 31 MB），" +
+        "下载完成后按 SHA-256 校验；它以 LGPL-3.0 许可单独发布，由启动器作为独立进程运行。" +
+        "启动器不安装 TUN 驱动，也不需要管理员权限。"
 
-private const val MEBIBYTE = 1024.0 * 1024.0
+/** 防火墙与进程生命周期说明：启动器不替用户改系统安全设置。 */
+private const val FIREWALL_CONSENT =
+    "首次运行时 Windows 可能弹出防火墙提示；启动器不会自动修改防火墙设置，请按系统提示自行放行或拒绝。" +
+        "关闭启动器会结束 EasyTier 进程，正在进行的联机也会中断。"

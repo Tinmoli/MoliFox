@@ -43,7 +43,8 @@ fun main() {
                     val ui = UiProbe(awaitTestWindow(window), root.resolve("screenshots"))
                     runScenarios(ui, fixture)
                     println(
-                        "MULTIPLAYER_UI_PASSED: consent, download, host, join, guides, settings",
+                        "MULTIPLAYER_UI_PASSED: consent, runtime download, host, join, " +
+                            "guides, settings",
                     )
                 },
             )
@@ -101,48 +102,57 @@ private fun runScenarios(
     fixture: MultiplayerUiFixture,
 ) {
     confirmConsent(ui, fixture)
-    verifyRoomFlow(ui)
-    verifySettings(ui)
+    verifyRoomFlow(ui, fixture)
+    verifySettings(ui, fixture)
 }
 
-/** 首次进入：拒绝后只留下说明入口，确认并取消一次下载，再真实下载核心。 */
+/** 首次进入：拒绝后只留下说明入口；再次同意会在保存说明后直接开始下载运行时。 */
 private fun confirmConsent(
     ui: UiProbe,
     fixture: MultiplayerUiFixture,
 ) {
-    ui.await("首次联机说明") { ui.exists("同意并继续") }
-    check(!ui.enabled("同意并继续"))
+    ui.await("首次联机说明") { ui.exists("同意并下载") }
+    check(!ui.enabled("同意并下载"))
     check(!ui.exists("联机设置"))
     ui.click("暂不使用")
-    ui.await("拒绝后仅显示说明入口") { ui.exists("阅读联机说明") }
+    ui.await("拒绝后仅显示说明入口") { ui.exists("阅读并同意联机说明") }
     check(!ui.exists("房主教程"))
     check(!ui.exists("创建房间"))
     check(!ui.exists("联机设置"))
-    ui.click("阅读联机说明")
+    check(!ui.exists("下载官方 EasyTier"))
+    check(fixture.downloads.get() == 0)
+    ui.click("阅读并同意联机说明")
     repeat(SETTINGS_SCROLL_ATTEMPTS) {
         if (!ui.exists("我已阅读并了解以上说明")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
     }
     ui.click("我已阅读并了解以上说明", role = AccessibleRole.CHECK_BOX)
-    ui.click("同意并继续")
-    ui.await("进入联机大厅") { ui.exists("联机大厅") }
-    ui.click("准备联机核心")
-    ui.await("下载确认") { ui.exists("取消") }
-    ui.click("取消")
-    check(fixture.downloads.get() == 0)
-    ui.click("准备联机核心")
-    ui.click("下载联机核心")
-    ui.await("核心准备完成") {
-        fixture.backend.state.value.core
+    // 先模拟一次下载失败，确认状态栏提供重试入口。
+    fixture.failNextDownload = true
+    ui.click("同意并下载")
+    ui.await("首次下载失败可重试") { ui.exists("下载官方 EasyTier") }
+    check(fixture.downloads.get() == 1)
+    ui.click("下载官方 EasyTier")
+    ui.await("同意后直接下载运行时") {
+        fixture.backend.state.value.runtime
             ?.installed == true
     }
-    check(fixture.downloads.get() == 1)
+    check(fixture.downloads.get() == 2)
+    ui.await("进入联机大厅") { ui.exists("联机大厅") }
+    check(!ui.exists("下载官方 EasyTier"))
 }
 
 /** 创建房间、复制邀请码、关闭房间、用邀请码加入与退出房间。 */
-private fun verifyRoomFlow(ui: UiProbe) {
+private fun verifyRoomFlow(
+    ui: UiProbe,
+    fixture: MultiplayerUiFixture,
+) {
     ui.capture("multiplayer-lobby")
+    ui.await("房主入口可用") { ui.exists("创建房间") }
+    check(ui.exists("刷新世界"))
+    check(ui.exists("茉狐的小屋"))
     ui.click("创建房间")
-    ui.await("房主已启动房间") { ui.exists("已启动房间") && ui.exists(FIXTURE_ROOM_CODE) }
+    ui.await("房主已启动房间") { ui.exists("房间已开启") && ui.exists(FIXTURE_ROOM_CODE) }
+    check(fixture.hostedPort == FIXTURE_FIRST_WORLD_PORT)
     ui.capture("multiplayer-room")
     ui.click("复制邀请码")
     ui.click("关闭房间")
@@ -150,13 +160,17 @@ private fun verifyRoomFlow(ui: UiProbe) {
     ui.type("邀请码", FIXTURE_ROOM_CODE)
     ui.click("加入房间", role = AccessibleRole.PUSH_BUTTON)
     ui.await("房客已加入") { ui.exists("已加入房间") }
+    check(ui.exists(FIXTURE_GUEST_ADDRESS))
     ui.capture("multiplayer-guest")
     ui.click("退出房间")
     ui.await("退出后回到大厅") { ui.exists("创建房间") }
 }
 
-/** 教程页可切换，联机昵称可保存且有明确提示。 */
-private fun verifySettings(ui: UiProbe) {
+/** 教程页可切换；联机昵称与自定义中继保存后写入后端设置。 */
+private fun verifySettings(
+    ui: UiProbe,
+    fixture: MultiplayerUiFixture,
+) {
     ui.tab("房主教程")
     ui.capture("multiplayer-host-guide")
     ui.tab("房客教程")
@@ -164,10 +178,14 @@ private fun verifySettings(ui: UiProbe) {
     ui.tab("联机设置")
     ui.await("设置页可见") { ui.exists("联机昵称") }
     ui.type("联机昵称", "小狐")
+    ui.await("中继设置可见") { ui.exists("自定义中继") }
+    ui.type("自定义中继", "tcp://relay.example.com:11010")
     ui.capture("multiplayer-settings")
     repeat(SETTINGS_SCROLL_ATTEMPTS) {
         if (!ui.exists("保存联机设置")) ui.scroll(SETTINGS_SCROLL_AMOUNT)
     }
     ui.click("保存联机设置")
-    ui.await("设置保存提示") { ui.exists("已保存。昵称在下次创建或加入房间时生效。") }
+    ui.await("设置保存提示") { ui.exists("已保存。昵称与自定义中继在下次创建或加入房间时生效。") }
+    check(fixture.backend.settings.value.nickname == "小狐")
+    check(fixture.backend.settings.value.relayServer == "tcp://relay.example.com:11010")
 }

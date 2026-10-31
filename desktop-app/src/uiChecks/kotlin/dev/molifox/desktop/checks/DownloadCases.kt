@@ -21,7 +21,7 @@ internal fun checkDownloads(
     ui.tab("联机", navigation = true)
     ui.await("首次联机说明") { ui.exists("暂不使用") }
     ui.click("暂不使用")
-    ui.await("联机大厅") { ui.exists("阅读联机说明") }
+    ui.await("联机大厅") { ui.exists("阅读并同意联机说明") }
     ui.capture("multiplayer")
     ui.tab("开始", navigation = true)
     check(fixture.network.unexpected.isEmpty()) {

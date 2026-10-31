@@ -1,4 +1,4 @@
-// Scaffolding 玩家模型与协议 JSON 编解码；字段名与 Terracotta 协议文档保持一致。
+// Scaffolding 玩家模型与协议 JSON 编解码；字段名与 Scaffolding 协议保持一致。
 package dev.molifox.multiplayer.scaffolding
 
 import com.google.gson.JsonArray
