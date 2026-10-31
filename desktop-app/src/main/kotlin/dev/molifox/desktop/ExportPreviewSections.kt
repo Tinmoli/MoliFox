@@ -31,6 +31,7 @@ internal data class ExportEntriesState(
     val scanError: String?,
     val selectableEntries: List<PackExportEntry>,
     val selectedEntries: Set<String>,
+    val excludedPaths: Set<String>,
     val exporting: Boolean,
 )
 
@@ -50,6 +51,7 @@ internal fun ExportEntriesSection(
     state: ExportEntriesState,
     onRetry: () -> Unit,
     onToggle: (String, Boolean) -> Unit,
+    onToggleNode: (String, Boolean) -> Unit,
 ) {
     with(state) {
         when {
@@ -88,6 +90,8 @@ internal fun ExportEntriesSection(
                                 entry = entry,
                                 checked = entry.key in selectedEntries,
                                 enabled = !exporting,
+                                excludedPaths = excludedPaths,
+                                onToggleNode = onToggleNode,
                             ) { onToggle(entry.key, it) }
                         }
                     }

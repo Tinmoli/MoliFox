@@ -238,6 +238,30 @@ class PackExportSelectionTest : PackExportTestSupport() {
     }
 
     @Test
+    fun `tree exclusions remove only the unchecked child paths`() =
+        runBlocking {
+            fixture { store, instance, root ->
+                write(root, "mods/a.jar", "a")
+                write(root, "mods/b.jar", "b")
+                NetworkClient().use { network ->
+                    val plan =
+                        service(store, network)
+                            .previewMrpackExport(instance.id, metadata, false)
+                    val options = PackExportOptions()
+                    val selected =
+                        exportSelectedPaths(
+                            plan,
+                            PackExportFormat.Modrinth,
+                            options,
+                            setOf("mods"),
+                            setOf("mods/a.jar"),
+                        )
+                    assertEquals(setOf("mods/b.jar"), selected)
+                }
+            }
+        }
+
+    @Test
     fun `backup without saves contains no saves entries`() =
         runBlocking {
             fixture { store, instance, root ->

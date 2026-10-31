@@ -44,7 +44,7 @@ private class ExportEntryState(
 
 /** 可变的内容树；对外快照转成不可变的 `PackExportNode`。 */
 private class ExportTreeNode(
-    private val name: String,
+    private val path: String,
     private val directory: Boolean,
 ) {
     private val children = linkedMapOf<String, ExportTreeNode>()
@@ -55,20 +55,26 @@ private class ExportTreeNode(
     ) {
         if (parts.isEmpty()) return
         val childDirectory = directory || parts.size > 1
+        val childPath = "$path/${parts.first()}"
         val child =
-            children.getOrPut(parts.first()) { ExportTreeNode(parts.first(), childDirectory) }
+            children.getOrPut(parts.first()) { ExportTreeNode(childPath, childDirectory) }
         child.add(parts.drop(1), directory)
     }
 
     fun toPublic(): List<PackExportNode> = sortedChildren().map { it.toPublicNode() }
 
     private fun toPublicNode(): PackExportNode =
-        PackExportNode(name, directory, sortedChildren().map { it.toPublicNode() })
+        PackExportNode(
+            path,
+            path.substringAfterLast('/'),
+            directory,
+            sortedChildren().map { it.toPublicNode() },
+        )
 
     private fun sortedChildren(): List<ExportTreeNode> =
         children.values.sortedWith(
             compareByDescending<ExportTreeNode> { it.directory }
-                .thenBy { it.name.lowercase(Locale.ROOT) },
+                .thenBy { it.path.lowercase(Locale.ROOT) },
         )
 }
 

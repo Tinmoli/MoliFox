@@ -64,6 +64,8 @@ fun ExportMrpackPage(
     // 勾选只按条目键保存；touched 记录用户手动改过的行，切换格式时不重置。
     var checked by remember(instance.id) { mutableStateOf<Set<String>>(emptySet()) }
     var touched by remember(instance.id) { mutableStateOf<Set<String>>(emptySet()) }
+    // 树里被单独取消的文件/子目录；父文件夹仍勾选时只排除这些路径。
+    var excludedPaths by remember(instance.id) { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(instance.id, scanAttempt) {
         scanError = null
         collectExportScan(actions, instance.id, { scan = it }) { scanError = it }
@@ -109,7 +111,8 @@ fun ExportMrpackPage(
     val prepared = plan
     val view = ExportMrpackView(target, format, version, packName, prepared)
     val localPaths = rememberExportLocalPaths(prepared, format)
-    val selection = rememberExportSelection(prepared, format, options, selectedEntries)
+    val selection =
+        rememberExportSelection(prepared, format, options, selectedEntries, excludedPaths)
 
     fun toggleEntry(
         key: String,
@@ -117,6 +120,15 @@ fun ExportMrpackPage(
     ) {
         touched = touched + key
         checked = if (on) checked + key else checked - key
+        excludedPaths =
+            excludedPaths.filterNot { it == key || it.startsWith("$key/") }.toSet()
+    }
+
+    fun toggleNode(
+        path: String,
+        on: Boolean,
+    ) {
+        excludedPaths = if (on) excludedPaths - path else excludedPaths + path
     }
     val canConfirm =
         exportCanConfirm(
@@ -143,6 +155,7 @@ fun ExportMrpackPage(
         scanError = scanError,
         selectableEntries = selectableEntries,
         selectedEntries = selectedEntries,
+        excludedPaths = excludedPaths,
         prepared = prepared,
         view = view,
         localPaths = localPaths,
@@ -173,6 +186,7 @@ fun ExportMrpackPage(
         onRetryScan = { scanAttempt++ },
         onRetryPreview = { attempt++ },
         onToggleEntry = { key, on -> toggleEntry(key, on) },
+        onToggleNode = { path, on -> toggleNode(path, on) },
         onOptionsChange = { options = it },
         onExportStart = {
             exporting = true

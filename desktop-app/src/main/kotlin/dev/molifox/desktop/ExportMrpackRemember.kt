@@ -43,7 +43,10 @@ internal fun rememberExportSelection(
     format: PackExportFormat,
     options: PackExportOptions,
     selectedEntries: Set<String>,
+    excludedPaths: Set<String>,
 ): Set<String> =
-    remember(prepared, format, options, selectedEntries) {
-        prepared?.let { exportSelectedPaths(it, format, options, selectedEntries) }.orEmpty()
+    remember(prepared, format, options, selectedEntries, excludedPaths) {
+        prepared
+            ?.let { exportSelectedPaths(it, format, options, selectedEntries, excludedPaths) }
+            .orEmpty()
     }

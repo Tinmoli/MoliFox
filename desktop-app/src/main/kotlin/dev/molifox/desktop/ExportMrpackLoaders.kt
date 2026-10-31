@@ -138,6 +138,7 @@ internal fun startMrpackExport(
     format: PackExportFormat,
     options: PackExportOptions,
     selectedEntries: Set<String>,
+    excludedPaths: Set<String>,
     includeLogs: Boolean,
     onStarted: () -> Unit,
     onDismiss: () -> Unit,
@@ -160,7 +161,7 @@ internal fun startMrpackExport(
             actions.controller.exportMrpack(
                 fresh,
                 destination,
-                exportSelectedPaths(fresh, format, chosen, selectedEntries),
+                exportSelectedPaths(fresh, format, chosen, selectedEntries, excludedPaths),
                 local,
                 format,
                 chosen,

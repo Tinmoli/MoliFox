@@ -195,6 +195,7 @@ data class PackExportEntry(
 
 /** 导出内容树中的一个实际文件或文件夹；文件夹可继续展开。 */
 data class PackExportNode(
+    val path: String,
     val name: String,
     val directory: Boolean,
     val children: List<PackExportNode> = emptyList(),

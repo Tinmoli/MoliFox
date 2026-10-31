@@ -88,8 +88,15 @@ fun retainExportSelection(
     return checked.filterTo(mutableSetOf()) { it in keys }
 }
 
+/** 某个相对路径是否被自身或任一被取消的父目录排除。 */
+fun exportPathExcluded(
+    path: String,
+    excluded: Set<String>,
+): Boolean = excluded.any { it == path || path.startsWith("$it/") }
+
 /**
  * 把顶层勾选落到具体文件：文件夹未勾选时其下所有文件都不写入。
+ * `excluded` 是树里被单独取消的文件/子目录，父目录仍勾选时只排除这些路径。
  * 与旧开关共用规则：日志只进完整备份、禁用模组按选项排除、本地资源未经许可不分发。
  */
 fun exportSelectedPaths(
@@ -97,11 +104,13 @@ fun exportSelectedPaths(
     format: PackExportFormat,
     options: PackExportOptions,
     entries: Set<String>,
+    excluded: Set<String> = emptySet(),
 ): Set<String> {
     val selected =
         plan.files
             .filter { it.path.substringBefore('/').lowercase(Locale.ROOT) in entries }
             .filter { format == PackExportFormat.Backup || !backupOnlyExportPath(it.path) }
+            .filter { !exportPathExcluded(it.path, excluded) }
             .map { it.path }
             .toMutableSet()
     if (format != PackExportFormat.Backup && !options.includeLocalResources) {

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.PackExportEntry
 import dev.molifox.core.PackExportNode
+import dev.molifox.core.exportPathExcluded
 
 /** 实例名转成安全的导出文件名：替换 Windows 不允许的字符，避免导出时才失败。 */
 internal fun exportFileStem(name: String): String =
@@ -66,6 +67,8 @@ internal fun ExportEntryRow(
     entry: PackExportEntry,
     checked: Boolean,
     enabled: Boolean,
+    excludedPaths: Set<String>,
+    onToggleNode: (String, Boolean) -> Unit,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     var expanded by remember(entry.key) { mutableStateOf(false) }
@@ -115,7 +118,15 @@ internal fun ExportEntryRow(
             Text(size, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (expanded) {
-            entry.children.forEach { ExportNodeRow(it, depth = 1) }
+            entry.children.forEach {
+                ExportNodeRow(
+                    node = it,
+                    depth = 1,
+                    parentChecked = checked,
+                    excludedPaths = excludedPaths,
+                    onToggle = onToggleNode,
+                )
+            }
         }
     }
 }
@@ -130,8 +141,13 @@ private fun exportEntryTitle(name: String): String {
 private fun ExportNodeRow(
     node: PackExportNode,
     depth: Int,
+    parentChecked: Boolean,
+    excludedPaths: Set<String>,
+    onToggle: (String, Boolean) -> Unit,
 ) {
-    var expanded by remember(node.name, depth) { mutableStateOf(false) }
+    var expanded by remember(node.path) { mutableStateOf(false) }
+    val excluded = exportPathExcluded(node.path, excludedPaths)
+    val checked = parentChecked && !excluded
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
@@ -145,6 +161,11 @@ private fun ExportNodeRow(
                 visible = node.children.isNotEmpty(),
                 onClick = { expanded = !expanded },
             )
+            Checkbox(
+                checked,
+                { onToggle(node.path, it) },
+                enabled = parentChecked,
+            )
             Text(
                 node.name,
                 fontSize = 12.sp,
@@ -155,7 +176,15 @@ private fun ExportNodeRow(
             )
         }
         if (expanded) {
-            node.children.forEach { ExportNodeRow(it, depth + 1) }
+            node.children.forEach {
+                ExportNodeRow(
+                    node = it,
+                    depth = depth + 1,
+                    parentChecked = checked,
+                    excludedPaths = excludedPaths,
+                    onToggle = onToggle,
+                )
+            }
         }
     }
 }
