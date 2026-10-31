@@ -154,9 +154,9 @@ private fun ExportNodeRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = (depth * 14).dp),
+                .padding(start = (depth * 16).dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             ExportExpandArrow(
                 expanded = expanded,
