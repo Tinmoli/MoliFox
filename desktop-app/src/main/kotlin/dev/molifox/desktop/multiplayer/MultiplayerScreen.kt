@@ -140,7 +140,8 @@ fun MultiplayerScreen(
             downloadFailed = page.runtimeDownloadFailed,
             importing = page.runtimeImporting,
             cancelling = page.cancellingDownload,
-            cancelVisible = page.downloadJob != null,
+            // 页面切走再回来时 downloadJob 会为空，但后端仍在下载：按钮跟随阶段显示即可。
+            cancelVisible = true,
         )
     val acceptTerms: () -> Unit = {
         val consented = settings.copy(acceptedTermsRevision = MultiplayerPolicy.TERMS_REVISION)
