@@ -115,8 +115,20 @@ internal open class RoundedSurface(
 
 /** 8dp 圆角进度条：浅色底轨 + 主题色填充；还没有镜像/总量时画一段循环扫过的指示条。 */
 internal class RoundedProgressBar : JComponent() {
+    /** 确定进度；赋值时主动重绘，否则 250ms 刷新只更新文字、进度条会停在旧位置。 */
     var progress: Float = 0f
+        set(value) {
+            val next = value.coerceIn(0f, 1f)
+            if (field == next) return
+            field = next
+            repaint()
+        }
     var indeterminate: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            repaint()
+        }
     private var phase = 0f
     private val barHeight = 8
 
