@@ -63,9 +63,6 @@ object RoomCode {
         return null
     }
 
-    /** 只解析旧版 25 字符房间码，用于加入旧房间；不用于生成或展示。 */
-    fun parseLegacy(input: String): LegacyRoomCode? = LegacyRoomCodeParser.parse(input)
-
     /** 取随机数的低 16 位 34 进制数字：反复除以 34，余数即从低位到高位的数字。 */
     private fun lowBase34Digits(bytes: ByteArray): IntArray {
         require(bytes.size == RANDOM_BYTES) {
