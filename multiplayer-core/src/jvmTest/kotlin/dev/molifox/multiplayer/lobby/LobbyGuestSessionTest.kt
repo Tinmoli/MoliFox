@@ -8,11 +8,14 @@ import dev.molifox.multiplayer.protocol.RoomCodeRandom
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
 import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayerKind
 import dev.molifox.multiplayer.scaffolding.ScaffoldingServer
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.Socket
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,6 +42,45 @@ class LobbyGuestSessionTest {
                 assertEquals(listOf("Alice", "Bob"), awaitPlayers(scaffolding))
                 assertReachable(localPort)
                 assertLanPacket(listener, localPort, session.hostName)
+            } finally {
+                session.close()
+                loopbackForwarder.close()
+                scaffolding.close()
+                minecraft.close()
+                listener.close()
+                assertEquals(1, node.stops)
+            }
+        }
+
+    @Test
+    fun retriesUntilP2pConnectionIsAvailable() =
+        runBlocking {
+            val minecraft = FakeTcpServer()
+            val port = ServerSocket(0).use { socket -> socket.localPort }
+            val scaffolding = ScaffoldingServer(requestedPort = port, hostProfile = HOST_PLAYER)
+            scaffolding.setMinecraftPort(minecraft.port)
+            val listener = DatagramSocket(0, InetAddress.getLoopbackAddress())
+            val loopbackForwarder = LoopbackForwarder()
+            val node = FakeEasyTierNode(fakeCli { hostPeersJson(port) }.first)
+            val session =
+                guestSession(
+                    node,
+                    loopbackForwarder,
+                    listener,
+                    p2pWaitTimeoutMillis = 5_000L,
+                    p2pRetryIntervalMillis = 100L,
+                )
+            // 先让连接失败几次，再启动 Scaffolding 服务端，模拟“房主已发现但 P2P 刚打通”。
+            val starter =
+                launch {
+                    delay(P2P_START_DELAY_MILLIS)
+                    scaffolding.start().getOrThrow()
+                }
+            try {
+                session.start().getOrThrow()
+                starter.join()
+                assertTrue(session.localAddress.isNotBlank())
+                assertForwardChain(loopbackForwarder.calls, port, minecraft.port)
             } finally {
                 session.close()
                 loopbackForwarder.close()
@@ -85,6 +127,8 @@ class LobbyGuestSessionTest {
         node: FakeEasyTierNode,
         loopbackForwarder: LoopbackForwarder,
         listener: DatagramSocket,
+        p2pWaitTimeoutMillis: Long = 30_000L,
+        p2pRetryIntervalMillis: Long = 1_500L,
     ): LobbyGuestSession =
         LobbyGuestSession(
             code = code,
@@ -95,6 +139,8 @@ class LobbyGuestSessionTest {
             onClosed = { },
             hostWaitTimeoutMillis = WAIT_TIMEOUT_MILLIS,
             pollIntervalMillis = POLL_INTERVAL_MILLIS,
+            p2pWaitTimeoutMillis = p2pWaitTimeoutMillis,
+            p2pRetryIntervalMillis = p2pRetryIntervalMillis,
             forwarderFactory = { loopbackForwarder.forwarder },
             broadcastFactory = { description, port ->
                 MinecraftLanBroadcast(
@@ -144,6 +190,7 @@ class LobbyGuestSessionTest {
 
     private companion object {
         const val BYTES = 16
+        const val P2P_START_DELAY_MILLIS = 400L
         const val LOOPBACK = "127.0.0.1"
         const val PLAYER_COUNT = 2
         const val WAIT_TIMEOUT_MILLIS = 5_000L

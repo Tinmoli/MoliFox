@@ -50,6 +50,8 @@ class LobbyGuestSession(
     private val portAllocator: LoopbackPortAllocator = FreeLoopbackPortAllocator,
     private val hostWaitTimeoutMillis: Long = DEFAULT_HOST_WAIT_TIMEOUT_MILLIS,
     private val pollIntervalMillis: Long = DEFAULT_POLL_INTERVAL_MILLIS,
+    private val p2pWaitTimeoutMillis: Long = DEFAULT_P2P_WAIT_TIMEOUT_MILLIS,
+    private val p2pRetryIntervalMillis: Long = DEFAULT_P2P_RETRY_INTERVAL_MILLIS,
     private val forwarderFactory: (EasyTierCli) -> VirtualPortForwarder =
         ::EasyTierCliPortForwarder,
     private val localForwardFactory: (Int) -> LocalPortForward = { target ->
@@ -136,28 +138,51 @@ class LobbyGuestSession(
         )
     }
 
+    /**
+     * 连接房主；p2p-only 下数据只能走 P2P，发现房主不等于已经直连成功。
+     *
+     * 首次连不上时继续重试 [p2pWaitTimeoutMillis] 毫秒，给 EasyTier 打洞留时间；
+     * 全部失败再给出“未建立 P2P 直连”的明确提示，避免几秒内就误判失败。
+     */
     private suspend fun connectRoom(scaffoldingLocalPort: Int): ScaffoldingClient {
-        val created =
-            ScaffoldingClient(
-                host = LOOPBACK,
-                port = scaffoldingLocalPort,
-                player =
-                    ScaffoldingPlayer(
-                        machineId,
-                        playerName,
-                        kind = ScaffoldingPlayerKind.GUEST,
-                    ),
-                onDisconnected = ::onClientDisconnected,
-                onError = { failure ->
-                    logger("Scaffolding 连接错误：${failure.message}", true)
-                },
-            )
-        created.connect().getOrElse { failure ->
+        val deadline = System.nanoTime() + p2pWaitTimeoutMillis * NANOS_PER_MILLI
+        var lastFailure: Throwable? = null
+        var waitingLogged = false
+        while (true) {
+            val created =
+                ScaffoldingClient(
+                    host = LOOPBACK,
+                    port = scaffoldingLocalPort,
+                    player =
+                        ScaffoldingPlayer(
+                            machineId,
+                            playerName,
+                            kind = ScaffoldingPlayerKind.GUEST,
+                        ),
+                    onDisconnected = ::onClientDisconnected,
+                    onError = { failure ->
+                        logger("Scaffolding 连接错误：${failure.message}", true)
+                    },
+                )
+            val result = created.connect()
+            if (result.isSuccess) {
+                synchronized(lock) { client = created }
+                return created
+            }
             created.close()
-            throw IOException("无法连接房主房间：${failure.message}", failure)
+            lastFailure = result.exceptionOrNull()
+            if (System.nanoTime() >= deadline) break
+            if (!waitingLogged) {
+                waitingLogged = true
+                logger("房主已发现，正在等待 P2P 直连（当前设置为不经过中继）…", false)
+            }
+            delay(p2pRetryIntervalMillis)
         }
-        synchronized(lock) { client = created }
-        return created
+        throw IOException(
+            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_SECOND} 秒内没有建立 P2P 直连" +
+                "（当前设置为不经过中继），请重试、换网络，或让中继允许转发数据。",
+            lastFailure,
+        )
     }
 
     private suspend fun resolveMinecraftPort(client: ScaffoldingClient): Int =
@@ -252,6 +277,9 @@ class LobbyGuestSession(
         const val NANOS_PER_MILLI = 1_000_000L
         const val DEFAULT_HOST_WAIT_TIMEOUT_MILLIS = 60_000L
         const val DEFAULT_POLL_INTERVAL_MILLIS = 1_000L
+        const val DEFAULT_P2P_WAIT_TIMEOUT_MILLIS = 30_000L
+        const val DEFAULT_P2P_RETRY_INTERVAL_MILLIS = 1_500L
+        const val MILLIS_PER_SECOND = 1_000L
         const val PLAYER_REFRESH_INTERVAL_MILLIS = 10_000L
     }
 }
