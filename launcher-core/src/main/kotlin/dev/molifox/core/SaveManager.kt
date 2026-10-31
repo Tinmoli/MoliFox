@@ -78,6 +78,21 @@ class SaveManager(
     private val store: LauncherStore,
 ) {
     private val packer = SavePacker(store)
+    private val detailsReader = SaveDetailsReader(store)
+    private val settingsEditor = SaveSettingsEditor(store)
+
+    /** 读取一个世界文件夹的详情；压缩包存档不支持。 */
+    fun readDetails(
+        instanceId: String,
+        saveName: String,
+    ): SaveDetails = detailsReader.read(instanceId, saveName)
+
+    /** 写回允许作弊 / 难度 / 锁定难度；返回是否真的写入。 */
+    fun updateSettings(
+        instanceId: String,
+        saveName: String,
+        changes: SaveSettingsChanges,
+    ): Boolean = settingsEditor.update(instanceId, saveName, changes)
 
     /**
      * 列出实例 `saves/` 下的直接子项。

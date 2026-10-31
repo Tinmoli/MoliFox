@@ -7,9 +7,6 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
-import java.util.UUID
-import kotlin.io.path.createDirectories
 
 /** `level.dat` 里 `Data.Packs.Enabled/Disabled` 的字符串标签类型号。 */
 private const val NBT_TAG_STRING = 8
@@ -69,15 +66,8 @@ internal class DatapackLevelDat(
         if (next == current) return false
         val root = withPacks(document.root, next.enabled, next.disabled)
         val bytes = encodeNbt(document.copy(root = root))
-        backup(world, before)
-        val temporary = level.resolveSibling(".level-${UUID.randomUUID()}.part")
-        try {
-            Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW)
-            requireLevelUnchanged(level, before)
-            replaceFile(temporary, level)
-        } finally {
-            Files.deleteIfExists(temporary)
-        }
+        backupLevelDat(store, world, before)
+        replaceLevelDat(level, before, bytes)
         return true
     }
 
@@ -94,44 +84,7 @@ internal class DatapackLevelDat(
         val disabled = current.disabled.filterNot { matchesPackId(it, name) }
         if (enabled == current.enabled && disabled == current.disabled) return
         val bytes = encodeNbt(document.copy(root = withPacks(document.root, enabled, disabled)))
-        val temporary = level.resolveSibling(".level-${UUID.randomUUID()}.part")
-        try {
-            Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW)
-            if (!Files.readAllBytes(level).contentEquals(before)) return
-            replaceFile(temporary, level)
-        } finally {
-            Files.deleteIfExists(temporary)
-        }
-    }
-
-    /** 原始 `level.dat` 的滚动备份：每个世界一个文件，覆盖写，不随操作次数膨胀。 */
-    private fun backup(
-        world: Path,
-        bytes: ByteArray,
-    ) {
-        runCatching {
-            val directory = store.dataDirectory.resolve("backups/level-dat")
-            directory.createDirectories()
-            val label =
-                world.fileName.toString().replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
-            Files.write(
-                directory.resolve("$label.dat"),
-                bytes,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE,
-            )
-        }.onFailure { store.log("备份 level.dat 失败：${it.message ?: world.fileName}", true) }
-    }
-
-    /** 写入前复核 `level.dat` 未被其他程序改动。 */
-    private fun requireLevelUnchanged(
-        level: Path,
-        before: ByteArray,
-    ) {
-        require(Files.readAllBytes(level).contentEquals(before)) {
-            "level.dat 已被其他程序修改，请刷新后再试；未写入"
-        }
+        if (Files.readAllBytes(level).contentEquals(before)) replaceLevelDat(level, before, bytes)
     }
 
     /** 读取 `Data.Packs` 的两个字符串列表；结构异常时抛错。 */

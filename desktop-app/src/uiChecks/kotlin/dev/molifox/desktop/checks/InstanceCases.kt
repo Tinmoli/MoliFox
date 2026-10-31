@@ -25,7 +25,7 @@ internal fun checkInstance(
     ui.click("游戏文件夹")
     ui.await("重新查询新增目录") { ui.exists("崩溃报告文件夹") }
     ui.click("游戏文件夹")
-    for (tab in listOf("模组", "资源包", "光影", "存档", "数据包", "原理图", "设置")) {
+    for (tab in listOf("模组", "资源包", "光影", "存档", "原理图", "设置")) {
         ui.tab(tab)
         ui.capture("instance-" + instanceTabName(tab))
     }
@@ -77,7 +77,6 @@ private fun instanceTabName(tab: String): String =
         "资源包" -> "resources"
         "光影" -> "shaders"
         "存档" -> "saves"
-        "数据包" -> "datapacks"
         "原理图" -> "schematics"
         else -> "settings"
     }

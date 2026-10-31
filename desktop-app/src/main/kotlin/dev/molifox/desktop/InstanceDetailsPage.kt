@@ -1,4 +1,4 @@
-﻿// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
 // 实例详情页：页头、页签切换、自动保存与对话框，各页签内容在 instance 包内。
@@ -62,12 +62,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 
-/** 页签序号：光影 3、存档 4、原理图 6；其余页签按内容目录的固定顺序排列。 */
+/** 页签序号：光影 3、存档 4、原理图 5；其余页签按内容目录的固定顺序排列。 */
 private const val TAB_INDEX_SHADER_PACKS = 3
 private const val TAB_INDEX_SAVES = 4
-private const val TAB_INDEX_SCHEMATICS = 6
+private const val TAB_INDEX_SCHEMATICS = 5
 
-/** 实例详情：页头 + 左侧页签栏与右侧内容区，页签为设置 / 模组 / 资源包 / 光影 / 存档 / 数据包 / 原理图。 */
+/** 实例详情：页头 + 左侧页签栏与右侧内容区，页签为设置 / 模组 / 资源包 / 光影 / 存档 / 原理图。 */
 @Composable
 fun ColumnScope.InstanceDetailsPage(
     instance: GameInstance,
@@ -392,8 +392,7 @@ private fun RowScope.InstanceTabContent(
                                 Modifier.weight(1f),
                             )
                         4 -> InstanceSavesTab(instance, actions, Modifier.weight(1f))
-                        5 -> InstanceDatapacksTab(instance, actions, Modifier.weight(1f))
-                        6 ->
+                        5 ->
                             InstanceFolderBrowser(
                                 instance,
                                 actions,
@@ -555,7 +554,7 @@ private fun savedInstanceMemoryMb(
 private fun initialInstanceMemoryMb(instance: GameInstance): Int =
     if (instanceMemoryPolicy(instance) == InstanceMemoryPolicy.Manual) instance.memoryMb else 0
 
-/** 页签对应的内容目录；游戏设置与数据包不创建目录，返回 null。 */
+/** 页签对应的内容目录；游戏设置不创建目录，返回 null。 */
 private fun instanceTabFolder(index: Int): GameFolder? =
     when (index) {
         1 -> GameFolder.Mods

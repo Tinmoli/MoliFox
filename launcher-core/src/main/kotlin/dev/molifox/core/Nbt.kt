@@ -68,6 +68,12 @@ data class NbtCompound(
 
     fun string(key: String): String? = (entries[key] as? NbtString)?.value
 
+    fun byte(key: String): Byte? = (entries[key] as? NbtByte)?.value
+
+    fun int(key: String): Int? = (entries[key] as? NbtInt)?.value
+
+    fun long(key: String): Long? = (entries[key] as? NbtLong)?.value
+
     fun compound(key: String): NbtCompound? = entries[key] as? NbtCompound
 
     fun list(key: String): NbtList? = entries[key] as? NbtList

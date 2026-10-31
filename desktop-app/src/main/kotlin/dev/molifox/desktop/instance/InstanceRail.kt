@@ -19,7 +19,6 @@ import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.FolderZip
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Save
@@ -53,7 +52,7 @@ import dev.molifox.desktop.title
 /** 原理图页签的标题；实例没有 schematics 目录时隐藏，索引保持不变。 */
 internal const val SCHEMATICS_TAB_TITLE = "原理图"
 
-/** 实例详情页签：左侧二级列表的 7 个页签。 */
+/** 实例详情页签：左侧二级列表的 6 个页签。 */
 private data class InstanceTab(
     val title: String,
     val icon: ImageVector,
@@ -66,12 +65,11 @@ private val instanceTabs =
         InstanceTab("资源包", Icons.Outlined.Palette),
         InstanceTab("光影", Icons.Outlined.AutoAwesome),
         InstanceTab("存档", Icons.Outlined.Save),
-        InstanceTab("数据包", Icons.Outlined.FolderZip),
         InstanceTab(SCHEMATICS_TAB_TITLE, Icons.Outlined.Architecture),
     )
 
 /**
- * 左侧页签栏：7 个页签、游戏文件夹分组与管理动作。
+ * 左侧页签栏：6 个页签、游戏文件夹分组与管理动作。
  *
  * 只负责导航与目录/管理区的展开状态；实例本身的维护动作通过回调交给页面。
  */

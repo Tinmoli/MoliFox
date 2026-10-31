@@ -36,7 +36,7 @@ import java.nio.file.Path
 
 /**
  * 存档页签：顶部搜索 / 刷新 / 打开存档文件夹，44dp 一行列出世界（名称、大小、修改时间、 「可能不是有效世界」提示），
- * 行尾「备份」「复制到…」「删除」；下方是「恢复时替换原世界」设置与「备份」卡片。
+ * 行尾「详情」「备份」「复制到…」「删除」；下方是「恢复时替换原世界」设置与「备份」卡片。
  *
  * 备份与原版游戏共用 `<游戏目录>/backups/`，原版写的备份也会列出；没有 `level.dat` 的压缩包只展示、不提供恢复。
  * 列表在 IO 线程读取；任务进行中（controller.busy）禁用所有操作按钮；后台任务失败时把后端的中文消息显示在 工具行下方，不静默吞掉。
@@ -62,6 +62,7 @@ internal fun InstanceSavesTab(
     // 开启「恢复时替换原世界」后，恢复会替换同名世界；执行前单独确认。
     var replacing by remember { mutableStateOf<SaveBackupInfo?>(null) }
     var copying by remember { mutableStateOf<SaveEntry?>(null) }
+    var detailed by remember { mutableStateOf<SaveEntry?>(null) }
     val liveState by actions.controller.state.collectAsState()
     val busy = actions.controller.isInstanceBusy(instance.id)
     val running = actions.controller.game.isRunning(instance.id)
@@ -211,6 +212,7 @@ internal fun InstanceSavesTab(
             onClearError = { actionError = null },
             onRefresh = { refresh++ },
             onOpenFolder = { actions.run { actions.controller.openFolder(instance.id, "saves") } },
+            onDetails = { detailed = it },
             onBackup = startBackup,
             onCopy = { copying = it },
             onDelete = { deleting = it },
@@ -237,6 +239,16 @@ internal fun InstanceSavesTab(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SavesTabSections(ui, callbacks)
+    }
+    detailed?.let { entry ->
+        SaveDetailsDialog(
+            instance = instance,
+            entry = entry,
+            actions = actions,
+            canEdit = canManage,
+            onDismiss = { detailed = null },
+            onSaved = { refresh++ },
+        )
     }
 }
 

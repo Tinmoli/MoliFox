@@ -49,6 +49,7 @@ internal fun SaveRow(
     entry: SaveEntry,
     canManage: Boolean,
     canCopy: Boolean,
+    onDetails: () -> Unit,
     onBackup: () -> Unit,
     onCopy: () -> Unit,
     onDelete: () -> Unit,
@@ -93,6 +94,11 @@ internal fun SaveRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                RowTextAction(
+                    "详情",
+                    enabled = entry.hasLevelDat && !entry.name.endsWith(".zip", true),
+                    onClick = onDetails,
+                )
                 RowTextAction("备份", enabled = canManage, onClick = onBackup)
                 RowTextAction("复制到…", enabled = canCopy, onClick = onCopy)
                 RowIconAction(

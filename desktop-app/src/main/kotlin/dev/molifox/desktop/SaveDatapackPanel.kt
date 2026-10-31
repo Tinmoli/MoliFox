@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 展示存档列表与选中存档的数据包列表及操作状态。
+// 展示一个存档的数据包列表与操作状态，供存档详情页嵌入。
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,21 +12,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FolderZip
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,43 +39,32 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.DatapackEntry
 import dev.molifox.core.DatapackListing
 import dev.molifox.core.GameInstance
-import dev.molifox.core.SaveEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import kotlin.io.path.isDirectory
-
-/** 存档行需要的信息：存档本身 + 该存档 datapacks/ 里的条目数。 */
-private data class WorldDatapacks(
-    val entry: SaveEntry,
-    val count: Int,
-)
 
 /**
- * 数据包页签：先列出实例里的存档（带数据包数量），点开某个存档再管理它的数据包。
+ * 存档详情里的「数据包」页：只管理 [world] 的 `datapacks/`。
  *
- * 数据包只属于真实存档目录 `saves/<存档>/datapacks/`：`saves/` 下的 `.zip` 存档没有可写的 datapacks 目录，
- * 因此不列入入口。支持安装 `.zip`（校验 `pack.mcmeta` 与 `pack_format`）、删除到回收站、打开文件夹、
- * 启用/禁用（写 `level.dat` 的 `Data.Packs`）。`level.dat` 无法解析或存档正被打开时，开关禁用并说明原因。
+ * 数据包属于具体世界，所以这里不再选择存档；安装、启停、删除与打开文件夹的行为与原来的数据包页一致。
+ * `level.dat` 无法解析或世界正被打开时，开关禁用并说明原因。
  */
 @Composable
-internal fun InstanceDatapacksTab(
+internal fun SaveDatapackPanel(
     instance: GameInstance,
+    world: String,
     actions: UiActions,
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
 ) {
-    val state = remember(instance.id) { DatapacksTabState() }
+    val state = remember(instance.id, world) { DatapackPanelState(world) }
     var deleting by remember { mutableStateOf<DatapackEntry?>(null) }
-    LaunchedEffect(instance.id, state.refresh) {
-        state.loadWorlds(actions, instance.id)
+    LaunchedEffect(instance.id, world, state.refresh) {
+        state.load(actions, instance.id)
     }
-    LaunchedEffect(instance.id, state.world, state.refresh) {
-        if (state.world.isBlank()) state.resetListing() else state.loadListing(actions, instance.id)
-    }
-    DatapacksBody(instance, actions, state, modifier) { deleting = it }
+    SaveDatapackBody(instance, actions, state, modifier) { deleting = it }
     deleting?.let { entry ->
         DeleteDatapackDialog(
             entry = entry,
@@ -98,78 +78,22 @@ internal fun InstanceDatapacksTab(
     }
 }
 
-/** 数据包页签的界面状态与加载/动作逻辑；只读磁盘，不自行创建目录。 */
-private class DatapacksTabState {
-    var worlds by mutableStateOf<List<WorldDatapacks>>(emptyList())
-
-    /** 当前打开的存档名；空串表示停在存档列表。 */
-    var world by mutableStateOf("")
+/** 数据包页的状态：世界名固定，只加载它自己的列表。 */
+private class DatapackPanelState(
+    val world: String,
+) {
     var listing by mutableStateOf<DatapackListing?>(null)
     var loading by mutableStateOf(true)
-    var worldsLoaded by mutableStateOf(false)
     var loadError by mutableStateOf<String?>(null)
     var actionError by mutableStateOf<String?>(null)
     var refresh by mutableIntStateOf(0)
-    var query by mutableStateOf("")
     var working by mutableStateOf<String?>(null)
 
-    /** 读取存档列表与各自的数据包数量；失败只提示，不改动磁盘。 */
-    suspend fun loadWorlds(
+    /** 读取当前存档的数据包列表；失败只提示，不改动磁盘。 */
+    suspend fun load(
         actions: UiActions,
         instanceId: String,
     ) {
-        loading = true
-        loadError = null
-        try {
-            worlds = withContext(Dispatchers.IO) { scanWorlds(actions, instanceId) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: IOException) {
-            worlds = emptyList()
-            loadError = failure.message ?: "无法读取存档目录"
-        } catch (failure: IllegalStateException) {
-            worlds = emptyList()
-            loadError = failure.message ?: "无法读取存档目录"
-        } finally {
-            worldsLoaded = true
-            if (world.isNotBlank() && worlds.none { it.entry.name == world }) world = ""
-        }
-    }
-
-    private fun scanWorlds(
-        actions: UiActions,
-        instanceId: String,
-    ): List<WorldDatapacks> =
-        actions.controller
-            .listSaves(instanceId)
-            .filter { it.path.isDirectory() && it.hasLevelDat }
-            .map { save ->
-                val count =
-                    runCatching {
-                        actions.controller
-                            .listDatapacks(instanceId, save.name)
-                            .entries.size
-                    }.getOrDefault(0)
-                WorldDatapacks(save, count)
-            }
-            // 有数据包的存档排前面，其余按名称；用户点任意存档都能进去安装。
-            .sortedWith(
-                compareByDescending<WorldDatapacks> { it.count > 0 }
-                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.entry.name },
-            )
-
-    fun resetListing() {
-        listing = null
-        loading = false
-        loadError = null
-    }
-
-    /** 读取当前存档的数据包列表。 */
-    suspend fun loadListing(
-        actions: UiActions,
-        instanceId: String,
-    ) {
-        listing = null
         loading = true
         loadError = null
         try {
@@ -180,13 +104,10 @@ private class DatapacksTabState {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: IOException) {
-            // 数据包列表来自磁盘与 level.dat，实际失败是读取异常；这里只把错误转成页面提示。
             loadError = failure.message ?: "无法读取数据包"
         } catch (failure: IllegalArgumentException) {
-            // 存档名或 level.dat 校验失败时显示原因，页面保持只读可重试。
             loadError = failure.message ?: "无法读取数据包"
         } catch (failure: IllegalStateException) {
-            // 扫描期间实例记录已被移除（error(...)）时同样只提示，不写磁盘。
             loadError = failure.message ?: "无法读取数据包"
         } finally {
             loading = false
@@ -257,12 +178,18 @@ private class DatapacksTabState {
     ) {
         val moved =
             withContext(Dispatchers.IO) {
-                runCatching {
+                try {
                     actions.controller.deleteDatapack(instance.id, world, entry.name)
-                }.getOrElse { failure ->
-                    withContext(Dispatchers.Swing) {
-                        actionError = failure.message ?: "删除数据包失败，详情见日志"
-                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: IOException) {
+                    reportActionFailure(failure, "删除数据包失败，详情见日志")
+                    false
+                } catch (failure: IllegalArgumentException) {
+                    reportActionFailure(failure, "删除数据包失败，详情见日志")
+                    false
+                } catch (failure: IllegalStateException) {
+                    reportActionFailure(failure, "删除数据包失败，详情见日志")
                     false
                 }
             }
@@ -276,10 +203,10 @@ private class DatapacksTabState {
 }
 
 @Composable
-private fun DatapacksBody(
+private fun SaveDatapackBody(
     instance: GameInstance,
     actions: UiActions,
-    state: DatapacksTabState,
+    state: DatapackPanelState,
     modifier: Modifier,
     onDeleteRequest: (DatapackEntry) -> Unit,
 ) {
@@ -298,13 +225,9 @@ private fun DatapacksBody(
             .resolve("saves")
     val datapacksDirectory = savesDirectory.resolve(state.world).resolve("datapacks")
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DatapacksToolbar(instance, actions, state, canEdit, busy)
+        DatapackToolbar(instance, actions, state, canEdit, busy)
         Text(
-            if (state.world.isBlank()) {
-                "${state.worlds.count { it.count > 0 }} 个存档有数据包 · $savesDirectory"
-            } else {
-                "${state.listing?.entries?.size ?: 0} 个数据包 · $datapacksDirectory"
-            },
+            "${state.listing?.entries?.size ?: 0} 个数据包 · $datapacksDirectory",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -320,22 +243,18 @@ private fun DatapacksBody(
         state.actionError?.let {
             Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
         }
-        if (state.loading && (state.listing != null || state.world.isBlank())) {
+        if (state.loading && state.listing != null) {
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         }
-        if (state.world.isBlank()) {
-            WorldsPanel(state)
-        } else {
-            DatapacksPanel(instance, actions, state, canEdit, onDeleteRequest)
-        }
+        DatapackListingBody(instance, actions, state, canEdit, onDeleteRequest)
     }
 }
 
 @Composable
-private fun DatapacksToolbar(
+private fun DatapackToolbar(
     instance: GameInstance,
     actions: UiActions,
-    state: DatapacksTabState,
+    state: DatapackPanelState,
     canEdit: Boolean,
     busy: Boolean,
 ) {
@@ -346,36 +265,20 @@ private fun DatapacksToolbar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (state.world.isBlank()) {
-                    Text(
-                        "选择存档",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    SmallIconButton(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        "返回存档列表",
-                        onClick = {
-                            state.world = ""
-                            state.query = ""
-                        },
-                    )
-                    Text(
-                        state.world,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                Text(
+                    state.world,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             }
         },
         importAction =
             ToolbarAction(
                 "安装数据包",
                 icon = Icons.Outlined.FileDownload,
-                enabled = state.world.isNotBlank() && canEdit,
+                enabled = canEdit,
             ) {
                 state.actionError = null
                 actions.run { state.installDatapack(actions, instance) }
@@ -386,93 +289,17 @@ private fun DatapacksToolbar(
                 state.refresh++
             },
         openFolder =
-            ToolbarAction(
-                "打开文件夹",
-                icon = Icons.Outlined.FolderOpen,
-                enabled = state.world.isNotBlank() && !busy,
-            ) {
+            ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
                 actions.run { actions.controller.openWorldDatapacks(instance.id, state.world) }
             },
     )
 }
 
-/** 存档列表：有数据包的在前，点击进入该存档的数据包管理。 */
 @Composable
-private fun ColumnScope.WorldsPanel(state: DatapacksTabState) {
-    when {
-        state.loadError != null ->
-            Panel(Modifier.fillMaxWidth()) {
-                EmptyState(
-                    "无法读取存档目录",
-                    state.loadError.orEmpty(),
-                    Icons.Outlined.CloudOff,
-                ) {
-                    TextButton({ state.refresh++ }) { Text("重试") }
-                }
-            }
-        state.worldsLoaded && state.worlds.isEmpty() ->
-            Panel(Modifier.fillMaxWidth()) {
-                EmptyState(
-                    "这个实例还没有存档",
-                    "先创建或复制一个存档，再回来管理它的数据包。",
-                    Icons.Outlined.Save,
-                )
-            }
-        else ->
-            ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    state.worlds.forEach { world ->
-                        key(world.entry.name) {
-                            WorldRow(state, world.entry, world.count)
-                        }
-                    }
-                }
-            }
-    }
-}
-
-@Composable
-private fun WorldRow(
-    state: DatapacksTabState,
-    entry: SaveEntry,
-    count: Int,
-) {
-    val shape = RoundedCornerShape(Metrics.innerRadius)
-    Surface(
-        Modifier.fillMaxWidth().height(Metrics.rowHeight).clickable { state.world = entry.name },
-        shape = shape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LocalContentThumbnail(entry.path, world = true)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    entry.name,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    if (count > 0) "$count 个数据包" else "没有数据包",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ColumnScope.DatapacksPanel(
+private fun ColumnScope.DatapackListingBody(
     instance: GameInstance,
     actions: UiActions,
-    state: DatapacksTabState,
+    state: DatapackPanelState,
     canEdit: Boolean,
     onDeleteRequest: (DatapackEntry) -> Unit,
 ) {
@@ -480,11 +307,7 @@ private fun ColumnScope.DatapacksPanel(
     when {
         state.loadError != null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState(
-                    "无法读取数据包",
-                    state.loadError.orEmpty(),
-                    Icons.Outlined.CloudOff,
-                ) {
+                EmptyState("无法读取数据包", state.loadError.orEmpty(), Icons.Outlined.CloudOff) {
                     TextButton({ state.refresh++ }) { Text("重试") }
                 }
             }
@@ -517,43 +340,30 @@ private fun ColumnScope.DatapacksPanel(
 @Composable
 private fun ColumnScope.DatapackList(
     current: DatapackListing,
-    state: DatapacksTabState,
+    state: DatapackPanelState,
     canEdit: Boolean,
     onToggle: (DatapackEntry, Boolean) -> Unit,
     onDeleteRequest: (DatapackEntry) -> Unit,
 ) {
-    val filtered =
-        current.entries.filter { state.query.isBlank() || it.name.contains(state.query, true) }
+    val entries = current.entries
     ScrollColumn(Modifier.weight(1f).fillMaxWidth()) {
         if (current.note.isNotBlank()) {
-            Text(
-                current.note,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(current.note, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (filtered.isEmpty()) {
-            Panel(Modifier.fillMaxWidth()) {
-                EmptyState("没有匹配的数据包", "换个关键词试试", Icons.Outlined.SearchOff) {
-                    TextButton({ state.query = "" }) { Text("清除搜索") }
-                }
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                filtered.forEach { entry ->
-                    key(entry.name) {
-                        DatapackRow(
-                            entry = entry,
-                            toggleEnabled =
-                                current.toggleAvailable &&
-                                    canEdit &&
-                                    state.working == null &&
-                                    entry.enabled != null,
-                            onToggle = { enabled -> onToggle(entry, enabled) },
-                            deleteEnabled = canEdit && state.working == null,
-                            onDelete = { onDeleteRequest(entry) },
-                        )
-                    }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            entries.forEach { entry ->
+                key(entry.name) {
+                    DatapackRow(
+                        entry = entry,
+                        toggleEnabled =
+                            current.toggleAvailable &&
+                                canEdit &&
+                                state.working == null &&
+                                entry.enabled != null,
+                        onToggle = { enabled -> onToggle(entry, enabled) },
+                        deleteEnabled = canEdit && state.working == null,
+                        onDelete = { onDeleteRequest(entry) },
+                    )
                 }
             }
         }
