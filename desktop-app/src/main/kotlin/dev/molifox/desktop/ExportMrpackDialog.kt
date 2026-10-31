@@ -39,13 +39,15 @@ fun ExportMrpackDialog(
     val stem = remember(instance.name) { exportFileStem(instance.name) }
     val defaultTarget =
         remember(stem) {
+            // 默认目标名跟随初始格式的扩展名；切换格式时只替换扩展名，保留用户改过的名字。
+            val fileName = "$stem.${PackExportFormat.Modrinth.extension}"
             runCatching {
                 Path
                     .of(System.getProperty("user.home", "."))
                     .toAbsolutePath()
-                    .resolve("$stem.mrpack")
+                    .resolve(fileName)
                     .toString()
-            }.getOrDefault("$stem.mrpack")
+            }.getOrDefault(fileName)
         }
     var target by remember(instance.id) { mutableStateOf(defaultTarget) }
     var version by remember(instance.id) { mutableStateOf("1.0.0") }
@@ -135,16 +137,7 @@ fun ExportMrpackDialog(
         onVersionChange = { version = it },
         onFormatChosen = { name ->
             val chosen = PackExportFormat.valueOf(name)
-            target =
-                runCatching {
-                    val file = Path.of(target.trim().trim('"'))
-                    file
-                        .resolveSibling(
-                            file.fileName.toString().substringBeforeLast('.') +
-                                "." +
-                                chosen.extension,
-                        ).toString()
-                }.getOrDefault(target)
+            target = exportTargetWithExtension(target, chosen.extension)
             // 默认勾选与格式无关：保留用户当前选择，只丢弃已不存在的条目；选项也不重置。
             checked = scan?.let { retainExportSelection(it.entries, checked) } ?: checked
             format = chosen

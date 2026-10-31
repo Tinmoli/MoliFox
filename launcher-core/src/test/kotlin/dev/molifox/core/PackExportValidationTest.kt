@@ -159,6 +159,39 @@ class PackExportValidationTest : PackExportTestSupport() {
         }
     }
 
+    @Test
+    fun `multimc validation refuses an archive that references a missing instance icon`() =
+        runBlocking {
+            fixture { store, instance, root ->
+                write(root, "mods/a.jar", "jar")
+                NetworkClient().use { network ->
+                    val service = service(store, network)
+                    val plan = service.previewMrpackExport(instance.id, metadata, false)
+                    // iconKey=pack 与 icons/ 目录已写入，但图标条目本身没写：必须拒绝。
+                    val layout =
+                        buildPackExportLayout(
+                            PackExportFormat.MultiMc,
+                            plan,
+                            PackExportOptions(),
+                            plan.files,
+                            byteArrayOf(1, 2, 3),
+                        )
+                    val archive = temporary.resolve("missing-icon.zip")
+                    writeSelectedArchive(archive, layout, root)
+                    assertFailsWith<IllegalArgumentException> {
+                        validatePackExport(
+                            archive,
+                            PackExportFormat.MultiMc,
+                            layout,
+                            plan,
+                            PackExportOptions(),
+                            plan.files.map { it.path }.toSet(),
+                        )
+                    }
+                }
+            }
+        }
+
     private fun writeSelectedArchive(
         archive: Path,
         layout: PackExportLayout,

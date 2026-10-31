@@ -70,13 +70,22 @@ internal abstract class ContentPackImportActions(
                 } else {
                     null
                 }
+            // 修复只补文件：包内声明的内存/窗口默认值不再覆盖用户已有设置。
+            val instanceDefaults = if (repairId == null) manifest.instanceDefaults else null
             verifyRepairTarget(request, repairId)
             verifyOptionalFiles(manifest, optionalFiles)
             val selection =
                 optionalFiles ?: repairId?.let { store.instance(it).packOptionalFiles?.toSet() }
             val curseForgeFiles =
                 prepareCurseForgeFiles(manifest, selection, archive, context, repairId)
-            val instance = importInstance(request, launchDefaults, repairId, gameDirectoryId)
+            val instance =
+                importInstance(
+                    request,
+                    launchDefaults,
+                    instanceDefaults,
+                    repairId,
+                    gameDirectoryId,
+                )
             context.bindInstance(instance.id)
             if (repairId == null) NewInstallationCleanup(store).register(instance, context)
             val root = store.instancePath(instance.id)

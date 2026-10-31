@@ -145,7 +145,7 @@ internal suspend fun writePackEntries(
     }
     if (layout.icon != null) {
         context.checkCancelled()
-        zip.putNextEntry(ZipEntry("icon.png"))
+        zip.putNextEntry(ZipEntry(layout.iconPath))
         zip.write(layout.icon)
         zip.closeEntry()
         written++

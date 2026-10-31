@@ -18,7 +18,7 @@ internal fun validateExportManifest(
     when (format) {
         PackExportFormat.Modrinth -> validateModrinthManifest(zip, layout, plan)
         PackExportFormat.CurseForge -> validateCurseForgeManifest(zip, plan)
-        PackExportFormat.MultiMc -> validateMultiMcManifest(zip, plan)
+        PackExportFormat.MultiMc -> validateMultiMcManifest(zip, layout, plan)
         PackExportFormat.Mcbbs -> validateMcbbsManifest(zip, layout, plan)
         PackExportFormat.Backup -> validateBackupManifest(zip, layout)
     }
@@ -104,11 +104,15 @@ private fun validateCurseForgeManifest(
 
 private fun validateMultiMcManifest(
     zip: ZipFile,
+    layout: PackExportLayout,
     plan: MrpackExportPlan,
 ) {
     val pack = requireNotNull(packJson(zip, "mmc-pack.json"))
     require(pack.get("formatVersion")?.asInt == 1) { "mmc-pack.json 版本无效" }
     val components = pack.array("components").map { it.asJsonObject }
+    require(components.all { it.string("version").isNotBlank() }) {
+        "mmc-pack.json 组件缺少确切版本"
+    }
     require(
         components.any {
             it.string("uid") == "net.minecraft" &&
@@ -127,10 +131,7 @@ private fun validateMultiMcManifest(
             "mmc-pack.json 缺少匹配的加载器组件"
         }
     }
-    val config =
-        zip
-            .getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
-            .use { it.readBytes().toString(Charsets.UTF_8) }
+    val config = instanceConfigText(zip)
     require(
         "[General]" in config &&
             "InstanceType=OneSix" in config &&
@@ -141,7 +142,47 @@ private fun validateMultiMcManifest(
     ) {
         "instance.cfg 缺少实例名或 OneSix 类型"
     }
+    validateMultiMcInstanceConfig(zip, config, layout)
 }
+
+/** 逐键核对导出写入的实例设置：名称长度、内存/JVM 覆盖与图标键必须自洽。 */
+private fun validateMultiMcInstanceConfig(
+    zip: ZipFile,
+    config: String,
+    layout: PackExportLayout,
+) {
+    val values =
+        config
+            .lineSequence()
+            .map { it.trim() }
+            .filter { '=' in it }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
+    val name = values["name"].orEmpty()
+    require(name.isNotBlank() && name.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS) {
+        "instance.cfg 实例名超过 $MAX_MULTIMC_INSTANCE_NAME_CHARS 字或为空"
+    }
+    require((values["OverrideJavaArgs"] == "true") == values.containsKey("JvmArgs")) {
+        "instance.cfg 的 OverrideJavaArgs 与 JvmArgs 不成对"
+    }
+    require((values["OverrideMemory"] == "true") == values.containsKey("MaxMemAlloc")) {
+        "instance.cfg 的 OverrideMemory 与 MaxMemAlloc 不成对"
+    }
+    val iconKey = values["iconKey"].orEmpty()
+    if (layout.icon == null) {
+        require(iconKey == "default") { "instance.cfg 引用了未写入的实例图标" }
+    } else {
+        require(
+            iconKey == MULTIMC_ICON_KEY && zip.getEntry(layout.iconPath) != null,
+        ) {
+            "instance.cfg 的 iconKey 与图标条目不一致"
+        }
+    }
+}
+
+private fun instanceConfigText(zip: ZipFile): String =
+    zip
+        .getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
+        .use { it.readBytes().toString(Charsets.UTF_8) }
 
 private fun validateMcbbsManifest(
     zip: ZipFile,

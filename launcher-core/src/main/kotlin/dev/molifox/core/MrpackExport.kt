@@ -71,7 +71,8 @@ enum class PackExportFormat(
         "MultiMC / Prism · .zip（可导入）",
         "zip",
         true,
-        "MultiMC 实例目录：instance.cfg + mmc-pack.json + .minecraft/，可直接作为 Prism 实例导入。",
+        "MultiMC 实例目录：instance.cfg + mmc-pack.json + .minecraft/；" +
+            "Prism/MultiMC 可用「从 ZIP 导入实例」打开，实例内存/JVM/窗口设置一并写入。",
     ),
     Mcbbs(
         "MCBBS · .zip（PCL / HMCL 可导入）",
@@ -85,6 +86,16 @@ enum class PackExportFormat(
         false,
         "完整备份：保留存档、截图和可选日志，只用于还原或留档；其他启动器不会把它识别成整合包。",
     ),
+    ;
+
+    companion object {
+        /**
+         * 导出界面只保留最常用的两种：可被 Modrinth App / Prism / HMCL 导入的标准包，
+         * 以及不能当整合包导入的完整备份。其余格式的导出代码保留给旧配置与测试，
+         * 不再出现在选择列表；导入端继续支持全部格式。
+         */
+        val offeredForExport: List<PackExportFormat> = listOf(Modrinth, Backup)
+    }
 }
 
 /**
@@ -147,6 +158,8 @@ class MrpackExportPlan
         internal val root: Path,
         internal val realRoot: Path,
         internal val components: InstallRequest,
+        /** 实例级启动设置（内存/JVM/窗口），供 MultiMC/Prism 的 instance.cfg 使用。 */
+        internal val instance: GameInstance,
     ) {
         val defaultSelection: Set<String>
             get() = files.filter { it.selectedByDefault }.map { it.path }.toSet()
@@ -240,6 +253,7 @@ internal class MrpackExporter(
                     instance.loader,
                     instance.loaderVersion,
                 ),
+                instance,
             )
         }
 
@@ -306,16 +320,19 @@ internal class MrpackExporter(
         }
     }
 
-    /** 只有 Modrinth 与 MCBBS 清单带图标；取图标失败不阻断打包。 */
+    /**
+     * 整合包图标：Modrinth / MCBBS 写根目录 `icon.png`，MultiMC/Prism 写 `icons/<key>.png`；
+     * 完整备份与 CurseForge 清单不需要图标。取图标失败不阻断打包。
+     */
     private suspend fun exportIcon(
         plan: MrpackExportPlan,
         format: PackExportFormat,
     ): ByteArray? =
         try {
-            if (format == PackExportFormat.Modrinth || format == PackExportFormat.Mcbbs) {
-                InstanceIcons(store).exportImage(store.instance(plan.instanceId))
-            } else {
-                null
+            when (format) {
+                PackExportFormat.Modrinth, PackExportFormat.Mcbbs, PackExportFormat.MultiMc ->
+                    InstanceIcons(store).exportImage(store.instance(plan.instanceId))
+                PackExportFormat.CurseForge, PackExportFormat.Backup -> null
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

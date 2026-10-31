@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责MultiMC 整合包的识别和导入。
+// 负责 MultiMC/Prism 整合包的识别与导入。
 
 package dev.molifox.core
 
@@ -9,13 +9,8 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.nio.file.Path
 import java.util.zip.ZipFile
-import kotlin.io.path.isDirectory
-import kotlin.io.path.name
 
 private const val MAX_MULTIMC_COMPONENTS = 32
-private const val MULTIMC_HEX_RADIX = 16
-private const val MAX_MULTIMC_INSTANCE_NAME_CHARS = 80
-private const val MAX_MULTIMC_METADATA_BYTES = 1024 * 1024
 
 private val MULTIMC_LOADERS =
     mapOf(
@@ -56,20 +51,22 @@ internal fun readMultiMcManifest(
     safePath(root, manifestPath)
     val prefix = manifestPath.removeSuffix("mmc-pack.json")
     val all = readMultiMcComponents(zip, manifestPath)
-    validateMultiMcComponents(zip, prefix, all)
+    validateMultiMcArchive(zip, prefix, all)
     val enabled = all.filter { !it.boolean("disabled") }
     val game = readMultiMcGame(enabled)
     val folder = findMultiMcContentFolder(zip, prefix)
     val paths = collectMultiMcPaths(zip, folder, root, os)
-    val name = readMultiMcInstanceName(zip, prefix)
+    val settings = readMultiMcInstanceConfig(zip, prefix, multiMcFallbackName(prefix, zip.name))
     return PackManifest(
         null,
-        InstallRequest(name, game.version, game.loader, game.loaderVersion),
+        InstallRequest(settings.name, game.version, game.loader, game.loaderVersion),
         emptyList(),
         paths.size,
-        summary = "MultiMC/Prism 实例：保留游戏内容，游戏依赖按官方元数据重建；不迁移原启动器的命令、Java 路径或账户。",
+        summary = settings.summary,
         payloadPrefix = folder,
         excludedRoots = MULTIMC_EXCLUDED_ROOTS,
+        launchOptions = settings.launchOptions,
+        instanceDefaults = settings.instanceDefaults,
     )
 }
 
@@ -81,7 +78,7 @@ private fun readMultiMcComponents(
     val raw = requireNotNull(multiMcText(zip, manifestPath))
     val info = JsonParser.parseString(raw).asJsonObject
     require(info.string("formatVersion") == "1" && info.get("components")?.isJsonArray == true) {
-        "不支持的 MultiMC/Prism 组件清单版本"
+        "不支持的 MultiMC/Prism 组件清单版本（仅支持 formatVersion 1）"
     }
     val all = info.array("components").map { it.asJsonObject }
     require(
@@ -93,8 +90,8 @@ private fun readMultiMcComponents(
     return all
 }
 
-/** 拒绝不支持的组件、自定义组件以及与自定义补丁并存的整合包。 */
-private fun validateMultiMcComponents(
+/** 拒绝不支持的组件、自定义组件、实例自带 libraries 以及与自定义补丁并存的整合包。 */
+private fun validateMultiMcArchive(
     zip: ZipFile,
     prefix: String,
     all: List<JsonObject>,
@@ -106,13 +103,21 @@ private fun validateMultiMcComponents(
     require(all.none { it.boolean("custom") }) { "暂不支持 MultiMC/Prism 自定义组件" }
     require(
         zip.entries().asSequence().none {
-            !it.isDirectory &&
-                (it.name.startsWith("${prefix}patches/") || it.name.startsWith("${prefix}jarmods/"))
+            !it.isDirectory && unsupportedMultiMcEntry(it.name, prefix)
         },
     ) {
-        "暂不支持包含自定义组件补丁或 JAR 修改的整合包"
+        "暂不支持包含 patches 补丁、jarmods 或实例自带 libraries 的整合包；请让作者改用 mrpack/MCBBS 导出"
     }
 }
+
+/** Prism 的补丁目录、jarmods 与实例自带 libraries 都不在支持范围内。 */
+private fun unsupportedMultiMcEntry(
+    name: String,
+    prefix: String,
+): Boolean =
+    name.startsWith("${prefix}patches/") ||
+        name.startsWith("${prefix}jarmods/") ||
+        name.startsWith("${prefix}libraries/")
 
 /** 解析启用的 Minecraft 与唯一加载器版本。 */
 private fun readMultiMcGame(enabled: List<JsonObject>): MultiMcGame {
@@ -130,15 +135,28 @@ private fun readMultiMcGame(enabled: List<JsonObject>): MultiMcGame {
         require(component.boolean("dependencyOnly")) { "暂不支持单独覆盖 LWJGL 版本的整合包" }
     }
     val loader = selected.singleOrNull()
-    val loaderVersion = loader?.string("version")?.removePrefix("$gameVersion-").orEmpty()
+    val loaderType = loader?.let { MULTIMC_LOADERS.getValue(it.string("uid")) }
+    val loaderVersion =
+        loader?.let { multiMcLoaderVersion(it.string("version"), gameVersion) }.orEmpty()
     require(loader == null || loaderVersion.isNotBlank()) { "加载器组件必须指定版本" }
+    require(!(loaderType == LoaderType.Forge && loaderVersion.startsWith("0."))) {
+        "暂不支持 Cleanroom（Forge 0.x）整合包"
+    }
     if (loaderVersion.isNotBlank()) safeFilename(loaderVersion)
     return MultiMcGame(
         gameVersion,
-        loader?.let { MULTIMC_LOADERS.getValue(it.string("uid")) } ?: LoaderType.Vanilla,
+        loaderType ?: LoaderType.Vanilla,
         loaderVersion,
     )
 }
+
+/** Prism 的版本字段可能带 `<游戏版本>-` 或加载器前缀；其它写法不猜，交给后续校验拒绝。 */
+private fun multiMcLoaderVersion(
+    version: String,
+    gameVersion: String,
+): String =
+    listOf("$gameVersion-", "forge-", "neoforge-", "fabric-loader-", "quilt-loader-")
+        .fold(version.trim()) { value, prefix -> value.removePrefix(prefix) }
 
 /** 内容目录必须唯一，避免猜测哪一份才是实例根目录。 */
 private fun findMultiMcContentFolder(
@@ -187,57 +205,4 @@ private fun collectMultiMcPaths(
         }
     }
     return paths
-}
-
-/** 从 instance.cfg 读取实例名并还原 MultiMC 的 \x 转义。 */
-private fun readMultiMcInstanceName(
-    zip: ZipFile,
-    prefix: String,
-): String {
-    val config =
-        requireNotNull(multiMcText(zip, "${prefix}instance.cfg")) { "整合包缺少 instance.cfg" }
-    var section = "General"
-    var name = ""
-    for (line in config.lineSequence()) {
-        val trimmed = line.trim()
-        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-            section = trimmed.substring(1, trimmed.length - 1)
-        }
-        if (section == "General" &&
-            trimmed.substringBefore('=').trim() == "name" &&
-            '=' in trimmed
-        ) {
-            name = trimmed.substringAfter('=').trim().removeSurrounding("\"")
-        }
-    }
-    name = decodeMultiMcName(name)
-    require(
-        name.isNotBlank() &&
-            name.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS &&
-            name.none { it.isISOControl() },
-    ) {
-        "MultiMC/Prism 实例名称为空或无效"
-    }
-    return name
-}
-
-/** 还原 instance.cfg 中以 \xHHHH 形式保存的 Unicode 字符。 */
-private fun decodeMultiMcName(name: String): String =
-    name.replace(Regex("\\\\x([0-9a-fA-F]{1,4})")) {
-        it.groupValues[1]
-            .toInt(MULTIMC_HEX_RADIX)
-            .toChar()
-            .toString()
-    }
-
-/** 读取压缩包内的小体积文本元数据，拒绝缺失或超限条目。 */
-private fun multiMcText(
-    zip: ZipFile,
-    name: String,
-): String? {
-    val entry = zip.getEntry(name) ?: return null
-    require(entry.size in 1..MAX_MULTIMC_METADATA_BYTES.toLong()) { "MultiMC/Prism 元数据过大或为空" }
-    val bytes = zip.getInputStream(entry).use { it.readNBytes(MAX_MULTIMC_METADATA_BYTES + 1) }
-    require(bytes.size <= MAX_MULTIMC_METADATA_BYTES) { "MultiMC/Prism 元数据过大" }
-    return bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
 }

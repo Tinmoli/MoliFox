@@ -33,16 +33,20 @@ internal abstract class ContentPackStageActions(
     protected fun importInstance(
         request: InstallRequest,
         launchDefaults: PackLaunchDefaults?,
+        instanceDefaults: PackInstanceDefaults?,
         repairId: String?,
         gameDirectoryId: String?,
     ): GameInstance =
         repairId?.let { store.instance(it) }
             ?: installer.createInstance(request, gameDirectoryId).let { created ->
                 store.updateInstance(created.id) {
-                    it.copy(
-                        isolation = VersionIsolation.Inherit,
-                        extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
-                        advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
+                    applyPackInstanceDefaults(
+                        it.copy(
+                            isolation = VersionIsolation.Inherit,
+                            extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
+                            advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
+                        ),
+                        instanceDefaults,
                     )
                 }
                 store.instance(created.id)

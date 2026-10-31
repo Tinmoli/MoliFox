@@ -5,12 +5,14 @@
 
 package dev.molifox.core
 
-/** 一次导出写入归档的文档、内容条目、目录条目与必需条目。 */
+/** 一次导出写入归档的文档、内容条目、目录条目、必需条目与图标路径。 */
 internal data class PackExportContent(
     val documents: List<Pair<String, ByteArray>>,
     val payload: List<Pair<String, MrpackExportFile>>,
     val directories: List<String>,
     val required: List<String>,
+    /** MultiMC/Prism 使用 `icons/<key>.png`，其它格式仍是根目录 `icon.png`。 */
+    val iconPath: String = "icon.png",
 )
 
 /** 序列化清单文档：沿用全局 Gson 配置，输出与导出结构一致。 */
@@ -29,11 +31,12 @@ internal fun packExportContent(
     plan: MrpackExportPlan,
     options: PackExportOptions,
     files: List<MrpackExportFile>,
+    hasIcon: Boolean,
 ): PackExportContent =
     when (format) {
         PackExportFormat.Modrinth -> modrinthContent(plan, files)
         PackExportFormat.CurseForge -> curseForgeContent(plan, files)
-        PackExportFormat.MultiMc -> multimcContent(plan, files)
+        PackExportFormat.MultiMc -> multimcContent(plan, files, hasIcon)
         PackExportFormat.Mcbbs -> mcbbsContent(plan, files)
         PackExportFormat.Backup -> backupContent(plan, options, files)
     }
@@ -71,17 +74,25 @@ private fun curseForgeContent(
 private fun multimcContent(
     plan: MrpackExportPlan,
     files: List<MrpackExportFile>,
-): PackExportContent =
-    PackExportContent(
+    hasIcon: Boolean,
+): PackExportContent {
+    // Prism 只认 icons/<key>.png + instance.cfg 的 iconKey；没有实例图时用内置图标。
+    val iconKey = if (hasIcon) MULTIMC_ICON_KEY else "default"
+    val iconPath = if (hasIcon) "icons/$MULTIMC_ICON_KEY.png" else "icon.png"
+    return PackExportContent(
         documents =
             listOf(
-                textDocument("instance.cfg", multimcInstanceConfig(plan)),
+                textDocument("instance.cfg", multimcInstanceConfig(plan, iconKey)),
                 document("mmc-pack.json", multimcManifest(plan)),
             ),
         payload = files.map { ".minecraft/${it.path}" to it },
-        directories = listOf(".minecraft/"),
-        required = listOf("instance.cfg", "mmc-pack.json", ".minecraft/"),
+        directories = if (hasIcon) listOf(".minecraft/", "icons/") else listOf(".minecraft/"),
+        required =
+            listOf("instance.cfg", "mmc-pack.json", ".minecraft/") +
+                if (hasIcon) listOf(iconPath) else emptyList(),
+        iconPath = iconPath,
     )
+}
 
 private fun mcbbsContent(
     plan: MrpackExportPlan,

@@ -234,6 +234,10 @@ private fun ExportPreviewStatistics(state: ExportPreviewState) {
                     "只读扫描实例目录并联网匹配 CurseForge 文件编号；导出时复核文件哈希。"
                 PackExportFormat.Modrinth ->
                     "只读扫描实例目录并联网核对下载地址；导出时按同一份快照复核文件哈希。"
+                PackExportFormat.MultiMc ->
+                    "只读扫描实例目录；写入 instance.cfg、mmc-pack.json 与 .minecraft/，" +
+                        "可在 Prism/MultiMC 用「从 ZIP 导入实例」打开。实例的内存、JVM 与窗口" +
+                        "设置会一并写入；启动前命令、自动进服不导出。"
                 else -> "只读扫描实例目录；导出时复核文件哈希，将选中内容写入包内。"
             },
         ) {

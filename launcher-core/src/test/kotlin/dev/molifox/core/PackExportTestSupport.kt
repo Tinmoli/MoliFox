@@ -63,4 +63,14 @@ abstract class PackExportTestSupport {
             .asSequence()
             .map { it.name }
             .toSet()
+
+    /** MultiMC/Prism 的 instance.cfg 键值：导出测试用它核对写入的实例设置。 */
+    protected fun instanceConfigValues(zip: ZipFile): Map<String, String> =
+        zip
+            .getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
+            .use { it.readBytes().toString(Charsets.UTF_8) }
+            .lineSequence()
+            .map { it.trim() }
+            .filter { '=' in it }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
 }

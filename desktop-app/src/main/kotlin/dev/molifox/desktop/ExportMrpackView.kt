@@ -66,6 +66,22 @@ internal class ExportMrpackView(
         }
 }
 
+/** 切换导出格式时只替换目标文件的扩展名，保留用户改过的目录与文件名。 */
+internal fun exportTargetWithExtension(
+    target: String,
+    extension: String,
+): String =
+    runCatching {
+        val file = Path.of(target.trim().trim('"'))
+        val name = file.fileName?.toString().orEmpty()
+        if (name.isEmpty()) {
+            file.toString()
+        } else {
+            val stem = name.substringBeforeLast('.', name).ifBlank { name }
+            file.resolveSibling("$stem.$extension").toString()
+        }
+    }.getOrDefault(target)
+
 /** 清单里的开关按实际勾选写入，完整备份的记录与归档内容保持一致。 */
 internal fun exportEffectiveOptions(
     options: PackExportOptions,

@@ -23,6 +23,8 @@ internal data class PackManifest(
     val excludedRoots: Set<String> = emptySet(),
     val checkedFiles: List<PackCheckedFile> = emptyList(),
     val launchOptions: PackLaunchOptions? = null,
+    /** 只有声明了实例级默认值（MultiMC/Prism 的 instance.cfg）的格式才会填充。 */
+    val instanceDefaults: PackInstanceDefaults? = null,
 ) {
     val overridePrefixes: List<String>
         get() =

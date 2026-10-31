@@ -284,4 +284,67 @@ class PackIconsTest {
             assertEquals(2, parsed.checkedFiles.size)
         }
     }
+
+    @Test
+    fun `MultiMC export carries the instance icon under icons and imports it back`() =
+        runBlocking {
+            fixture { store, instance, icons ->
+                prepareExportSources(store, instance, icons)
+                NetworkClient().use { network ->
+                    val service =
+                        ContentService(
+                            store,
+                            network,
+                            MinecraftInstaller(store, network, JavaService(store, network)),
+                        )
+                    val plan =
+                        service.previewMrpackExport(
+                            instance.id,
+                            MrpackExportMetadata("Pack", "1.0"),
+                            false,
+                        )
+                    val target = temporary.resolve("prism.zip")
+                    service.exportMrpack(
+                        plan,
+                        target,
+                        JobContext(store, "export"),
+                        plan.files.map { it.path }.toSet(),
+                        setOf("mods/local.jar"),
+                        PackExportFormat.MultiMc,
+                    )
+                    assertMultiMcIcon(store, instance, icons, target)
+                }
+            }
+        }
+
+    /** 图标必须以 icons/pack.png 落盘并被 iconKey 引用，导入后能还原同样像素。 */
+    private suspend fun assertMultiMcIcon(
+        store: LauncherStore,
+        instance: GameInstance,
+        icons: InstanceIcons,
+        target: Path,
+    ) {
+        ZipFile(target.toFile()).use { zip ->
+            assertNotNull(zip.getEntry("icons/pack.png"))
+            assertNull(zip.getEntry("icon.png"))
+            val config =
+                zip
+                    .getInputStream(requireNotNull(zip.getEntry("instance.cfg")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) }
+            assertTrue(config.contains("iconKey=pack"))
+            icons.setPreset(instance.id, InstanceIconStyle.Auto)
+            applyPackIcon(
+                store,
+                instance.id,
+                zip,
+                readPackManifest(zip, temporary.resolve("preview"), "windows"),
+            )
+            assertEquals(
+                0xffcc9966.toInt(),
+                ImageIO
+                    .read(requireNotNull(icons.texture(store.instance(instance.id))).toFile())
+                    .getRGB(0, 0),
+            )
+        }
+    }
 }

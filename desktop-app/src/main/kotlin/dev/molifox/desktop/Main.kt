@@ -181,8 +181,10 @@ class UiActions
 
         fun importPack() =
             run {
-                choose("选择 Modrinth / MoliFox 整合包", extensions = listOf("mrpack", "zip"))
-                    .firstOrNull()
+                choose(
+                    "选择 Modrinth / CurseForge / MultiMC·Prism / HMCL·MCBBS / MoliFox 整合包",
+                    extensions = listOf("mrpack", "zip"),
+                ).firstOrNull()
                     ?.let { source -> withContext(Dispatchers.Swing) { previewPackFile(source) } }
             }
 

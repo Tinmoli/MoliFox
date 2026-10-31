@@ -7,6 +7,9 @@ package dev.molifox.core
 
 import java.time.Instant
 
+/** MultiMC/Prism 的实例图标键：导出写 `icons/<key>.png`，导入按 iconKey 回读。 */
+internal const val MULTIMC_ICON_KEY = "pack"
+
 /** 一次导出的归档结构：清单文档、按文件复制的条目、目录条目与必需条目。 */
 internal class PackExportLayout(
     val documents: List<Pair<String, ByteArray>>,
@@ -14,6 +17,8 @@ internal class PackExportLayout(
     val directories: List<String>,
     val icon: ByteArray?,
     val requiredEntries: List<String>,
+    /** 图标在归档内的路径：MultiMC/Prism 用 `icons/<key>.png`，其它格式是 `icon.png`。 */
+    val iconPath: String = "icon.png",
 ) {
     val totalEntries: Int
         get() =
@@ -27,13 +32,14 @@ internal fun buildPackExportLayout(
     files: List<MrpackExportFile>,
     icon: ByteArray?,
 ): PackExportLayout {
-    val content = packExportContent(format, plan, options, files)
+    val content = packExportContent(format, plan, options, files, icon != null)
     return PackExportLayout(
         content.documents,
         content.payload,
         content.directories,
         icon,
         content.required,
+        content.iconPath,
     )
 }
 
@@ -44,16 +50,6 @@ private fun mrpackLoaderKey(loader: LoaderType): String? =
         LoaderType.Quilt -> "quilt-loader"
         LoaderType.Forge -> "forge"
         LoaderType.NeoForge -> "neoforge"
-    }
-
-/** MultiMC / Prism 组件 uid。 */
-internal fun multimcLoaderUid(loader: LoaderType): String? =
-    when (loader) {
-        LoaderType.Vanilla -> null
-        LoaderType.Fabric -> "net.fabricmc.fabric-loader"
-        LoaderType.Quilt -> "org.quiltmc.quilt-loader"
-        LoaderType.Forge -> "net.minecraftforge"
-        LoaderType.NeoForge -> "net.neoforged"
     }
 
 internal fun mrpackIndex(
@@ -132,40 +128,6 @@ internal fun curseForgeManifest(
             },
         "overrides" to "overrides",
     )
-}
-
-internal fun multimcManifest(plan: MrpackExportPlan): Map<String, Any> {
-    val components = mutableListOf<Map<String, Any>>()
-    components +=
-        mapOf(
-            "uid" to "net.minecraft",
-            "version" to plan.components.gameVersion,
-            "important" to true,
-        )
-    multimcLoaderUid(plan.components.loader)?.let {
-        components +=
-            mapOf("uid" to it, "version" to plan.components.loaderVersion, "important" to true)
-    }
-    return mapOf("formatVersion" to 1, "components" to components)
-}
-
-internal fun multimcInstanceConfig(plan: MrpackExportPlan): String {
-    val name =
-        plan.metadata.name
-            .replace(Regex("[\\r\\n]"), " ")
-            .trim()
-    // MultiMC/Prism 的自由实例：OneSix + 由 mmc-pack.json 声明的组件。
-    return buildString {
-        appendLine("[General]")
-        appendLine("ConfigVersion=1.4")
-        appendLine("InstanceType=OneSix")
-        appendLine("name=$name")
-        appendLine("iconKey=default")
-        appendLine("OverrideMemory=false")
-        appendLine("OverrideJavaArgs=false")
-        appendLine("OverrideGameTime=false")
-        appendLine("joinServerOnLaunch=false")
-    }
 }
 
 internal fun mcbbsManifest(

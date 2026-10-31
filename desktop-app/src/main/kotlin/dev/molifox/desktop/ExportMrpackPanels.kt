@@ -154,7 +154,7 @@ private fun ExportMrpackInputs(
 ) {
     SimpleDropdown(
         format.name,
-        PackExportFormat.entries.map { it.name to it.title },
+        PackExportFormat.offeredForExport.map { it.name to it.title },
         onFormatChosen,
         Modifier.fillMaxWidth(),
         enabled = !exporting,
@@ -181,7 +181,8 @@ private fun ExportMrpackInputs(
             {
                 actions.run {
                     actions.choose("选择整合包导出目录", directory = true).firstOrNull()?.let {
-                        onTargetChange(it.resolve(fileName.ifBlank { "$stem.mrpack" }).toString())
+                        val name = fileName.ifBlank { "$stem.${format.extension}" }
+                        onTargetChange(it.resolve(name).toString())
                     }
                 }
             },

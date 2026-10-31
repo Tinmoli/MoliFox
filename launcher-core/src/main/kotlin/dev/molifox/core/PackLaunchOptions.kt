@@ -8,22 +8,27 @@ package dev.molifox.core
 private const val MAX_PACK_LAUNCH_ARGUMENTS = 256
 private const val MAX_PACK_LAUNCH_ARGUMENT_CHARS = 4096
 
-/** Source arguments become editable instance overrides; repair never reapplies them. */
+/**
+ * Source arguments become editable instance overrides; repair never reapplies them.
+ * [overrideJvm] 对应 MultiMC 的 `OverrideJavaArgs`：为真时实例参数替换全局，而不是追加。
+ */
 internal data class PackLaunchOptions(
     val jvm: List<String>,
     val game: List<String>,
+    val overrideJvm: Boolean = false,
 ) {
     fun resolve(
         settings: LauncherSettings,
         os: String,
     ): PackLaunchDefaults {
         val jvmText =
-            if (jvm.isEmpty()) {
-                null
-            } else {
-                listOf(settings.extraJvmArgs, packArgumentsText(jvm))
-                    .filter { it.isNotBlank() }
-                    .joinToString(" ")
+            when {
+                jvm.isEmpty() -> null
+                overrideJvm -> packArgumentsText(jvm)
+                else ->
+                    listOf(settings.extraJvmArgs, packArgumentsText(jvm))
+                        .filter { it.isNotBlank() }
+                        .joinToString(" ")
             }
         if (jvmText != null) validateExtraJvmArguments(jvmText)
         val advanced =
