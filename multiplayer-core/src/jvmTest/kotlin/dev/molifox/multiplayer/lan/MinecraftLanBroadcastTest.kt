@@ -1,6 +1,9 @@
 // LAN 广播测试：临时回环接收端断言报文内容、stop 后停发与重复 start/stop。
 package dev.molifox.multiplayer.lan
 
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -18,6 +21,23 @@ class MinecraftLanBroadcastTest {
                     "[MOTD]MoliFox 世界[/MOTD][AD]25566[/AD]",
                     receiveLanText(receiver),
                 )
+            } finally {
+                broadcast.close()
+            }
+        }
+    }
+
+    @Test
+    fun `packet source is loopback so minecraft connects to 127_0_0_1`() {
+        DatagramSocket(0, InetAddress.getLoopbackAddress()).use { receiver ->
+            receiver.soTimeout = RECEIVE_TIMEOUT_MILLIS
+            val broadcast = newBroadcast(receiver.localPort)
+            try {
+                broadcast.start().getOrThrow()
+                val buffer = ByteArray(512)
+                val packet = DatagramPacket(buffer, buffer.size)
+                receiver.receive(packet)
+                assertTrue(packet.address.isLoopbackAddress, "实际源地址：${packet.address}")
             } finally {
                 broadcast.close()
             }
@@ -70,3 +90,4 @@ class MinecraftLanBroadcastTest {
 }
 
 private const val STOP_OBSERVE_TIMEOUT_MILLIS = 300
+private const val RECEIVE_TIMEOUT_MILLIS = 2_000

@@ -46,6 +46,7 @@ class LobbyHostSessionTest {
                 assertEquals(EasyTierRole.HOST, node.request?.role)
                 assertEquals(listOf(scaffoldingPort, WORLD.port), node.request?.whitelistedPorts)
                 assertEquals(code.networkName, node.request?.networkName)
+                awaitUntil { session.players.value.isNotEmpty() }
                 assertEquals(
                     "Alice",
                     session.players.value

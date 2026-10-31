@@ -102,7 +102,9 @@ class MinecraftLanBroadcast(
 
     private fun openAndLaunch(): Result<Unit> =
         try {
-            val openedUnicast = DatagramSocket()
+            // 必须显式绑定回环：未绑定时系统可能用 172.17.x.x（WSL/Hyper-V）等地址发包，
+            // Minecraft 会拿源地址去连接，而本地转发只监听 127.0.0.1，导致“连接被拒绝”。
+            val openedUnicast = DatagramSocket(0, InetAddress.getLoopbackAddress())
             val openedMulticast = openMulticastSocket()
             unicastSocket = openedUnicast
             multicastSocket = openedMulticast
