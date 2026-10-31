@@ -25,11 +25,11 @@ data class EasyTierTuning(
 /**
  * EasyTier 节点发现与保底中继。
  *
- * - [NODE_LIST_URL]：PCL CE 使用的活动节点接口；启动器在创建/加入房间前实时拉取，
- *   只取 `is_active && allow_relay` 的地址（字段名见 PCL CE `PublicNodeDto`）。
- * - [HTTP_NODE_LISTS]：EasyTier 原生支持的 HTTP 节点列表入口，由核心在连接时实时解析；
- *   启动器只把它们当作 `-p` 兜底，不自己解析。
- * - [DEFAULT]：前面两项都不可用时仍会尝试的固定节点，保证参数列表不为空。
+ * - [NODE_LIST_URL]：PCL CE 曾使用的活动节点接口（`uptime.easytier.cn`）。EasyTier Uptime
+ *   已由官方关停，启动器仍会尝试一次，失败后改用社区 HTTP 节点列表，不阻断房间。
+ * - [HTTP_NODE_LISTS]：社区维护的 HTTP 节点列表；启动器会优先自行解析成具体节点，
+ *   解析失败时再把列表地址交给 EasyTier 自行拉取（EasyTier 原生支持 https 节点列表）。
+ * - [DEFAULT]：官方固定节点，仅作为最后兜底；官方域名当前可能失效，保留用于服务恢复。
  *
  * 没有这些节点时跨 NAT 基本无法连通；用户可在设置里追加自定义中继。
  */
@@ -37,15 +37,15 @@ object EasyTierRelays {
     const val NODE_LIST_URL =
         "https://uptime.easytier.cn/api/nodes?page=1&per_page=50&is_active=true"
 
-    /** 官方固定节点；域名或网络不可用时由 EasyTier 自行重试，不会阻断房间创建。 */
+    /** 官方固定节点；保留以便官方服务恢复后继续生效。 */
     private val OFFICIAL: List<String> =
         listOf(
             "tcp://public.easytier.top:11010",
             "tcp://public2.easytier.cn:54321",
         )
 
-    /** EasyTier 自己支持 HTTP 节点列表；内容变化会在连接时重新拉取。 */
-    private val HTTP_NODE_LISTS: List<String> =
+    /** 社区 HTTP 节点列表；启动器优先解析，失败时交给 EasyTier 自取。 */
+    val HTTP_NODE_LISTS: List<String> =
         listOf(
             "https://etnode.zkitefly.eu.org/node1",
             "https://etnode.zkitefly.eu.org/node2",
@@ -53,7 +53,7 @@ object EasyTierRelays {
             "https://etnode.zkitefly.eu.org/-node2",
         )
 
-    val DEFAULT: List<String> = OFFICIAL + HTTP_NODE_LISTS
+    val DEFAULT: List<String> = OFFICIAL
 }
 
 /** 启动一个 EasyTier 节点所需的全部业务参数；RPC 端口由运行时分配。 */

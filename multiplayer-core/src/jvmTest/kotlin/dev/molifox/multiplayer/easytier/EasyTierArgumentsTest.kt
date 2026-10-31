@@ -76,7 +76,7 @@ class EasyTierArgumentsTest {
             )
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
-        assertEquals(MAX_RELAYS, relays.size)
+        assertEquals(EasyTierRelays.DEFAULT.size + 1, relays.size)
         assertEquals(1, relays.count { it == EasyTierRelays.DEFAULT.first() })
         assertTrue(relays.contains("udp://custom.example:11010"))
     }
@@ -92,7 +92,7 @@ class EasyTierArgumentsTest {
         val relays = relaysOf(EasyTierArguments.build(request, RPC_PORT))
 
         assertEquals("tcp://live.example:11010", relays.first())
-        assertEquals(MAX_RELAYS, relays.size)
+        assertEquals(EasyTierRelays.DEFAULT.size + 1, relays.size)
     }
 
     @Test

@@ -1,4 +1,4 @@
-// 中继发现：活动节点 JSON 解析、失败兜底、缓存与自定义优先级。
+// 中继发现：官方 JSON 接口、社区文本列表、失败兜底与缓存。
 package dev.molifox.multiplayer.easytier
 
 import kotlinx.coroutines.runBlocking
@@ -40,79 +40,126 @@ class EasyTierRelayDirectoryTest {
     }
 
     @Test
+    fun `community text list keeps only peer urls`() {
+        val text =
+            """
+            # node list
+            tcp://community.example:39409
+
+            <html>error</html>
+            https://etnode.zkitefly.eu.org/node1
+            tcp://community.example:39409
+            """.trimIndent()
+
+        assertEquals(listOf("tcp://community.example:39409"), parseRelayUrls(text))
+    }
+
+    @Test
     fun `custom relays come before live nodes and duplicates collapse`() =
         runBlocking {
             val fetcher =
-                FakeRelayFetcher(Result.success(nodesJson(LIVE_NODE, "udp://second.example:11010")))
+                FakeRelayFetcher(
+                    json = Result.success(nodesJson(LIVE_NODE, "udp://second.example:11010")),
+                )
             val directory = EasyTierRelayDirectory(fetcher = fetcher, logger = { _, _ -> })
 
             val relays = directory.resolve(listOf(CUSTOM_NODE, LIVE_NODE))
 
             assertEquals(listOf(CUSTOM_NODE, LIVE_NODE, "udp://second.example:11010"), relays)
-            assertEquals(1, fetcher.calls)
+            assertEquals(FETCH_CALLS, fetcher.calls)
         }
 
     @Test
-    fun `fetch failure falls back to custom relays and retries later`() =
+    fun `community list is used when official api is gone`() =
         runBlocking {
-            val fetcher = FakeRelayFetcher(Result.failure(IOException("dns unavailable")))
+            val fetcher =
+                FakeRelayFetcher(
+                    json = Result.failure(IOException("UnknownHostException: uptime.easytier.cn")),
+                    community = mapOf(COMMUNITY_LIST to Result.success("$COMMUNITY_NODE\n")),
+                )
             val directory = EasyTierRelayDirectory(fetcher = fetcher, logger = { _, _ -> })
 
-            assertEquals(listOf(CUSTOM_NODE), directory.resolve(listOf(CUSTOM_NODE)))
-            assertTrue(directory.resolve(emptyList()).isEmpty())
-            assertEquals(2, fetcher.calls)
+            assertEquals(listOf(COMMUNITY_NODE), directory.resolve(emptyList()))
+            assertEquals(FETCH_CALLS, fetcher.calls)
+        }
+
+    @Test
+    fun `total failure falls back to list urls and caches them`() =
+        runBlocking {
+            val fetcher = FakeRelayFetcher(json = Result.failure(IOException("dns unavailable")))
+            val directory = EasyTierRelayDirectory(fetcher = fetcher, logger = { _, _ -> })
+
+            val relays = directory.resolve(listOf(CUSTOM_NODE))
+            assertEquals(CUSTOM_NODE, relays.first())
+            assertTrue(relays.containsAll(EasyTierRelays.HTTP_NODE_LISTS))
+            assertEquals(FETCH_CALLS, fetcher.calls)
+
+            directory.resolve(emptyList())
+            assertEquals(FETCH_CALLS, fetcher.calls)
         }
 
     @Test
     fun `successful result is cached and reused by prefetch`() =
         runBlocking {
-            val fetcher = FakeRelayFetcher(Result.success(nodesJson(LIVE_NODE)))
+            val fetcher =
+                FakeRelayFetcher(
+                    json = Result.success(nodesJson(LIVE_NODE)),
+                    community = mapOf(COMMUNITY_LIST to Result.success("$COMMUNITY_NODE\n")),
+                )
             val directory = EasyTierRelayDirectory(fetcher = fetcher, logger = { _, _ -> })
 
             directory.prefetch()
-            assertEquals(listOf(LIVE_NODE), directory.resolve(emptyList()))
+            assertEquals(listOf(LIVE_NODE, COMMUNITY_NODE), directory.resolve(emptyList()))
             assertEquals(
-                listOf(CUSTOM_NODE, LIVE_NODE),
+                listOf(CUSTOM_NODE, LIVE_NODE, COMMUNITY_NODE),
                 directory.resolve(listOf(CUSTOM_NODE, LIVE_NODE)),
             )
-            assertEquals(1, fetcher.calls)
+            assertEquals(FETCH_CALLS, fetcher.calls)
         }
 
     @Test
     fun `dynamic relay count is capped`() =
         runBlocking {
             val many = (1..20).map { index -> "tcp://relay$index.example:11010" }
-            val fetcher = FakeRelayFetcher(Result.success(nodesJson(*many.toTypedArray())))
+            val fetcher = FakeRelayFetcher(json = Result.success(nodesJson(*many.toTypedArray())))
             val directory = EasyTierRelayDirectory(fetcher = fetcher, logger = { _, _ -> })
 
             assertEquals(MAX_DYNAMIC_RELAYS, directory.resolve(many).size)
-            assertEquals(1, fetcher.calls)
+            assertEquals(FETCH_CALLS, fetcher.calls)
         }
 
     @Test
-    fun `built-in fallback includes fixed nodes and http node lists`() {
+    fun `built-in fallback keeps official nodes and community lists separate`() {
         assertTrue(EasyTierRelays.DEFAULT.contains("tcp://public.easytier.top:11010"))
-        assertTrue(EasyTierRelays.DEFAULT.contains("https://etnode.zkitefly.eu.org/node1"))
+        assertTrue(EasyTierRelays.HTTP_NODE_LISTS.contains("https://etnode.zkitefly.eu.org/node1"))
         assertTrue(EasyTierRelays.NODE_LIST_URL.startsWith("https://"))
     }
 
+    /** 按 URL 返回脚本化响应；未配置的社区列表返回空文本（等价于“没有节点”）。 */
     private class FakeRelayFetcher(
-        private val response: Result<String>,
+        private val json: Result<String> = Result.failure(IOException("no json")),
+        private val community: Map<String, Result<String>> = emptyMap(),
     ) : RelayListFetcher {
         var calls = 0
             private set
 
         override suspend fun fetch(url: String): Result<String> {
             calls++
-            assertTrue(url == EasyTierRelays.NODE_LIST_URL, "unexpected url: $url")
-            return response
+            return if (url == EasyTierRelays.NODE_LIST_URL) {
+                json
+            } else {
+                community[url] ?: Result.success("")
+            }
         }
     }
 
     private companion object {
         const val CUSTOM_NODE = "tcp://custom.example:11010"
         const val LIVE_NODE = "tcp://live.example:11010"
+        const val COMMUNITY_NODE = "tcp://community.example:39409"
+        const val COMMUNITY_LIST = "https://etnode.zkitefly.eu.org/node1"
         const val MAX_DYNAMIC_RELAYS = 8
+        const val FETCH_CALLS = 5
 
         fun nodesJson(vararg addresses: String): String =
             addresses.joinToString(

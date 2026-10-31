@@ -88,7 +88,7 @@ private fun RelayGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = "中继节点",
-        detail = "创建或加入房间前会自动获取 EasyTier 活跃公共节点，失败时使用内置节点；这里的自定义地址优先级更高，多个用分号分隔。",
+        detail = "官方节点状态接口已停用，启动器会自动改用社区节点列表；都不可用时使用内置节点。这里的自定义地址优先级更高，多个用分号分隔。",
     ) {
         CompactTextField(
             draft.relayServer,

@@ -116,11 +116,24 @@ private fun JsonObject.booleanOrFalse(key: String): Boolean =
 
 private val RELAY_PATTERN = Regex("^(tcp|udp|ws|wss|quic|ring|faketcp|https?)://\\S+$")
 
+/** 解析 EasyTier HTTP 节点列表的纯文本响应：每行一个 `tcp://host:port`。 */
+internal fun parseRelayUrls(text: String): List<String> =
+    text
+        .lineSequence()
+        .map(String::trim)
+        .filter { line -> RELAY_PATTERN.matches(line) && !line.startsWith("http") }
+        .distinct()
+        .toList()
+
 /**
- * 一次会话内的中继列表：自定义中继优先，其次是实时拉取的活动节点。
+ * 一次会话内的中继列表：自定义优先，其次是官方活动节点接口，再是社区节点列表。
  *
- * 实时接口失败时返回空列表，由 [EasyTierRelays.DEFAULT] 兜底；成功结果缓存
- * [cacheValidityMillis] 毫秒，避免每次建房/加入都重新请求。
+ * `uptime.easytier.cn` 已关停，因此：
+ * - 接口失败只打一条 INFO 日志，不再每次建房都报错；
+ * - 社区 HTTP 列表会由启动器解析成具体节点；解析失败时退化为把列表地址交给 EasyTier；
+ * - 全部失败时使用 [EasyTierRelays.DEFAULT]（官方固定节点）。
+ *
+ * 成功与失败结果都会缓存：成功 10 分钟，失败 2 分钟后再重试。
  */
 class EasyTierRelayDirectory(
     private val fetcher: RelayListFetcher = HttpRelayListFetcher(),
@@ -131,15 +144,17 @@ class EasyTierRelayDirectory(
 ) {
     private val lock = Mutex()
     private var cached: List<String>? = null
-    private var cachedAt = 0L
+    private var cachedUntil = 0L
+    private var jsonFailureReported = false
+    private var communityFailureReported = false
 
-    /** 本次房间要追加到参数里的中继：自定义 + 实时节点，去重后限制条数。 */
+    /** 本次房间要追加到参数里的中继：自定义 + 实时/社区节点，去重后限制条数。 */
     suspend fun resolve(customRelays: List<String>): List<String> =
         (customRelays.map(String::trim).filter(String::isNotEmpty) + liveRelays())
             .distinct()
             .take(maxDynamicRelays)
 
-    /** 后台预热缓存；失败只写技术日志，不影响后续房间。 */
+    /** 后台预热缓存；失败只写日志，不影响后续房间。 */
     suspend fun prefetch() {
         liveRelays()
     }
@@ -148,33 +163,56 @@ class EasyTierRelayDirectory(
         lock.withLock {
             val now = clock()
             val current = cached
-            if (current != null && now - cachedAt < cacheValidityMillis) return current
-            val fetched = fetchActiveNodes()
-            if (fetched.isNotEmpty()) {
-                cached = fetched
-                cachedAt = now
-            }
-            fetched
+            if (current != null && now < cachedUntil) return current
+            val apiNodes = fetchActiveNodes()
+            val communityNodes = fetchCommunityNodes()
+            val combined = (apiNodes + communityNodes).distinct()
+            val result = combined.ifEmpty { EasyTierRelays.HTTP_NODE_LISTS }
+            cached = result
+            cachedUntil =
+                now + if (combined.isEmpty()) FAILURE_RETRY_MILLIS else cacheValidityMillis
+            result
         }
 
-    private suspend fun fetchActiveNodes(): List<String> =
-        fetcher
-            .fetch(EasyTierRelays.NODE_LIST_URL)
-            .fold(
+    private suspend fun fetchActiveNodes(): List<String> {
+        val fetched = fetcher.fetch(EasyTierRelays.NODE_LIST_URL)
+        val nodes =
+            fetched.fold(
                 onSuccess = { body ->
                     parseActiveRelays(body).getOrElse { failure ->
-                        logFailure(failure)
+                        reportJsonFailure(failure)
                         emptyList()
                     }
                 },
                 onFailure = { failure ->
-                    logFailure(failure)
+                    reportJsonFailure(failure)
                     emptyList()
                 },
             )
+        if (nodes.isNotEmpty()) jsonFailureReported = false
+        return nodes
+    }
 
-    private fun logFailure(failure: Throwable) {
-        logger("获取 EasyTier 活动节点失败（${describeFailure(failure)}），将使用内置节点", true)
+    private suspend fun fetchCommunityNodes(): List<String> =
+        EasyTierRelays.HTTP_NODE_LISTS
+            .flatMap { url ->
+                fetcher
+                    .fetch(url)
+                    .getOrNull()
+                    ?.let(::parseRelayUrls)
+                    .orEmpty()
+            }.distinct()
+            .also { nodes ->
+                if (nodes.isEmpty() && !communityFailureReported) {
+                    communityFailureReported = true
+                    logger("社区节点列表暂未返回可用节点，将把列表地址交给 EasyTier 自行解析", false)
+                }
+            }
+
+    private fun reportJsonFailure(failure: Throwable) {
+        if (jsonFailureReported) return
+        jsonFailureReported = true
+        logger("EasyTier 官方节点列表接口不可用（${describeFailure(failure)}），改用社区节点列表", false)
     }
 
     /** 常见网络异常给出人话说明，避免日志里只剩一个域名。 */
@@ -188,6 +226,7 @@ class EasyTierRelayDirectory(
 
     private companion object {
         const val DEFAULT_CACHE_VALIDITY_MILLIS = 10 * 60 * 1_000L
+        const val FAILURE_RETRY_MILLIS = 2 * 60 * 1_000L
         const val DEFAULT_MAX_DYNAMIC_RELAYS = 8
     }
 }
