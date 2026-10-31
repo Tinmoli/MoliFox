@@ -16,6 +16,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,13 +75,24 @@ internal fun ExportEntriesSection(
                     MutedText("正在读取实例目录…")
                 }
             else -> {
-                SettingsSection("选择内容", "") {
-                    selectableEntries.forEach { entry ->
-                        ExportEntryRow(
-                            entry = entry,
-                            checked = entry.key in selectedEntries,
-                            enabled = !exporting,
-                        ) { onToggle(entry.key, it) }
+                var expanded by remember(selectableEntries) { mutableStateOf(true) }
+                SettingsSection(
+                    "打包内容",
+                    "已选 ${selectedEntries.size}/${selectableEntries.size}",
+                    action = {
+                        TextButton({ expanded = !expanded }) {
+                            Text(if (expanded) "收起" else "展开")
+                        }
+                    },
+                ) {
+                    if (expanded) {
+                        selectableEntries.forEach { entry ->
+                            ExportEntryRow(
+                                entry = entry,
+                                checked = entry.key in selectedEntries,
+                                enabled = !exporting,
+                            ) { onToggle(entry.key, it) }
+                        }
                     }
                 }
                 if (omitted.isNotEmpty()) {

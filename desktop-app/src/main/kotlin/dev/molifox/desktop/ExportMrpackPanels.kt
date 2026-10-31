@@ -193,7 +193,7 @@ private fun ExportMrpackInputs(
         CompactTextField(
             packName,
             { onPackNameChange(it.take(200)) },
-            Modifier.weight(2f),
+            Modifier.weight(1f),
             label = "整合包名称",
             enabled = !exporting,
         )
@@ -209,13 +209,13 @@ private fun ExportMrpackInputs(
             format.name,
             PackExportFormat.offeredForExport.map { it.name to it.title },
             onFormatChosen,
-            Modifier.width(210.dp),
+            Modifier.width(240.dp),
             enabled = !exporting,
         )
     }
     Row(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompactTextField(
@@ -235,37 +235,43 @@ private fun ExportMrpackInputs(
                     }
                 }
             },
+            Modifier.width(150.dp),
             enabled = !exporting,
         ) {
             Text("选择文件夹…", fontSize = 12.sp)
         }
         if (format == PackExportFormat.Modrinth) {
-            ExportCompactToggle(
-                title = "打包资源文件",
-                checked = !options.remoteResources,
-                enabled = !exporting,
-                onCheckedChange = { checked ->
-                    onOptionsChange(
-                        options.copy(
-                            remoteResources = !checked,
-                            modrinthUploadMode = false,
-                        ),
-                    )
-                },
-            )
-            ExportCompactToggle(
-                title = "Modrinth 上传模式",
-                checked = options.modrinthUploadMode,
-                enabled = !exporting && options.remoteResources,
-                onCheckedChange = { checked ->
-                    onOptionsChange(
-                        options.copy(
-                            remoteResources = true,
-                            modrinthUploadMode = checked,
-                        ),
-                    )
-                },
-            )
+            Column(
+                Modifier.width(240.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                ExportCompactToggle(
+                    title = "打包资源文件",
+                    checked = !options.remoteResources,
+                    enabled = !exporting,
+                    onCheckedChange = { checked ->
+                        onOptionsChange(
+                            options.copy(
+                                remoteResources = !checked,
+                                modrinthUploadMode = false,
+                            ),
+                        )
+                    },
+                )
+                ExportCompactToggle(
+                    title = "Modrinth 上传模式",
+                    checked = options.modrinthUploadMode,
+                    enabled = !exporting && options.remoteResources,
+                    onCheckedChange = { checked ->
+                        onOptionsChange(
+                            options.copy(
+                                remoteResources = true,
+                                modrinthUploadMode = checked,
+                            ),
+                        )
+                    },
+                )
+            }
         }
     }
 }

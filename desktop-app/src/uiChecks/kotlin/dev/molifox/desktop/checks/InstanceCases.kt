@@ -32,10 +32,10 @@ internal fun checkInstance(
     ui.click("管理")
     ui.await("移动入口可用") { ui.exists("移动实例") && ui.enabled("移动实例") }
     ui.click("导出整合包")
-    ui.await("导出内容预览") { ui.exists("选择内容") }
+    ui.await("导出内容预览") { ui.exists("打包内容") }
     ui.capture("export-preview")
     ui.click("取消")
-    ui.await("导出页关闭") { !ui.exists("选择内容") }
+    ui.await("导出页关闭") { !ui.exists("打包内容") }
 }
 
 internal fun checkMove(

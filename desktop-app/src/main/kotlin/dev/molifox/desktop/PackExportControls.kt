@@ -34,6 +34,22 @@ internal fun exportFileStem(name: String): String =
         .trim('.')
         .ifBlank { "instance" }
 
+/** 导出内容的中文名称；未知目录保留原名，避免凭空翻译。 */
+internal fun exportEntryLabel(name: String): String =
+    when (name.lowercase()) {
+        "mods" -> "模组"
+        "resourcepacks" -> "资源包"
+        "shaderpacks" -> "光影包"
+        "saves" -> "单人游戏存档"
+        "screenshots" -> "截图"
+        "schematics" -> "原理图"
+        "config" -> "配置文件"
+        "defaultconfigs" -> "默认配置"
+        "datapacks" -> "数据包"
+        "servers.dat" -> "服务器列表"
+        else -> name
+    }
+
 /** 「选择内容」的一行：复选框 + 顶层条目名 + 文件数与磁盘体积；扫描中显示 `…`。 */
 @Composable
 internal fun ExportEntryRow(
@@ -60,7 +76,7 @@ internal fun ExportEntryRow(
         Checkbox(checked, { onCheckedChange(it) }, enabled = enabled)
         Column(Modifier.weight(1f)) {
             Text(
-                entry.name,
+                exportEntryLabel(entry.name),
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
