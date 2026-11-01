@@ -125,6 +125,13 @@ private fun runScenarios(
 ) {
     ui.await("首页可操作") { ui.exists("版本设置") }
     ui.capture("home")
+    if (java.lang.Boolean.getBoolean("molifox.ui.deletionOnly")) {
+        ui.click("版本设置")
+        ui.click("管理")
+        checkDeletion(ui, fixture)
+        passed += "instance-delete-and-continue"
+        return
+    }
     if (java.lang.Boolean.getBoolean("molifox.ui.refinements")) {
         checkAppearanceRefinements(ui, fixture)
         passed += "appearance-scale-transparency-fonts-dropdowns"
@@ -143,6 +150,7 @@ private fun runScenarios(
             "download-categories-and-manifest" to { checkDownloads(ui, fixture) },
             "instance-settings-autosave" to { checkInstanceSettingsAutoSave(ui, fixture) },
             "instance-manage-section" to { checkManageRail(ui) },
+            "instance-delete-and-continue" to { checkDeletion(ui, fixture) },
         )
     for ((name, scenario) in scenarios) {
         println("UI_SCENARIO_BEGIN $name")

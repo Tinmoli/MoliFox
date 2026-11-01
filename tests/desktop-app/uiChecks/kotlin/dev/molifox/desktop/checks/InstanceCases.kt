@@ -80,3 +80,28 @@ private fun instanceTabName(tab: String): String =
         "原理图" -> "schematics"
         else -> "settings"
     }
+
+/** 删除确认、记录消失和后续导航必须在同一个测试窗口内完成。 */
+internal fun checkDeletion(
+    ui: UiProbe,
+    fixture: UiFixture,
+) {
+    val instance = fixture.selectedInstance()
+    val directory = fixture.instanceDirectory(instance)
+    ui.click("删除实例")
+    ui.await("删除确认可用") { ui.exists("删除") && ui.enabled("删除") }
+    ui.click("删除")
+    ui.await("实例记录和目录已移除") {
+        fixture.controller.store.data.instances.none { it.id == instance.id } &&
+            !Files.exists(directory)
+    }
+    // 留出迟到的目录占用查询和退出补写执行时间，再通过导航确认界面仍可交互。
+    Thread.sleep(1000)
+    check(!ui.exists("找不到游戏实例"))
+    ui.tab("设置", navigation = true)
+    ui.await("删除后仍可使用设置") { ui.exists("外观") }
+    ui.tab("开始", navigation = true)
+    ui.await("删除后仍可返回开始页") { ui.exists("版本设置") }
+    check(fixture.controller.store.data.instances.none { it.id == instance.id })
+    ui.capture("instance-deleted")
+}
