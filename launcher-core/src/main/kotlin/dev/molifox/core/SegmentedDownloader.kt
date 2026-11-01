@@ -43,6 +43,15 @@ import kotlin.io.path.writeText
 
 private const val MAX_SEGMENT_MARKER_BYTES = 2048
 private const val HTTP_PARTIAL_CONTENT = 206
+internal const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+private const val SEGMENT_COUNT_LINE = 4
+
+private fun ownedSegment(file: Path, count: Int): Boolean {
+    val name = file.fileName.toString()
+    val index = name.removeSuffix(".part").toIntOrNull() ?: return false
+    return index in 0 until count && name == "$index.part" &&
+        !file.isSymbolicLink() && file.isRegularFile(NOFOLLOW_LINKS)
+}
 
 private class RangeUnsupported : IOException(I18n.t("networkA.segments.rangeUnsupported"))
 
@@ -57,7 +66,8 @@ internal suspend fun <T> Response.readCancellable(block: suspend (Response) -> T
             java.util.concurrent.atomic
                 .AtomicBoolean(false)
         val closer =
-            launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+            // 取消观察不排进被同步读取占满的 IO 池，否则满并发时无法及时关闭套接字。
+            launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
                 try {
                     awaitCancellation()
                 } finally {
@@ -92,6 +102,15 @@ internal class SegmentedDownloader(
         private const val MINIMUM_SEGMENT_SIZE = 4L * 1024 * 1024
         private const val MARKER = "molifox-segments-v1"
 
+        fun segmentCount(size: Long, configured: Int): Int = if (size < MINIMUM_FILE_SIZE || configured < 2) {
+            1
+        } else {
+            minOf(
+                configured.coerceAtMost(MAX_DOWNLOAD_SEGMENTS),
+                (size / MINIMUM_SEGMENT_SIZE).coerceAtMost(MAX_DOWNLOAD_SEGMENTS.toLong()).toInt(),
+            )
+        }
+
         fun directory(target: Path): Path = target.resolveSibling("${target.fileName}.parts")
 
         fun discard(target: Path) {
@@ -105,14 +124,14 @@ internal class SegmentedDownloader(
             ) {
                 return
             }
-            if (!marker.readText().startsWith("$MARKER\n")) return
+            val identity = marker.readText()
+            if (!identity.startsWith("$MARKER\n")) return
+            val count = identity.lineSequence().drop(SEGMENT_COUNT_LINE).firstOrNull()?.toIntOrNull() ?: return
+            if (count !in 2..MAX_DOWNLOAD_SEGMENTS) return
             folder
                 .listDirectoryEntries()
-                .filter {
-                    it.fileName.toString().matches(Regex("[0-7]\\.part")) &&
-                        !it.isSymbolicLink() &&
-                        it.isRegularFile(NOFOLLOW_LINKS)
-                }.forEach { it.deleteIfExists() }
+                .filter { ownedSegment(it, count) }
+                .forEach { it.deleteIfExists() }
             // Unknown files belong to someone else; leave the directory intact.
             if (folder.listDirectoryEntries().all { it == marker }) {
                 marker.deleteIfExists()
@@ -131,7 +150,7 @@ internal class SegmentedDownloader(
         if (segments < 2 || artifact.size < MINIMUM_FILE_SIZE || artifact.sha1.isBlank()) {
             return false
         }
-        val count = minOf(segments.coerceAtMost(8), (artifact.size / MINIMUM_SEGMENT_SIZE).toInt())
+        val count = segmentCount(artifact.size, segments)
         return try {
             val supported =
                 request(url, "bytes=0-0").use { probe -> matches(probe, 0, 0, artifact.size) }
@@ -257,14 +276,14 @@ internal class SegmentedDownloader(
         request(url, "bytes=${start + offset}-$end")
             .readCancellable { response ->
                 val body = segmentBody(response, start, offset, end, artifact.size)
-                val expected = end - start + 1 - offset
-                ensureSegmentLength(body, expected)
+                val length = end - start + 1
+                ensureSegmentLength(body, length - offset)
                 offset =
-                    copySegment(body, piece, offset, expected) { value ->
+                    copySegment(body, piece, offset, length) { value ->
                         offset = value
                         report()
                     }
-                if (offset != expected) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
+                if (offset != length) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
             }
     }
 
@@ -348,7 +367,7 @@ private suspend fun copySegmentBytes(
     onProgress: (Long) -> Unit,
 ): Long {
     var offset = startOffset
-    val buffer = ByteArray(65536)
+    val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
     while (true) {
         coroutineContext.ensureActive()
         val length = input.read(buffer)
@@ -356,6 +375,7 @@ private suspend fun copySegmentBytes(
         if (offset + length > expected) throw RangeUnsupported()
         output.write(buffer, 0, length)
         offset += length
+        recordNetworkBytes(length)
         onProgress(offset)
     }
     return offset

@@ -59,6 +59,12 @@ internal class NetworkClientSettings(
     val interceptors: List<Interceptor>,
 )
 
+private fun requestLimit(settings: NetworkClientSettings): Int {
+    val files = settings.maxConcurrent().coerceIn(1, MAX_DOWNLOAD_THREADS)
+    val segments = settings.downloadSegments().coerceIn(1, MAX_DOWNLOAD_SEGMENTS)
+    return files * segments
+}
+
 /** 请求执行：连接池、超时、重试与中文错误翻译。 */
 internal class NetworkTransport(
     private val settings: NetworkClientSettings,
@@ -73,8 +79,8 @@ internal class NetworkTransport(
                 }
             }.dispatcher(
                 Dispatcher().apply {
-                    maxRequests = 64
-                    maxRequestsPerHost = 32
+                    maxRequests = requestLimit(settings)
+                    maxRequestsPerHost = maxRequests
                 },
             ).connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
@@ -228,6 +234,10 @@ internal class NetworkTransport(
         direct: Boolean = false,
     ): Response =
         suspendCancellableCoroutine { continuation ->
+            // 文件和分段已有独立上限；HTTP 队列不能再把同主机请求固定压成 32 路。
+            val limit = requestLimit(settings)
+            if (client.dispatcher.maxRequests != limit) client.dispatcher.maxRequests = limit
+            if (client.dispatcher.maxRequestsPerHost != limit) client.dispatcher.maxRequestsPerHost = limit
             val timeout = settings.requestTimeoutSeconds().coerceIn(10, 180)
             val base =
                 when {

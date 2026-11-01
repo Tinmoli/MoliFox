@@ -170,7 +170,7 @@ internal class InstallProgress(
             state.sizeOf[composite] = artifact.size
             state.setCredit(composite, 0.0)
             // 任务中心的速度与「剩余文件」仍按真实传输统计，和进度条共用同一份数据。
-            context.transfer(key, 0, artifact.size.coerceAtLeast(0))
+            context.planTransfer(key, artifact.size.coerceAtLeast(0))
         }
     }
 

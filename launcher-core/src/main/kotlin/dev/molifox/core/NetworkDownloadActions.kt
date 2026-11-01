@@ -12,6 +12,7 @@ import dev.molifox.core.net.DownloadSourceFailureException
 import dev.molifox.core.net.SourceAttempt
 import dev.molifox.core.net.SourceThrottle
 import dev.molifox.core.net.TransferBudget
+import dev.molifox.core.net.TransferSlots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -47,6 +48,12 @@ private const val MAX_RATE_LIMIT_RETRIES = 3
 /** 403/429：限流而不是失败，退避后重试同一源，不计入禁用。 */
 private val RATE_LIMIT_STATUSES = setOf(403, 429)
 
+/** 只在目标仍有使用者时保留锁；计数由 ConcurrentHashMap.compute 串行修改。 */
+private class TargetTransferLock {
+    val mutex = Mutex()
+    var users = 0
+}
+
 /** 断点文件与源健康度入口：取消下载后清理、换源前重置。 */
 internal interface NetworkTransferApi {
     fun partialFile(target: Path): Path
@@ -73,8 +80,9 @@ internal abstract class NetworkSessionActions(
     settings: NetworkClientSettings,
 ) : NetworkPayloadActions(settings),
     NetworkTransferApi {
-    /** 按目标路径分片的下载锁，避免同一文件被并发写入同一份 `.part`。 */
-    private val downloadLocks = List(16) { Mutex() }
+    /** 同一目标互斥，不同目标不因哈希分桶而串行。 */
+    private val downloadLocks = ConcurrentHashMap<String, TargetTransferLock>()
+    protected val transferSlots = TransferSlots(settings.maxConcurrent)
     protected val downloadJournals = ConcurrentHashMap<String, TaskDownloadJournal>()
 
     /** 传输闸门：并发数按任务快照，设置改动只影响下一个任务。 */
@@ -82,7 +90,7 @@ internal abstract class NetworkSessionActions(
 
     @Volatile private var transferBudget: TransferBudget? = null
 
-    @Volatile private var transferBudgetKey: Pair<Int, String>? = null
+    @Volatile private var transferBudgetKey: Triple<Int, Int, Int>? = null
 
     /** 断点缓存固定为 `<目标>.part`，与目标同目录，随实例目录一起迁移或清理。 */
     override fun partialFile(target: Path): Path = target.resolveSibling("${target.fileName}.part")
@@ -101,13 +109,25 @@ internal abstract class NetworkSessionActions(
     }
 
     suspend fun transferBudget(): TransferBudget {
+        val task = coroutineContext[TaskDownloadContext]
+        if (task != null) {
+            return task.budgets.computeIfAbsent(this) {
+                TransferBudget(
+                    settings.maxConcurrent().coerceIn(1, MAX_DOWNLOAD_THREADS),
+                    settings.downloadBudgetBytes,
+                    settings.mirrorConcurrency().coerceIn(1, MAX_DOWNLOAD_THREADS),
+                    settings.downloadSegments().coerceIn(1, MAX_DOWNLOAD_SEGMENTS),
+                )
+            }
+        }
         val units = settings.maxConcurrent().coerceIn(1, MAX_DOWNLOAD_THREADS)
-        val taskId = coroutineContext[TaskDownloadContext]?.task?.id ?: ""
-        val key = units to taskId
+        val sourceConcurrency = settings.mirrorConcurrency().coerceIn(1, MAX_DOWNLOAD_THREADS)
+        val segmentLimit = settings.downloadSegments().coerceIn(1, MAX_DOWNLOAD_SEGMENTS)
+        val key = Triple(units, sourceConcurrency, segmentLimit)
         if (transferBudgetKey == key) transferBudget?.let { return it }
         return transferBudgetLock.withLock {
             if (transferBudgetKey == key) transferBudget?.let { return@withLock it }
-            TransferBudget(units, settings.downloadBudgetBytes).also {
+            TransferBudget(units, settings.downloadBudgetBytes, sourceConcurrency, segmentLimit).also {
                 transferBudget = it
                 transferBudgetKey = key
             }
@@ -124,8 +144,19 @@ internal abstract class NetworkSessionActions(
         block: suspend () -> T,
     ): T {
         val key = taskPathKey(target)
-        val index = Math.floorMod(key.hashCode(), downloadLocks.size)
-        return downloadLocks[index].withLock { block() }
+        val entry = checkNotNull(
+            downloadLocks.compute(key) { _, current ->
+                (current ?: TargetTransferLock()).also { it.users++ }
+            },
+        )
+        try {
+            return entry.mutex.withLock { block() }
+        } finally {
+            downloadLocks.computeIfPresent(key) { _, current ->
+                current.users--
+                current.takeIf { it.users > 0 }
+            }
+        }
     }
 
     /** 登记本轮任务的下载日志：取消时清理断点，完成后摘除记录。 */
@@ -221,7 +252,7 @@ internal abstract class NetworkResumeActions(
         total: Long,
         progress: (Long, Long) -> Unit,
     ) {
-        val buffer = ByteArray(65536)
+        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
         var received = 0L
         while (true) {
             coroutineContext.ensureActive()
@@ -230,6 +261,7 @@ internal abstract class NetworkResumeActions(
             output.write(buffer, 0, count)
             digest.update(buffer, 0, count)
             received += count
+            recordNetworkBytes(count)
             progress(start + received, total)
         }
     }
@@ -322,14 +354,23 @@ internal abstract class NetworkCandidateActions(
             error
         }
 
-    /** 传输闸门（内存预算）与源闸门（镜像并发与间隔）都覆盖整次文件传输。 */
+    /** 缓冲预算、来源上限和所有任务共用的文件上限都覆盖整次传输。 */
     private suspend fun transferOnSource(
         run: CandidateFetchRun,
         candidate: CandidateSource,
     ) {
-        run.budget.run(run.artifact.size, ::logClampedConcurrency) {
-            SourceThrottle.run(candidate.source, settings.mirrorConcurrency()) {
-                fetchSegmentedOrPlain(run, candidate)
+        val segments =
+            if (run.artifact.sha1.isBlank()) {
+                1
+            } else {
+                SegmentedDownloader.segmentCount(run.artifact.size, run.budget.segmentLimit)
+            }
+        val bufferBytes = DOWNLOAD_BUFFER_BYTES.toLong() * segments
+        run.budget.run(bufferBytes, ::logClampedConcurrency) {
+            SourceThrottle.run(candidate.source, run.budget.sourceConcurrency) {
+                transferSlots.run(run.budget.units) {
+                    fetchSegmentedOrPlain(run, candidate)
+                }
             }
         }
     }
@@ -348,7 +389,7 @@ internal abstract class NetworkCandidateActions(
                 run.artifact,
                 run.partial,
                 candidate.url,
-                settings.downloadSegments(),
+                run.budget.segmentLimit,
                 run.progress,
             )
         ) {

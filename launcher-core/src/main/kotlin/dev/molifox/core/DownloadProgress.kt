@@ -5,13 +5,14 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.withContext
 import kotlin.io.path.fileSize
 
 internal suspend fun NetworkClient.downloadTracked(
     context: JobContext,
     artifact: DownloadArtifact,
     progress: (Long, Long) -> Unit = { _, _ -> },
-) {
+) = withContext(TransferTrafficContext(context)) {
     context.beginTransfers(1)
     download(artifact) { bytes, total ->
         context.transfer(artifact.target.toString(), bytes, total)

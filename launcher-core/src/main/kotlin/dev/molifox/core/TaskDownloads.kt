@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.net.TransferBudget
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -12,10 +13,23 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
+
+internal class TransferTrafficContext(val task: JobContext) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<TransferTrafficContext>
+}
+
+internal suspend fun recordNetworkBytes(bytes: Int) {
+    val task = coroutineContext[TransferTrafficContext]?.task ?: coroutineContext[TaskDownloadContext]?.task
+    task?.networkBytes(bytes.toLong())
+}
 
 internal class TaskDownloadContext(
     val task: JobContext,
 ) : AbstractCoroutineContextElement(Key) {
+    // 随本任务上下文一起释放；不同网络会话各自冻结首次下载时的并发设置。
+    val budgets = ConcurrentHashMap<Any, TransferBudget>()
+
     companion object Key : CoroutineContext.Key<TaskDownloadContext>
 }
 

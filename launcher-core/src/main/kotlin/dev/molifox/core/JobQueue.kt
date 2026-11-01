@@ -26,12 +26,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
-/** 传输速度采样窗口：约每 250ms 汇总一次，避免每个回调都刷新状态。 */
-private const val TRANSFER_SAMPLE_INTERVAL_NANOS = 250_000_000L
-
-/** 纳秒到秒的换算系数，用于把字节/纳秒换算成字节/秒。 */
-private const val NANOS_PER_SECOND = 1_000_000_000.0
-
 /** 进度节流间隔（毫秒）：约 10 次/秒。 */
 private const val PROGRESS_THROTTLE_MS = 100
 
@@ -67,17 +61,21 @@ class JobContext
 
         private var lastUpdate = 0L
         private val transfers = mutableMapOf<String, Triple<Long, Long, Boolean>>()
+        private val observedTransfers = mutableSetOf<String>()
+        private val transferRate = TransferRate()
+        private var hasNetworkMeasurement = false
         private var transferCount = 0
         private var sampleTime = System.nanoTime()
-        private var sampleBytes = 0L
         private var transferSpeed = 0L
 
         @Synchronized
         fun beginTransfers(count: Int) {
             transfers.clear()
+            observedTransfers.clear()
+            transferRate.reset()
+            hasNetworkMeasurement = false
             transferCount = count
             sampleTime = System.nanoTime()
-            sampleBytes = 0
             transferSpeed = 0
             publishTransfers()
         }
@@ -91,15 +89,33 @@ class JobContext
             completed: Boolean = false,
         ) {
             val previous = transfers[key]
-            if (previous != null) sampleBytes += (bytes - previous.first).coerceAtLeast(0)
+            val measuredBytes =
+                if (!observedTransfers.add(key) && previous != null && !hasNetworkMeasurement) {
+                    (bytes - previous.first).coerceAtLeast(0)
+                } else {
+                    0L
+                }
+            transferSpeed = transferRate.record(measuredBytes)
             transfers[key] = Triple(bytes.coerceAtLeast(0), total.coerceAtLeast(0), completed)
             val elapsed = System.nanoTime() - sampleTime
             if (elapsed >= TRANSFER_SAMPLE_INTERVAL_NANOS || completed) {
-                if (elapsed > 0) transferSpeed = (sampleBytes * NANOS_PER_SECOND / elapsed).toLong()
-                sampleBytes = 0
                 sampleTime = System.nanoTime()
                 publishTransfers()
             }
+        }
+
+        /** 计划大小用于展示；网络首回调仍需单独建立断点基线。 */
+        @Synchronized
+        internal fun planTransfer(key: String, total: Long) {
+            transfers[key] = Triple(0L, total.coerceAtLeast(0), false)
+            observedTransfers.remove(key)
+        }
+
+        /** 只接收本次从网络读取的字节，缓存、断点和校验读盘不计入。 */
+        @Synchronized
+        internal fun networkBytes(bytes: Long) {
+            hasNetworkMeasurement = true
+            transferSpeed = transferRate.record(bytes)
         }
 
         private fun publishTransfers() {

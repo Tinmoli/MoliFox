@@ -24,9 +24,6 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 
-/** 镜像主机的并发上限：再高容易被 BMCLAPI 等镜像限流。 */
-private const val MIRROR_CONCURRENCY_LIMIT = 8
-
 /**
  * 桌面入口的全部运行时状态：文件锁、协程作用域与各服务都在这里创建一次。
  *
@@ -106,12 +103,12 @@ internal class LauncherControllerCore(
                 }
             },
             { store.data.settings.effectiveProxyMode() == "system" },
-            // 分段数走设置项（1–16）；镜像并发不再单独设置，压到 8 路避免镜像限流。
+            // 文件并发统一使用设置上限；来源限流仍由重试和退避处理。
             downloadSegments = { store.data.settings.downloadSegments },
             downloadAttempts = { 5 },
             requestTimeoutSeconds = { store.data.settings.networkTimeoutSeconds },
             maxConcurrent = downloadConcurrency,
-            mirrorConcurrency = { minOf(downloadConcurrency(), MIRROR_CONCURRENCY_LIMIT) },
+            mirrorConcurrency = downloadConcurrency,
             // 源被禁用、限流与并发预算调整都要在启动器日志里留一行。
             logger = { message, error -> store.log(message, error) },
         )

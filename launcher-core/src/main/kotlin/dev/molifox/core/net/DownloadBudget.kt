@@ -7,14 +7,16 @@ package dev.molifox.core.net
 
 import dev.molifox.core.MAX_DOWNLOAD_THREADS
 import dev.molifox.core.i18n.I18n
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** 字节换算到 KiB 的进制；日志里的 MB 用浮点除法，保留一位小数。 */
 private const val KIBIBYTE_BYTES = 1024.0
 
-/** 单任务下载预算：并发数 × 平均文件大小不超过该值。 */
+/** 单任务传输缓冲预算；流式下载不把整个文件大小当作内存占用。 */
 const val DOWNLOAD_BUDGET_BYTES = 256L * 1024 * 1024
 
 /** 预算换算后的有效并发：[note] 只在真的被压低时给出，供任务开始时记一行日志。 */
@@ -54,14 +56,16 @@ private fun megabytes(bytes: Long): String =
     String.format(Locale.ROOT, "%.1f MB", bytes / KIBIBYTE_BYTES / KIBIBYTE_BYTES)
 
 /**
- * 传输闸门：总许可 = 请求的并发数，每个文件按大小占用多份许可，因此
- * 「在途文件数 × 文件大小」被压在预算内。小文件各占一份，等于原来的并发上限。
+ * 传输闸门：调用方按实际传输缓冲估算占用，多许可取得与取消均受保护。
  */
 internal class TransferBudget(
     val units: Int,
     private val budgetBytes: Long,
+    val sourceConcurrency: Int = units,
+    val segmentLimit: Int = 1,
 ) {
     private val semaphore = Semaphore(units)
+    private val allocation = Mutex()
     private val reported = AtomicBoolean(false)
 
     /** 该文件占用的许可数；单位大小 = 预算 / 并发数。 */
@@ -81,11 +85,18 @@ internal class TransferBudget(
         if (permits > 1 && reported.compareAndSet(false, true)) {
             onClamped(downloadConcurrency(units, fileBytes, budgetBytes))
         }
-        repeat(permits) { semaphore.acquire() }
+        var acquired = 0
         try {
+            // 一次只让一个申请者取得多份许可，避免彼此各持部分许可后互等。
+            allocation.withLock {
+                repeat(permits) {
+                    semaphore.acquire()
+                    acquired++
+                }
+            }
             return block()
         } finally {
-            repeat(permits) { semaphore.release() }
+            repeat(acquired) { semaphore.release() }
         }
     }
 }

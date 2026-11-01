@@ -123,7 +123,7 @@ internal class DownloadScheduler(
         context: JobContext,
         sink: DownloadProgressSink,
     ) = (0 until minOf(concurrency.coerceIn(1, MAX_FILE_CONCURRENCY), batch.unique.size)).map {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO + TransferTrafficContext(context)) {
             while (coroutineContext.isActive) {
                 context.checkCancelled()
                 val index = batch.next.getAndIncrement()
