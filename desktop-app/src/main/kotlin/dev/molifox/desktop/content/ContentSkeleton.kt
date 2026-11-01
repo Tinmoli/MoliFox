@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.desktop.LocalAnimationsEnabled
+import dev.molifox.desktop.LocalStrings
 
 /** 骨架：28dp 环 + 3 行灰条，稳定占位，避免整页在加载与结果之间跳动。 */
 @Composable
@@ -60,7 +61,7 @@ internal fun SkeletonResults() {
             CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(10.dp))
             Text(
-                "正在检索资源…",
+                LocalStrings.current.t("pages.content.search.checking"),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

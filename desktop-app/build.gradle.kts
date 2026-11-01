@@ -22,6 +22,8 @@ evaluationDependsOn(":multiplayer-core")
 // 界面与文档资源统一放在仓库根的 assets/；legal 与 brand 由打包任务单独处理，不进类路径。
 sourceSets["main"].resources.srcDir(rootProject.file("assets"))
 sourceSets["main"].resources.exclude("legal/**", "brand/**")
+// 测试与 GUI 检查源码统一放在仓库根的 tests/。
+sourceSets["test"].kotlin.srcDirs(rootProject.file("tests/desktop-app/test/kotlin"))
 
 val bootstrapProject = project(":launcher-bootstrap")
 val bootstrapSourceSets = bootstrapProject.extensions.getByType<SourceSetContainer>()
@@ -260,8 +262,7 @@ tasks.register<Jar>("portableJar") {
 val nativeBuildDirectory = layout.buildDirectory.dir("portable/native")
 val mingwDirectory = providers.environmentVariable("MOLIFOX_MINGW_BIN").orNull
 
-fun nativeCompiler(name: String) =
-    mingwDirectory?.let { file("$it/$name.exe").absolutePath } ?: name
+fun nativeCompiler(name: String) = mingwDirectory?.let { file("$it/$name.exe").absolutePath } ?: name
 
 val windowsResource =
     tasks.register("prepareWindowsResource") {
@@ -315,7 +316,7 @@ tasks.register<Exec>("portableWindows") {
     inputs.dir(rootProject.file("launcher-bootstrap/native/miniz"))
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
-    outputs.file(rootProject.file(windowsPackageName))
+    outputs.file(rootProject.file("dist/$windowsPackageName"))
     outputs.file(rootProject.file("build/validation/windows-package.sha256"))
     commandLine(
         nativeCompiler("g++"),
@@ -342,10 +343,10 @@ tasks.register<Exec>("portableWindows") {
         "-lcomctl32",
         "-ladvapi32",
         "-o",
-        rootProject.file(windowsPackageName),
+        rootProject.file("dist/$windowsPackageName"),
     )
     doLast {
-        val executable = rootProject.file(windowsPackageName)
+        val executable = rootProject.file("dist/$windowsPackageName")
         val imports =
             providers
                 .exec {
@@ -459,7 +460,7 @@ tasks.register("portableLinux") {
     val payload = layout.buildDirectory.file("portable/linux/MoliFox-linux.jar")
     inputs.file(rootProject.file("launcher-bootstrap/native/LinuxMain.sh"))
     inputs.file(payload)
-    outputs.file(rootProject.file(linuxPackageName))
+    outputs.file(rootProject.file("dist/$linuxPackageName"))
     outputs.file(rootProject.file("build/validation/linux-package.sha256"))
     doLast {
         val jar = payload.get().asFile
@@ -471,7 +472,7 @@ tasks.register("portableLinux") {
                 .replace("\r\n", "\n")
                 .replace("@VERSION@", project.version.toString())
                 .replace("@PAYLOAD_SHA256@", digest)
-        val output = rootProject.file(linuxPackageName)
+        val output = rootProject.file("dist/$linuxPackageName")
         output.outputStream().buffered().use { destination ->
             destination.write(header.toByteArray(Charsets.UTF_8))
             jar.inputStream().buffered().use { it.copyTo(destination) }
@@ -576,7 +577,7 @@ tasks.register("verifyDesktopPackages") {
         val report = rootProject.file("build/validation/desktop-packages.md")
         report.parentFile.mkdirs()
         report.writeText(
-            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: structure checked here; launcher UI and Terracotta core start were executed separately in WSL Arch + Xvfb (software rendering), not on this Windows host\n",
+            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: structure checked here; launcher UI and EasyTier core start were executed separately in WSL Arch + Xvfb (software rendering), not on this Windows host\n",
         )
     }
 }
@@ -627,8 +628,9 @@ tasks.register<JavaExec>("multiplayerUiSmoke") {
     timeout.set(Duration.ofMinutes(3))
 }
 
+sourceSets["uiChecks"].kotlin.srcDirs(rootProject.file("tests/desktop-app/uiChecks/kotlin"))
 sourceSets["uiChecks"].java.apply {
-    srcDir(rootProject.file("tools"))
+    srcDir(rootProject.file("tests/tools"))
     include("TestWindowFocus.java")
 }
 
@@ -650,7 +652,7 @@ fun registerGuiSmoke(
     dependsOn(if (native) "portableWindows" else "portableJar")
     val testDirectory =
         rootProject.layout.projectDirectory
-            .dir(".work/tests/${project.name}-$name")
+            .dir("tests/.tmp/${project.name}-$name")
             .asFile
     val portableJar = layout.buildDirectory.file("portable/MoliFox.jar")
     // 运行时依赖不再内嵌进 MoliFox.jar：GUI 探针直接用 Gradle 解析出的类路径，
@@ -690,24 +692,24 @@ fun registerGuiSmoke(
                 files(portableJar, configurations.runtimeClasspath).asPath,
                 "-d",
                 classes.absolutePath,
-                rootProject.file("tools/$probe.java").absolutePath,
-                rootProject.file("tools/UiSmoke.java").absolutePath,
-                rootProject.file("tools/UiFunctionalChecks.java").absolutePath,
-                rootProject.file("tools/InstanceActionChecks.java").absolutePath,
-                rootProject.file("tools/SettingsActionChecks.java").absolutePath,
-                rootProject.file("tools/DownloadActionChecks.java").absolutePath,
-                rootProject.file("tools/JavaActionChecks.java").absolutePath,
-                rootProject.file("tools/AccountActionChecks.java").absolutePath,
-                rootProject.file("tools/PackActionChecks.java").absolutePath,
-                rootProject.file("tools/WindowActionChecks.java").absolutePath,
-                rootProject.file("tools/LogActionChecks.java").absolutePath,
-                rootProject.file("tools/MicrosoftActionChecks.java").absolutePath,
-                rootProject.file("tools/TestWindowFocus.java").absolutePath,
-                rootProject.file("tools/NativeDialogActions.java").absolutePath,
-                rootProject.file("tools/RefinementActions.java").absolutePath,
-                rootProject.file("tools/PackDragChecks.java").absolutePath,
-                rootProject.file("tools/NativeRuntimeCache.java").absolutePath,
-                rootProject.file("tools/NativeMemoryProbe.java").absolutePath,
+                rootProject.file("tests/tools/$probe.java").absolutePath,
+                rootProject.file("tests/tools/UiSmoke.java").absolutePath,
+                rootProject.file("tests/tools/UiFunctionalChecks.java").absolutePath,
+                rootProject.file("tests/tools/InstanceActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/SettingsActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/DownloadActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/JavaActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/AccountActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/PackActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/WindowActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/LogActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/MicrosoftActionChecks.java").absolutePath,
+                rootProject.file("tests/tools/TestWindowFocus.java").absolutePath,
+                rootProject.file("tests/tools/NativeDialogActions.java").absolutePath,
+                rootProject.file("tests/tools/RefinementActions.java").absolutePath,
+                rootProject.file("tests/tools/PackDragChecks.java").absolutePath,
+                rootProject.file("tests/tools/NativeRuntimeCache.java").absolutePath,
+                rootProject.file("tests/tools/NativeMemoryProbe.java").absolutePath,
             ) == 0,
         ) {
             "$probe compilation failed"
@@ -715,7 +717,7 @@ fun registerGuiSmoke(
         if (native) {
             // 沙箱里保留固定文件名，探针按 MoliFox.exe 启动；发布名不影响运行。
             rootProject
-                .file(windowsPackageName)
+                .file("dist/$windowsPackageName")
                 .copyTo(File(testDirectory, "MoliFox.exe"), overwrite = true)
             setArgs(
                 listOf(
@@ -846,7 +848,7 @@ tasks.register<JavaExec>("nativePickerSmoke") {
     dependsOn(tasks.classes)
     val root =
         rootProject.layout.projectDirectory
-            .dir(".work/tests/desktop-app-nativePickerSmoke")
+            .dir("tests/.tmp/desktop-app-nativePickerSmoke")
             .asFile
     classpath = files(File(root, "classes"), sourceSets.main.get().runtimeClasspath)
     mainClass.set("NativePickerSmoke")
@@ -868,8 +870,8 @@ tasks.register<JavaExec>("nativePickerSmoke") {
                     .runtimeClasspath.asPath,
                 "-d",
                 classes.absolutePath,
-                rootProject.file("tools/NativePickerSmoke.java").absolutePath,
-                rootProject.file("tools/NativeDialogActions.java").absolutePath,
+                rootProject.file("tests/tools/NativePickerSmoke.java").absolutePath,
+                rootProject.file("tests/tools/NativeDialogActions.java").absolutePath,
             ) == 0,
         )
         setArgs(listOf(File(root, "fixtures").absolutePath))

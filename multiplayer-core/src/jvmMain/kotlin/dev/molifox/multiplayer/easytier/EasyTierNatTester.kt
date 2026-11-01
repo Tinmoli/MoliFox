@@ -4,6 +4,7 @@ package dev.molifox.multiplayer.easytier
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.NatDiagnostics
 import dev.molifox.multiplayer.common.NatType
 import kotlinx.coroutines.CancellationException
@@ -27,14 +28,14 @@ class EasyTierNatTester(
     override suspend fun test(cliExecutable: Path): Result<NatDiagnostics> =
         runCatching {
             require(Files.isRegularFile(cliExecutable)) {
-                "还没有安装 EasyTier，无法测试网络类型。"
+                I18n.t("multiplayer.easyTierNatTester.1")
             }
             val command = listOf(cliExecutable.toString(), "-o", "json", "stun")
             val output =
                 runner.run(command, timeoutMillis).getOrElse { failure ->
-                    throw IOException("无法运行 EasyTier 网络测试：${failure.message}", failure)
+                    throw IOException(I18n.t("multiplayer.easyTierNatTester.2", failure.message), failure)
                 }
-            check(output.exitCode == 0) { "EasyTier 网络测试失败（退出码 ${output.exitCode}）" }
+            check(output.exitCode == 0) { I18n.t("multiplayer.easyTierNatTester.3", output.exitCode) }
             parseNatDiagnostics(output.output).getOrElse { failure -> throw failure }
         }.onFailure { failure ->
             if (failure is CancellationException) throw failure
@@ -51,10 +52,10 @@ internal fun parseNatDiagnostics(output: String): Result<NatDiagnostics> =
         val start = output.indexOf('{')
         val end = output.lastIndexOf('}')
         if (start < 0 || end <= start) {
-            throw IOException("EasyTier 网络测试没有返回结果。")
+            throw IOException(I18n.t("multiplayer.easyTierNatTester.4"))
         }
         val json = JsonParser.parseString(output.substring(start, end + 1))
-        if (!json.isJsonObject) throw IOException("EasyTier 网络测试结果不是 JSON 对象。")
+        if (!json.isJsonObject) throw IOException(I18n.t("multiplayer.easyTierNatTester.5"))
         val root = json.asJsonObject
         val ips =
             root
@@ -75,5 +76,4 @@ private fun JsonObject.intOrNull(key: String): Int? {
     return runCatching { value.asJsonPrimitive.asInt }.getOrNull()
 }
 
-private fun JsonElement.stringOrNull(): String? =
-    if (isJsonPrimitive) asJsonPrimitive.asString else null
+private fun JsonElement.stringOrNull(): String? = if (isJsonPrimitive) asJsonPrimitive.asString else null

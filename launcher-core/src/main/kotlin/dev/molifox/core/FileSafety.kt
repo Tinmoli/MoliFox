@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -36,7 +37,7 @@ fun safePath(
             !relative.startsWith('/') &&
             !relative.startsWith('\\'),
     ) {
-        "不安全的文件路径"
+        I18n.t("diagA1.fileSafety.unsafePath")
     }
     val segments = relative.replace('\\', '/').split('/')
     require(
@@ -47,21 +48,21 @@ fun safePath(
                 Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?").matches(it)
         },
     ) {
-        "不安全的文件路径"
+        I18n.t("diagA1.fileSafety.unsafePath")
     }
     val absoluteRoot = root.toAbsolutePath().normalize()
     val target = absoluteRoot.resolve(segments.joinToString("/")).normalize()
-    require(target != absoluteRoot && target.startsWith(absoluteRoot)) { "路径超出指定目录" }
+    require(target != absoluteRoot && target.startsWith(absoluteRoot)) { I18n.t("diagA1.fileSafety.outsideRoot") }
     var parent: Path? = target
     while (parent != null && parent != absoluteRoot.parent) {
-        require(!Files.isSymbolicLink(parent)) { "目标路径包含符号链接" }
+        require(!Files.isSymbolicLink(parent)) { I18n.t("diagA1.fileSafety.symlinkInPath") }
         parent = parent.parent
     }
     return target
 }
 
 internal fun safeFilename(name: String): String {
-    require('/' !in name && '\\' !in name) { "文件名不能包含目录" }
+    require('/' !in name && '\\' !in name) { I18n.t("diagA1.fileSafety.directoryInFilename") }
     safePath(Path.of(System.getProperty("java.io.tmpdir")), name)
     return name
 }
@@ -78,12 +79,12 @@ internal fun validateArchive(
             .asSequence()
             .filter { it.name.startsWith(prefix) && !it.isDirectory }
             .toList()
-    require(entries.size <= MAX_ARCHIVE_ENTRY_COUNT) { "压缩包文件过多" }
+    require(entries.size <= MAX_ARCHIVE_ENTRY_COUNT) { I18n.t("diagA1.fileSafety.tooManyEntries") }
     var size = 0L
     return entries.map { entry ->
-        require(entry.size >= 0) { "压缩包文件长度无效" }
+        require(entry.size >= 0) { I18n.t("diagA1.fileSafety.invalidEntrySize") }
         size = Math.addExact(size, entry.size)
-        require(size <= maxBytes) { "压缩包解压后体积超出限制" }
+        require(size <= maxBytes) { I18n.t("diagA1.fileSafety.archiveTooLarge") }
         entry to safePath(root, entry.name.removePrefix(prefix))
     }
 }
@@ -93,7 +94,7 @@ internal fun copyTree(
     destination: Path,
     excluded: Set<String> = emptySet(),
 ) {
-    require(!Files.isSymbolicLink(source)) { "不支持导入符号链接" }
+    require(!Files.isSymbolicLink(source)) { I18n.t("diagA1.fileSafety.symlinkImportUnsupported") }
     if (!source.exists(LinkOption.NOFOLLOW_LINKS)) return
     if (source.isRegularFile(LinkOption.NOFOLLOW_LINKS)) {
         destination.parent.createDirectories()

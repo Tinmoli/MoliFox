@@ -45,12 +45,12 @@ internal fun homeInstallState(
     filesPresent: Boolean,
 ): String =
     when {
-        instance == null -> "未选择版本"
-        instance.broken -> "无法识别 · " + instance.brokenReason
-        !instance.installed -> "未安装完成"
-        instance.externalProfile && !filesPresent -> "版本文件缺失"
-        !filesPresent -> "启动时补全文件"
-        else -> "已安装"
+        instance == null -> tr("pages.home.state.noVersion")
+        instance.broken -> tr("pages.home.state.broken", instance.brokenReason)
+        !instance.installed -> tr("pages.home.state.notInstalled")
+        instance.externalProfile && !filesPresent -> tr("pages.home.state.filesMissing")
+        !filesPresent -> tr("pages.home.state.fillsOnLaunch")
+        else -> tr("pages.home.state.installed")
     }
 
 /** 右上角的实例与账户统计；[LauncherState] 里没开统计偏好时整行不渲染。 */
@@ -71,11 +71,11 @@ internal fun HomeStatisticsRow(state: LauncherState) {
         )
         Spacer(Modifier.width(5.dp))
         Text(
-            state.data.instances.size
-                .toString() +
-                " 个版本 · " +
-                state.data.accounts.size +
-                " 个账户",
+            LocalStrings.current.t(
+                "pages.home.statistics.summary",
+                state.data.instances.size,
+                state.data.accounts.size,
+            ),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -185,6 +185,7 @@ internal fun ColumnScope.CurrentGameCardBody(
     game: CurrentGameState,
     callbacks: CurrentGameCallbacks,
 ) {
+    val strings = LocalStrings.current
     val instance = game.selected
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (instance != null) {
@@ -200,7 +201,7 @@ internal fun ColumnScope.CurrentGameCardBody(
             // 名称行右侧是隔离标签；简介行整宽留给「版本 · 加载器 · 安装状态」。
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    instance?.name ?: "未选择版本",
+                    instance?.name ?: strings.t("pages.home.state.noVersion"),
                     Modifier.weight(1f),
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
@@ -209,13 +210,13 @@ internal fun ColumnScope.CurrentGameCardBody(
                 if (instance != null) {
                     Spacer(Modifier.width(6.dp))
                     if (instance.broken) {
-                        Tag("无法识别", MaterialTheme.colorScheme.error)
+                        Tag(strings.t("pages.home.state.brokenTag"), MaterialTheme.colorScheme.error)
                     } else {
                         Tag(
                             if (actions.controller.store.isolated(instance)) {
-                                "版本隔离"
+                                strings.t("pages.home.isolation.enabled")
                             } else {
-                                "共用目录"
+                                strings.t("pages.home.isolation.shared")
                             },
                         )
                     }
@@ -235,7 +236,7 @@ internal fun ColumnScope.CurrentGameCardBody(
                 )
             } else {
                 Text(
-                    "安装 Minecraft，或选择已有的游戏目录。",
+                    strings.t("pages.home.noInstanceHint"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -282,32 +283,31 @@ private fun CurrentGameLaunchButton(
     ) {
         when {
             instance == null -> {
-                actions.controller.store.notify("还没有可启动的游戏，已打开安装页")
+                actions.controller.store.notify(tr("pages.home.notify.noGame"))
                 callbacks.onCreate()
             }
             instance.broken -> {
                 actions.controller.store.notify(
-                    "「" + instance.name + "」无法识别：" + instance.brokenReason,
+                    tr("pages.home.notify.broken", instance.name, instance.brokenReason),
                 )
                 callbacks.onCreate()
             }
             !instance.installed -> {
                 // 修复任务在后台推进，进度可从左侧「日志」入口查看。
                 actions.controller.store.notify(
-                    "「" + instance.name + "」尚未安装完成，已开始修复，可在日志中查看进度",
+                    tr("pages.home.notify.notInstalled", instance.name),
                 )
                 actions.run { actions.controller.repair(instance.id) }
             }
             // 外部目录的版本文件被移走或删掉时无法自动补全，直接启动只会报错。
             instance.externalProfile && !game.filesPresent -> {
                 actions.controller.store.notify(
-                    "找不到「" + instance.name + "」的版本文件，已打开安装页；" +
-                        "可重新选择目录或修复原版本",
+                    tr("pages.home.notify.filesMissing", instance.name),
                 )
                 callbacks.onCreate()
             }
             !game.hasAccount -> {
-                actions.controller.store.notify("请先添加一个游戏账户")
+                actions.controller.store.notify(tr("pages.home.notify.noAccount"))
                 callbacks.onOpenAccounts()
             }
             else -> callbacks.onLaunch(instance)
@@ -338,9 +338,9 @@ private fun CurrentGameBottomRow(
             enabled = instance != null && !busy,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         ) {
-            // 只留中文文字并居中：两侧内边距对称，不再保留任何图标或图标间距。
+            // 只留文字并居中：两侧内边距对称，不再保留任何图标或图标间距。
             Text(
-                "版本设置",
+                LocalStrings.current.t("pages.home.versionSettings"),
                 Modifier.fillMaxWidth(),
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,

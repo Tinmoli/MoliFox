@@ -31,6 +31,7 @@ import dev.molifox.core.LAUNCHER_VERSION
 import dev.molifox.core.LauncherRelease
 import dev.molifox.core.LauncherUpdateState
 import dev.molifox.core.MoliFoxIdentity
+import dev.molifox.core.i18n.I18n
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Path
@@ -40,8 +41,12 @@ fun LauncherUpdatePanel(
     update: LauncherUpdateState,
     actions: UiActions,
 ) {
+    val strings = LocalStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SettingRow("当前版本", "MoliFox $LAUNCHER_VERSION · 正式版本通道") {
+        SettingRow(
+            strings.t("settings.update.current.title"),
+            strings.t("settings.update.current.detail", LAUNCHER_VERSION),
+        ) {
             SecondaryButton(
                 { actions.controller.checkForUpdates(true) },
                 enabled = !update.checking,
@@ -50,28 +55,28 @@ fun LauncherUpdatePanel(
                     CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(if (update.checking) "正在检查…" else "检查更新")
+                Text(if (update.checking) strings.t("settings.update.checking") else strings.t("settings.update.check"))
             }
         }
         update.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (update.checked && update.error == null) {
             Text(
                 when {
-                    update.release == null -> "尚无正式发布版本"
-                    update.available -> "可更新至 ${update.release?.version}"
-                    else -> "已是最新版本"
+                    update.release == null -> strings.t("settings.update.none")
+                    update.available -> strings.t("settings.update.available", update.release?.version)
+                    else -> strings.t("settings.update.latest")
                 },
                 style = MaterialTheme.typography.titleMedium,
             )
         }
-        MutedText("自动测速 GitHub 原站与加速站，按版本号判断最新正式版；忽略草稿和预发布版。")
+        MutedText(strings.t("settings.update.note"))
         update.release?.let { release ->
             LauncherReleaseDetails(update, actions, release)
         }
         TextButton({
             actions.run { actions.controller.platform.openUrl(MoliFoxIdentity.RELEASES) }
         }) {
-            Text("查看 GitHub 发布页")
+            Text(strings.t("settings.update.releases"))
         }
     }
 }
@@ -82,9 +87,10 @@ private fun LauncherReleaseDetails(
     actions: UiActions,
     release: LauncherRelease,
 ) {
+    val strings = LocalStrings.current
     MutedText("${release.title} · ${release.publishedAt.take(10)}")
     if (release.notes.isNotBlank()) {
-        Text("更新内容", style = MaterialTheme.typography.titleSmall)
+        Text(strings.t("settings.update.notes"), style = MaterialTheme.typography.titleSmall)
         ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
             Text(release.notes, style = MaterialTheme.typography.bodySmall)
         }
@@ -94,7 +100,7 @@ private fun LauncherReleaseDetails(
         val hasPackage = release.asset?.sha256?.isNotBlank() == true
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(
-                "下载更新包",
+                strings.t("settings.update.download"),
                 Icons.Outlined.Download,
                 enabled = hasPackage && !actions.controller.jobs.busy,
             ) {
@@ -109,33 +115,33 @@ private fun LauncherReleaseDetails(
                         actions.controller.platform.openFolder(Path.of(file).parent)
                     }
                 }) {
-                    Text("查看下载文件")
+                    Text(strings.t("settings.update.viewDownload"))
                 }
-                PrimaryButton("安装更新并重启") { confirmInstall = true }
+                PrimaryButton(strings.t("settings.update.install")) { confirmInstall = true }
             }
         }
         MutedText(
             if (hasPackage) {
-                "下载后验证 SHA-256；可自动替换并重启，数据目录 MoliFox/ 保留。"
+                strings.t("settings.update.detail.ready")
             } else {
-                "该版本缺少适配此系统的包或 SHA-256 摘要，请前往发布页下载。"
+                strings.t("settings.update.detail.missing")
             },
         )
         if (confirmInstall) {
             AlertDialog(
                 onDismissRequest = { confirmInstall = false },
-                title = { Text("安装更新并重启？") },
+                title = { Text(strings.t("settings.update.confirm.title")) },
                 text = {
-                    Text("启动器会先退出；更新脚本等待退出后替换当前启动器文件并重新打开。MoliFox 数据目录和游戏不受影响。")
+                    Text(strings.t("settings.update.confirm.message"))
                 },
                 confirmButton = {
                     TextButton({
                         confirmInstall = false
                         actions.controller.applyDownloadedUpdate()
-                    }) { Text("安装并重启") }
+                    }) { Text(strings.t("settings.update.confirm.confirm")) }
                 },
                 dismissButton = {
-                    TextButton({ confirmInstall = false }) { Text("取消") }
+                    TextButton({ confirmInstall = false }) { Text(strings.t("settings.common.cancel")) }
                 },
             )
         }
@@ -146,6 +152,7 @@ private fun LauncherReleaseDetails(
 fun LauncherAboutPanel(actions: UiActions) {
     var document by remember { mutableStateOf<String?>(null) }
     var licensesOpen by remember { mutableStateOf(false) }
+    val strings = LocalStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row {
             FoxMark(Modifier.size(46.dp))
@@ -155,7 +162,7 @@ fun LauncherAboutPanel(actions: UiActions) {
                 MutedText("$LAUNCHER_VERSION · Minecraft Java Edition Launcher")
             }
         }
-        MutedText("Kotlin · Compose Multiplatform · 支持 Windows x86_64 / Linux x86_64")
+        MutedText(strings.t("settings.about.platform"))
         MutedText(
             "${actions.controller.platform.osName} " +
                 "${actions.controller.platform.architecture} · " +
@@ -163,9 +170,9 @@ fun LauncherAboutPanel(actions: UiActions) {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
-                "项目源码" to MoliFoxIdentity.REPOSITORY,
-                "发布记录" to MoliFoxIdentity.RELEASES,
-                "问题反馈" to MoliFoxIdentity.ISSUES,
+                strings.t("settings.about.source") to MoliFoxIdentity.REPOSITORY,
+                strings.t("settings.about.releases") to MoliFoxIdentity.RELEASES,
+                strings.t("settings.about.issues") to MoliFoxIdentity.ISSUES,
             ).forEach { (label, url) ->
                 SecondaryButton({ actions.run { actions.controller.platform.openUrl(url) } }) {
                     Text(label)
@@ -174,11 +181,13 @@ fun LauncherAboutPanel(actions: UiActions) {
         }
         MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors · GPL-3.0-only")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("许可全文" to "LICENSE", "附加条款" to "NOTICE")
-                .forEach { (label, name) ->
-                    SecondaryButton({ document = name }) { Text(label) }
-                }
-            SecondaryButton({ licensesOpen = true }) { Text("第三方许可") }
+            listOf(
+                strings.t("settings.about.licenseFull") to "LICENSE",
+                strings.t("settings.about.notice") to "NOTICE",
+            ).forEach { (label, name) ->
+                SecondaryButton({ document = name }) { Text(label) }
+            }
+            SecondaryButton({ licensesOpen = true }) { Text(strings.t("settings.about.thirdParty")) }
         }
         SecondaryButton({
             val summary =
@@ -188,16 +197,16 @@ fun LauncherAboutPanel(actions: UiActions) {
                     "java.version",
                 )}\n${MoliFoxIdentity.REPOSITORY}"
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(summary), null)
-            actions.controller.store.notify("版本与运行信息已复制")
+            actions.controller.store.notify(strings.t("settings.about.copied"))
         }) {
-            Text("复制版本信息")
+            Text(strings.t("settings.about.copyVersion"))
         }
-        MutedText("感谢 Kotlin、Compose、OpenJDK 及各开源依赖。")
-        MutedText("Minecraft 是 Mojang 的商标。本项目与 Mojang、Microsoft 没有关联。")
+        MutedText(strings.t("settings.about.thanks"))
+        MutedText(strings.t("settings.about.trademark"))
     }
     document?.let { name ->
         val text = remember(name) { BundledLegalDocuments.load(name) }
-        Modal(name, "随程序分发的许可声明", 760.dp, { document = null }) {
+        Modal(name, strings.t("settings.about.legal.title"), 760.dp, { document = null }) {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
                 Text(
                     "MoliFox — Minecraft Launcher",
@@ -206,9 +215,9 @@ fun LauncherAboutPanel(actions: UiActions) {
                 MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors")
                 MutedText(
                     if (name == "LICENSE") {
-                        "本程序以 GNU 通用公共许可证第 3 版（GPL-3.0-only）发布；以下为许可全文。"
+                        strings.t("settings.about.legal.gpl")
                     } else {
-                        "以下为本项目附加条款原文。"
+                        strings.t("settings.about.legal.notice")
                     },
                 )
                 Text("", style = MaterialTheme.typography.bodySmall)
@@ -216,7 +225,7 @@ fun LauncherAboutPanel(actions: UiActions) {
                     Text(text, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            TextButton({ document = null }) { Text("关闭") }
+            TextButton({ document = null }) { Text(strings.t("settings.common.close")) }
         }
     }
     if (licensesOpen) {
@@ -232,5 +241,5 @@ private object BundledLegalDocuments {
         javaClass
             .getResourceAsStream("/META-INF/molifox/$name")
             ?.bufferedReader(Charsets.UTF_8)
-            ?.use { it.readText() } ?: "未找到随包许可文件，请查看项目仓库中的 $name。"
+            ?.use { it.readText() } ?: I18n.t("settings.about.legal.missing", name)
 }

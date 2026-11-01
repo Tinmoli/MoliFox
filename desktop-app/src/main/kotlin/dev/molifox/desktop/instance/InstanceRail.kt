@@ -43,6 +43,7 @@ import dev.molifox.desktop.FrostedPanel
 import dev.molifox.desktop.InstanceRailAction
 import dev.molifox.desktop.InstanceRailItem
 import dev.molifox.desktop.InstanceRailSectionHeader
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.RailSubEntry
 import dev.molifox.desktop.ScrollColumn
@@ -50,22 +51,22 @@ import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.title
 
 /** 原理图页签的标题；实例没有 schematics 目录时隐藏，索引保持不变。 */
-internal const val SCHEMATICS_TAB_TITLE = "原理图"
+internal const val SCHEMATICS_TAB_KEY = "dialogs.pack.schematics"
 
 /** 实例详情页签：左侧二级列表的 6 个页签。 */
 private data class InstanceTab(
-    val title: String,
+    val titleKey: String,
     val icon: ImageVector,
 )
 
 private val instanceTabs =
     listOf(
-        InstanceTab("设置", Icons.Outlined.Tune),
-        InstanceTab("模组", Icons.Outlined.Extension),
-        InstanceTab("资源包", Icons.Outlined.Palette),
-        InstanceTab("光影", Icons.Outlined.AutoAwesome),
-        InstanceTab("存档", Icons.Outlined.Save),
-        InstanceTab(SCHEMATICS_TAB_TITLE, Icons.Outlined.Architecture),
+        InstanceTab("nav.settings", Icons.Outlined.Tune),
+        InstanceTab("pages.content.kind.mod", Icons.Outlined.Extension),
+        InstanceTab("pages.content.kind.resourcepack", Icons.Outlined.Palette),
+        InstanceTab("pages.content.kind.shader", Icons.Outlined.AutoAwesome),
+        InstanceTab("dialogs.recent.worlds", Icons.Outlined.Save),
+        InstanceTab(SCHEMATICS_TAB_KEY, Icons.Outlined.Architecture),
     )
 
 /**
@@ -88,6 +89,7 @@ internal fun InstanceDetailsRail(
     /** 实例里没有 schematics 目录时不显示「原理图」页签；其余页签行为不变。 */
     showSchematics: Boolean = true,
 ) {
+    val strings = LocalStrings.current
     var foldersOpen by remember { mutableStateOf(false) }
     // 「管理」每次进入页面都从收起开始，不持久化展开状态。
     var manageOpen by remember(instance.id) { mutableStateOf(false) }
@@ -100,7 +102,7 @@ internal fun InstanceDetailsRail(
                 existingFolders = it
                 foldersError = null
             },
-            onFailure = { foldersError = it.message ?: "无法读取实例目录" },
+            onFailure = { foldersError = it.message ?: strings.t("dialogs.export.readDirFailed") },
         )
     }
     val isolated = actions.controller.store.isolated(instance)
@@ -117,8 +119,8 @@ internal fun InstanceDetailsRail(
     FrostedPanel(Modifier.width(158.dp).fillMaxHeight()) {
         ScrollColumn(Modifier.fillMaxSize(), gap = 4.dp) {
             instanceTabs.forEachIndexed { index, item ->
-                if (!showSchematics && item.title == SCHEMATICS_TAB_TITLE) return@forEachIndexed
-                InstanceRailItem(item.title, item.icon, selectedTab == index) {
+                if (!showSchematics && item.titleKey == SCHEMATICS_TAB_KEY) return@forEachIndexed
+                InstanceRailItem(strings.t(item.titleKey), item.icon, selectedTab == index) {
                     onSelectTab(index)
                 }
             }
@@ -128,7 +130,7 @@ internal fun InstanceDetailsRail(
             )
             Spacer(Modifier.height(2.dp))
             InstanceRailItem(
-                "游戏文件夹",
+                strings.t("instA1.rail.gameFolders"),
                 Icons.Outlined.FolderOpen,
                 foldersOpen,
                 onClick = { foldersOpen = !foldersOpen },
@@ -149,38 +151,40 @@ internal fun InstanceDetailsRail(
             )
             Spacer(Modifier.height(2.dp))
             // 「管理」默认收起：标题行可点、可聚焦，箭头随展开状态旋转；展开后每项仍是一行直接执行。
-            InstanceRailSectionHeader("管理", manageOpen) { manageOpen = !manageOpen }
+            InstanceRailSectionHeader(strings.t("pages.content.tag.management"), manageOpen) {
+                manageOpen = !manageOpen
+            }
             if (manageOpen) {
                 InstanceRailAction(
-                    "查看启动参数",
+                    strings.t("pages.logs.action.viewLaunchArgs"),
                     Icons.Outlined.Terminal,
                     enabled =
                         instance.installed && !actions.controller.isInstanceBusy(instance.id),
                 ) { actions.previewLaunch(instance.id) }
-                InstanceRailAction("打开游戏目录", Icons.Outlined.FolderOpen) {
+                InstanceRailAction(strings.t("pages.instances.menu.openFolder"), Icons.Outlined.FolderOpen) {
                     actions.run { actions.controller.openFolder(instance.id) }
                 }
                 InstanceRailAction(
-                    "导出整合包",
+                    strings.t("instA1.rail.exportModpack"),
                     Icons.Outlined.Archive,
                     enabled = !actions.controller.isInstanceBusy(instance.id),
                 ) { onExport() }
-                InstanceRailAction("游戏截图", Icons.Outlined.PhotoLibrary) {
+                InstanceRailAction(strings.t("dialogs.screenshot.title"), Icons.Outlined.PhotoLibrary) {
                     onScreenshots()
                 }
                 InstanceRailAction(
-                    "整理实例目录",
+                    strings.t("dialogs.tidy.title"),
                     Icons.Outlined.CleaningServices,
                     enabled = canMaintainInstance,
                 ) { onTidy() }
                 InstanceRailAction(
-                    "移动实例",
+                    strings.t("core.isolationMigration.30"),
                     Icons.AutoMirrored.Outlined.DriveFileMove,
                     enabled = canMoveInstance,
                     hint = moveBlockedNote,
                 ) { onMove() }
                 InstanceRailAction(
-                    "删除实例",
+                    strings.t("dialogs.delete.title"),
                     Icons.Outlined.DeleteOutline,
                     danger = true,
                 ) { onDelete() }

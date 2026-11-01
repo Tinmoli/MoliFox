@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.sun.management.OperatingSystemMXBean
+import dev.molifox.core.i18n.I18n
 import java.awt.Desktop
 import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
@@ -89,13 +90,15 @@ class DesktopPlatform : PlatformServices {
      */
     override fun openFolder(directory: Path) {
         val target = directory.toAbsolutePath().normalize()
-        require(Files.exists(target) && Files.isDirectory(target)) { "目标不是文件夹：$target" }
+        require(Files.exists(target) && Files.isDirectory(target)) {
+            I18n.t("miscA1.platform.targetNotDirectory", target)
+        }
         opener.open(target)
     }
 
     override fun openUrl(url: String) {
         val uri = URI(url)
-        require(uri.scheme == "https" && uri.userInfo == null) { "只允许 HTTPS 链接" }
+        require(uri.scheme == "https" && uri.userInfo == null) { I18n.t("miscA1.platform.httpsOnly") }
         if (
             !GraphicsEnvironment.isHeadless() &&
             Desktop.isDesktopSupported() &&
@@ -182,13 +185,17 @@ internal class PathOpener(
         } else {
             val copied = runCatching { copyToClipboard(path.toString()) }.getOrDefault(false)
             log(
-                "打开 $path 的所有方式都失败" + if (copied) "，已复制路径到剪贴板" else "，剪贴板也不可用",
+                if (copied) {
+                    I18n.t("miscA1.platform.openAllFailedCopied", path)
+                } else {
+                    I18n.t("miscA1.platform.openAllFailedNoClipboard", path)
+                },
             )
             notice(
                 if (copied) {
-                    "系统拒绝打开（可能被安全软件拦截），路径已复制"
+                    I18n.t("miscA1.platform.openDeniedPathCopied")
                 } else {
-                    "系统拒绝打开（可能被安全软件拦截），请手动打开：$path"
+                    I18n.t("miscA1.platform.openDeniedOpenManually", path)
                 },
             )
             false
@@ -203,10 +210,10 @@ internal class PathOpener(
         // 打开动作由调用方以 lambda 注入（Desktop.open / ProcessBuilder / 测试替身），异常类型无法收窄，按契约不抛出。
         runCatching {
             action()
-            log("已打开 $path（$name）")
+            log(I18n.t("miscA1.platform.opened", path, name))
             true
         }.getOrElse { error ->
-            log("打开 $path 失败（$name）：${error.message ?: error.javaClass.simpleName}")
+            log(I18n.t("miscA1.platform.openFailed", path, name, error.message ?: error.javaClass.simpleName))
             false
         }
 }

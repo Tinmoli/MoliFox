@@ -59,6 +59,7 @@ fun HomeAccountSummary(
     onOpenAccounts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     val account = state.data.accounts.find { it.id == state.data.activeAccountId }
     // 头像读取计数：皮肤概览报告更新、或点了刷新后递增，produceState 才会重取纹理（地址不变时也能重读）。
     var revision by remember(account?.id) { mutableStateOf(0) }
@@ -72,7 +73,7 @@ fun HomeAccountSummary(
         }
 
     fun reportRefreshFailure(failure: Exception) {
-        actions.controller.store.notify(failure.message ?: "刷新账户资料失败")
+        actions.controller.store.notify(failure.message ?: tr("pages.home.accounts.refreshFailed"))
     }
 
     fun refresh() {
@@ -103,13 +104,15 @@ fun HomeAccountSummary(
             .clip(shape)
             // hoverHighlight 自带 hoverable 与 120ms 淡入，整块可点：点哪里都进账户列表。
             .hoverHighlight(shape)
-            .clickable(onClickLabel = "打开账户列表", onClick = onOpenAccounts)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .clickable(
+                onClickLabel = strings.t("pages.home.accounts.openLabel"),
+                onClick = onOpenAccounts,
+            ).padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         StaticSkinHead(
             skinPath,
-            { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
+            { actions.controller.store.log(tr("deskI.accounts.avatarFailed", it.message), true) },
             revision,
             Modifier.size(48.dp).clip(RoundedCornerShape(Metrics.innerRadius)),
         )
@@ -117,14 +120,14 @@ fun HomeAccountSummary(
         if (account == null) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "没有游戏账户",
+                    strings.t("pages.home.accounts.empty"),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "点击此处添加账户",
+                    strings.t("pages.home.accounts.add"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -144,13 +147,17 @@ fun HomeAccountSummary(
             // 它们各自是可点击的 IconButton，会在自己的节点消费按下事件，因此不会触发卡片的 onOpenAccounts。
             AccountIconAction(
                 Icons.Outlined.Palette,
-                "皮肤概览",
+                strings.t("pages.home.accounts.skin"),
                 { managingSkin = true },
                 size = 32.dp,
             )
             AccountIconAction(
                 Icons.Outlined.Refresh,
-                if (refreshing) "正在刷新账户资料" else "刷新账户资料",
+                if (refreshing) {
+                    strings.t("pages.home.accounts.refreshing")
+                } else {
+                    strings.t("pages.home.accounts.refresh")
+                },
                 { refresh() },
                 enabled = !refreshing,
                 size = 32.dp,
@@ -159,7 +166,7 @@ fun HomeAccountSummary(
         }
         Icon(
             Icons.Outlined.ChevronRight,
-            "打开账户列表",
+            strings.t("pages.home.accounts.openLabel"),
             Modifier.size(16.dp),
             MaterialTheme.colorScheme.onSurfaceVariant,
         )

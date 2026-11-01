@@ -13,6 +13,7 @@ import com.sun.jna.platform.win32.WinDef
 import com.sun.jna.platform.win32.WinReg
 import com.sun.jna.platform.win32.WinUser
 import com.sun.jna.ptr.IntByReference
+import dev.molifox.core.i18n.I18n
 import java.util.concurrent.TimeUnit
 
 private const val WINDOW_TITLE_TIMEOUT_MS = 15_000L
@@ -100,7 +101,7 @@ internal fun applyHighPerformanceGpu(
     enabled: Boolean,
 ): String? {
     if (!osName.startsWith("Windows", ignoreCase = true)) {
-        return if (enabled) "高性能显卡设置仅支持 Windows，本次已忽略" else null
+        return if (enabled) I18n.t("diagA1.gameWindowTitle.gpuWindowsOnly") else null
     }
     return runCatching {
         val current =
@@ -121,7 +122,7 @@ internal fun applyHighPerformanceGpu(
                     executable,
                     REGISTRY_HIGH_PERFORMANCE,
                 )
-                "已把 ${executable.substringAfterLast('\\')} 设为高性能显卡"
+                I18n.t("diagA1.gameWindowTitle.gpuEnabled", executable.substringAfterLast('\\'))
             }
             current == REGISTRY_HIGH_PERFORMANCE -> {
                 Advapi32Util.registrySetStringValue(
@@ -130,11 +131,11 @@ internal fun applyHighPerformanceGpu(
                     executable,
                     REGISTRY_DEFAULT,
                 )
-                "已恢复 ${executable.substringAfterLast('\\')} 的默认显卡偏好"
+                I18n.t("diagA1.gameWindowTitle.gpuRestored", executable.substringAfterLast('\\'))
             }
             else -> null
         }
     }.getOrElse { failure ->
-        "设置高性能显卡失败：${failure.message ?: failure.javaClass.simpleName}"
+        I18n.t("diagA1.gameWindowTitle.gpuFailed", failure.message ?: failure.javaClass.simpleName)
     }
 }

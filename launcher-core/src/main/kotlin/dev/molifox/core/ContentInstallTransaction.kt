@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.net.URISyntaxException
 import java.nio.file.Files
@@ -39,7 +40,7 @@ internal class ContentInstallTransaction(
     ) {
         val instance = store.instance(plan.instanceId)
         require(instance.installed && contentSignature(store, instance) == plan.signature) {
-            "实例配置已改变，请重新选择安装内容"
+            I18n.t("core.contentInstallTransaction.1")
         }
         ContentInstallRun(store, network, api, plan, context, instance).execute()
     }
@@ -70,9 +71,9 @@ private class ContentInstallRun(
             val downloads = buildDownloads()
             network.downloadAll(
                 downloads,
-                store.data.settings.maxConcurrent,
+                store.data.settings.downloadThreads,
                 context,
-                "下载资源与前置依赖",
+                I18n.t("core.contentInstallTransaction.2"),
                 0f,
                 DOWNLOAD_PROGRESS_END,
             )
@@ -101,7 +102,7 @@ private class ContentInstallRun(
     /** 校验实例与资源列表，登记前置来源，并建立本次安装的暂存目录。 */
     private fun prepare() {
         require((if (registryFile.exists()) digest(registryFile) else "") == plan.registryHash) {
-            "资源列表已改变，请重新准备安装"
+            I18n.t("core.contentInstallTransaction.3")
         }
         val stored = if (registryFile.exists()) registryFile.readBytes() else null
         original = stored
@@ -121,7 +122,7 @@ private class ContentInstallRun(
                 !registry.obj(source.projectId).boolean("locked") ||
                     registry.obj(source.projectId).string("versionId") == source.versionId,
             ) {
-                "锁定版本与本地文件不一致，请先整理或解锁"
+                I18n.t("contentA1.installPlan.lockedVersionMismatch")
             }
             registry.add(
                 source.projectId,
@@ -139,7 +140,7 @@ private class ContentInstallRun(
         for (file in plan.files) {
             val previous = registry.obj(file.projectId)
             require(!previous.boolean("locked") || previous.string("versionId") == file.versionId) {
-                "资源版本已锁定，请先解锁：${file.title}"
+                I18n.t("core.contentInstallTransaction.4", file.title)
             }
         }
     }
@@ -164,7 +165,7 @@ private class ContentInstallRun(
             contentSignature(store, store.instance(plan.instanceId)) == plan.signature &&
                 (if (registryFile.exists()) digest(registryFile) else "") == plan.registryHash,
         ) {
-            "安装期间实例或资源列表发生变化，请重新准备安装"
+            I18n.t("core.contentInstallTransaction.5")
         }
         context.checkCancelled()
         plan.sources.forEach { verifyContentSource(store, instance.id, it) }
@@ -188,11 +189,11 @@ private class ContentInstallRun(
             runCatching { store.platform.moveToTrash(backup) }
                 .onFailure {
                     cleanStaging = false
-                    store.log("旧资源副本保留在 $staging", true)
+                    store.log(I18n.t("contentA1.installTx.stagingKept", staging), true)
                 }
         }
-        context.progress(1f, "资源与依赖安装完成")
-        store.log("资源安装完成：${plan.title}（${plan.files.size} 个文件）")
+        context.progress(1f, I18n.t("core.contentInstallTransaction.6"))
+        store.log(I18n.t("core.contentInstallTransaction.7", plan.title, plan.files.size))
     }
 
     /**
@@ -216,7 +217,7 @@ private class ContentInstallRun(
             }
         if (rollback.isFailure) {
             cleanStaging = false
-            throw IOException("资源安装未完成，原文件备份保留在 $staging，请先恢复后再操作", error)
+            throw IOException(I18n.t("core.contentInstallTransaction.8", staging), error)
                 .also { rollback.exceptionOrNull()?.let(it::addSuppressed) }
         }
     }
@@ -252,7 +253,7 @@ private class ContentFilePlacement(
         val previous = registry.obj(file.projectId)
         val previousFolder = previous.string("folder", file.folder)
         require(previousFolder in CONTENT_FOLDERS) {
-            "资源登记目录无效"
+            I18n.t("core.contentInstallTransaction.9")
         }
         val old = existingPath(file, previous, previousFolder)
         val disabled = disabledTarget(old)
@@ -265,7 +266,7 @@ private class ContentFilePlacement(
                 target != old?.resolveSibling("${old.fileName}.disabled")
         if (staleTarget) {
             require(digest(target, file.algorithm).equals(file.hash, true)) {
-                "同名本地文件已存在，未覆盖：$filename"
+                I18n.t("core.contentInstallTransaction.10", filename)
             }
         }
         old?.let {
@@ -300,11 +301,11 @@ private class ContentFilePlacement(
         if (old == null) return false
         val oldIsDisabled = old.name.endsWith(".disabled", true)
         require(!oldIsDisabled || !old.resolveSibling(contentBaseFilename(old.name)).exists()) {
-            "同一模组存在启用和禁用两个副本，请先整理"
+            I18n.t("core.contentInstallTransaction.11")
         }
         val disabled = oldIsDisabled || old.resolveSibling("${old.fileName}.disabled").exists()
         require(!disabled || oldIsDisabled || !old.exists()) {
-            "同一模组存在启用和禁用两个副本，请先整理：${old.fileName}"
+            I18n.t("core.contentInstallTransaction.12", old.fileName)
         }
         return disabled
     }
@@ -318,13 +319,15 @@ private class ContentFilePlacement(
                     value.asJsonObject.string("file") == file.filename
             },
         ) {
-            "此文件名已由其他项目使用：${file.filename}"
+            I18n.t("core.contentInstallTransaction.13", file.filename)
         }
     }
 
     private fun backup(file: Path) {
         if (file in backups || !file.exists()) return
-        require(file.isRegularFile() && !Files.isSymbolicLink(file)) { "资源目标不是普通文件：$file" }
+        require(file.isRegularFile() && !Files.isSymbolicLink(file)) {
+            I18n.t("core.contentInstallTransaction.14", file)
+        }
         val target = safePath(staging, "backup/${backups.size}/${file.fileName}")
         target.parent.createDirectories()
         Files.move(file, target)

@@ -26,8 +26,7 @@ object LauncherLocation {
     /** 启动器目录的真实绝对路径；同一进程内只解析一次。 */
     fun locate(): Path = cached ?: resolve().also { cached = it }
 
-    private fun resolve(): Path =
-        explicit() ?: packagedDataDirectory() ?: codeSourceDirectory() ?: workingDirectory()
+    private fun resolve(): Path = explicit() ?: packagedDataDirectory() ?: codeSourceDirectory() ?: workingDirectory()
 
     /** 显式指定优先，便于安装器、便携包和测试固定目录。 */
     private fun explicit(): Path? =

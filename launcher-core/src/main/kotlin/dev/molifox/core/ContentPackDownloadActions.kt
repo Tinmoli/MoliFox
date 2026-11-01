@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import kotlin.io.path.name
 
@@ -39,7 +40,7 @@ internal abstract class ContentPackDownloadActions(
         versionId: String,
     ): Path {
         require(hit.type == "modpack")
-        context.progress(0f, "读取整合包版本…")
+        context.progress(0f, I18n.t("contentA2.contentPackDownloadActions.readingVersion"))
         return if (hit.id.startsWith("curseforge:")) {
             downloadCurseForgePack(hit, context, versionId)
         } else {
@@ -63,7 +64,9 @@ internal abstract class ContentPackDownloadActions(
                     hit.id,
                 )}/${safeFilename(file.string("filename"))}",
             )
-        require(archive.name.endsWith(".zip", true)) { "CurseForge 整合包必须为 ZIP" }
+        require(archive.name.endsWith(".zip", true)) {
+            I18n.t("contentA2.contentPackDownloadActions.zipRequired")
+        }
         downloadPackArchive(
             context,
             DownloadArtifact(
@@ -88,7 +91,7 @@ internal abstract class ContentPackDownloadActions(
             }
         return available.firstOrNull { it.string("version_type") == "release" }
             ?: available.firstOrNull()
-            ?: error("整合包没有可用版本")
+            ?: error(I18n.t("contentA2.contentPackDownloadActions.noVersion"))
     }
 
     private suspend fun downloadModrinthPack(
@@ -102,7 +105,8 @@ internal abstract class ContentPackDownloadActions(
             version
                 .array("files")
                 .map { it.asJsonObject }
-                .find { it.string("filename").endsWith(".mrpack") } ?: error("此项目不提供 .mrpack 文件")
+                .find { it.string("filename").endsWith(".mrpack") }
+                ?: error(I18n.t("contentA2.contentPackDownloadActions.mrpackMissing"))
         val archive =
             safePath(
                 safePath(store.downloadDirectory, "packs/${safeFilename(hit.id)}"),
@@ -138,7 +142,7 @@ internal abstract class ContentPackDownloadActions(
             .sortedByDescending { it.string("date_published") }
             .let { all ->
                 all.firstOrNull { it.string("version_type") == "release" } ?: all.firstOrNull()
-            } ?: error("整合包没有可用版本")
+            } ?: error(I18n.t("contentA2.contentPackDownloadActions.noVersion"))
     }
 
     /** 优先使用 SHA-512，缺失时退回 SHA-1；两者都无效则拒绝下载。 */
@@ -151,7 +155,7 @@ internal abstract class ContentPackDownloadActions(
                 (sha1.isBlank() || sha1.matches(Regex("[a-fA-F0-9]{40}"))) &&
                 (sha512.isNotBlank() || sha1.isNotBlank()),
         ) {
-            "整合包下载缺少有效校验信息"
+            I18n.t("contentA2.contentPackDownloadActions.checksumMissing")
         }
         return sha512 to sha1
     }
@@ -181,7 +185,7 @@ internal abstract class ContentPackDownloadActions(
         network.downloadTracked(context, artifact) { bytes, total ->
             context.progress(
                 packDownloadProgress(bytes, total),
-                "下载整合包 · ${bytes / BYTES_PER_MEGABYTE} MB",
+                I18n.t("contentA2.contentPackDownloadActions.downloading", bytes / BYTES_PER_MEGABYTE),
             )
         }
     }
@@ -200,7 +204,7 @@ internal abstract class ContentPackDownloadActions(
             version.string("project_id") == hit.id &&
                 (versionId.isBlank() || version.string("id") == versionId),
         ) {
-            "整合包版本不属于当前项目"
+            I18n.t("contentA2.contentPackDownloadActions.versionMismatch")
         }
     }
 

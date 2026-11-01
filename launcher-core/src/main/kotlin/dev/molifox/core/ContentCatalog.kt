@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
@@ -107,7 +108,7 @@ internal fun verifyContentSource(
             !Files.isSymbolicLink(file) &&
             digest(file, "SHA-512").equals(source.sha512, true),
     ) {
-        "本地文件已改变，请重新检查：${source.filename}"
+        I18n.t("contentA1.catalog.localFileChanged", source.filename)
     }
 }
 
@@ -148,7 +149,7 @@ class ContentCatalog
         suspend fun browse(projectId: String): ContentDetails {
             val project = backend.project(projectId)
             val kind = project.string("project_type")
-            require(kind in supportedContentKinds) { "不支持的资源类型" }
+            require(kind in supportedContentKinds) { I18n.t("contentA1.catalog.unsupportedKind") }
             val hit =
                 ContentHit(
                     projectId,
@@ -191,7 +192,7 @@ class ContentCatalog
         ): ContentVersion {
             val info = backend.version(versionId)
             require(info.string("project_id") == projectId && info.string("id") == versionId) {
-                "资源版本不属于当前项目"
+                I18n.t("contentA1.catalog.versionNotInProject")
             }
             return contentVersionOf(info)
         }
@@ -211,7 +212,7 @@ class ContentCatalog
                         project.string("project_type"),
                     ),
             ) {
-                "资源版本与项目、游戏或加载器不匹配"
+                I18n.t("contentA1.catalog.versionMismatch")
             }
             return contentVersionOf(info)
         }
@@ -222,7 +223,9 @@ class ContentCatalog
         ): ContentDetails {
             val project = backend.project(projectId)
             val kind = project.string("project_type")
-            require(kind in setOf("mod", "resourcepack", "shader")) { "此项目类型暂不支持版本管理" }
+            require(kind in setOf("mod", "resourcepack", "shader")) {
+                I18n.t("contentA1.catalog.versionManagementUnsupported")
+            }
             val hit =
                 ContentHit(
                     projectId,
@@ -274,7 +277,7 @@ class ContentCatalog
                     it.isBlank() || it == contentBaseFilename(source.filename)
                 },
             ) {
-                "同一项目有多个本地文件，请先整理重复版本"
+                I18n.t("contentA1.catalog.duplicateLocalFiles")
             }
             registry.add(source.projectId, contentSourceRecord(source.copy(locked = locked)))
             writeJson(registryFile, registry)

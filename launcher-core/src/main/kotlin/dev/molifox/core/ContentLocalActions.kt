@@ -5,7 +5,9 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
@@ -68,9 +70,17 @@ internal interface ContentLocalApi {
         files: List<Path>,
     )
 
-    fun deleteSchematic(
+    /** 重命名原理图目录下的文件或文件夹；[relativePath] 相对于 schematics 根目录。 */
+    fun renameSchematicEntry(
         id: String,
-        filename: String,
+        relativePath: String,
+        newName: String,
+    )
+
+    /** 把原理图目录下的文件或文件夹移入回收站；[relativePath] 相对于 schematics 根目录。 */
+    fun deleteSchematicEntry(
+        id: String,
+        relativePath: String,
     )
 }
 
@@ -89,7 +99,15 @@ internal abstract class ContentLocalActions(
         installedIcons
             .read(id, path, folder)
             .onFailure {
-                store.log("无法读取${folder.title}头像 ${path.fileName}：${it.message}", true)
+                store.log(
+                    I18n.t(
+                        "contentA1.local.packIconReadFailed",
+                        folder.title,
+                        path.fileName,
+                        it.message.toString(),
+                    ),
+                    true,
+                )
             }.getOrNull()
 
     /** 列出 `resourcepacks/` / `shaderpacks/` 的直接子项（zip 或文件夹）。 */
@@ -138,7 +156,9 @@ internal abstract class ContentLocalActions(
         id: String,
         filename: String,
     ) {
-        require(Regex("(?i).*\\.jar(?:\\.disabled)?").matches(filename)) { "无效的模组文件" }
+        require(Regex("(?i).*\\.jar(?:\\.disabled)?").matches(filename)) {
+            I18n.t("contentA1.local.invalidModFile")
+        }
         val directory = store.instancePath(id).resolve("mods")
         val source = safePath(directory, safeFilename(filename))
         val target =
@@ -150,7 +170,7 @@ internal abstract class ContentLocalActions(
                     "$filename.disabled"
                 },
             )
-        require(!target.exists()) { "目标文件已存在，请处理重复模组" }
+        require(!target.exists()) { I18n.t("contentA1.local.modTargetExists") }
         Files.move(source, target)
     }
 
@@ -168,7 +188,9 @@ internal abstract class ContentLocalActions(
         id: String,
         files: List<Path>,
     ) {
-        require(store.instance(id).loader != LoaderType.Vanilla) { "请先选择带加载器的实例" }
+        require(store.instance(id).loader != LoaderType.Vanilla) {
+            I18n.t("contentA1.local.loaderInstanceRequired")
+        }
         val destination = store.instancePath(id).resolve("mods").apply { createDirectories() }
         for (file in files) {
             require(file.name.endsWith(".jar", true))
@@ -181,26 +203,51 @@ internal abstract class ContentLocalActions(
         id: String,
         files: List<Path>,
     ) {
-        require(files.isNotEmpty()) { "请选择原理图文件" }
+        require(files.isNotEmpty()) { I18n.t("contentA1.local.selectSchematics") }
         val destination = store.instancePath(id).resolve("schematics").apply { createDirectories() }
         for (file in files) {
             require(Regex("(?i).*\\.(litematic|schem|schematic|nbt)").matches(file.name)) {
-                "仅支持 .litematic / .schem / .schematic / .nbt 原理图"
+                I18n.t("contentA1.local.schematicFormats")
             }
             require(runCatching { file.fileSize() }.getOrDefault(0L) <= SCHEMATIC_MAX_BYTES) {
-                "原理图文件过大（上限 256 MB）"
+                I18n.t("contentA1.local.schematicTooLarge")
             }
             Files.copy(file, safePath(destination, safeFilename(file.name)))
         }
     }
 
-    override fun deleteSchematic(
+    /** 目录内重命名：只允许改当前层名字，路径与符号链接由 safePath 兜底。 */
+    override fun renameSchematicEntry(
         id: String,
-        filename: String,
+        relativePath: String,
+        newName: String,
     ) {
-        require(Regex("(?i).*\\.(litematic|schem|schematic|nbt)").matches(filename)) { "无效的原理图文件" }
-        store.platform.moveToTrash(
-            safePath(store.instancePath(id).resolve("schematics"), safeFilename(filename)),
-        )
+        val root = store.instancePath(id).resolve("schematics")
+        val source = safePath(root, relativePath)
+        require(Files.exists(source, LinkOption.NOFOLLOW_LINKS)) {
+            I18n.t("contentA1.local.renameSourceMissing")
+        }
+        val trimmed = newName.trim()
+        safeFilename(trimmed)
+        val parent = relativePath.replace('\\', '/').substringBeforeLast('/', "")
+        val targetRelative = if (parent.isBlank()) trimmed else "$parent/$trimmed"
+        val target = safePath(root, targetRelative)
+        require(!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            I18n.t("contentA1.local.renameTargetExists", trimmed)
+        }
+        Files.move(source, target)
+        store.notify(I18n.t("contentA1.local.renamed", source.fileName, trimmed))
+    }
+
+    override fun deleteSchematicEntry(
+        id: String,
+        relativePath: String,
+    ) {
+        val target = safePath(store.instancePath(id).resolve("schematics"), relativePath)
+        require(Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            I18n.t("contentA1.local.deleteSourceMissing")
+        }
+        store.platform.moveToTrash(target)
+        store.notify(I18n.t("contentA1.local.movedToTrash", target.fileName))
     }
 }

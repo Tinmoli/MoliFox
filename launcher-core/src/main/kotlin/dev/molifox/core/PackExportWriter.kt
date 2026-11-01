@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.ensureActive
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -61,7 +62,7 @@ private suspend fun collectExportFile(
     if (!state.store.isolated(state.instance) && top !in state.contentRoots) return
     val checked = safePath(state.root, path)
     require(checked.toRealPath().startsWith(state.realRoot)) {
-        "导出文件指向实例目录外：$path"
+        I18n.t("packsA2.packExport.fileOutsideInstance", path)
     }
     classifyCheckedEntry(state, path, top, checked)
 }
@@ -78,7 +79,7 @@ private suspend fun classifyCheckedEntry(
         !Files.isRegularFile(checked, NOFOLLOW_LINKS) -> return
         // 日志可能带登录凭据：即使已选择包含日志，命中凭据特征的单个文件也跳过。
         state.includeLogs && backupOnlyExportPath(path) && exportLogContainsSecret(checked) ->
-            state.warnings += "已跳过疑似包含登录凭据的日志：$path"
+            state.warnings += I18n.t("packsA2.packExport.credentialLogSkipped", path)
         else -> addExportFile(state, path, top, checked)
     }
 }
@@ -91,9 +92,11 @@ private suspend fun addExportFile(
     checked: Path,
 ) {
     require(state.names.add(path.lowercase(Locale.ROOT))) {
-        "文件名在 Windows 上冲突：$path"
+        I18n.t("packsA2.packExport.nameConflictOnWindows", path)
     }
-    require(state.files.size < MAX_EXPORT_FILE_COUNT) { "实例文件过多，请缩小导出范围" }
+    require(state.files.size < MAX_EXPORT_FILE_COUNT) {
+        I18n.t("packsA2.packExport.tooManyInstanceFiles")
+    }
     state.files += buildExportFile(path, top, hashExportFile(checked))
 }
 
@@ -137,7 +140,10 @@ internal suspend fun writePackEntries(
     }
     for ((name, bytes) in layout.documents) {
         context.checkCancelled()
-        context.progress(written.toFloat() / maxOf(1, total), "写入 $name（${written + 1}/$total）")
+        context.progress(
+            written.toFloat() / maxOf(1, total),
+            I18n.t("packsA2.packExport.progressWritingDocument", name, written + 1, total),
+        )
         zip.putNextEntry(ZipEntry(name))
         zip.write(bytes)
         zip.closeEntry()
@@ -154,7 +160,7 @@ internal suspend fun writePackEntries(
         context.checkCancelled()
         context.progress(
             written.toFloat() / maxOf(1, total),
-            "导出 ${file.path}（${written + 1}/$total）",
+            I18n.t("packsA2.packExport.progressExportingFile", file.path, written + 1, total),
         )
         writePayloadEntry(zip, archivePath, file, plan)
         written++
@@ -173,12 +179,12 @@ private suspend fun writePayloadEntry(
         Files.isRegularFile(source, NOFOLLOW_LINKS) &&
             source.toRealPath().startsWith(plan.realRoot),
     ) {
-        "文件已移动，请重新预览：${file.path}"
+        I18n.t("packsA2.packExport.fileMovedPreviewAgain", file.path)
     }
     zip.putNextEntry(ZipEntry(archivePath))
     val hashes = hashExportFile(source) { bytes, count -> zip.write(bytes, 0, count) }
     require(hashes == ExportHashes(file.size, file.sha1, file.sha512)) {
-        "文件已改变，请重新预览：${file.path}"
+        I18n.t("packsA2.packExport.fileChangedPreviewAgain", file.path)
     }
     zip.closeEntry()
 }

@@ -130,8 +130,7 @@ private class ByteAccumulator {
         end += chunk.size
     }
 
-    fun peekOrNull(index: Int): Int? =
-        if (index >= size) null else data[start + index].toInt() and BYTE_MASK
+    fun peekOrNull(index: Int): Int? = if (index >= size) null else data[start + index].toInt() and BYTE_MASK
 
     fun unsignedByteAt(index: Int): Int = data[start + index].toInt() and BYTE_MASK
 

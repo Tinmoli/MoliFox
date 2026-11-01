@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.net.DownloadSourceCatalog
 import dev.molifox.core.net.SourceHealth
 import kotlinx.coroutines.CancellationException
@@ -200,8 +201,12 @@ internal class NetworkTransport(
         if (!canRetryRequest(request.method, failure)) return null
         val route = proxyRoute(request)
         settings.logger(
-            "通过${route}连接 ${request.url.host} 失败，已改用直连重试：" +
+            I18n.t(
+                "networkA.transport.directRetry",
+                route,
+                request.url.host,
                 failure.javaClass.simpleName,
+            ),
             true,
         )
         return try {
@@ -209,7 +214,10 @@ internal class NetworkTransport(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (directFailure: IOException) {
-            settings.logger("直连重试也失败：${directFailure.javaClass.simpleName}", true)
+            settings.logger(
+                I18n.t("networkA.transport.directRetryFailed", directFailure.javaClass.simpleName),
+                true,
+            )
             null
         }
     }
@@ -276,14 +284,19 @@ internal class NetworkTransport(
         }
 
     private fun proxyRoute(request: Request): String {
-        val proxy = proxiedRoute(request) ?: return "直接连接"
-        val label = if (settings.proxyProvider() != null) "手动 ${proxy.type()} 代理" else "系统代理"
+        val proxy = proxiedRoute(request) ?: return I18n.t("networkA.transport.direct")
+        val label =
+            if (settings.proxyProvider() != null) {
+                I18n.t("networkA.transport.manualProxy", proxy.type())
+            } else {
+                I18n.t("networkA.transport.systemProxy")
+            }
         val address = proxy.address()
         val detail =
             if (address is java.net.InetSocketAddress) {
                 "${address.hostString}:${address.port}"
             } else {
-                "未解析地址"
+                I18n.t("networkA.transport.unresolvedAddress")
             }
         return "$label $detail"
     }
@@ -301,7 +314,7 @@ internal class NetworkTransport(
                         (allowInsecureHttp || uri.host in setOf("localhost", "127.0.0.1"))
                 ),
         ) {
-            "只允许 HTTPS 请求"
+            I18n.t("networkA.transport.httpsOnly")
         }
         return Request
             .Builder()
@@ -368,8 +381,14 @@ private fun connectionFailure(
 ): IOException {
     val reason = failureReason(failure)
     return IOException(
-        "连接 ${request.url.host} 时$reason（$route，尝试 $attempt 次）：" +
-            "${failure.javaClass.simpleName}；请检查网络或代理后重试",
+        I18n.t(
+            "networkA.transport.connectionFailed",
+            request.url.host,
+            reason,
+            route,
+            attempt,
+            failure.javaClass.simpleName,
+        ),
         failure,
     )
 }
@@ -378,8 +397,8 @@ private fun failureReason(failure: IOException): String {
     val causes = generateSequence<Throwable>(failure) { it.cause }.take(16).toList()
     return when {
         causes.any { it is CertificateException || it is SSLPeerUnverifiedException } ->
-            "证书校验失败"
-        failure is SSLHandshakeException -> "TLS 握手失败"
-        else -> "网络连接失败"
+            I18n.t("networkA.transport.certFailed")
+        failure is SSLHandshakeException -> I18n.t("networkA.transport.tlsHandshakeFailed")
+        else -> I18n.t("networkA.transport.networkFailed")
     }
 }

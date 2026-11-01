@@ -74,8 +74,7 @@ internal fun backupOnlyExportPath(path: String): Boolean =
 
 internal fun saveExportPath(path: String): Boolean = path.substringBefore('/').equals("saves", true)
 
-internal fun screenshotExportPath(path: String): Boolean =
-    path.substringBefore('/').equals("screenshots", true)
+internal fun screenshotExportPath(path: String): Boolean = path.substringBefore('/').equals("screenshots", true)
 
 internal fun preferenceExportPath(path: String): Boolean =
     '/' !in path &&

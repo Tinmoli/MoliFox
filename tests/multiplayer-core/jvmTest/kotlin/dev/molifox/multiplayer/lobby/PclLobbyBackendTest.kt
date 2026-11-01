@@ -1,0 +1,450 @@
+// 后端编排测试：初始化、世界发现、建房/加入、离开与会话异常回收。
+package dev.molifox.multiplayer.lobby
+
+import dev.molifox.multiplayer.common.ConnectionRoute
+import dev.molifox.multiplayer.common.CoreStatus
+import dev.molifox.multiplayer.common.LanWorld
+import dev.molifox.multiplayer.common.LobbyPhase
+import dev.molifox.multiplayer.common.LobbyRole
+import dev.molifox.multiplayer.common.MultiplayerSettings
+import dev.molifox.multiplayer.common.NatDiagnostics
+import dev.molifox.multiplayer.common.NatType
+import dev.molifox.multiplayer.data.MultiplayerSettingsRepository
+import dev.molifox.multiplayer.easytier.EasyTierCatalog
+import dev.molifox.multiplayer.easytier.EasyTierInstaller
+import dev.molifox.multiplayer.easytier.EasyTierTuning
+import dev.molifox.multiplayer.easytier.NatTester
+import dev.molifox.multiplayer.protocol.RoomCode
+import dev.molifox.multiplayer.protocol.RoomCodeRandom
+import dev.molifox.multiplayer.scaffolding.ScaffoldingPlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class PclLobbyBackendTest {
+    private val code = RoomCode.generate(RoomCodeRandom { ByteArray(BYTES) { 5 } })
+
+    @Test
+    fun initializeStartsDiscoveryAndInspectsRuntime() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                val state = harness.backend.state.value
+                assertEquals(true, state.runtime?.installed)
+                assertEquals(1, harness.discovery.created.size)
+                assertEquals(1, harness.discovery.latest.starts)
+            }
+        }
+
+    @Test
+    fun refreshWorldsPublishesDiscoveredWorlds() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.backend.refreshWorlds()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil { harness.backend.state.value.worlds == listOf(WORLD) }
+                assertEquals(LobbyPhase.Idle, harness.backend.state.value.phase)
+            }
+        }
+
+    @Test
+    fun hostOpensRoomAndStopsDiscovery() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil {
+                    harness.backend.state.value.worlds
+                        .isNotEmpty()
+                }
+                val result = harness.backend.host(WORLD.port)
+                assertTrue(result.isSuccess, "建房失败：${result.exceptionOrNull()}")
+                val state = harness.backend.state.value
+                assertEquals(LobbyPhase.RoomOpen, state.phase)
+                assertEquals(LobbyRole.Host, state.role)
+                assertTrue(
+                    state.roomCode?.matches(ROOM_CODE_PATTERN.toRegex()) == true,
+                    "邀请码：${state.roomCode}",
+                )
+                assertEquals(WORLD, harness.hostContext?.world)
+                assertEquals(emptyList(), harness.hostContext?.extraRelays)
+                assertEquals(1, harness.discovery.latest.closes)
+            }
+        }
+
+    @Test
+    fun hostWithoutDiscoveredWorldFails() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                val result = harness.backend.host(null)
+                assertTrue(result.isFailure)
+                val message =
+                    harness.backend.state.value.error
+                        .orEmpty()
+                assertTrue(message.contains("局域网世界"), message)
+            }
+        }
+
+    @Test
+    fun hostPassesAdvancedTogglesToEasyTier() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.backend
+                    .saveSettings(
+                        MultiplayerSettings(latencyFirst = true, disableSymHolePunching = true),
+                    ).getOrThrow()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil {
+                    harness.backend.state.value.worlds
+                        .isNotEmpty()
+                }
+                harness.backend.host(WORLD.port).getOrThrow()
+                assertEquals(
+                    EasyTierTuning(latencyFirst = true, disableSymHolePunching = true),
+                    harness.hostContext?.tuning,
+                )
+            }
+        }
+
+    @Test
+    fun joinConnectsGuestAndRejectsInvalidCode() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                val invalid = harness.backend.join("not-a-code")
+                assertTrue(invalid.isFailure)
+                val result = harness.backend.join(code.code)
+                assertTrue(result.isSuccess, "加入失败：${result.exceptionOrNull()}")
+                val state = harness.backend.state.value
+                assertEquals(LobbyPhase.Connected, state.phase)
+                assertEquals(LobbyRole.Guest, state.role)
+                assertEquals(GUEST_ADDRESS, state.localAddress)
+                assertEquals(emptyList(), harness.guestContext?.extraRelays)
+                assertEquals(code.networkName, harness.guestContext?.code?.networkName)
+            }
+        }
+
+    @Test
+    fun leaveClosesRoomAndRestartsDiscovery() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil {
+                    harness.backend.state.value.worlds
+                        .isNotEmpty()
+                }
+                harness.backend.host(WORLD.port).getOrThrow()
+                harness.backend.leave()
+                val state = harness.backend.state.value
+                assertEquals(LobbyPhase.Idle, state.phase)
+                assertEquals(null, state.roomCode)
+                assertEquals(1, harness.hostSessions.single().closes)
+                assertEquals(1, harness.nodes.single().stops)
+                assertTrue(harness.discovery.created.size >= 2)
+            }
+        }
+
+    @Test
+    fun hostSessionFailureReturnsToIdleWithReason() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                harness.discovery.latest.mutable.value = listOf(WORLD)
+                awaitUntil {
+                    harness.backend.state.value.worlds
+                        .isNotEmpty()
+                }
+                harness.backend.host(WORLD.port).getOrThrow()
+                harness.hostContext?.onClosed?.invoke("存档已退出，房间已关闭。")
+                awaitUntil {
+                    val state = harness.backend.state.value
+                    state.phase == LobbyPhase.Idle &&
+                        state.error == "存档已退出，房间已关闭。"
+                }
+                assertEquals(1, harness.hostSessions.single().closes)
+            }
+        }
+
+    @Test
+    fun runtimeDownloadContinuesAfterCallerCancelled() =
+        runBlocking {
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                onProgress(0.2f)
+                delay(300)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val caller = launch(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                awaitUntil { harness.backend.state.value.phase == LobbyPhase.DownloadingRuntime }
+                caller.cancelAndJoin()
+                assertEquals(LobbyPhase.DownloadingRuntime, harness.backend.state.value.phase)
+                awaitUntil {
+                    val state = harness.backend.state.value
+                    state.phase == LobbyPhase.Idle && state.runtime?.installed == true
+                }
+            }
+        }
+
+    @Test
+    fun cancelRuntimeInstallReturnsToIdleWithoutError() =
+        runBlocking {
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                onProgress(0.1f)
+                delay(10_000)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val caller = launch(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                awaitUntil { harness.backend.state.value.phase == LobbyPhase.DownloadingRuntime }
+                harness.backend.cancelRuntimeInstall()
+                awaitUntil {
+                    val state = harness.backend.state.value
+                    state.phase == LobbyPhase.Idle && state.error == null
+                }
+                caller.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun duplicatePrepareWhileRunningStartsOnlyOneInstall() =
+        runBlocking {
+            var calls = 0
+            val runner: suspend ((Float?) -> Unit) -> CoreStatus = { onProgress ->
+                calls++
+                onProgress(0.3f)
+                delay(200)
+                INSTALLED_STATUS
+            }
+            withHarness(installRunner = runner) { harness ->
+                harness.backend.initialize().getOrThrow()
+                val first = async(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                val second = async(Dispatchers.Default) { harness.backend.prepareRuntime() }
+                first.await().getOrThrow()
+                second.await().getOrThrow()
+                assertEquals(1, calls)
+            }
+        }
+
+    @Test
+    fun testNatReturnsInjectedDiagnostics() =
+        runBlocking {
+            withHarness { harness ->
+                val expected =
+                    NatDiagnostics(
+                        udpNatType = NatType.Symmetric,
+                        tcpNatType = NatType.PortRestricted,
+                        supportsIpv6 = false,
+                        publicIps = listOf("1.2.3.4"),
+                    )
+                harness.natTester.result = Result.success(expected)
+                assertEquals(expected, harness.backend.testNat().getOrThrow())
+                val failure = IllegalStateException("stun timeout")
+                harness.natTester.result = Result.failure(failure)
+                assertEquals(failure, harness.backend.testNat().exceptionOrNull())
+            }
+        }
+
+    @Test
+    fun saveSettingsValidatesRelayAndPersists() =
+        runBlocking {
+            withHarness { harness ->
+                harness.backend.initialize().getOrThrow()
+                val invalid =
+                    harness.backend.saveSettings(
+                        MultiplayerSettings(relayServer = "public.easytier.top:11010"),
+                    )
+                assertTrue(invalid.isFailure)
+                val valid =
+                    harness.backend.saveSettings(
+                        MultiplayerSettings(
+                            nickname = " Bob ",
+                            relayServer = "tcp://relay.example:11010",
+                        ),
+                    )
+                assertTrue(valid.isSuccess)
+                assertEquals("Bob", harness.repository.saved?.nickname)
+                assertEquals("tcp://relay.example:11010", harness.repository.saved?.relayServer)
+            }
+        }
+
+    private suspend fun withHarness(
+        installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
+        block: suspend (Harness) -> Unit,
+    ) {
+        val parent =
+            System.getProperty("molifox.test.dir")?.let { Path.of(it) }
+                ?: Path.of("..", "tests", ".tmp")
+        Files.createDirectories(parent)
+        val directory = Files.createTempDirectory(parent, "lobby-backend-test")
+        try {
+            val harness = Harness(directory, installRunner)
+            block(harness)
+            harness.backend.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    private class Harness(
+        directory: Path,
+        installRunner: (suspend ((Float?) -> Unit) -> CoreStatus)? = null,
+    ) {
+        val repository = FakeSettingsRepository()
+        val discovery = FakeDiscoveryFactory()
+        val natTester = FakeNatTester()
+        val nodes = mutableListOf<FakeEasyTierNode>()
+        val hostSessions = mutableListOf<FakeHostSession>()
+        val guestSessions = mutableListOf<FakeGuestSession>()
+        var hostContext: LobbyHostContext? = null
+        var guestContext: LobbyGuestContext? = null
+
+        private val installer = EasyTierInstaller(directory.resolve("runtimes"))
+        private val installed = FakeRuntimeStatus.install(installer)
+
+        val backend =
+            PclLobbyBackend(
+                settingsRepository = repository,
+                installer = installer,
+                machineIdStore = MachineIdStore(directory.resolve("config/machine-id")),
+                logger = { _, _ -> },
+                playerName = { "Account" },
+                runtimeFactory = { _, _ ->
+                    FakeEasyTierNode().also { nodes += it }
+                },
+                discoveryFactory = discovery.factory,
+                hostSessionFactory =
+                    LobbyHostSessionFactory { context ->
+                        hostContext = context
+                        FakeHostSession().also { hostSessions += it }
+                    },
+                guestSessionFactory =
+                    LobbyGuestSessionFactory { context ->
+                        guestContext = context
+                        FakeGuestSession().also { guestSessions += it }
+                    },
+                probe = { true },
+                natTester = natTester,
+                installRunner = installRunner,
+                scanCheckIntervalMillis = SCAN_INTERVAL_MILLIS,
+            )
+
+        init {
+            check(installed) { "无法为测试准备 EasyTier 安装目录" }
+        }
+    }
+
+    private class FakeNatTester : NatTester {
+        var result: Result<NatDiagnostics> = Result.failure(IllegalStateException("unused"))
+
+        override suspend fun test(cliExecutable: Path): Result<NatDiagnostics> = result
+    }
+
+    private class FakeSettingsRepository : MultiplayerSettingsRepository {
+        var saved: MultiplayerSettings? = null
+
+        override suspend fun load(): MultiplayerSettings = MultiplayerSettings()
+
+        override suspend fun save(settings: MultiplayerSettings) {
+            saved = settings
+        }
+    }
+
+    private class FakeDiscovery : LobbyWorldDiscovery {
+        val mutable = MutableStateFlow<List<LanWorld>>(emptyList())
+        var starts = 0
+        var closes = 0
+
+        override val worlds: StateFlow<List<LanWorld>> = mutable
+
+        override fun start(): Result<Unit> {
+            starts++
+            return Result.success(Unit)
+        }
+
+        override fun close() {
+            closes++
+        }
+    }
+
+    private class FakeDiscoveryFactory {
+        val created = mutableListOf<FakeDiscovery>()
+        val latest: FakeDiscovery get() = created.last()
+
+        val factory =
+            LanDiscoveryFactory { _ ->
+                FakeDiscovery().also { created += it }
+            }
+    }
+
+    private class FakeHostSession : LobbyHostSessionApi {
+        private val mutablePlayers = MutableStateFlow<List<ScaffoldingPlayer>>(emptyList())
+        var closes = 0
+
+        override val players: StateFlow<List<ScaffoldingPlayer>> = mutablePlayers
+        override val scaffoldingPort: Int = SCAFFOLDING_PORT
+
+        override suspend fun start(): Result<Unit> {
+            mutablePlayers.value = listOf(ScaffoldingPlayer("host-machine", "Alice"))
+            return Result.success(Unit)
+        }
+
+        override fun close() {
+            closes++
+        }
+    }
+
+    private class FakeGuestSession : LobbyGuestSessionApi {
+        private val mutablePlayers = MutableStateFlow<List<ScaffoldingPlayer>>(emptyList())
+        var closes = 0
+
+        override val players: StateFlow<List<ScaffoldingPlayer>> = mutablePlayers
+        override val localAddress: String = GUEST_ADDRESS
+        override val hostName: String = "Alice"
+        override val connectionRoute: ConnectionRoute = ConnectionRoute.Relay
+
+        override suspend fun start(): Result<Unit> = Result.success(Unit)
+
+        override fun close() {
+            closes++
+        }
+    }
+
+    private companion object {
+        const val BYTES = 16
+        const val SCAFFOLDING_PORT = 25_565
+        const val SCAN_INTERVAL_MILLIS = 50L
+        const val GUEST_ADDRESS = "127.0.0.1:52341"
+        val INSTALLED_STATUS = CoreStatus(true, "2.6.4", "test", 0, "test-dir")
+        const val ROOM_CODE_PATTERN = "U/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}"
+        val WORLD = LanWorld(name = "测试世界", version = "1.21", port = 25_565)
+    }
+}
+
+/** 在当前平台安装目录写入占位文件，让 [EasyTierInstaller.inspect] 认为运行时已就绪。 */
+private object FakeRuntimeStatus {
+    fun install(installer: EasyTierInstaller): Boolean {
+        val packageInfo = EasyTierCatalog.current() ?: return false
+        val directory = installer.directory(packageInfo)
+        Files.createDirectories(directory)
+        packageInfo.requiredFiles.forEach { name ->
+            Files.writeString(directory.resolve(name), "stub")
+        }
+        return installer.inspect(packageInfo).installed
+    }
+}

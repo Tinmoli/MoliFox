@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -25,11 +26,16 @@ private const val COMMAND_POLL_INTERVAL_MS = 100L
 private const val MAX_COMMAND_OUTPUT_LINES = 500
 
 internal enum class LaunchCommandPhase(
-    val title: String,
+    private val titleKey: String,
     val filename: String,
 ) {
-    Before("启动前", "before-command.log"),
-    After("退出后", "after-command.log"),
+    Before("core.launchCommandPhase.before", "before-command.log"),
+    After("core.launchCommandPhase.after", "after-command.log"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 /** User-entered argv only. No shell or credential substitution is inserted by the launcher. */
@@ -50,9 +56,9 @@ internal class LaunchCommandRunner(
     ) = withContext(Dispatchers.IO) {
         if (command.isBlank()) return@withContext
         val arguments = splitArguments(command)
-        require(arguments.isNotEmpty()) { "${phase.title}命令不能为空" }
+        require(arguments.isNotEmpty()) { I18n.t("diagA2.launchCommandRunner.emptyCommand", phase.title) }
         val output = session.directory.resolve(phase.filename)
-        store.log("开始执行${phase.title}命令")
+        store.log(I18n.t("diagA2.launchCommandRunner.startLog", phase.title))
         val process =
             try {
                 startProcess(arguments, output, plan, instance, exitCode)
@@ -89,15 +95,19 @@ internal class LaunchCommandRunner(
         while (!process.waitFor(COMMAND_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS)) {
             currentCoroutineContext().ensureActive()
             if (System.nanoTime() > deadline) {
-                throw IOException("${phase.title}命令超过 $timeoutSeconds 秒，已终止")
+                throw IOException(
+                    I18n.t("diagA2.launchCommandRunner.timeout", phase.title, timeoutSeconds),
+                )
             }
             if (output.exists() && output.fileSize() > logLimit) {
-                throw IOException("${phase.title}命令日志超过 8 MB，已终止")
+                throw IOException(I18n.t("diagA2.launchCommandRunner.logTooLarge", phase.title))
             }
         }
         currentCoroutineContext().ensureActive()
         val code = process.exitValue()
-        check(code == 0) { "${phase.title}命令退出码为 $code，请查看命令日志" }
+        check(code == 0) {
+            I18n.t("diagA2.launchCommandRunner.nonZeroExit", phase.title, code)
+        }
     }
 
     private fun startProcess(
@@ -128,7 +138,7 @@ internal class LaunchCommandRunner(
         error: Exception,
     ): Nothing {
         session.commandResult(phase.name, "failed to start")
-        throw IOException("${phase.title}命令无法启动，请检查可执行文件路径", error)
+        throw IOException(I18n.t("diagA2.launchCommandRunner.startFailed", phase.title), error)
     }
 
     private fun cleanCommandLog(
@@ -151,7 +161,12 @@ internal class LaunchCommandRunner(
                     .take(MAX_COMMAND_OUTPUT_LINES)
                     .forEach { store.log("[${phase.title}] $it", level = LogLevel.Trace) }
             }
-        }.onFailure { store.log("${phase.title}命令日志暂时无法整理：${it.message}", true) }
+        }.onFailure {
+            store.log(
+                I18n.t("diagA2.launchCommandRunner.logCleanFailed", phase.title, it.message),
+                true,
+            )
+        }
     }
 
     fun stop() {

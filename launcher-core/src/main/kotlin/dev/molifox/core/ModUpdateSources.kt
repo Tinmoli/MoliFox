@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlin.io.path.name
 
 private const val FINGERPRINT_QUERY_BATCH_SIZE = 100
@@ -17,8 +18,7 @@ internal fun defaultModUpdateSources(
     network: NetworkClient,
     api: String,
     curseForge: CurseForgeBackend,
-): List<ModUpdateSource> =
-    listOf(ModrinthModUpdateSource(network, api), CurseForgeModUpdateSource(curseForge))
+): List<ModUpdateSource> = listOf(ModrinthModUpdateSource(network, api), CurseForgeModUpdateSource(curseForge))
 
 internal fun defaultModDownloader(
     network: NetworkClient,
@@ -38,7 +38,7 @@ internal fun defaultModDownloader(
         network.download(artifact) { bytes, total ->
             context?.progress(
                 if (total > 0) bytes.toFloat() / total else 0f,
-                "下载 ${version.filename}",
+                I18n.t("packsB2.packUpdate.downloading", version.filename),
             )
         }
     }

@@ -1,6 +1,8 @@
 // 联机公共模型：中性的房间阶段、世界与运行时状态，不引用界面、磁盘或进程类型。
 package dev.molifox.multiplayer.common
 
+import dev.molifox.core.i18n.I18n
+
 /**
  * 联机页阶段；房主与房客共用，名称不再绑定任何具体联机核心。
  *
@@ -113,14 +115,16 @@ data class MultiplayerSettings(
 /** 昵称与自定义中继只影响展示与网络配置，保存前统一规范化并校验。 */
 fun MultiplayerSettings.normalized(): MultiplayerSettings {
     val trimmedNickname = nickname.trim()
-    require(trimmedNickname.length <= MAX_NICKNAME_LENGTH) { "昵称最多 $MAX_NICKNAME_LENGTH 个字符" }
-    require(trimmedNickname.none { it.isISOControl() }) { "昵称不能包含控制字符" }
+    require(trimmedNickname.length <= MAX_NICKNAME_LENGTH) {
+        I18n.t("multiplayer.multiplayerModels.1", MAX_NICKNAME_LENGTH)
+    }
+    require(trimmedNickname.none { it.isISOControl() }) { I18n.t("multiplayer.multiplayerModels.2") }
     val relays = relayServer.trim()
-    require(relays.length <= MAX_RELAY_LENGTH) { "自定义中继地址过长" }
-    require(relays.none { it.isISOControl() }) { "自定义中继地址不能包含控制字符" }
+    require(relays.length <= MAX_RELAY_LENGTH) { I18n.t("multiplayer.multiplayerModels.3") }
+    require(relays.none { it.isISOControl() }) { I18n.t("multiplayer.multiplayerModels.4") }
     parseRelays(relays).forEach { relay ->
         require(RELAY_PATTERN.matches(relay)) {
-            "自定义中继地址必须带协议前缀，例如 tcp://public.easytier.top:11010"
+            I18n.t("multiplayer.multiplayerModels.5")
         }
     }
     return copy(nickname = trimmedNickname, relayServer = relays)

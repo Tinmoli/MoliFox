@@ -65,6 +65,7 @@ import dev.molifox.core.GameLaunchTarget
 import dev.molifox.core.JobStatus
 import dev.molifox.core.LauncherState
 import dev.molifox.core.LauncherStore
+import dev.molifox.core.LauncherTaskKind
 import dev.molifox.core.PlatformServices
 import dev.molifox.core.VersionResolver
 import java.nio.file.Files
@@ -103,7 +104,9 @@ fun ColumnScope.HomePage(
         }
     // 启动进度只读真实的排队/运行任务，不凭空造一份「launching」状态。
     val launchJob =
-        state.jobs.firstOrNull { it.status == JobStatus.Running && it.title.startsWith("启动 ") }
+        state.jobs.firstOrNull {
+            it.status == JobStatus.Running && it.kind == LauncherTaskKind.LaunchGame
+        }
     val running = selected != null && state.runningGames.any { it.instanceId == selected.id }
     val launchCard = remember { LaunchCardState() }
     val cardJob = HomeLaunchCardTracking(state, launchCard)
@@ -125,10 +128,12 @@ fun ColumnScope.HomePage(
                     verticalArrangement = Arrangement.spacedBy(Metrics.cardGap),
                 ) {
                     // 账户摘要卡提供头像、名字和账户列表入口。
-                    HomeCard("游戏账户") { HomeAccountSummary(state, actions, onOpenAccounts) }
+                    HomeCard(LocalStrings.current.t("pages.home.accounts.title")) {
+                        HomeAccountSummary(state, actions, onOpenAccounts)
+                    }
                     // 「当前游戏」撑到左栏底部：信息在上、中间弹性留白、启动与版本入口贴底。
                     HomeCard(
-                        title = "当前游戏",
+                        title = LocalStrings.current.t("pages.home.current.title"),
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         fillContent = true,
                     ) {
@@ -213,9 +218,9 @@ private class HomeLaunchHandlers(
         try {
             launchCard.attach(actions.controller.launch(instance.id, target))
         } catch (failure: IllegalArgumentException) {
-            launchCard.fail(failure.message ?: "启动失败，请查看日志")
+            launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
         } catch (failure: IllegalStateException) {
-            launchCard.fail(failure.message ?: "启动失败，请查看日志")
+            launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
         }
     }
 
@@ -306,12 +311,15 @@ internal fun InstanceManageButton(
             .background(fill, shape)
             .border(1.dp, borderColor, shape)
             .hoverable(interaction)
-            .clickable(role = Role.Button, onClickLabel = "打开实例列表", onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .clickable(
+                role = Role.Button,
+                onClickLabel = LocalStrings.current.t("pages.home.instances.openLabel"),
+                onClick = onClick,
+            ).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "实例管理",
+            LocalStrings.current.t("pages.home.instances.title"),
             Modifier.fillMaxWidth(),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurface,
@@ -361,6 +369,7 @@ internal fun LaunchActionButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Button(
         onClick,
         Modifier.fillMaxWidth().height(44.dp).pressScale(),
@@ -379,9 +388,9 @@ internal fun LaunchActionButton(
         }
         Text(
             when {
-                progress != null -> "正在启动 " + (progress * 100).toInt() + "%"
-                running -> "再次启动"
-                else -> "启动游戏"
+                progress != null -> strings.t("pages.launch.button.starting", (progress * 100).toInt())
+                running -> strings.t("pages.launch.button.again")
+                else -> strings.t("pages.launch.button.start")
             },
             fontSize = 15.sp,
             lineHeight = 19.sp,

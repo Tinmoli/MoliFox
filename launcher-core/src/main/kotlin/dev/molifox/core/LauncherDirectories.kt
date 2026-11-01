@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -22,6 +23,8 @@ class LauncherDirectories(
     val root: Path = root.toAbsolutePath().normalize()
     val config = this.root.resolve("config")
     val configuration = config.resolve("launcher.json")
+
+    /** 旧版凭据目录：只读，用于把旧凭据迁移到系统凭据位置；不再写入。 */
     val credentials = this.root.resolve("credentials")
     val appearance = this.root.resolve("appearance")
     val backgrounds = appearance.resolve("backgrounds")
@@ -50,7 +53,6 @@ class LauncherDirectories(
         createStorageDirectory(root)
         listOf(
             config,
-            credentials,
             backgrounds,
             fonts,
             music,
@@ -91,6 +93,6 @@ internal fun createStorageDirectory(path: Path) {
     val attributes =
         Files.readAttributes(normalized, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
     require(attributes.isDirectory && !attributes.isSymbolicLink && !attributes.isOther) {
-        "启动器数据目录不是普通文件夹：$normalized"
+        I18n.t("miscA1.directories.storageNotDirectory", normalized)
     }
 }

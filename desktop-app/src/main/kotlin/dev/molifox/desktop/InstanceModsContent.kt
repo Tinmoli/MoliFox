@@ -46,6 +46,7 @@ internal fun ModsStatusBar(
     onOpenJarInJar: () -> Unit,
     onOpenUpdates: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -82,19 +83,22 @@ internal fun ModsStatusBar(
             { onCheckUpdates() },
             enabled = !instanceBusy && !checking,
         ) {
-            Text(if (checking) "正在检查…" else "检查更新", fontSize = 12.sp)
+            Text(
+                if (checking) strings.t("deskD.mods.checkingShort") else strings.t("deskD.mods.checkUpdates"),
+                fontSize = 12.sp,
+            )
         }
         TextButton(
             { onOpenJarInJar() },
             enabled = !instanceBusy,
         ) {
-            Text("嵌入依赖", fontSize = 12.sp)
+            Text(strings.t("deskD.mods.jarInJar"), fontSize = 12.sp)
         }
         TextButton(
             { onOpenUpdates() },
             enabled = !instanceBusy,
         ) {
-            Text("版本管理", fontSize = 12.sp)
+            Text(strings.t("deskD.mods.versionManagement"), fontSize = 12.sp)
         }
     }
 }
@@ -107,6 +111,7 @@ internal fun ModsErrorRow(
     instanceBusy: Boolean,
     onRetry: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     message?.let { failure ->
         Row(
             Modifier.fillMaxWidth(),
@@ -125,7 +130,7 @@ internal fun ModsErrorRow(
                 { onRetry() },
                 enabled = !instanceBusy && !checking,
             ) {
-                Text("重新检查", fontSize = 12.sp)
+                Text(strings.t("deskD.mods.recheck"), fontSize = 12.sp)
             }
         }
     }
@@ -190,22 +195,23 @@ internal fun ModsListBody(
     onDelete: (ModFile) -> Unit,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     when {
         loading && mods.isEmpty() -> ListSkeleton()
         error != null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("无法读取模组列表", error.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton(onRetry) { Text("重试") }
+                EmptyState(strings.t("deskD.mods.listLoadFailed"), error.orEmpty(), Icons.Outlined.CloudOff) {
+                    TextButton(onRetry) { Text(strings.t("deskD.mods.retry")) }
                 }
             }
         mods.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
-                    "还没有安装模组",
-                    "从资源库下载，或导入本地 JAR 文件。",
+                    strings.t("deskD.mods.emptyTitle"),
+                    strings.t("deskD.mods.emptyHint"),
                     Icons.Outlined.Extension,
                 ) {
-                    PrimaryButton("下载模组", Icons.Outlined.Add, onClick = onDiscover)
+                    PrimaryButton(strings.t("deskD.mods.download"), Icons.Outlined.Add, onClick = onDiscover)
                 }
             }
         filtered.isEmpty() -> ModsNoMatchState(chip, query, onClearFilter)
@@ -241,14 +247,23 @@ private fun ModsNoMatchState(
     query: String,
     onClearFilter: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val chipFiltered = chip != ContentChip.All && query.isBlank()
     Panel(Modifier.fillMaxWidth()) {
         EmptyState(
-            if (chipFiltered) "没有「${chip.title}」的模组" else "没有匹配的模组",
-            if (chipFiltered) "切换到「全部」查看所有模组。" else "换个关键词试试",
+            if (chipFiltered) {
+                strings.t("deskD.mods.noChipMatch", chip.title)
+            } else {
+                strings.t("deskD.mods.noQueryMatch")
+            },
+            if (chipFiltered) {
+                strings.t("deskD.mods.switchToAll")
+            } else {
+                strings.t("deskD.mods.tryOtherKeyword")
+            },
             Icons.Outlined.SearchOff,
         ) {
-            TextButton(onClearFilter) { Text("清除筛选") }
+            TextButton(onClearFilter) { Text(strings.t("deskD.mods.clearFilter")) }
         }
     }
 }
@@ -311,9 +326,10 @@ internal fun ModsCountFooter(
     loading: Boolean,
     mods: List<ModFile>,
 ) {
+    val strings = LocalStrings.current
     if (!loading && mods.isNotEmpty()) {
         Text(
-            "共 " + mods.size + " 个文件 · 已启用 " + mods.count { it.enabled },
+            strings.t("deskD.mods.countFooter", mods.size, mods.count { it.enabled }),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

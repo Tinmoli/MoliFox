@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
@@ -50,7 +51,7 @@ internal abstract class ContentPackUpgradeActions(
     ): PackUpgradePlan =
         withPackSnapshot(archive) { snapshot ->
             val instance = store.instance(instanceId)
-            require(instance.packFile.isNotBlank()) { "该实例不是整合包实例，无法升级" }
+            require(instance.packFile.isNotBlank()) { I18n.t("core.contentPackUpgradeActions.1") }
             val root = store.instancePath(instanceId)
             ZipFile(snapshot.toFile()).use { zip ->
                 preparePackUpgrade(instance, root, snapshot, zip, policy).plan
@@ -68,13 +69,13 @@ internal abstract class ContentPackUpgradeActions(
         withPackSnapshot(archive) { snapshot ->
             verifyUpgradeArchive(snapshot, expectedArchiveSha256)
             val instance = store.instance(instanceId)
-            require(instance.installed) { "请先完成游戏实例安装" }
-            require(instance.packFile.isNotBlank()) { "该实例不是整合包实例，无法升级" }
+            require(instance.installed) { I18n.t("packsB2.worldPack.instanceNotInstalled") }
+            require(instance.packFile.isNotBlank()) { I18n.t("core.contentPackUpgradeActions.1") }
             val root = store.instancePath(instanceId)
             ZipFile(snapshot.toFile()).use { zip ->
                 val prepared = preparePackUpgrade(instance, root, snapshot, zip, policy)
                 require(!prepared.plan.requiresComponentChange || allowComponentChange) {
-                    "整合包更改了游戏版本或加载器，需先切换组件再升级"
+                    I18n.t("core.contentPackUpgradeActions.2")
                 }
                 val savedPack = upgradeArchivePath(instance.id, prepared.manifest.index != null)
                 runPreparedUpgrade(instance, prepared, root, zip, snapshot, savedPack, context)
@@ -96,7 +97,7 @@ internal abstract class ContentPackUpgradeActions(
                 store.platform.osName,
             )
         installer.validate(manifest.request)
-        require(manifest.curseForge == null) { "CurseForge 整合包暂不支持原地升级，请重新导入" }
+        require(manifest.curseForge == null) { I18n.t("core.contentPackUpgradeActions.3") }
         val selection =
             instance.packOptionalFiles?.let { chosen ->
                 manifest.optionalFiles.filter { it in chosen }.toSet()
@@ -158,7 +159,7 @@ internal abstract class ContentPackUpgradeActions(
             expectedArchiveSha256.isNotBlank() &&
                 digest(snapshot, "SHA-256").equals(expectedArchiveSha256, true),
         ) {
-            "升级计划已过期，请重新预览"
+            I18n.t("core.contentPackUpgradeActions.4")
         }
     }
 
@@ -219,7 +220,7 @@ internal abstract class ContentPackUpgradeActions(
                 },
                 context = context,
             )
-            applyPackIconSafely(instance.id, zip, prepared.manifest, "升级包图标未采用，保留原有图标")
+            applyPackIconSafely(instance.id, zip, prepared.manifest, I18n.t("core.contentPackUpgradeActions.5"))
         } finally {
             transaction.cleanup()
         }

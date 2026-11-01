@@ -23,6 +23,6 @@ internal fun urlHost(url: String): String {
             .substringBefore('/')
             .substringBefore('?')
             .substringBefore('#')
-            .ifBlank { "链接" }
+            .ifBlank { tr("pages.markdown.link") }
     return host.take(MAX_URL_HOST_CHARS)
 }

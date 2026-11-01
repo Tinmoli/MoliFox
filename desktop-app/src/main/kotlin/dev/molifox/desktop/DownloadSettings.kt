@@ -19,6 +19,7 @@ import dev.molifox.core.LauncherSettings
 import dev.molifox.core.effectiveDownloadSource
 import dev.molifox.core.effectiveProxyMode
 import dev.molifox.core.effectiveVersionListSource
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -33,32 +34,41 @@ internal fun downloadSettingCards(
     val cards = mutableListOf<SettingCard>()
     cards.add(
         SettingCard(
-            "下载设置",
-            "自动模式在中国网络优先镜像；分段固定关闭、失败换源重试 5 次。",
+            I18n.t("settings.download.section.title"),
+            I18n.t("settings.download.section.detail"),
             listOf(
-                settingField("版本列表源", "只影响版本清单（manifest）的获取地址。") {
+                settingField(
+                    I18n.t("settings.download.versionList.title"),
+                    I18n.t("settings.download.versionList.detail"),
+                ) {
                     SimpleDropdown(
                         settings.effectiveVersionListSource,
                         listOf(
-                            "auto" to "自动",
-                            "official" to "官方",
-                            "bmclapi" to "国内镜像（BMCLAPI）",
+                            "auto" to I18n.t("settings.download.source.auto"),
+                            "official" to I18n.t("settings.download.source.official"),
+                            "bmclapi" to I18n.t("settings.download.source.bmclapi"),
                         ),
                         { value -> writer.commit { it.copy(versionListSource = value) } },
                     )
                 },
-                settingField("文件下载源", "影响本体、依赖库、资源文件与 Java。") {
+                settingField(
+                    I18n.t("settings.download.fileSource.title"),
+                    I18n.t("settings.download.fileSource.detail"),
+                ) {
                     SimpleDropdown(
                         settings.effectiveDownloadSource,
                         listOf(
-                            "auto" to "自动",
-                            "official" to "官方",
-                            "bmclapi" to "国内镜像（BMCLAPI）",
+                            "auto" to I18n.t("settings.download.source.auto"),
+                            "official" to I18n.t("settings.download.source.official"),
+                            "bmclapi" to I18n.t("settings.download.source.bmclapi"),
                         ),
                         { value -> writer.commit { it.copy(downloadSource = value) } },
                     )
                 },
-                settingRow("下载线程数", "同时下载的文件数，1–128；下一个任务生效。") {
+                settingRow(
+                    I18n.t("settings.download.threads.title"),
+                    I18n.t("settings.download.threads.detail"),
+                ) {
                     LiveNumberField(
                         settings.downloadThreads,
                         "",
@@ -69,14 +79,34 @@ internal fun downloadSettingCards(
                         applySetting(actions) { it.copy(downloadThreads = value) }
                     }
                 },
-                settingField("附加内容下载源", "选择 Modrinth 或 CurseForge。") {
+                settingRow(
+                    I18n.t("settings.download.segments.title"),
+                    I18n.t("settings.download.segments.detail"),
+                ) {
+                    LiveNumberField(
+                        settings.downloadSegments,
+                        "",
+                        1..16,
+                        Modifier.width(120.dp),
+                        placeholder = "4",
+                    ) { value ->
+                        applySetting(actions) { it.copy(downloadSegments = value) }
+                    }
+                },
+                settingField(
+                    I18n.t("settings.download.contentSource.title"),
+                    I18n.t("settings.download.contentSource.detail"),
+                ) {
                     SimpleDropdown(
                         settings.contentDownloadSource,
                         listOf("modrinth" to "Modrinth", "curseforge" to "CurseForge"),
                         { value -> writer.commit { it.copy(contentDownloadSource = value) } },
                     )
                 },
-                settingField("CurseForge 服务", "公共镜像或自建代理地址；留空使用默认服务。") {
+                settingField(
+                    I18n.t("settings.download.curseForge.title"),
+                    I18n.t("settings.download.curseForge.detail"),
+                ) {
                     LiveTextField(
                         settings.curseForgeBaseUrl,
                         { value ->
@@ -85,38 +115,48 @@ internal fun downloadSettingCards(
                         placeholder = DEFAULT_CURSE_FORGE_BASE_URL,
                     )
                 },
-                settingRow("网络超时", "新请求的读取超时；代理和分段设置无需重启。") {
+                settingRow(
+                    I18n.t("settings.download.timeout.title"),
+                    I18n.t("settings.download.timeout.detail"),
+                ) {
                     SimpleDropdown(
                         settings.networkTimeoutSeconds.toString(),
-                        listOf(15, 30, 45, 60, 120, 180).map { it.toString() to "$it 秒" },
+                        listOf(15, 30, 45, 60, 120, 180).map {
+                            it.toString() to I18n.t("settings.download.timeout.seconds", it)
+                        },
                         { value ->
                             writer.commit { it.copy(networkTimeoutSeconds = value.toInt()) }
                         },
                         Modifier.width(132.dp),
                     )
                 },
-                settingNote("加载器资源使用各自官方服务。可同时添加下载；取消任务会清理本次下载的临时文件。"),
+                settingNote(I18n.t("settings.download.note")),
             ),
         ),
     )
     cards.add(
         SettingCard(
-            "缓存文件夹",
-            "版本列表与安装包的缓存位置，留空使用 MoliFox/cache。",
+            I18n.t("settings.download.cache.title"),
+            I18n.t("settings.download.cache.detail"),
             listOf(
-                settingField("缓存文件夹", "绝对路径；目录不存在时会自动创建。") {
+                settingField(
+                    I18n.t("settings.download.cache.path.title"),
+                    I18n.t("settings.download.cache.path.detail"),
+                ) {
                     LiveTextField(
                         settings.downloadCachePath,
                         { value -> applySetting(actions) { it.copy(downloadCachePath = value) } },
-                        placeholder = "留空使用默认缓存目录",
+                        placeholder = I18n.t("settings.download.cache.placeholder"),
                     ) {
                         SmallIconButton(
                             Icons.Outlined.FolderOpen,
-                            "选择缓存文件夹",
+                            I18n.t("settings.download.cache.pick"),
                             {
                                 actions.run {
                                     val chosen =
-                                        actions.choose("选择下载缓存文件夹", directory = true).firstOrNull()
+                                        actions
+                                            .choose(I18n.t("settings.download.cache.choose"), directory = true)
+                                            .firstOrNull()
                                     if (chosen != null) {
                                         withContext(Dispatchers.Swing) {
                                             applySetting(actions) {
@@ -134,16 +174,16 @@ internal fun downloadSettingCards(
     )
     cards.add(
         SettingCard(
-            "代理",
-            "改动立即作用于启动器下载、资源搜索和登录。",
+            I18n.t("settings.download.proxy.title"),
+            I18n.t("settings.download.proxy.detail"),
             listOf(
-                settingRow("连接方式") {
+                settingRow(I18n.t("settings.download.proxy.mode.title")) {
                     SimpleDropdown(
                         settings.effectiveProxyMode(),
                         listOf(
-                            "system" to "跟随系统",
-                            "direct" to "直接连接",
-                            "manual" to "手动代理",
+                            "system" to I18n.t("settings.download.proxy.mode.system"),
+                            "direct" to I18n.t("settings.download.proxy.mode.direct"),
+                            "manual" to I18n.t("settings.download.proxy.mode.manual"),
                         ),
                         { value ->
                             writer.commit {
@@ -165,7 +205,10 @@ internal fun downloadSettingCards(
                         Modifier.width(150.dp),
                     )
                 },
-                settingField("代理类型", "仅手动代理时可用。") {
+                settingField(
+                    I18n.t("settings.download.proxy.type.title"),
+                    I18n.t("settings.download.proxy.type.detail"),
+                ) {
                     SimpleDropdown(
                         settings.proxyType,
                         listOf("http" to "HTTP", "socks" to "SOCKS"),
@@ -173,7 +216,10 @@ internal fun downloadSettingCards(
                         enabled = settings.effectiveProxyMode() == "manual",
                     )
                 },
-                settingField("代理地址", "主机与端口；仅手动代理时生效。") {
+                settingField(
+                    I18n.t("settings.download.proxy.address.title"),
+                    I18n.t("settings.download.proxy.address.detail"),
+                ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         LiveTextField(
                             settings.proxyHost,
@@ -187,7 +233,7 @@ internal fun downloadSettingCards(
                             "",
                             0..65535,
                             Modifier.width(120.dp),
-                            placeholder = "端口",
+                            placeholder = I18n.t("settings.download.proxy.port"),
                             enabled = settings.effectiveProxyMode() == "manual",
                         ) { value ->
                             applySetting(actions) { it.copy(proxyPort = value) }

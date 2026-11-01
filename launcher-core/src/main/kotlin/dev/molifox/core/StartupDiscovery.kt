@@ -60,8 +60,7 @@ object StartupGameRoots {
                 Files.isDirectory(path.resolve("assets"))
         }.getOrDefault(false)
 
-    private fun isGameRootCandidate(path: Path): Boolean =
-        isMinecraftDirectory(path) || isFullGameRoot(path)
+    private fun isGameRootCandidate(path: Path): Boolean = isMinecraftDirectory(path) || isFullGameRoot(path)
 
     private fun realDirectory(path: Path): Path? =
         runCatching {

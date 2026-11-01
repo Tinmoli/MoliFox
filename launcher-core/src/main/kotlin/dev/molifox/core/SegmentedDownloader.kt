@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -43,7 +44,7 @@ import kotlin.io.path.writeText
 private const val MAX_SEGMENT_MARKER_BYTES = 2048
 private const val HTTP_PARTIAL_CONTENT = 206
 
-private class RangeUnsupported : IOException("下载服务器不支持有效的分段响应")
+private class RangeUnsupported : IOException(I18n.t("networkA.segments.rangeUnsupported"))
 
 internal class ResponseCancellation(
     val cancel: () -> Unit,
@@ -190,7 +191,7 @@ internal class SegmentedDownloader(
         count: Int,
         progress: (Long, Long) -> Unit,
     ) {
-        require(!partial.isSymbolicLink()) { "下载缓存不能是链接" }
+        require(!partial.isSymbolicLink()) { I18n.t("networkA.segments.partialSymlink") }
         Files.newOutputStream(partial).use { output ->
             for (index in 0 until count) {
                 coroutineContext.ensureActive()
@@ -204,7 +205,11 @@ internal class SegmentedDownloader(
             partial.deleteIfExists()
             discard(artifact.target)
             throw DownloadVerificationException(
-                "分段文件校验失败：${artifact.target.fileName} · $problem",
+                I18n.t(
+                    "networkA.segments.verifyFailed",
+                    artifact.target.fileName,
+                    problem,
+                ),
             )
         }
         coroutineContext.ensureActive()
@@ -218,7 +223,7 @@ internal class SegmentedDownloader(
             !piece.isSymbolicLink() &&
                 (!piece.exists(NOFOLLOW_LINKS) || piece.isRegularFile(NOFOLLOW_LINKS)),
         ) {
-            "分段缓存路径无效"
+            I18n.t("networkA.segments.invalidPath")
         }
     }
 
@@ -259,7 +264,7 @@ internal class SegmentedDownloader(
                         offset = value
                         report()
                     }
-                if (offset != expected) throw IOException("分段传输中断")
+                if (offset != expected) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
             }
     }
 
@@ -271,7 +276,7 @@ internal class SegmentedDownloader(
         total: Long,
     ): ResponseBody {
         if (!matches(response, start + offset, end, total)) throw RangeUnsupported()
-        return response.body ?: throw IOException("分段响应为空")
+        return response.body ?: throw IOException(I18n.t("networkA.segments.emptyBody"))
     }
 
     private fun ensureSegmentLength(
@@ -302,7 +307,7 @@ internal class SegmentedDownloader(
         val identity =
             "$MARKER\n${artifact.size}\n${artifact.hashAlgorithm}\n" +
                 "${artifact.sha1.lowercase()}\n$count\n"
-        require(!folder.isSymbolicLink()) { "分段缓存不能是链接" }
+        require(!folder.isSymbolicLink()) { I18n.t("networkA.segments.folderSymlink") }
         if (folder.exists(NOFOLLOW_LINKS)) {
             val marker = folder.resolve("manifest")
             require(
@@ -312,7 +317,7 @@ internal class SegmentedDownloader(
                     marker.fileSize() <= MAX_SEGMENT_MARKER_BYTES &&
                     marker.readText().startsWith("$MARKER\n"),
             ) {
-                "分段缓存目录已被其他文件占用"
+                I18n.t("networkA.segments.folderOccupied")
             }
             if (marker.readText() != identity) discard(artifact.target)
         }
@@ -321,7 +326,7 @@ internal class SegmentedDownloader(
         if (!marker.exists(NOFOLLOW_LINKS)) {
             marker.writeText(identity, Charsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW)
         }
-        require(marker.readText() == identity) { "分段缓存与目标文件不匹配" }
+        require(marker.readText() == identity) { I18n.t("networkA.segments.markerMismatch") }
         return folder
     }
 

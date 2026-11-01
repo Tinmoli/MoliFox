@@ -9,6 +9,7 @@ import java.awt.datatransfer.StringSelection
 
 @Composable
 fun MultiplayerPage(actions: UiActions) {
+    val strings = LocalStrings.current
     val backend = remember(actions.multiplayer) { actions.multiplayer.backend }
     MultiplayerScreen(
         backend = backend,
@@ -18,14 +19,14 @@ fun MultiplayerPage(actions: UiActions) {
                     StringSelection(address),
                     null,
                 )
-                actions.controller.store.notify("已复制到剪贴板")
+                actions.controller.store.notify(strings.t("dialogs.mp.copied"))
             }
         },
         // 文件选择交给应用统一的 actions.choose：界面只拿路径字符串，不自己调 AWT 选择器。
         chooseArchive = {
             actions
                 .choose(
-                    title = "选择 EasyTier 安装包",
+                    title = strings.t("dialogs.mp.chooseArchive"),
                     extensions = listOf("zip"),
                     multiple = false,
                 ).firstOrNull()

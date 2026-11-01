@@ -1,6 +1,7 @@
 // 把一条已解码的 Scaffolding 请求转成响应：只处理协议语义，不负责 socket 生命周期。
 package dev.molifox.multiplayer.scaffolding
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.protocol.ScaffoldingPayloads
 import dev.molifox.multiplayer.protocol.ScaffoldingProtocol
 import dev.molifox.multiplayer.protocol.ScaffoldingRequest
@@ -21,12 +22,12 @@ internal class ScaffoldingRequestHandler(
             ScaffoldingProtocol.SERVER_PORT -> describeServerPort()
             ScaffoldingProtocol.PLAYER_PING -> registerPlayer(socket, request.body)
             ScaffoldingProtocol.PLAYER_PROFILES_LIST -> listPlayers()
-            else -> failure("未知协议：${request.type}")
+            else -> failure(I18n.t("multiplayer.scaffoldingRequestHandler.1", request.type))
         }
 
     private fun negotiateProtocols(body: ByteArray): ScaffoldingResponse =
         if (ScaffoldingPayloads.decodeProtocolNames(body) == null) {
-            failure("c:protocols 请求体不是 NUL 分隔的协议名列表")
+            failure(I18n.t("multiplayer.scaffoldingRequestHandler.2"))
         } else {
             success(ScaffoldingPayloads.encodeProtocolNames(ScaffoldingProtocol.STANDARD_PROTOCOLS))
         }
@@ -45,11 +46,10 @@ internal class ScaffoldingRequestHandler(
                 registry.register(socket, player)
                 success()
             },
-            onFailure = { error -> failure(error.message ?: "c:player_ping 解析失败") },
+            onFailure = { error -> failure(error.message ?: I18n.t("multiplayer.scaffoldingRequestHandler.3")) },
         )
 
-    private fun listPlayers(): ScaffoldingResponse =
-        success(encodePlayerProfiles(registry.players.value))
+    private fun listPlayers(): ScaffoldingResponse = success(encodePlayerProfiles(registry.players.value))
 
     private fun success(body: ByteArray = ByteArray(0)): ScaffoldingResponse =
         ScaffoldingResponse(ScaffoldingProtocol.STATUS_OK, body)

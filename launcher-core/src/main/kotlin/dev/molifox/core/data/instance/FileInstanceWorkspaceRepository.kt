@@ -5,6 +5,7 @@
 
 package dev.molifox.core.data.instance
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.platform.files.FileSystemAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -42,7 +43,9 @@ class FileInstanceWorkspaceRepository(
             val directory = root.resolve(relativePath).normalize()
             if (!directory.startsWith(root)) {
                 return@withContext Result.failure(
-                    IllegalArgumentException("目录必须是实例内的相对路径"),
+                    IllegalArgumentException(
+                        I18n.t("miscA2.instanceWorkspace.relativePathWithinInstance"),
+                    ),
                 )
             }
             files.createDirectory(directory).onFailure { reportFailure(directory, it) }
@@ -100,12 +103,16 @@ class FileInstanceWorkspaceRepository(
     ): Result<Path> =
         runCatching {
             val root = instanceRoot(instanceId).toAbsolutePath().normalize()
-            require((listOf(folder) + segments).none { Path.of(it).isAbsolute }) { "目录必须是相对路径" }
+            require((listOf(folder) + segments).none { Path.of(it).isAbsolute }) {
+                I18n.t("miscA2.instanceWorkspace.relativePath")
+            }
             val directory =
                 segments
                     .fold(root.resolve(folder)) { parent, segment -> parent.resolve(segment) }
                     .normalize()
-            require(directory.startsWith(root)) { "不能浏览实例目录之外的路径" }
+            require(directory.startsWith(root)) {
+                I18n.t("miscA2.instanceWorkspace.pathOutsideInstance")
+            }
             directory
         }
 }

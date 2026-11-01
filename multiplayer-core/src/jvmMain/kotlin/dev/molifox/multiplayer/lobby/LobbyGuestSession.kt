@@ -1,6 +1,7 @@
 // 房客会话：等待房主 → 转发 Scaffolding → 连接房间 → 转发 Minecraft → 广播本地世界。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.ConnectionRoute
 import dev.molifox.multiplayer.easytier.EasyTierCli
 import dev.molifox.multiplayer.easytier.EasyTierHost
@@ -61,7 +62,7 @@ class LobbyGuestSession(
     private val broadcastFactory: (String, Int) -> MinecraftLanBroadcast = { description, port ->
         MinecraftLanBroadcast(description, port)
     },
-    private val motdFactory: (String) -> String = { host -> "$host 的世界" },
+    private val motdFactory: (String) -> String = { host -> I18n.t("multiplayer.lobbyGuestSession.1", host) },
 ) : LobbyGuestSessionApi {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
@@ -126,7 +127,7 @@ class LobbyGuestSession(
                 tuning = tuning,
             )
         return runtime.start(request, ::onRuntimeExit).getOrElse { failure ->
-            throw IOException("无法启动 EasyTier：${failure.message}", failure)
+            throw IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure)
         }
     }
 
@@ -140,7 +141,7 @@ class LobbyGuestSession(
                 val hosts = EasyTierPeers.hosts(peers.getOrThrow())
                 if (hosts.size > 1) {
                     throw IOException(
-                        "虚拟网络里出现多个房主节点，为避免连错已停止加入。",
+                        I18n.t("multiplayer.easyTierPeer.2"),
                     )
                 }
                 hosts.firstOrNull()?.let { return it }
@@ -150,7 +151,7 @@ class LobbyGuestSession(
             delay(pollIntervalMillis)
         }
         throw IOException(
-            lastFailure ?: "等待房主超时，请确认邀请码、双方网络与中继是否可用。",
+            lastFailure ?: I18n.t("multiplayer.lobbyGuestSession.2"),
         )
     }
 
@@ -163,25 +164,11 @@ class LobbyGuestSession(
     private suspend fun connectRoom(scaffoldingLocalPort: Int): ScaffoldingClient {
         val deadline = System.nanoTime() + p2pWaitTimeoutMillis * NANOS_PER_MILLI
         var lastFailure: Throwable? = null
-        logger("房主已发现，正在建立连接（优先 P2P，失败自动走中继，最多等 3 分钟）…", false)
+        logger(I18n.t("multiplayerB.lobbyGuestSession.hostFound"), false)
         while (true) {
             // 重试失败的客户端会触发 onDisconnected；只有真正连上时才上报。
             var established = false
-            val created =
-                ScaffoldingClient(
-                    host = LOOPBACK,
-                    port = scaffoldingLocalPort,
-                    player =
-                        ScaffoldingPlayer(
-                            machineId,
-                            playerName,
-                            kind = ScaffoldingPlayerKind.GUEST,
-                        ),
-                    onDisconnected = { failure -> if (established) onClientDisconnected(failure) },
-                    onError = { failure ->
-                        if (established) logger("Scaffolding 连接错误：${failure.message}", true)
-                    },
-                )
+            val created = newScaffoldingClient(scaffoldingLocalPort, { established }, ::onClientDisconnected)
             val result = created.connect()
             if (result.isSuccess) {
                 established = true
@@ -194,23 +181,36 @@ class LobbyGuestSession(
             delay(p2pRetryIntervalMillis)
         }
         throw IOException(
-            "无法连接房主房间：${p2pWaitTimeoutMillis / MILLIS_PER_MINUTE} 分钟内 P2P 与中继转发都失败。" +
-                "请确认自建节点开启转发（relay-network-whitelist=\"MoliFox*\"），或让双方在同一局域网后重试。",
+            I18n.t(
+                "multiplayerB.lobbyGuestSession.connectRoomFailed",
+                p2pWaitTimeoutMillis / MILLIS_PER_MINUTE,
+            ) + I18n.t("multiplayer.lobbyGuestSession.3"),
             lastFailure,
         )
     }
 
-    private suspend fun resolveMinecraftPort(client: ScaffoldingClient): Int =
-        client.serverPort.value
-            ?: client.refreshServerPort().getOrElse { failure ->
-                throw IOException(
-                    "无法读取房主的 Minecraft 端口：${failure.message}",
-                    failure,
-                )
-            }
-            ?: throw IOException(
-                "房主还没有准备好 Minecraft 端口，请让房主确认存档已对局域网开放。",
-            )
+    /** 组装客人侧脚手架客户端；建立前断线/报错不上报，避免重试刷屏。 */
+    private fun newScaffoldingClient(
+        scaffoldingLocalPort: Int,
+        isEstablished: () -> Boolean,
+        onDisconnected: (Throwable?) -> Unit,
+    ): ScaffoldingClient =
+        ScaffoldingClient(
+            host = LOOPBACK,
+            port = scaffoldingLocalPort,
+            player =
+                ScaffoldingPlayer(
+                    machineId,
+                    playerName,
+                    kind = ScaffoldingPlayerKind.GUEST,
+                ),
+            onDisconnected = { failure -> if (isEstablished()) onDisconnected(failure) },
+            onError = { failure ->
+                if (isEstablished()) {
+                    logger(I18n.t("multiplayerB.lobbyGuestSession.scaffoldingError", failure.message), true)
+                }
+            },
+        )
 
     /** 广播世界并推送玩家列表；[localPort] 既是本机转发端口也是展示给玩家的端口。 */
     private fun publishLocalWorld(
@@ -225,7 +225,10 @@ class LobbyGuestSession(
         transport?.startBroadcast(motdFactory(hostName.ifBlank { FALLBACK_HOST_NAME }), localPort)
         localAddress = "$LOOPBACK:$localPort"
         scope.launch { client.players.collect { mutablePlayers.value = it } }
-        logger("已加入房间：本地入口 $localAddress，房主 $hostName", false)
+        logger(
+            I18n.t("multiplayerB.lobbyGuestSession.joined", localAddress, hostName),
+            false,
+        )
     }
 
     /** 玩家列表来自房主广播；先拉一次再定期刷新，失败只写技术日志。 */
@@ -233,7 +236,7 @@ class LobbyGuestSession(
         scope.launch {
             while (isActive) {
                 client.refreshPlayers().onFailure { failure ->
-                    logger("刷新房间玩家列表失败：${failure.message}", true)
+                    logger(I18n.t("multiplayerB.lobbyGuestSession.refreshPlayersFailed", failure.message), true)
                 }
                 delay(PLAYER_REFRESH_INTERVAL_MILLIS)
             }
@@ -244,13 +247,17 @@ class LobbyGuestSession(
         code: Int,
         output: String,
     ) {
-        logger("EasyTier 房客进程退出（退出码 $code）：$output", true)
-        report("EasyTier 进程已退出，房间已关闭。")
+        logger(I18n.t("multiplayerB.lobbyGuestSession.runtimeExited", code, output), true)
+        report(I18n.t("multiplayerB.lobbySession.runtimeExitedRoomClosed"))
     }
 
     private fun onClientDisconnected(failure: Throwable?) {
         report(
-            if (failure == null) "房主已关闭房间。" else "与房主的连接已断开：${failure.message}",
+            if (failure == null) {
+                I18n.t("multiplayer.lobbyGuestSession.6")
+            } else {
+                I18n.t("multiplayer.lobbyGuestSession.7", failure.message)
+            },
         )
     }
 
@@ -280,15 +287,20 @@ class LobbyGuestSession(
         scope.cancel()
         current.forEach { closeable ->
             runCatching { closeable?.close() }
-                .onFailure { logger("关闭房客连接资源失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.lobbyGuestSession.closeResourcesFailed", failure.message), true)
+                }
         }
         runCatching { runtime.stop() }
-            .onFailure { logger("停止 EasyTier 房客进程失败：${it.message}", true) }
+            .onFailure { failure ->
+                logger(I18n.t("multiplayerB.lobbyGuestSession.stopRuntimeFailed", failure.message), true)
+            }
     }
 
     private companion object {
         const val LOOPBACK = "127.0.0.1"
-        const val FALLBACK_HOST_NAME = "房主"
+        val FALLBACK_HOST_NAME: String
+            get() = I18n.t("multiplayer.lobbyGuestSession.8")
         const val NANOS_PER_MILLI = 1_000_000L
         const val DEFAULT_HOST_WAIT_TIMEOUT_MILLIS = 60_000L
         const val DEFAULT_POLL_INTERVAL_MILLIS = 1_000L
@@ -311,3 +323,16 @@ private fun routeFromCost(cost: String?): ConnectionRoute =
             ConnectionRoute.Direct
         else -> ConnectionRoute.Unknown
     }
+
+/** 从脚手架客户端解析 MC 转发端口：先读已广播值，必要时刷新一次。 */
+private suspend fun resolveMinecraftPort(client: ScaffoldingClient): Int =
+    client.serverPort.value
+        ?: client.refreshServerPort().getOrElse { failure ->
+            throw IOException(
+                I18n.t("multiplayer.lobbyGuestSession.4", failure.message),
+                failure,
+            )
+        }
+        ?: throw IOException(
+            I18n.t("multiplayer.lobbyGuestSession.5"),
+        )

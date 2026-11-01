@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.nio.file.Files
@@ -67,7 +68,7 @@ internal class ContentUpdateChecker(
                 contentSignature(store, instance) &&
                 (if (registryFile.exists()) digest(registryFile) else "") == registryHash,
         ) {
-            "检查期间实例或资源列表已改变，请重试"
+            I18n.t("contentA2.contentUpdateChecker.changedDuringCheck")
         }
         return ContentUpdateReport(
             instanceId,
@@ -107,7 +108,7 @@ internal class ContentUpdateChecker(
         instance: GameInstance,
         includePrerelease: Boolean,
     ): ContentRecognition {
-        val provider = requireNotNull(curseForge) { "CurseForge 内容源未初始化" }
+        val provider = requireNotNull(curseForge) { I18n.t("contentA2.contentUpdateChecker.curseForgeUnavailable") }
         val recognized = JsonObject()
         val latest = JsonObject()
         val matches =
@@ -188,10 +189,14 @@ internal class ContentUpdateChecker(
                     ContentUpdate(
                         file.filename,
                         file.folder,
-                        warning = "此文件登记在另一内容源，请切换下载来源后检查",
+                        warning = I18n.t("contentA2.contentUpdateChecker.otherSource"),
                     )
                 current == null ->
-                    ContentUpdate(file.filename, file.folder, warning = "未识别来源，无法确认更新")
+                    ContentUpdate(
+                        file.filename,
+                        file.folder,
+                        warning = I18n.t("contentA2.contentUpdateChecker.unknownSource"),
+                    )
                 else ->
                     recognizedItem(
                         file,
@@ -252,7 +257,7 @@ internal class ContentUpdateChecker(
             source,
             current.string("version_number", current.string("name")),
             if (locked) null else newer?.let(::contentVersionOf),
-            if (locked) "版本已锁定" else "",
+            if (locked) I18n.t("contentA2.contentUpdateChecker.versionLocked") else "",
         )
     }
 

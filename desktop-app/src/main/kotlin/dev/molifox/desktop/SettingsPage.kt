@@ -46,10 +46,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.LauncherState
+import dev.molifox.core.i18n.Strings
 import dev.molifox.desktop.content.DownloadsPage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -58,15 +60,16 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 // 设置页七个分区：全局游戏设置 / Java 管理 / 通用 / 外观 / 下载 / 日志 / 关于。
-private val settingsIndex =
+// 标题按当前语言生成；顺序固定，APPEARANCE_SECTION 等索引常量以此为准。
+private fun settingsIndex(strings: Strings): List<Pair<String, ImageVector>> =
     listOf(
-        "全局游戏设置" to Icons.Outlined.Tune,
-        "Java 管理" to Icons.Outlined.Memory,
-        "通用" to Icons.Outlined.Settings,
-        "外观" to Icons.Outlined.Palette,
-        "下载" to Icons.Outlined.CloudDownload,
-        "日志" to Icons.Outlined.Article,
-        "关于 MoliFox" to Icons.Outlined.Info,
+        strings.t("settings.section.game") to Icons.Outlined.Tune,
+        strings.t("settings.section.java") to Icons.Outlined.Memory,
+        strings.t("settings.section.general") to Icons.Outlined.Settings,
+        strings.t("settings.section.appearance") to Icons.Outlined.Palette,
+        strings.t("settings.section.download") to Icons.Outlined.CloudDownload,
+        strings.t("settings.section.logs") to Icons.Outlined.Article,
+        strings.t("settings.section.about") to Icons.Outlined.Info,
     )
 
 // 搜索结果为独立状态：目标 -1 表示正在显示跨分区搜索结果。
@@ -81,6 +84,7 @@ fun ColumnScope.SettingsPage(
     actions: UiActions,
 ) {
     val settings = state.data.settings
+    val strings = LocalStrings.current
     var section by remember { mutableIntStateOf(0) }
     // 外观子页（主题与效果 / 字体与缩放 / 页面布局）：选择器在左栏，「外观」下面的子条目里。
     var appearanceSub by remember { mutableIntStateOf(0) }
@@ -105,9 +109,9 @@ fun ColumnScope.SettingsPage(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: IOException) {
-            detectionError = error.message ?: "检测失败"
+            detectionError = error.message ?: strings.t("settings.java.detectionFailed")
         } catch (error: IllegalStateException) {
-            detectionError = error.message ?: "检测失败"
+            detectionError = error.message ?: strings.t("settings.java.detectionFailed")
         } finally {
             detecting = false
         }
@@ -157,7 +161,7 @@ fun ColumnScope.SettingsPage(
     SettingsSearchHeader(query) { query = it }
     saveError?.let { message ->
         Text(
-            "有设置未保存：" + message,
+            strings.t("settings.unsavedPrefix") + message,
             Modifier.padding(top = 6.dp),
             color = MaterialTheme.colorScheme.error,
             fontSize = 12.sp,
@@ -193,6 +197,7 @@ private fun SettingsSearchHeader(
     onQueryChange: (String) -> Unit,
 ) {
     val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
         Row(
             Modifier.width(250.dp),
@@ -203,14 +208,14 @@ private fun SettingsSearchHeader(
                 query,
                 onQueryChange,
                 Modifier.weight(1f),
-                placeholder = "搜索设置项",
+                placeholder = strings.t("settings.search.placeholder"),
             )
             AnimatedVisibility(
                 query.isNotBlank(),
                 enter = fadeIn(tween(duration)),
                 exit = fadeOut(tween(duration)),
             ) {
-                SmallIconButton(Icons.Outlined.Close, "清空搜索", { onQueryChange("") })
+                SmallIconButton(Icons.Outlined.Close, strings.t("settings.search.clear"), { onQueryChange("") })
             }
         }
     }
@@ -230,6 +235,7 @@ private fun SettingsNavigationPanel(
     onSelectSub: (Int) -> Unit,
 ) {
     val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
+    val strings = LocalStrings.current
     FrostedPanel(
         Modifier.width(168.dp).fillMaxHeight(),
         contentPadding = PaddingValues(vertical = 8.dp),
@@ -239,8 +245,8 @@ private fun SettingsNavigationPanel(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            SettingsGroupTitle("设置", topPadding = 2.dp)
-            settingsIndex.forEachIndexed { index, (title, icon) ->
+            SettingsGroupTitle(strings.t("settings.groupTitle"), topPadding = 2.dp)
+            settingsIndex(strings).forEachIndexed { index, (title, icon) ->
                 SettingsNavItem(
                     title,
                     icon,
@@ -258,9 +264,9 @@ private fun SettingsNavigationPanel(
                             Modifier.fillMaxWidth().padding(top = 2.dp),
                             verticalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
-                            appearanceSubSections.forEachIndexed { subIndex, subTitle ->
+                            appearanceSubSectionKeys.forEachIndexed { subIndex, subKey ->
                                 SettingSubEntry(
-                                    subTitle,
+                                    strings.t(subKey),
                                     appearanceSub == subIndex,
                                     onClick = { onSelectSub(subIndex) },
                                 )

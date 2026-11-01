@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -33,15 +34,15 @@ internal object SaveArchive {
         require(
             archive.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(archive),
         ) {
-            "找不到存档压缩包：${archive.fileName}"
+            I18n.t("saveA1.saveArchive.notFound", archive.fileName)
         }
         ZipFile(archive.toFile()).use { zip ->
             val entries = readEntries(zip)
-            require(entries.isNotEmpty()) { "压缩包是空的，不是有效的存档" }
+            require(entries.isNotEmpty()) { I18n.t("saveA1.saveArchive.empty") }
             rejectUnsafeNames(entries)
             val rootLevel = entries.firstOrNull { (name, _) -> name.equals("level.dat", true) }
             if (rootLevel != null) {
-                require(rootLevel.second > 0) { "level.dat 是空文件，不是有效的存档" }
+                require(rootLevel.second > 0) { I18n.t("saveA1.saveArchive.emptyLevelDat") }
                 return SaveArchiveLayout("")
             }
             return wrappedLayout(entries)
@@ -61,10 +62,10 @@ internal object SaveArchive {
     private fun rejectUnsafeNames(entries: List<Pair<String, Long>>) {
         for ((name, _) in entries) {
             require(name.split('/').none { it == ".." }) {
-                "压缩包包含向上跳转的路径：$name"
+                I18n.t("saveA1.saveArchive.traversal", name)
             }
             require(!name.startsWith('/') && !Regex("^[A-Za-z]:").containsMatchIn(name)) {
-                "压缩包包含绝对路径：$name"
+                I18n.t("saveA1.saveArchive.absolutePath", name)
             }
         }
     }
@@ -78,20 +79,21 @@ internal object SaveArchive {
                         name.substringAfter('/').equals("level.dat", true)
                 }.map { (name, size) -> name.substringBefore('/') to size }
                 .distinctBy { it.first.lowercase() }
-        require(wrappers.isNotEmpty()) { "压缩包里没有 level.dat，不是有效的存档" }
+        require(wrappers.isNotEmpty()) { I18n.t("saveA1.saveArchive.missingLevelDat") }
         require(wrappers.size == 1) {
-            "压缩包里有多个世界目录（${wrappers.joinToString("、") { it.first }}），无法确定导入哪一个"
+            I18n.t(
+                "saveA1.saveArchive.multipleWorlds",
+                wrappers.joinToString("、") { it.first },
+            )
         }
         val (wrapper, levelSize) = wrappers.single()
-        require(levelSize > 0) { "level.dat 是空文件，不是有效的存档" }
+        require(levelSize > 0) { I18n.t("saveA1.saveArchive.emptyLevelDat") }
         val prefix = "$wrapper/"
         require(entries.all { (name, _) -> name.startsWith(prefix, ignoreCase = true) }) {
-            "压缩包里有包装目录之外的文件（" +
-                entries
-                    .first { (name, _) ->
-                        !name.startsWith(prefix, ignoreCase = true)
-                    }.first +
-                "），无法导入"
+            I18n.t(
+                "saveA1.saveArchive.outsideWrapper",
+                entries.first { (name, _) -> !name.startsWith(prefix, ignoreCase = true) }.first,
+            )
         }
         return SaveArchiveLayout(prefix)
     }

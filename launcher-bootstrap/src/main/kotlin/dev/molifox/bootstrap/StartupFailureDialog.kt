@@ -1,6 +1,7 @@
 // 启动阶段也能显示的轻量错误窗口，不依赖 Compose；提供原因、复制详情和日志入口。
 package dev.molifox.bootstrap
 
+import dev.molifox.core.i18n.I18n
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Desktop
@@ -55,13 +56,13 @@ private class FailureWindow(
     private val error: Throwable,
     private val logPath: Path?,
 ) {
-    private val dialog = JDialog(null as java.awt.Frame?, "茉狐 · 遇到问题", true)
+    private val dialog = JDialog(null as java.awt.Frame?, I18n.t("bootstrapB.dialog.title"), true)
     private val font =
         (
             UIManager.getFont("Label.font")
                 ?: Font(Font.SANS_SERIF, Font.PLAIN, ERROR_TEXT_SIZE)
         ).deriveFont(ERROR_TEXT_SIZE.toFloat())
-    private val status = JLabel("详细原因已保留，可复制后反馈。")
+    private val status = JLabel(I18n.t("bootstrap.startupFailureDialog.1"))
     private val details =
         JScrollPane(text(error.stackTraceToString(), wrap = false)).apply {
             preferredSize = Dimension(ERROR_WINDOW_WIDTH - ERROR_PADDING * 2, ERROR_DETAILS_HEIGHT)
@@ -94,7 +95,7 @@ private class FailureWindow(
                     ERROR_PADDING,
                 )
             add(
-                JLabel("暂时无法继续").apply {
+                JLabel(I18n.t("bootstrap.startupFailureDialog.2")).apply {
                     font = this@FailureWindow.font.deriveFont(Font.BOLD, ERROR_TITLE_SIZE.toFloat())
                     foreground = Color(ERROR_ACCENT)
                 },
@@ -107,12 +108,16 @@ private class FailureWindow(
             isOpaque = false
             border = BorderFactory.createEmptyBorder(ERROR_PADDING, ERROR_PADDING, 0, ERROR_PADDING)
             add(text(summary()))
-            logPath?.let { add(text("日志位置：$it")) }
+            logPath?.let { add(text(I18n.t("bootstrap.startupFailureDialog.3", it))) }
             add(
-                button("查看技术详情") {
+                button(I18n.t("bootstrap.startupFailureDialog.4")) {
                     details.isVisible = !details.isVisible
                     (it.source as? JButton)?.text =
-                        if (details.isVisible) "收起技术详情" else "查看技术详情"
+                        if (details.isVisible) {
+                            I18n.t("bootstrap.startupFailureDialog.5")
+                        } else {
+                            I18n.t("bootstrap.startupFailureDialog.4")
+                        }
                     dialog.pack()
                 },
             )
@@ -135,10 +140,10 @@ private class FailureWindow(
                     ERROR_PADDING,
                     ERROR_PADDING,
                 )
-            add(button("复制错误") { copyError() })
-            add(button("打开日志目录") { openLogs() }.apply { isEnabled = logPath != null })
+            add(button(I18n.t("bootstrap.startupFailureDialog.6")) { copyError() })
+            add(button(I18n.t("bootstrap.startupFailureDialog.7")) { openLogs() }.apply { isEnabled = logPath != null })
             add(
-                button("关闭") { dialog.dispose() }.apply {
+                button(I18n.t("bootstrap.startupFailureDialog.8")) { dialog.dispose() }.apply {
                     background = Color(ERROR_ACCENT)
                     foreground = Color.WHITE
                     dialog.rootPane.defaultButton = this
@@ -147,25 +152,27 @@ private class FailureWindow(
         }
 
     private fun copyError() =
-        attempt("错误详情已复制") {
-            val content = error.stackTraceToString() + (logPath?.let { "\n日志：$it" } ?: "")
+        attempt(I18n.t("bootstrap.startupFailureDialog.9")) {
+            val content =
+                error.stackTraceToString() + (logPath?.let { I18n.t("bootstrap.startupFailureDialog.10", it) } ?: "")
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(content), null)
         }
 
     private fun openLogs() =
-        attempt("已打开日志目录") {
-            val directory = requireNotNull(logPath?.toAbsolutePath()?.parent) { "尚未生成日志目录" }
-            check(Files.isDirectory(directory)) { "日志目录不存在" }
-            check(Desktop.isDesktopSupported()) { "系统不支持直接打开目录，请按日志位置手动查看" }
+        attempt(I18n.t("bootstrap.startupFailureDialog.11")) {
+            val directory =
+                requireNotNull(logPath?.toAbsolutePath()?.parent) { I18n.t("bootstrap.startupFailureDialog.12") }
+            check(Files.isDirectory(directory)) { I18n.t("bootstrap.startupFailureDialog.13") }
+            check(Desktop.isDesktopSupported()) { I18n.t("bootstrap.startupFailureDialog.14") }
             Desktop.getDesktop().open(directory.toFile())
         }
 
     private fun summary(): String =
         when {
             error.message.orEmpty().contains("Cannot change transparency", ignoreCase = true) ->
-                "窗口透明效果未能应用。请重新打开启动器，并将错误详情反馈给开发者。"
-            error is java.io.IOException -> "无法完成文件或网络操作，请查看具体原因：\n${error.message.orEmpty()}"
-            else -> "程序遇到了一个问题：\n${error.message ?: error.javaClass.simpleName}"
+                I18n.t("bootstrap.startupFailureDialog.15")
+            error is java.io.IOException -> I18n.t("bootstrap.startupFailureDialog.16", error.message.orEmpty())
+            else -> I18n.t("bootstrap.startupFailureDialog.17", error.message ?: error.javaClass.simpleName)
         }
 
     private fun text(
@@ -197,8 +204,8 @@ private class FailureWindow(
         action: () -> Unit,
     ) {
         runCatching(action).onSuccess { status.text = message }.onFailure {
-            status.text = it.message ?: "操作未完成，请手动查看日志"
-            System.err.println("错误窗口操作失败：${it.stackTraceToString()}")
+            status.text = it.message ?: I18n.t("bootstrap.startupFailureDialog.18")
+            System.err.println(I18n.t("bootstrap.startupFailureDialog.19", it.stackTraceToString()))
         }
     }
 }

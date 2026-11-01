@@ -5,6 +5,10 @@
 
 package dev.molifox.core
 
+/** LiteLoader 与 Cleanroom 只用于识别和启动已有实例，不提供新建与升级入口。 */
+val LoaderType.launchOnly: Boolean
+    get() = this == LoaderType.LiteLoader || this == LoaderType.Cleanroom
+
 /** Meta services do not all return loader releases in chronological order. */
 fun compareLoaderVersions(
     left: String,
@@ -65,6 +69,7 @@ fun loaderUpgradeCandidates(
 ): List<LoaderVersion> {
     val upgradeable =
         instance.loader != LoaderType.Vanilla &&
+            !instance.loader.launchOnly &&
             instance.installed &&
             instance.packFile.isBlank() &&
             instance.loaderVersion.isNotBlank()

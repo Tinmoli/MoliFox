@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -23,6 +24,11 @@ import kotlin.io.path.writeBytes
 
 /** 实例名称的最大长度，目录名校验与提示文案共用。 */
 private const val MAX_INSTANCE_NAME_LENGTH = 80
+
+/** 目标名称或版本目录已被其它实例占用；界面按类型提示，不解析本地化文案。 */
+class InstanceNameConflictException(
+    message: String,
+) : IllegalArgumentException(message)
 
 /** 版本配置 JSON 的大小上限；超过就不再读取或快照。 */
 private const val MAX_VERSION_PROFILE_BYTES = 8 * 1024 * 1024
@@ -49,14 +55,16 @@ private val reservedInstanceName = Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9]
  * 显示名就是实际目录名，因此这里同时是文件名校验：非法字符、结尾点号、系统保留名都拒绝。
  */
 fun validateInstanceDirectoryName(name: String) {
-    require(name.isNotBlank()) { "实例名称不能为空" }
-    require(name.length <= MAX_INSTANCE_NAME_LENGTH) { "实例名称最多 80 个字符" }
+    require(name.isNotBlank()) { I18n.t("core.instanceRename.1") }
+    require(name.length <= MAX_INSTANCE_NAME_LENGTH) { I18n.t("core.instanceRename.2") }
     require(!invalidInstanceName.containsMatchIn(name)) {
-        "实例名称不能包含 \\ / : * ? \" < > | 或控制字符"
+        I18n.t("core.instanceRename.3")
     }
-    require(!name.endsWith('.') && !name.endsWith(' ')) { "实例名称不能以点或空格结尾" }
-    require(name != "." && name != "..") { "实例名称不能是 . 或 .." }
-    require(!reservedInstanceName.matches(name)) { "实例名称是系统保留名，请换一个" }
+    require(!name.endsWith('.') && !name.endsWith(' ')) {
+        I18n.t("instA2.instanceRename.endsWithDotOrSpace")
+    }
+    require(name != "." && name != "..") { I18n.t("core.instanceRename.4") }
+    require(!reservedInstanceName.matches(name)) { I18n.t("core.instanceRename.5") }
     safeFilename(name)
 }
 
@@ -114,14 +122,16 @@ class InstanceRename(
         validateInstanceDirectoryName(newName)
         val source = store.versionGamePath(instance)
         val oldName = source.fileName.toString()
-        require(newName != oldName) { "实例已经是这个名称" }
+        require(newName != oldName) { I18n.t("core.instanceRename.6") }
         val root = store.minecraftRoot(instance)
         val versions = source.parent
         require(source.isDirectory(NOFOLLOW_LINKS) && !Files.isSymbolicLink(source)) {
-            "实例目录不存在或不是文件夹：$source"
+            I18n.t("core.instanceRename.7", source)
         }
         val target = safePath(versions, newName)
-        require(!target.exists(NOFOLLOW_LINKS)) { "versions/$newName 已存在，请换一个名称" }
+        if (target.exists(NOFOLLOW_LINKS)) {
+            throw InstanceNameConflictException(I18n.t("core.instanceRename.8", newName))
+        }
         val windows = store.platform.osName == "windows"
         val siblings = sameRootInstances(store, instance, root)
         requireNoNameClash(siblings, newName, windows)
@@ -181,10 +191,10 @@ class InstanceRename(
         newName: String,
     ): GameInstance {
         if (currentName == newName) {
-            throw IllegalArgumentException("实例已经是这个名称")
+            throw IllegalArgumentException(I18n.t("core.instanceRename.6"))
         }
         store.updateInstance(instanceId) { it.copy(name = newName) }
-        store.notify("实例名称已更新")
+        store.notify(I18n.t("core.instanceRename.9"))
         return store.instance(instanceId)
     }
 
@@ -244,16 +254,22 @@ class InstanceRename(
         }
         // 组件回退清单里的路径和记录快照要跟着改，否则回退会重新写出旧目录。
         runCatching { syncBackupManifests(instanceId, oldName, newName) }
-            .onFailure { store.log("更新组件备份路径失败：${it.message}", true) }
+            .onFailure {
+                store.log(I18n.t("instA2.instanceRename.syncBackupPathsFailed", it.message), true)
+            }
         store.log(
-            "已重命名实例：$oldName → $newName" +
-                if (plan.dependentProfiles.isEmpty()) {
-                    ""
-                } else {
-                    "（同步 ${plan.dependentProfiles.size} 个版本引用）"
-                },
+            if (plan.dependentProfiles.isEmpty()) {
+                I18n.t("instA2.instanceRename.renamed", oldName, newName)
+            } else {
+                I18n.t(
+                    "instA2.instanceRename.renamedWithRefs",
+                    oldName,
+                    newName,
+                    plan.dependentProfiles.size,
+                )
+            },
         )
-        store.notify("实例已重命名为「$newName」")
+        store.notify(I18n.t("core.instanceRename.11", newName))
     }
 
     /** 改写其它版本配置里指向旧目录的 `inheritsFrom`；读或写失败都按原提示中止。 */
@@ -325,7 +341,10 @@ class InstanceRename(
                     writeJson(manifest, json)
                 }
             }.onFailure {
-                store.log("更新组件备份清单失败：${directory.fileName}（${it.message}）", true)
+                store.log(
+                    I18n.t("instA2.instanceRename.syncManifestFailed", directory.fileName, it.message),
+                    true,
+                )
             }
         }
     }
@@ -339,17 +358,24 @@ class InstanceRename(
         if (progress.directoryMoved) {
             runCatching { restoreDirectory(plan, progress) }.onFailure {
                 store.log(
-                    "回滚实例目录失败：${it.message}（${plan.source} → ${plan.target}）",
+                    I18n.t("core.instanceRename.12", it.message, plan.source, plan.target),
                     true,
                 )
             }
         }
         snapshots.forEach { (file, bytes) ->
             runCatching { file.writeBytes(bytes) }
-                .onFailure { store.log("回滚版本配置失败：$file（${it.message}）", true) }
+                .onFailure {
+                    store.log(
+                        I18n.t("instA2.instanceRename.rollbackProfileFailed", file, it.message),
+                        true,
+                    )
+                }
         }
         runCatching { store.updateInstance(plan.instance.id) { plan.instance } }
-            .onFailure { store.log("回滚实例记录失败：${it.message}", true) }
+            .onFailure {
+                store.log(I18n.t("instA2.instanceRename.rollbackRecordFailed", it.message), true)
+            }
     }
 
     /** 把已改名的 natives/JAR/JSON 逐个改回旧名，最后把整个目录移回原位置。 */
@@ -409,7 +435,7 @@ private fun requireNoNameClash(
                 .ifBlank { it.versionId.ifBlank { it.gameVersion } }
                 .equals(newName, ignoreCase = windows)
         }?.let { clash ->
-            throw IllegalArgumentException("已有实例「${clash.name}」使用这个名称")
+            throw InstanceNameConflictException(I18n.t("core.instanceRename.nameClash", clash.name))
         }
 }
 
@@ -423,7 +449,7 @@ private fun requireNoBaseVersionUse(
         .firstOrNull { it.versionId.equals(oldName, ignoreCase = windows) }
         ?.let { dependent ->
             throw IllegalArgumentException(
-                "versions/$oldName 仍是实例「${dependent.name}」的基础版本目录，请先处理该实例",
+                I18n.t("core.instanceRename.13", oldName, dependent.name),
             )
         }
 }
@@ -470,7 +496,9 @@ private fun snapshotVersionProfiles(
             if (file.fileSize() <= MAX_VERSION_PROFILE_BYTES) {
                 snapshots[file] = Files.readAllBytes(file)
             }
-        }.onFailure { store.log("读取版本配置失败：$file（${it.message}）", true) }
+        }.onFailure {
+            store.log(I18n.t("instA2.instanceRename.readProfileFailed", file, it.message), true)
+        }
     }
     return snapshots
 }
@@ -483,16 +511,19 @@ private inline fun <T> versionProfileIo(
     try {
         block()
     } catch (failure: IOException) {
-        throw IOException("无法更新版本引用：$file（${failure.message}）", failure)
+        throw IOException(I18n.t("core.instanceRename.14", file, failure.message), failure)
     } catch (failure: JsonParseException) {
-        throw IOException("无法更新版本引用：$file（${failure.message}）", failure)
+        throw IOException(I18n.t("core.instanceRename.14", file, failure.message), failure)
     } catch (failure: IllegalStateException) {
-        throw IOException("无法更新版本引用：$file（${failure.message}）", failure)
+        throw IOException(I18n.t("core.instanceRename.14", file, failure.message), failure)
     }
 
 /** 重命名失败时统一包装成中文 IO 错误，保留原始原因。 */
 private fun renameFailure(failure: Throwable): IOException =
-    IOException("重命名失败，已回滚：${failure.message ?: "未知错误"}", failure)
+    IOException(
+        I18n.t("core.instanceRename.15", failure.message ?: I18n.t("instA2.common.unknownError")),
+        failure,
+    )
 
 /** 把清单里属于旧目录的名称与 `profiles[].path` 改成新目录；返回是否真的改了。 */
 private fun renameInManifest(

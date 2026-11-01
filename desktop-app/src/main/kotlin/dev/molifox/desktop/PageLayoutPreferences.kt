@@ -30,9 +30,16 @@ fun PageLayoutPreferences(
 ) {
     var page by remember { mutableIntStateOf(0) }
     val options = settings.pages
+    val strings = LocalStrings.current
     SecondaryTabRow(page, containerColor = MaterialTheme.colorScheme.surface) {
-        listOf("开始页", "版本库", "下载中心", "运行日志", "启动设置").forEachIndexed { index, title ->
-            Tab(page == index, { page = index }, text = { Text(title) })
+        listOf(
+            "settings.pageLayout.tab.home",
+            "settings.pageLayout.tab.versions",
+            "settings.pageLayout.tab.downloads",
+            "settings.pageLayout.tab.logs",
+            "settings.pageLayout.tab.launch",
+        ).forEachIndexed { index, key ->
+            Tab(page == index, { page = index }, text = { Text(strings.t(key)) })
         }
     }
     when (page) {
@@ -50,8 +57,17 @@ private fun HomePageLayout(
     options: PagePreferences,
     apply: AppearanceChange,
 ) {
-    SettingsSection("开始页", "选择首页显示的内容，账户与启动操作始终保留。", contentGap = 0.dp) {
-        PreferenceSwitch("游戏统计", "在页头显示版本和账户数量", options.home.showStatistics) { value ->
+    val strings = LocalStrings.current
+    SettingsSection(
+        strings.t("settings.pageLayout.home.title"),
+        strings.t("settings.pageLayout.home.detail"),
+        contentGap = 0.dp,
+    ) {
+        PreferenceSwitch(
+            strings.t("settings.pageLayout.home.statistics.title"),
+            strings.t("settings.pageLayout.home.statistics.detail"),
+            options.home.showStatistics,
+        ) { value ->
             apply {
                 it.copy(
                     pages =
@@ -63,8 +79,8 @@ private fun HomePageLayout(
         }
         SettingDivider()
         PreferenceSwitch(
-            "展开最近游玩",
-            "首页「最近游玩的存档或服务器」是否展开；在卡片标题行折叠后这里同步变化",
+            strings.t("settings.pageLayout.home.recent.title"),
+            strings.t("settings.pageLayout.home.recent.detail"),
             options.home.recentPlayExpanded,
         ) { value ->
             apply {
@@ -85,11 +101,15 @@ private fun VersionsPageLayout(
     options: PagePreferences,
     apply: AppearanceChange,
 ) {
-    SettingsSection("版本库", contentGap = 0.dp) {
-        SettingRow("默认视图") {
+    val strings = LocalStrings.current
+    SettingsSection(strings.t("settings.pageLayout.versions.title"), contentGap = 0.dp) {
+        SettingRow(strings.t("settings.pageLayout.versions.view")) {
             SimpleDropdown(
                 options.versions.view,
-                listOf("list" to "列表", "grid" to "网格"),
+                listOf(
+                    "list" to strings.t("settings.pageLayout.versions.list"),
+                    "grid" to strings.t("settings.pageLayout.versions.grid"),
+                ),
                 { value ->
                     apply {
                         it.copy(
@@ -104,10 +124,14 @@ private fun VersionsPageLayout(
             )
         }
         SettingDivider()
-        SettingRow("默认排序") {
+        SettingRow(strings.t("settings.pageLayout.versions.sort")) {
             SimpleDropdown(
                 options.versions.sort,
-                listOf("recent" to "最近游玩", "name" to "按名称", "created" to "最近添加"),
+                listOf(
+                    "recent" to strings.t("settings.pageLayout.versions.sort.recent"),
+                    "name" to strings.t("settings.pageLayout.versions.sort.name"),
+                    "created" to strings.t("settings.pageLayout.versions.sort.created"),
+                ),
                 { value ->
                     apply {
                         it.copy(
@@ -123,8 +147,8 @@ private fun VersionsPageLayout(
         }
         SettingDivider()
         PreferenceSwitch(
-            "收藏优先",
-            "按最近游玩排列时，将收藏版本放在前面",
+            strings.t("settings.pageLayout.versions.favorites"),
+            strings.t("settings.pageLayout.versions.favorites.detail"),
             options.versions.favoritesFirst,
         ) { value ->
             apply {
@@ -137,7 +161,11 @@ private fun VersionsPageLayout(
             }
         }
         SettingDivider()
-        PreferenceSwitch("显示备注", "在列表中显示版本备注", options.versions.showNotes) { value ->
+        PreferenceSwitch(
+            strings.t("settings.pageLayout.versions.notes"),
+            strings.t("settings.pageLayout.versions.notes.detail"),
+            options.versions.showNotes,
+        ) { value ->
             apply {
                 it.copy(
                     pages =
@@ -154,10 +182,11 @@ private fun DownloadsPageLayout(
     options: PagePreferences,
     apply: AppearanceChange,
 ) {
-    SettingsSection("下载中心资源卡片", contentGap = 0.dp) {
+    val strings = LocalStrings.current
+    SettingsSection(strings.t("settings.pageLayout.downloads.title"), contentGap = 0.dp) {
         PreferenceSwitch(
-            "紧凑卡片",
-            "缩短资源卡片高度，显示更多结果",
+            strings.t("settings.pageLayout.downloads.compact"),
+            strings.t("settings.pageLayout.downloads.compact.detail"),
             options.downloads.compactCards,
         ) { value ->
             apply {
@@ -170,7 +199,11 @@ private fun DownloadsPageLayout(
             }
         }
         SettingDivider()
-        PreferenceSwitch("显示作者", "显示资源作者名称", options.downloads.showAuthors) { value ->
+        PreferenceSwitch(
+            strings.t("settings.pageLayout.downloads.authors"),
+            strings.t("settings.pageLayout.downloads.authors.detail"),
+            options.downloads.showAuthors,
+        ) { value ->
             apply {
                 it.copy(
                     pages =
@@ -181,7 +214,11 @@ private fun DownloadsPageLayout(
             }
         }
         SettingDivider()
-        PreferenceSwitch("显示简介", "显示资源说明摘要", options.downloads.showDescriptions) { value ->
+        PreferenceSwitch(
+            strings.t("settings.pageLayout.downloads.descriptions"),
+            strings.t("settings.pageLayout.downloads.descriptions.detail"),
+            options.downloads.showDescriptions,
+        ) { value ->
             apply {
                 it.copy(
                     pages =
@@ -200,8 +237,13 @@ private fun LogsPageLayout(
     options: PagePreferences,
     apply: AppearanceChange,
 ) {
-    SettingsSection("运行日志", contentGap = 0.dp) {
-        PreferenceSwitch("日志自动滚动", "新日志出现时自动跟随到末尾", options.logs.autoScroll) { value ->
+    val strings = LocalStrings.current
+    SettingsSection(strings.t("settings.pageLayout.logs.title"), contentGap = 0.dp) {
+        PreferenceSwitch(
+            strings.t("settings.pageLayout.logs.autoScroll"),
+            strings.t("settings.pageLayout.logs.autoScroll.detail"),
+            options.logs.autoScroll,
+        ) { value ->
             apply {
                 it.copy(
                     pages = it.pages.copy(logs = it.pages.logs.copy(autoScroll = value)),
@@ -210,7 +252,7 @@ private fun LogsPageLayout(
         }
         SettingDivider()
         PreferenceSlider(
-            "日志字号",
+            strings.t("settings.pageLayout.logs.fontSize"),
             options.logs.fontSize.toFloat(),
             10f..18f,
             { it.toInt().toString() + " sp" },
@@ -231,10 +273,11 @@ private fun LaunchPageLayout(
     options: PagePreferences,
     apply: AppearanceChange,
 ) {
-    SettingsSection("启动设置") {
+    val strings = LocalStrings.current
+    SettingsSection(strings.t("settings.pageLayout.launch.title")) {
         PreferenceSwitch(
-            "显示高级参数",
-            "控制全局与版本设置中的 JVM 输入区域；已有参数仍会生效",
+            strings.t("settings.pageLayout.launch.advanced"),
+            strings.t("settings.pageLayout.launch.advanced.detail"),
             options.showAdvancedLaunchOptions,
         ) { value ->
             apply { it.copy(pages = it.pages.copy(showAdvancedLaunchOptions = value)) }
@@ -249,7 +292,12 @@ private fun PreferenceSwitch(
     checked: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     SettingRow(title, detail) {
-        Switch(checked, onChange, Modifier.semantics { contentDescription = title + "开关" })
+        Switch(
+            checked,
+            onChange,
+            Modifier.semantics { contentDescription = strings.t("settings.common.switchA11y", title) },
+        )
     }
 }

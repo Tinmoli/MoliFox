@@ -106,16 +106,6 @@ val accentPresets: List<Pair<String, Pair<Color, Color>>> =
         "graphite" to (Color(0xFF565B66) to Color(0xFFB9BEC8)),
     )
 
-val accentPresetTitles: Map<String, String> =
-    mapOf(
-        "sakura" to "樱花粉",
-        "ocean" to "海盐蓝",
-        "mint" to "薄荷绿",
-        "amber" to "琥珀橙",
-        "lavender" to "薰衣草紫",
-        "graphite" to "石墨灰",
-    )
-
 private fun parseHexColor(value: String): Color? {
     if (!Regex("^#[0-9A-Fa-f]{6}$").matches(value)) return null
     return Color(OPAQUE_COLOR_ALPHA_MASK or value.substring(1).toLong(COLOR_HEX_RADIX))

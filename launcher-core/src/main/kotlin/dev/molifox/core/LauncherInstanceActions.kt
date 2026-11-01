@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** 实例的安装、启动、重命名与设置。 */
@@ -61,8 +62,9 @@ internal abstract class LauncherInstanceActions(
     ): String {
         val instance = installer.createInstance(request, gameDirectoryId)
         return jobs.enqueue(
-            "安装 ${instance.name}",
+            I18n.t("instA2.tasks.install", instance.name),
             taskResourcesForInstances(store, instance.id),
+            kind = LauncherTaskKind.InstallInstance,
             prepare = { NewInstallationCleanup(store).register(instance, it) },
         ) {
             network.resetSourceHealth()
@@ -76,7 +78,11 @@ internal abstract class LauncherInstanceActions(
     override fun repair(id: String): String {
         requireIdle(id)
         val instance = store.instance(id)
-        return jobs.enqueue("修复 ${instance.name}", taskResourcesForInstances(store, id)) {
+        return jobs.enqueue(
+            I18n.t("instA2.tasks.repair", instance.name),
+            taskResourcesForInstances(store, id),
+            kind = LauncherTaskKind.RepairInstance,
+        ) {
             network.resetSourceHealth()
             if (instance.packFile.isNotBlank()) {
                 content.importPack(Path.of(instance.packFile), this, instance.id)
@@ -93,12 +99,15 @@ internal abstract class LauncherInstanceActions(
     ): String {
         val instance = store.instance(id)
         // 损坏/缺失 JSON 的目录仍显示在列表里，但绝不尝试启动或隐式改写它。
-        require(!instance.broken) { "此实例无法识别：" + instance.brokenReason }
-        require(instance.installed) { "此实例尚未安装完成，请先修复" }
-        require(store.data.activeAccountId != null) { "请先添加并选择游戏账户" }
+        require(!instance.broken) {
+            I18n.t("instA2.instance.unrecognized", instance.brokenReason)
+        }
+        require(instance.installed) { I18n.t("instA2.instance.notInstalled") }
+        require(store.data.activeAccountId != null) { I18n.t("core.accountService.1") }
         return jobs.enqueue(
-            "启动 ${store.instance(id).name}",
+            I18n.t("instA2.tasks.launch", store.instance(id).name),
             taskResourcesForInstances(store, id),
+            kind = LauncherTaskKind.LaunchGame,
         ) {
             game.launch(id, this, target)
         }
@@ -164,7 +173,7 @@ internal abstract class LauncherInstanceActions(
             java.invalidate()
             refreshJavaPrompt()
         }
-        if (notify) store.notify("版本设置已保存")
+        if (notify) store.notify(I18n.t("instA2.instance.settingsSaved"))
     }
 
     /** 校验实例设置；失败时抛出的文案直接展示在设置页。 */
@@ -173,7 +182,7 @@ internal abstract class LauncherInstanceActions(
             configuration.name.isNotBlank() &&
                 configuration.name.length <= MAX_INSTANCE_NAME_LENGTH,
         ) {
-            "实例名称需要 1–80 个字符"
+            I18n.t("instA2.instance.nameLength")
         }
         validateInstanceLaunchOptions(
             memoryMb = configuration.memoryMb,
@@ -189,9 +198,11 @@ internal abstract class LauncherInstanceActions(
             configuration.initialMemoryMb == 0 ||
                 configuration.initialMemoryMb in MIN_INITIAL_MEMORY_MB..maximumMemory,
         ) {
-            "初始内存需为 0（继承）或在 128 MB 到最大内存之间"
+            I18n.t("instA2.instance.initialMemoryInvalid")
         }
-        require(configuration.notes.length <= MAX_NOTES_LENGTH) { "备注最多 2000 字" }
+        require(configuration.notes.length <= MAX_NOTES_LENGTH) {
+            I18n.t("instA2.instance.notesTooLong")
+        }
         configuration.advancedLaunch?.let {
             validateAdvancedLaunchSettings(
                 it,
@@ -222,8 +233,9 @@ internal abstract class LauncherInstanceActions(
         requireIdle(instanceId)
         val instance = store.instance(instanceId)
         return jobs.enqueue(
-            "升级加载器 ${instance.name}",
+            I18n.t("instA2.tasks.upgradeLoader", instance.name),
             taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.UpgradeLoader,
         ) {
             installer.upgradeLoader(instanceId, loaderVersion, this)
         }
@@ -236,18 +248,23 @@ internal abstract class LauncherInstanceActions(
         val javaPath =
             instance.javaPath
                 .ifBlank { store.data.settings.javaPath }
-                .ifBlank { "自动选择 Java ${profile.requiredJava}" }
+                .ifBlank { I18n.t("instA2.preview.autoJava", profile.requiredJava) }
         val account = store.data.accounts.find { it.id == store.data.activeAccountId }
         val plan =
             LaunchPlanner(store)
                 .plan(
                     instance,
                     profile,
-                    JavaRuntime(javaPath, profile.requiredJava, "预览", platform.architecture),
+                    JavaRuntime(
+                        javaPath,
+                        profile.requiredJava,
+                        I18n.t("instA2.preview.vendor"),
+                        platform.architecture,
+                    ),
                     GameCredentials(
                         account?.name ?: "Player",
-                        account?.uuid ?: "<玩家 UUID>",
-                        "<访问令牌>",
+                        account?.uuid ?: I18n.t("instA2.preview.playerUuid"),
+                        I18n.t("instA2.preview.accessToken"),
                     ),
                     prepareFiles = false,
                 )

@@ -5,10 +5,8 @@
 
 package dev.molifox.core
 
-import java.nio.file.Files
-import java.nio.file.LinkOption
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
-import kotlin.io.path.exists
 import kotlin.io.path.writeText
 
 /** 迁移清单与备份目录的维护；执行器只负责搬运与回滚。 */
@@ -20,12 +18,14 @@ internal object MigrationManifest {
     ) {
         val text =
             buildString {
-                appendLine("MoliFox 迁移清单")
-                appendLine("实例：${plan.instanceId}")
-                appendLine("方向：${plan.from.title} → ${plan.to.title}")
-                appendLine("源目录：${plan.sourceRoot.toAbsolutePath()}")
-                appendLine("目标目录：${plan.targetRoot.toAbsolutePath()}")
-                appendLine("条目：${plan.entries.size}")
+                appendLine(I18n.t("diagA2.migrationManifest.title"))
+                appendLine(I18n.t("diagA2.migrationManifest.instance", plan.instanceId))
+                appendLine(
+                    I18n.t("diagA2.migrationManifest.direction", plan.from.title, plan.to.title),
+                )
+                appendLine(I18n.t("diagA2.migrationManifest.sourceRoot", plan.sourceRoot.toAbsolutePath()))
+                appendLine(I18n.t("diagA2.migrationManifest.targetRoot", plan.targetRoot.toAbsolutePath()))
+                appendLine(I18n.t("diagA2.migrationManifest.entries", plan.entries.size))
                 plan.entries.forEach {
                     appendLine("${it.action} ${it.relativePath} ${it.size} ${it.reason}")
                 }
@@ -33,10 +33,13 @@ internal object MigrationManifest {
         directory.resolve("isolation-plan.txt").writeText(text)
     }
 
+    /**
+     * 删除迁移暂存/备份目录。
+     *
+     * 用 [deletionDeleteTree] 而不是裸 `Files.walk`：后者会进入 Windows 目录联接（junction）指向的
+     * 真实目录，把用户放在别处的内容一起删掉；[deletionDeleteTree] 只删链接本身、不进入。
+     */
     fun deleteTree(directory: Path) {
-        if (!directory.exists(LinkOption.NOFOLLOW_LINKS)) return
-        Files.walk(directory).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
-        }
+        deletionDeleteTree(directory)
     }
 }

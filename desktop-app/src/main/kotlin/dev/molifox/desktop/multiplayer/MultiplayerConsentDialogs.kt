@@ -24,6 +24,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 
 @Composable
@@ -31,51 +33,41 @@ internal fun MultiplayerTermsDialog(
     onAccept: () -> Unit,
     onDecline: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var checked by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDecline,
-        title = { Text("开始使用 MoliFox 联机") },
+        title = { Text(strings.t("dialogs.mp.consent.startTitle")) },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                Text(MULTIPLAYER_TECHNOLOGY_NOTICE)
-                Text(MULTIPLAYER_NETWORK_NOTICE, Modifier.padding(top = 12.dp))
-                Text(
-                    "你在房间中使用的显示名称、随机设备标识与客户端版本会发送给同房间的玩家，" +
-                        "用于房间内展示与识别；优先 P2P 直连，打洞失败时会自动经内置中继转发。" +
-                        "中继不支持转发或不可用时会提示连接失败。" +
-                        "联机目前仅支持 MoliFox 启动器之间使用，PCL CE / HMCL 等其它启动器无法加入。" +
-                        "邀请码包含网络密钥，等同于房间口令，请只分享给要一起玩的朋友。",
-                    Modifier.padding(top = 12.dp),
-                )
-                Text(RUNTIME_CONSENT, Modifier.padding(top = 12.dp))
-                Text(FIREWALL_CONSENT, Modifier.padding(top = 12.dp))
-                Text(MULTIPLAYER_LEGAL_NOTICE, Modifier.padding(top = 12.dp))
+                Text(multiplayerTechnologyNotice())
+                Text(multiplayerNetworkNotice(), Modifier.padding(top = 12.dp))
+                Text(strings.t("dialogs.mp.consent.intro"), Modifier.padding(top = 12.dp))
+                Text(runtimeConsent(), Modifier.padding(top = 12.dp))
+                Text(firewallConsent(), Modifier.padding(top = 12.dp))
+                Text(multiplayerLegalNotice(), Modifier.padding(top = 12.dp))
                 Row(
                     Modifier
                         .toggleable(checked, role = Role.Checkbox, onValueChange = { checked = it })
-                        .semantics(mergeDescendants = true) { contentDescription = "我已阅读并了解以上说明" },
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = strings.t("dialogs.mp.consent.ack")
+                        },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Checkbox(checked = checked, onCheckedChange = null)
-                    Text("我已阅读并了解以上说明", style = MaterialTheme.typography.bodySmall)
+                    Text(strings.t("dialogs.mp.consent.ack"), style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onAccept, enabled = checked) { Text("同意并开始下载") }
+            TextButton(onClick = onAccept, enabled = checked) { Text(strings.t("dialogs.mp.consent.accept")) }
         },
-        dismissButton = { TextButton(onClick = onDecline) { Text("暂不使用") } },
+        dismissButton = { TextButton(onClick = onDecline) { Text(strings.t("dialogs.mp.consent.decline")) } },
     )
 }
 
 /** 下载与许可说明：只承诺启动器确实会做的事，不暗示安装驱动或提权。 */
-private val RUNTIME_CONSENT =
-    "点击“同意并开始下载”后会立即下载官方 EasyTier ${MultiplayerPolicy.CORE_VERSION} 独立进程" +
-        "（约 31 MB，官方源失败会自动换镜像），下载完成后按 SHA-256 校验；" +
-        "它以 LGPL-3.0 许可单独发布，由启动器作为独立进程运行。" +
-        "启动器不安装 TUN 驱动，也不需要管理员权限。"
+private fun runtimeConsent(): String = tr("dialogs.mp.consent.download", MultiplayerPolicy.CORE_VERSION)
 
 /** 防火墙与进程生命周期说明：启动器不替用户改系统安全设置。 */
-private const val FIREWALL_CONSENT =
-    "首次运行时 Windows 可能弹出防火墙提示；启动器不会自动修改防火墙设置，请按系统提示自行放行或拒绝。" +
-        "关闭启动器会结束 EasyTier 进程，正在进行的联机也会中断。"
+private fun firewallConsent(): String = tr("dialogs.mp.consent.firewall")

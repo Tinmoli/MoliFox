@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
@@ -66,7 +67,9 @@ class VersionResolver(
         chain: Set<String> = emptySet(),
     ): ResolvedProfile {
         safeFilename(id)
-        require(id !in chain && chain.size < MAX_INHERITANCE_DEPTH) { "游戏版本继承出现循环" }
+        require(id !in chain && chain.size < MAX_INHERITANCE_DEPTH) {
+            I18n.t("networkB2.versionResolver.inheritanceCycle")
+        }
         val child = readObject(root.resolve("versions").resolve(id).resolve("$id.json"))
         val parentId = child.string("inheritsFrom")
         if (parentId.isBlank()) return ResolvedProfile(id, child.string("jar", id), child)
@@ -285,7 +288,7 @@ fun mavenPath(
             parts.none { it.isBlank() } &&
             extension.matches(Regex("[a-zA-Z0-9]+")),
     ) {
-        "无效的 Maven 依赖：$coordinate"
+        I18n.t("networkB2.versionResolver.invalidMavenCoordinate", coordinate)
     }
     val classifier = classifierOverride ?: parts.getOrNull(3)
     val filename = "${parts[1]}-${parts[2]}${classifier?.let { "-$it" } ?: ""}.$extension"
@@ -339,5 +342,6 @@ internal fun substitute(
     values: Map<String, String>,
 ): String =
     Regex("\\$\\{([^}]+)}").replace(argument) { match ->
-        values[match.groupValues[1]] ?: error("不支持的游戏启动参数：${match.value}")
+        values[match.groupValues[1]]
+            ?: error(I18n.t("networkB2.versionResolver.unsupportedArgument", match.value))
     }

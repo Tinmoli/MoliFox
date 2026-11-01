@@ -175,7 +175,7 @@ private fun notifyRecentPlayFailure(
     controller: LauncherController,
     failure: Exception,
 ) {
-    controller.store.notify("读取最近游玩失败：${failure.message}")
+    controller.store.notify(tr("pages.recent.readFailed", failure.message.orEmpty()))
 }
 
 /** 在 IO 线程执行一次条目动作；可预期的失败转为提示，结束后无论成败都刷新列表。 */
@@ -191,11 +191,11 @@ private fun ioAction(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: IOException) {
-                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+                controller.store.notify(failure.message ?: tr("pages.recent.actionFailed"))
             } catch (failure: IllegalStateException) {
-                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+                controller.store.notify(failure.message ?: tr("pages.recent.actionFailed"))
             } catch (failure: IllegalArgumentException) {
-                controller.store.notify(failure.message ?: "操作失败，请查看日志")
+                controller.store.notify(failure.message ?: tr("pages.recent.actionFailed"))
             } finally {
                 onDone()
             }
@@ -211,7 +211,7 @@ private fun openRecentPlayPrimary(
 ) {
     if (item.kind == EntryKind.Server) {
         clipboard.setText(AnnotatedString(item.key))
-        controller.store.notify("已复制服务器地址")
+        controller.store.notify(tr("pages.recent.copied"))
     } else {
         item.save?.let { save ->
             perform {
@@ -244,11 +244,15 @@ private fun deleteRecentPlay(
     if (item.kind == EntryKind.Server) {
         val result = controller.deleteServer(instance.id, item.key)
         controller.store.notify(
-            if (result.removed > 0) "服务器已删除，原列表已备份" else "已移除这条历史记录",
+            if (result.removed > 0) {
+                tr("pages.recent.deletedServer")
+            } else {
+                tr("pages.recent.removed")
+            },
         )
     } else {
         require(controller.deleteSave(instance.id, item.key)) {
-            "存档未能移入回收站，请查看日志"
+            tr("pages.recent.trashFailed")
         }
         controller.store.recentUsage.forget(EntryKind.World, instance.id, item.key)
     }
@@ -260,9 +264,11 @@ private fun recentPlayEmptyText(
     kind: EntryKind,
 ): String =
     if (loading) {
-        "正在读取…"
+        tr("pages.recent.loading")
+    } else if (kind == EntryKind.World) {
+        tr("pages.recent.empty.world")
     } else {
-        "暂无${if (kind == EntryKind.World) "存档" else "服务器"}，可在查看全部中恢复隐藏项"
+        tr("pages.recent.empty.server")
     }
 
 @Composable
@@ -280,6 +286,7 @@ private fun RecentPlayCard(
     callbacks: RecentPlayActions,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     Panel(
         modifier.animateContentSize(tween(if (LocalReducedMotion.current) 0 else 180)),
         padding = 0,
@@ -289,7 +296,7 @@ private fun RecentPlayCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "最近游玩",
+                strings.t("pages.recent.title"),
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 maxLines = 1,
@@ -298,15 +305,19 @@ private fun RecentPlayCard(
             RecentKindSwitch(kind, onKindChange)
             SmallIconButton(
                 Icons.Outlined.Refresh,
-                "刷新最近游玩的存档与服务器",
+                strings.t("pages.recent.refresh"),
                 onClick = onRefresh,
             )
             TextButton(onShowAll, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Text("查看全部", fontSize = 12.sp)
+                Text(strings.t("pages.recent.viewAll"), fontSize = 12.sp)
             }
             SmallIconButton(
                 if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                if (expanded) "折叠最近游玩的存档或服务器" else "展开最近游玩的存档或服务器",
+                if (expanded) {
+                    strings.t("pages.recent.collapse")
+                } else {
+                    strings.t("pages.recent.expand")
+                },
                 onClick = { onExpandedChange(!expanded) },
             )
         }
@@ -338,24 +349,34 @@ private fun DeleteRecentPlayDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (item.kind == EntryKind.Server) "删除服务器？" else "删除存档？") },
+        title = {
+            Text(
+                if (item.kind == EntryKind.Server) {
+                    strings.t("pages.recent.deleteServer.title")
+                } else {
+                    strings.t("pages.recent.deleteWorld.title")
+                },
+            )
+        },
         text = {
             Text(
                 if (item.kind == EntryKind.Server) {
-                    "「${item.title}」将从当前游戏目录的服务器列表移除，游戏内也不再显示。" +
-                        "共用此目录的实例同步生效；修改前会备份原列表。请先退出使用此目录的游戏。"
+                    strings.t("pages.recent.deleteServer.body", item.title)
                 } else {
-                    "「${item.title}」将移入回收站，可从回收站恢复。"
+                    strings.t("pages.recent.deleteWorld.body", item.title)
                 },
             )
         },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("删除", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("pages.recent.delete"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onDismiss) { Text(strings.t("pages.recent.cancel")) }
+        },
     )
 }

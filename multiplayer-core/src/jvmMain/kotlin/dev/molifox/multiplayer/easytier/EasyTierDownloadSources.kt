@@ -1,6 +1,7 @@
 // 安装包下载源探测与 TLS 兼容：镜像测速、系统信任库回退，供安装器选择最快来源。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.io.InputStream
@@ -54,7 +55,7 @@ class HttpEasyTierSourceProbe(
                         MIN_ELAPSED_MILLIS,
                         (System.nanoTime() - startedNanos) / NANOS_PER_MILLI,
                     )
-                if (received < MIN_SAMPLE_BYTES) throw IOException("测速样本不足")
+                if (received < MIN_SAMPLE_BYTES) throw IOException(I18n.t("multiplayer.easyTierDownloadSources.1"))
                 received * MILLIS_PER_SECOND / elapsedMillis
             }
         }.onFailure { failure ->
@@ -85,8 +86,7 @@ class HttpEasyTierSourceProbe(
         return total
     }
 
-    private fun elapsedMillis(startedNanos: Long): Long =
-        (System.nanoTime() - startedNanos) / NANOS_PER_MILLI
+    private fun elapsedMillis(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / NANOS_PER_MILLI
 
     private companion object {
         const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 4_000

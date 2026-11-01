@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -160,7 +161,7 @@ internal class InstalledContentIcons(
                         .newInputStream(
                             registry,
                         ).use { it.readNBytes(MAX_CONTENT_RECORD_BYTES + 1) }
-                require(bytes.size <= MAX_CONTENT_RECORD_BYTES) { "资源安装登记超过大小限制" }
+                require(bytes.size <= MAX_CONTENT_RECORD_BYTES) { I18n.t("packsC.contentRecord.tooLarge") }
                 val entries =
                     JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject.entrySet()
                 entries.singleOrNull { (_, value) ->
@@ -242,8 +243,7 @@ private fun ByteArray.ascii(
 
 private fun ByteArray.u8(offset: Int): Int = this[offset].toInt() and BYTE_MASK
 
-private fun ByteArray.littleEndianShort(offset: Int): Int =
-    u8(offset) or (u8(offset + 1) shl BYTE_SHIFT)
+private fun ByteArray.littleEndianShort(offset: Int): Int = u8(offset) or (u8(offset + 1) shl BYTE_SHIFT)
 
 private fun ByteArray.u24(offset: Int): Int =
     u8(offset) or (u8(offset + 1) shl BYTE_SHIFT) or (u8(offset + 2) shl TWO_BYTE_SHIFT)

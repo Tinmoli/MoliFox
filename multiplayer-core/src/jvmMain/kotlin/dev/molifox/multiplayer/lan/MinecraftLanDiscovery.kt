@@ -1,6 +1,7 @@
 // JVM 局域网世界发现：监听 Minecraft LAN 广播，对候选端口做 status ping 并发布去重结果。
 package dev.molifox.multiplayer.lan
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.LanWorld
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,9 +46,9 @@ class MinecraftLanDiscovery(
 ) : AutoCloseable {
     init {
         require(listenPort in 0..MAX_PORT) {
-            "listenPort 必须在 0..$MAX_PORT 之间，收到 $listenPort"
+            I18n.t("multiplayer.minecraftLanDiscovery.1", MAX_PORT, listenPort)
         }
-        require(pingTimeoutMillis > 0) { "pingTimeoutMillis 必须为正数" }
+        require(pingTimeoutMillis > 0) { I18n.t("multiplayer.minecraftLanDiscovery.2") }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -75,7 +76,7 @@ class MinecraftLanDiscovery(
     fun start(): Result<Int> =
         synchronized(stateLock) {
             when {
-                closed -> Result.failure(IllegalStateException("LAN 发现已关闭"))
+                closed -> Result.failure(IllegalStateException(I18n.t("multiplayer.minecraftLanDiscovery.3")))
                 running -> Result.success(boundPortValue ?: listenPort)
                 else -> bindAndLaunch()
             }
@@ -115,7 +116,7 @@ class MinecraftLanDiscovery(
 
     private fun bindFailure(failure: IOException): IOException =
         IOException(
-            "无法监听 LAN 发现端口 $listenPort（可能被其它启动器占用）: ${failure.message}",
+            I18n.t("multiplayer.minecraftLanDiscovery.4", listenPort, failure.message),
             failure,
         )
 

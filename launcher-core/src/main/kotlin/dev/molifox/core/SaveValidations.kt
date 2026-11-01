@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -23,8 +24,8 @@ internal fun requireRestorableBackup(
 ): SaveBackupInfo {
     val archive = resolveBackupArchive(directory, backupId)
     val info =
-        describeSaveBackup(archive) ?: error("备份文件名无法识别，不能自动恢复：$backupId")
-    require(info.restorable) { "备份包里没有 level.dat，无法恢复：${archive.name}" }
+        describeSaveBackup(archive) ?: error(I18n.t("saveA2.validations.unrecognizedBackup", backupId))
+    require(info.restorable) { I18n.t("saveA2.validations.missingLevelDat", archive.name) }
     return info
 }
 
@@ -35,16 +36,16 @@ internal fun requireRestorableWorld(
 ) {
     val level = directory.resolve("level.dat")
     require(level.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLinkPath(level)) {
-        "$source 缺少 level.dat，未恢复"
+        I18n.t("saveA2.validations.sourceMissingLevelDat", source)
     }
-    require(level.fileSize() > 0) { "$source 的 level.dat 是空文件，未恢复" }
+    require(level.fileSize() > 0) { I18n.t("saveA2.validations.sourceEmptyLevelDat", source) }
     runCatching { Files.newInputStream(level).use { it.read() } }
-        .getOrElse { error("$source 的 level.dat 无法读取，未恢复") }
+        .getOrElse { error(I18n.t("saveA2.validations.sourceUnreadableLevelDat", source)) }
 }
 
 /** 替换前的额外校验：除 level.dat 外还要有非空的区域文件，避免把空壳目录换进世界位置。 */
 internal fun requireReplaceableWorld(directory: Path) {
-    requireRestorableWorld(directory, "备份包")
+    requireRestorableWorld(directory, I18n.t("core.saveManager.8"))
     var regions = 0
     Files.walkFileTree(
         directory,
@@ -77,5 +78,5 @@ internal fun requireReplaceableWorld(directory: Path) {
             ): FileVisitResult = FileVisitResult.CONTINUE
         },
     )
-    require(regions > 0) { "备份包没有非空的区域文件，未替换" }
+    require(regions > 0) { I18n.t("saveA2.validations.noRegionFiles") }
 }

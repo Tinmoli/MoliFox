@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.nio.file.Files
@@ -26,9 +27,11 @@ internal suspend fun stagePackFiles(
     optionalFiles: Set<String>?,
     repairing: Boolean,
     context: JobContext,
+    progressStart: Float = 0f,
+    progressEnd: Float = 1f,
     download: suspend (DownloadArtifact) -> Unit,
 ) {
-    val stager = PackFileStager(context, download)
+    val stager = PackFileStager(context, download, progressStart, progressEnd)
     stager.indexed(manifest, transaction, optionalFiles)
     val prefixes = manifest.overridePrefixes
     val target = PackStagingTarget(transaction, game, repairing)
@@ -45,6 +48,8 @@ private data class PackStagingTarget(
 private class PackFileStager(
     private val context: JobContext,
     private val download: suspend (DownloadArtifact) -> Unit,
+    private val progressStart: Float,
+    private val progressEnd: Float,
 ) {
     suspend fun indexed(
         manifest: PackManifest,
@@ -63,21 +68,26 @@ private class PackFileStager(
                                 it.string("path") in optionalFiles
                         )
                 }.orEmpty()
+        // 整合包下载是独立阶段：重置任务中心的文件计数，避免沿用原版安装的 1 万多文件。
+        context.beginTransfers(files.size)
+        val span = progressEnd - progressStart
         for ((position, file) in files.withIndex()) {
             context.checkCancelled()
+            val path = file.string("path")
             context.progress(
-                position.toFloat() / maxOf(files.size, 1),
-                "整合包文件 ${position + 1}/${files.size} · ${file.string("path")}",
+                progressStart + span * position.toFloat() / maxOf(files.size, 1),
+                I18n.t("packsA2.packStaging.progressIndexedFile", position + 1, files.size, path),
             )
-            val target = packPath(transaction.content, file.string("path"))
-            downloadIndexFile(file, target)
+            val target = packPath(transaction.content, path)
+            val size = downloadIndexFile(file, target)
+            context.transfer(target.toString(), size, size, completed = true)
         }
     }
 
     private suspend fun downloadIndexFile(
         file: JsonObject,
         target: Path,
-    ) {
+    ): Long {
         var failure: Exception? = null
         for (url in file.array("downloads")) {
             try {
@@ -90,10 +100,10 @@ private class PackFileStager(
                             .equals(file.obj("hashes").string("sha512"), true) &&
                         digest(target, "SHA-1").equals(file.obj("hashes").string("sha1"), true),
                 ) {
-                    "整合包文件大小或双哈希校验失败：${file.string("path")}"
+                    I18n.t("packsA2.packStaging.sizeOrHashMismatch", file.string("path"))
                 }
                 failure = null
-                break
+                return target.fileSize()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: IOException) {
@@ -105,6 +115,7 @@ private class PackFileStager(
             }
         }
         failure?.let { throw it }
+        error(I18n.t("packsA2.packStaging.downloadFailed", file.string("path")))
     }
 
     suspend fun checked(
@@ -118,7 +129,7 @@ private class PackFileStager(
             if (destination.repairing && actual.exists()) continue
             download(DownloadArtifact(file.url, target, file.hash))
             require(target.isRegularFile() && digest(target).equals(file.hash, true)) {
-                "整合包文件校验失败：${file.path}"
+                I18n.t("packsA2.packStaging.verificationFailed", file.path)
             }
         }
     }
@@ -151,7 +162,7 @@ private class PackFileStager(
                 }
                 checks[relative]?.let { file ->
                     require(digest(target).equals(file.hash, true)) {
-                        "整合包文件校验失败：$relative"
+                        I18n.t("packsA2.packStaging.verificationFailed", relative)
                     }
                 }
             }

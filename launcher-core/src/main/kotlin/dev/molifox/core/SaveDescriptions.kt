@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -125,7 +126,7 @@ private fun directorySize(
                 ): FileVisitResult = FileVisitResult.CONTINUE
             },
         )
-    }.onFailure { store.log("读取存档体积失败：${it.message ?: directory}") }
+    }.onFailure { store.log(I18n.t("saveA2.descriptions.sizeReadFailed", it.message ?: directory)) }
     return total
 }
 

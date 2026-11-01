@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.net.URI
 import kotlin.io.path.exists
 
@@ -79,8 +80,7 @@ internal class ContentInstallPlanner(
         selectedOptional: Set<String>,
         exactVersion: String = "",
         sources: List<ContentSource> = emptyList(),
-    ): ContentInstallPlan =
-        planMany(listOf(ContentRequest(hit, exactVersion)), instanceId, selectedOptional, sources)
+    ): ContentInstallPlan = planMany(listOf(ContentRequest(hit, exactVersion)), instanceId, selectedOptional, sources)
 
     suspend fun planMany(
         requests: List<ContentRequest>,
@@ -90,7 +90,7 @@ internal class ContentInstallPlanner(
     ): ContentInstallPlan {
         requireUniquePlanItems(requests, sources)
         val instance = store.instance(instanceId)
-        require(instance.installed) { "请先完成游戏实例安装" }
+        require(instance.installed) { I18n.t("contentA1.install.instanceNotInstalled") }
         val registryFile = store.instancePath(instanceId).resolve(".molifox-content.json")
         val registry = if (registryFile.exists()) readObject(registryFile) else JsonObject()
         val registryHash = if (registryFile.exists()) digest(registryFile) else ""
@@ -115,10 +115,10 @@ internal class ContentInstallPlanner(
         require(
             requests.isNotEmpty() && requests.map { it.hit.id }.distinct().size == requests.size,
         ) {
-            "同一项目有多个本地版本，请先整理"
+            I18n.t("contentA1.installPlan.duplicateProjectVersions")
         }
         require(sources.map { it.projectId }.distinct().size == sources.size) {
-            "同一项目有多个本地文件，请先整理"
+            I18n.t("contentA1.installPlan.duplicateLocalFiles")
         }
     }
 
@@ -134,14 +134,14 @@ internal class ContentInstallPlanner(
                 !registry.obj(source.projectId).boolean("locked") ||
                     registry.obj(source.projectId).string("versionId") == source.versionId,
             ) {
-                "锁定版本与本地文件不一致，请先整理或解锁"
+                I18n.t("contentA1.installPlan.lockedVersionMismatch")
             }
             require(
                 registry.obj(source.projectId).string("file").let {
                     it.isBlank() || it == contentBaseFilename(source.filename)
                 },
             ) {
-                "同一项目有多个文件，请先整理"
+                I18n.t("contentA1.installPlan.duplicateProjectFiles")
             }
             registry.add(
                 source.projectId,

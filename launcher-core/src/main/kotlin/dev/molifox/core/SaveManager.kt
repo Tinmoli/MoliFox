@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
@@ -106,7 +107,7 @@ class SaveManager(
         return runCatching {
             saves.listDirectoryEntries()
         }.onFailure {
-            store.log("读取存档目录失败：${it.message ?: saves}", true)
+            store.log(I18n.t("saveA2.manager.listFailed", it.message ?: saves), true)
         }.getOrDefault(emptyList())
             .mapNotNull { child -> runCatching { describeSaveEntry(child, store) }.getOrNull() }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
@@ -150,13 +151,13 @@ class SaveManager(
             val instance = store.instance(instanceId)
             requireSaveGameStopped(store, instanceId)
             val saves = savesDirectoryOf(store, instanceId)
-            requireSaveDirectory(saves, "存档目录不存在，无法备份")
+            requireSaveDirectory(saves, I18n.t("core.saveManager.1"))
             val source = saveSourcePath(saves, saveName)
             val label = safeSaveLabel(source.name.removeSuffixIgnoreCase(".zip"))
-            context?.progress(0f, "备份存档 · $saveName")
-            val info = packer.packSave(instanceId, source, label, context, "备份存档")
-            context?.progress(1f, "备份存档完成 · ${info.archive.name}")
-            store.log("已备份存档：${instance.name} / $saveName → ${info.archive.name}")
+            context?.progress(0f, I18n.t("core.saveManager.2", saveName))
+            val info = packer.packSave(instanceId, source, label, context, I18n.t("core.saveManager.3"))
+            context?.progress(1f, I18n.t("core.saveManager.4", info.archive.name))
+            store.log(I18n.t("core.saveManager.5", instance.name, saveName, info.archive.name))
             info
         }
 
@@ -175,25 +176,26 @@ class SaveManager(
             val instance = store.instance(instanceId)
             requireSaveGameStopped(store, instanceId)
             val saves = savesDirectoryOf(store, instanceId)
-            requireSaveDirectory(saves, "存档目录不存在，无法恢复")
+            requireSaveDirectory(saves, I18n.t("core.saveManager.6"))
             requireSavesUnlocked(saves)
             val info = requireRestorableBackup(backupDirectoryOf(store, instanceId), backupId)
             val base =
-                safeSaveLabel(info.saveName).take(SAVE_RESTORE_LABEL_LENGTH) +
-                    "（备份 " +
-                    restoreSuffixFormat.format(info.createdAt) +
-                    "）"
+                I18n.t(
+                    "saveC.restore.label",
+                    safeSaveLabel(info.saveName).take(SAVE_RESTORE_LABEL_LENGTH),
+                    restoreSuffixFormat.format(info.createdAt),
+                )
             val name = uniqueSaveName(saves, base, isZip = false)
             val target = saveTargetPath(saves, name)
-            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$name" }
+            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { I18n.t("core.saveManager.7", name) }
             val staging = saveStagingPath(saves)
             withSaveCleanup({ runCatching { deleteSaveTree(staging) } }) {
                 extractArchive(info.archive, staging, context, skipSessionLock = true)
-                requireRestorableWorld(staging, "备份包")
+                requireRestorableWorld(staging, I18n.t("core.saveManager.8"))
                 commitSavePath(staging, target)
             }
-            context?.progress(1f, "恢复存档完成 · $name")
-            store.log("已恢复存档：${instance.name} / $name ← ${info.archive.name}")
+            context?.progress(1f, I18n.t("core.saveManager.9", name))
+            store.log(I18n.t("core.saveManager.10", instance.name, name, info.archive.name))
             target
         }
 
@@ -212,30 +214,35 @@ class SaveManager(
             val instance = store.instance(instanceId)
             requireSaveGameStopped(store, instanceId)
             val saves = savesDirectoryOf(store, instanceId)
-            requireSaveDirectory(saves, "存档目录不存在，无法恢复")
+            requireSaveDirectory(saves, I18n.t("core.saveManager.6"))
             val info = requireRestorableBackup(backupDirectoryOf(store, instanceId), backupId)
             val name = safeSaveLabel(info.saveName)
             val target = saveTargetPath(saves, name)
-            require(!isLinkPath(target)) { "目标存档是符号链接或目录联接，未处理：$name" }
+            require(!isLinkPath(target)) { I18n.t("core.saveManager.11", name) }
             // 原世界不存在时「替换」没有意义，直接按非破坏性复制走一遍。
             if (!target.exists(LinkOption.NOFOLLOW_LINKS)) {
                 return@withContext restoreSave(instanceId, backupId, context)
             }
-            require(target.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "存档「$name」不是目录，未替换" }
+            require(target.isDirectory(LinkOption.NOFOLLOW_LINKS)) { I18n.t("core.saveManager.12", name) }
             require(!sessionLockHeld(target)) {
-                "世界「${target.fileName}」正在游戏中打开，请先退出游戏"
+                I18n.t("core.saveManager.13", target.fileName)
             }
             // 1) 先备份当前世界；备份失败时后面一步都还没做，原世界保持原样。
-            context?.progress(0f, "替换前备份存档 · $name")
+            context?.progress(0f, I18n.t("core.saveManager.14", name))
             val previous =
-                packer.packSave(instanceId, target, safeSaveLabel(name), context, "替换前备份存档")
-            store.log("替换前已备份当前世界：${instance.name} / $name → ${previous.archive.name}")
+                packer.packSave(instanceId, target, safeSaveLabel(name), context, I18n.t("core.saveManager.15"))
+            store.log(I18n.t("saveA2.manager.logPreviousBackup", instance.name, name, previous.archive.name))
             // 2) 解压到 saves/ 内的临时目录；3) 旧世界改名保留；4) 临时目录改名就位。
             val kept = replaceSaveWorld(saves, name, info.archive, context, previous.archive.name)
-            context?.progress(1f, "恢复存档完成 · $name")
+            context?.progress(1f, I18n.t("core.saveManager.9", name))
             store.log(
-                "已用备份替换存档：${instance.name} / $name ← ${info.archive.name}；" +
-                    "旧世界保留为 ${kept.fileName}",
+                I18n.t(
+                    "saveA2.manager.logReplaced",
+                    instance.name,
+                    name,
+                    info.archive.name,
+                    kept.fileName,
+                ),
             )
             target
         }
@@ -254,7 +261,7 @@ class SaveManager(
         context: JobContext? = null,
     ): Path =
         withContext(Dispatchers.IO) {
-            require(sourceInstanceId != targetInstanceId) { "源实例与目标实例相同，请选择另一个实例" }
+            require(sourceInstanceId != targetInstanceId) { I18n.t("core.saveManager.16") }
             val source = store.instance(sourceInstanceId)
             val destination = store.instance(targetInstanceId)
             requireSaveGameStopped(store, sourceInstanceId, targetInstanceId)
@@ -276,9 +283,9 @@ class SaveManager(
                 }
                 commitSavePath(staging, plan.target)
             }
-            context?.progress(1f, "复制存档完成 · ${plan.finalName}")
+            context?.progress(1f, I18n.t("core.saveManager.17", plan.finalName))
             store.log(
-                "已复制存档：${source.name} / $saveName → ${destination.name} / ${plan.finalName}",
+                I18n.t("core.saveManager.18", source.name, saveName, destination.name, plan.finalName),
             )
             plan.target
         }
@@ -299,13 +306,13 @@ class SaveManager(
             val instance = store.instance(instanceId)
             requireSaveGameStopped(store, instanceId)
             val saves = savesDirectoryOf(store, instanceId)
-            require(!isLinkPath(saves)) { "存档目录是符号链接或目录联接，无法导入" }
+            require(!isLinkPath(saves)) { I18n.t("core.saveManager.19") }
             saves.createDirectories()
             val plan = prepareSaveImport(source)
-            context?.progress(0f, "导入存档 · ${plan.source.fileName}")
+            context?.progress(0f, I18n.t("core.saveManager.20", plan.source.fileName))
             val name = uniqueChildName(saves, plan.base)
             val target = saveTargetPath(saves, name)
-            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$name" }
+            require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { I18n.t("core.saveManager.7", name) }
             val staging = saveStagingPath(saves)
             withSaveCleanup({ runCatching { deleteSaveTree(staging) } }) {
                 if (plan.isDirectory) {
@@ -319,11 +326,11 @@ class SaveManager(
                         stripPrefix = plan.prefix,
                     )
                 }
-                requireRestorableWorld(staging, "导入的存档")
+                requireRestorableWorld(staging, I18n.t("core.saveManager.21"))
                 commitSavePath(staging, target)
             }
-            context?.progress(1f, "导入存档完成 · $name")
-            store.log("已导入存档：${instance.name} / $name ← ${plan.source.fileName}")
+            context?.progress(1f, I18n.t("core.saveManager.22", name))
+            store.log(I18n.t("core.saveManager.23", instance.name, name, plan.source.fileName))
             target
         }
 
@@ -339,10 +346,10 @@ class SaveManager(
         if (archive == null) return false
         return runCatching {
             store.platform.moveToTrash(archive)
-            store.log("存档备份已移入回收站：${archive.name}")
+            store.log(I18n.t("saveA2.manager.logBackupTrashed", archive.name))
             true
         }.getOrElse {
-            store.log("删除存档备份失败：${it.message ?: backupId}", true)
+            store.log(I18n.t("saveA2.manager.deleteBackupFailed", it.message ?: backupId), true)
             false
         }
     }
@@ -358,10 +365,10 @@ class SaveManager(
         val path = runCatching { saveSourcePath(saves, saveName) }.getOrNull() ?: return false
         return runCatching {
             store.platform.moveToTrash(path)
-            store.log("存档已移入回收站：${instance.name} / $saveName")
+            store.log(I18n.t("saveA2.manager.logSaveTrashed", instance.name, saveName))
             true
         }.getOrElse {
-            store.log("删除存档失败：${it.message ?: saveName}", true)
+            store.log(I18n.t("saveA2.manager.deleteSaveFailed", it.message ?: saveName), true)
             false
         }
     }

@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.desktop.InstanceArtwork
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
 import dev.molifox.desktop.Motion
 import dev.molifox.desktop.SmallIconButton
@@ -214,6 +215,7 @@ private fun InstanceListRow(
     onExport: () -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
+    val strings = LocalStrings.current
     var menuOpen by remember(instance.id) { mutableStateOf(false) }
     var menuOffset by remember(instance.id) { mutableStateOf(DpOffset.Zero) }
     // 右键菜单贴在指针位置，⋯ 菜单贴在按钮自身：两者用同一个 DropdownMenu 实现，
@@ -259,20 +261,24 @@ private fun InstanceListRow(
                     )
                 }
                 InstanceTextAction(
-                    "开始游戏",
+                    strings.t("pages.instances.row.launch"),
                     onLaunch,
                     enabled = !busy && !instance.broken,
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 FavoriteTextAction(instance, onFavorite)
-                InstanceTextAction("设置", onManage)
-                InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
+                InstanceTextAction(strings.t("pages.instances.row.settings"), onManage)
+                InstanceTextAction(
+                    strings.t("pages.instances.row.delete"),
+                    onDelete,
+                    tint = MaterialTheme.colorScheme.error,
+                )
                 // 触屏/键盘的等价入口：与右键菜单是同一份内容。菜单锚在这个按钮自身的 Box 上，
                 // 右边缘对齐按钮，位置由 M3 弹窗自己限制在窗口内。
                 Box {
                     SmallIconButton(
                         Icons.Outlined.MoreHoriz,
-                        "更多操作 " + instance.name,
+                        strings.t("pages.instances.row.more", instance.name),
                         onClick = {
                             menuAnchor = InstanceMenuAnchor.Button
                             menuOpen = true
@@ -354,6 +360,7 @@ private fun InstanceTitleRow(
     instance: GameInstance,
     selected: Boolean,
 ) {
+    val strings = LocalStrings.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -366,9 +373,9 @@ private fun InstanceTitleRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
         )
-        if (selected) Tag("当前版本")
+        if (selected) Tag(strings.t("pages.instances.row.current"))
         if (!instance.broken && !instance.installed) {
-            Tag("待修复", MaterialTheme.colorScheme.error)
+            Tag(strings.t("pages.instances.row.repair"), MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -379,8 +386,13 @@ private fun FavoriteTextAction(
     instance: GameInstance,
     onFavorite: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     InstanceTextAction(
-        if (instance.favorite) "已收藏" else "收藏",
+        if (instance.favorite) {
+            strings.t("pages.instances.row.favorited")
+        } else {
+            strings.t("pages.instances.row.favorite")
+        },
         onFavorite,
         tint =
             if (instance.favorite) {

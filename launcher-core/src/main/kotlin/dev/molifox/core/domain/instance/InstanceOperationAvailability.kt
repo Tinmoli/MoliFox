@@ -5,6 +5,8 @@
 
 package dev.molifox.core.domain.instance
 
+import dev.molifox.core.i18n.I18n
+
 data class InstanceOperationAvailability(
     val maintain: Boolean,
     val move: Boolean,
@@ -21,9 +23,9 @@ fun instanceOperationAvailability(
         move = isolated && !external && !busy,
         moveBlockedNote =
             when {
-                external -> "外部游戏目录的实例由原启动器维护，不能移动"
-                !isolated -> "共用游戏目录没有独立目录，请先把此实例设为「版本隔离」"
-                busy -> "请等待当前任务结束"
+                external -> I18n.t("instA2.operationAvailability.external")
+                !isolated -> I18n.t("instA2.operationAvailability.notIsolated")
+                busy -> I18n.t("instA2.operationAvailability.busy")
                 else -> ""
             },
     )

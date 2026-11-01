@@ -1,6 +1,7 @@
 // JVM Scaffolding 客户端门面：连接、握手、心跳与玩家/端口状态流。
 package dev.molifox.multiplayer.scaffolding
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.protocol.ScaffoldingPayloads
 import dev.molifox.multiplayer.protocol.ScaffoldingProtocol
 import dev.molifox.multiplayer.protocol.ScaffoldingResponse
@@ -34,10 +35,10 @@ class ScaffoldingClient(
     onError: (Throwable) -> Unit = { failure -> failure.printStackTrace() },
 ) : AutoCloseable {
     init {
-        require(host.isNotBlank()) { "host 不能为空" }
-        require(port in MIN_PORT..MAX_PORT) { "端口必须在 $MIN_PORT..$MAX_PORT 之间，收到 $port" }
-        require(heartbeatIntervalMillis > 0) { "heartbeatIntervalMillis 必须为正数" }
-        require(requestTimeoutMillis > 0) { "requestTimeoutMillis 必须为正数" }
+        require(host.isNotBlank()) { I18n.t("multiplayer.scaffoldingClient.1") }
+        require(port in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.scaffoldingClient.2", MIN_PORT, MAX_PORT, port) }
+        require(heartbeatIntervalMillis > 0) { I18n.t("multiplayer.scaffoldingClient.3") }
+        require(requestTimeoutMillis > 0) { I18n.t("multiplayer.scaffoldingClient.4") }
     }
 
     private val session =
@@ -82,7 +83,7 @@ class ScaffoldingClient(
                     }
                 } else {
                     Result.failure(
-                        IOException("c:player_profiles_list 返回状态 ${response.status}"),
+                        IOException(I18n.t("multiplayer.scaffoldingClient.5", response.status)),
                     )
                 }
             },
@@ -109,7 +110,7 @@ class ScaffoldingClient(
                     refreshServerPort().map { }
                 } else {
                     Result.failure(
-                        IOException("c:player_ping 被拒绝：状态 ${response.status}"),
+                        IOException(I18n.t("multiplayer.scaffoldingClient.6", response.status)),
                     )
                 }
             },
@@ -121,13 +122,13 @@ class ScaffoldingClient(
             ScaffoldingProtocol.STATUS_OK -> {
                 val port = ScaffoldingPayloads.decodeServerPort(response.body)
                 if (port == null) {
-                    Result.failure(IOException("c:server_port 响应体不是 2 字节"))
+                    Result.failure(IOException(I18n.t("multiplayer.scaffoldingClient.7")))
                 } else {
                     Result.success(port)
                 }
             }
             ScaffoldingProtocol.STATUS_SERVER_NOT_READY -> Result.success(null)
-            else -> Result.failure(IOException("c:server_port 返回状态 ${response.status}"))
+            else -> Result.failure(IOException(I18n.t("multiplayer.scaffoldingClient.8", response.status)))
         }
 }
 

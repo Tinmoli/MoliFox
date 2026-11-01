@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** 纳秒到毫秒的换算基数。 */
@@ -14,20 +15,30 @@ internal typealias ModFileHasher = (Path, String) -> String
 
 /** 更新检查结果：有更新、匹配到项目但已是最新、或无法确认当前版本。 */
 enum class ModUpdateStatus(
-    val title: String,
+    private val titleKey: String,
 ) {
-    Updatable("有更新"),
-    Latest("已是最新"),
-    Unknown("无法确认"),
+    Updatable("core.modUpdateStatus.updatable"),
+    Latest("core.modUpdateStatus.latest"),
+    Unknown("core.modUpdateStatus.unknown"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 /** 识别依据：文件指纹最可靠，其次是声明里的项目标识，最后才是按名称搜索。 */
 enum class ModMatchSource(
-    val title: String,
+    private val titleKey: String,
 ) {
-    Fingerprint("文件指纹"),
-    ProjectId("项目标识"),
-    Name("名称搜索"),
+    Fingerprint("core.modMatchSource.fingerprint"),
+    ProjectId("core.modMatchSource.projectId"),
+    Name("core.modMatchSource.name"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 data class ModUpdateCandidate(
@@ -155,8 +166,7 @@ internal data class BatchLatest(
 /** 逐项目版本查询的并发上限：服务端能承受，又不至于把一条慢连接排成一列。 */
 internal const val UPDATE_LOOKUP_CONCURRENCY = 6
 
-internal fun elapsedMillis(startedAt: Long): Long =
-    (System.nanoTime() - startedAt) / NANOS_PER_MILLI
+internal fun elapsedMillis(startedAt: Long): Long = (System.nanoTime() - startedAt) / NANOS_PER_MILLI
 
 internal typealias ModUpdateDownloader =
     suspend (version: RemoteModVersion, target: Path, context: JobContext?) -> Unit

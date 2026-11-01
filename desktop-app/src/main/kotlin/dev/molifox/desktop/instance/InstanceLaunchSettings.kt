@@ -32,14 +32,17 @@ import dev.molifox.core.instanceMemoryPolicy
 import dev.molifox.core.instanceMemorySliderValue
 import dev.molifox.core.normalizeInstanceLaunchNumberInput
 import dev.molifox.core.parseInstanceLaunchNumberInput
+import dev.molifox.core.recommendedAutomaticMemoryMb
 import dev.molifox.desktop.CompactSettingsSection
 import dev.molifox.desktop.CompactSlider
 import dev.molifox.desktop.CompactSwitch
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.NumberField
 import dev.molifox.desktop.SettingRow
 import dev.molifox.desktop.Tag
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.tr
 
 /** 1 GB = 1024 MB，只用于内存标签的换算显示。 */
 private const val MEGABYTES_PER_GIGABYTE = 1024f
@@ -62,6 +65,7 @@ internal fun InstanceLaunchSettingsSection(
     onHeightChange: (String) -> Unit,
     launchError: String?,
 ) {
+    val strings = LocalStrings.current
     val memoryPolicy = instanceMemoryPolicy(draft)
     val memoryLimit = instanceMemoryLimitMb(actions.controller.platform.totalMemoryMb)
     // 只有手动分配会持久化显式值；继承全局/自动分配一律按「没有显式值」解析。
@@ -78,12 +82,26 @@ internal fun InstanceLaunchSettingsSection(
     val widthValue = parseInstanceLaunchNumberInput(width)
     val heightValue = parseInstanceLaunchNumberInput(height)
     CompactSettingsSection(
-        "启动设置",
-        "最大内存只在「手动分配」时可调；窗口宽高留空表示跟随全局，参数留空表示不追加。",
+        strings.t("deskG.launch.title"),
+        strings.t("deskG.launch.hint"),
     ) {
         val fullscreenNow = resolveFullscreenNow(draft, settings)
         val memoryLabel = memoryPolicyLabel(memoryPolicy, effectiveMemory, memoryMb)
-        val memoryHint = memoryPolicyHint(memoryPolicy)
+        val recommendedMemory = recommendedAutomaticMemoryMb(draft.modCount)
+        val memoryHint =
+            buildString {
+                append(memoryPolicyHint(memoryPolicy))
+                if (effectiveMemory < recommendedMemory) {
+                    append('\n')
+                    append(
+                        strings.t(
+                            "instA2.launchOptions.memoryBelowRecommended",
+                            effectiveMemory,
+                            recommendedMemory,
+                        ),
+                    )
+                }
+            }
         // 非手动策略滑块只显示解析后的有效值，不接受拖动。
         val sliderValue = sliderMemoryMb(memoryPolicy, memoryMb, effectiveMemory, memoryLimit)
         val memoryRange =
@@ -107,7 +125,7 @@ internal fun InstanceLaunchSettingsSection(
                     }
                 },
                 Modifier.weight(1f).semantics {
-                    contentDescription = "实例最大内存滑块"
+                    contentDescription = strings.t("deskG.launch.memorySlider")
                 },
                 valueRange = memoryRange,
                 enabled = memoryPolicy == InstanceMemoryPolicy.Manual,
@@ -118,40 +136,38 @@ internal fun InstanceLaunchSettingsSection(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumberField(
                 value = width,
-                label = "窗口宽度（px）",
+                label = strings.t("deskG.launch.widthLabel"),
                 onChange = {
                     onWidthChange(normalizeInstanceLaunchNumberInput(it))
                 },
                 modifier = Modifier.weight(1f),
                 placeholder = "—",
-                hint =
-                    "留空表示跟随全局（当前 ${settings.width} px）",
+                hint = strings.t("deskG.launch.sizeHint", settings.width),
                 onFocusChange = { focused ->
                     windowFieldFallback(focused, widthValue, instance.width)?.let(onWidthChange)
                 },
             )
             NumberField(
                 value = height,
-                label = "窗口高度（px）",
+                label = strings.t("deskG.launch.heightLabel"),
                 onChange = {
                     onHeightChange(normalizeInstanceLaunchNumberInput(it))
                 },
                 modifier = Modifier.weight(1f),
                 placeholder = "—",
-                hint =
-                    "留空表示跟随全局（当前 ${settings.height} px）",
+                hint = strings.t("deskG.launch.sizeHint", settings.height),
                 onFocusChange = { focused ->
                     windowFieldFallback(focused, heightValue, instance.height)?.let(onHeightChange)
                 },
             )
         }
-        SettingRow("全屏", "关闭时按窗口尺寸显示") {
+        SettingRow(strings.t("deskG.launch.fullscreen"), strings.t("deskG.launch.fullscreenHint")) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (draft.windowMode != "inherit") {
                     TextButton({
                         onDraftChange(draft.copy(windowMode = "inherit"))
                     }) {
-                        Text("跟随全局", fontSize = 11.sp)
+                        Text(strings.t("deskG.launch.followGlobal"), fontSize = 11.sp)
                     }
                 }
                 CompactSwitch(
@@ -177,7 +193,7 @@ internal fun InstanceLaunchSettingsSection(
                     onDraftChange(draft.copy(extraJvmArgs = original))
                 }
             },
-            label = { Text("额外 JVM 参数（留空跟随全局）") },
+            label = { Text(strings.t("deskG.launch.jvmArgs")) },
             placeholder = {
                 Text(
                     "-XX:+UseG1GC",
@@ -206,7 +222,7 @@ internal fun InstanceLaunchSettingsSection(
                     onDraftChange(draft.copy(extraGameArgs = original))
                 }
             },
-            label = { Text("额外游戏参数（追加在标准参数之后）") },
+            label = { Text(strings.t("deskG.launch.gameArgs")) },
             placeholder = {
                 Text(
                     "--skipMultiplayerWarning",
@@ -256,22 +272,23 @@ private fun memoryPolicyLabel(
 ): String =
     when (policy) {
         InstanceMemoryPolicy.Inherit ->
-            "跟随全局（当前 $effectiveMemory MB）"
+            tr("deskG.memory.inherit", effectiveMemory)
         InstanceMemoryPolicy.Automatic ->
-            "自动分配（当前 $effectiveMemory MB）"
+            tr("deskG.memory.auto", effectiveMemory)
         InstanceMemoryPolicy.Manual ->
-            "$memoryMb MB（%.1f GB）".format(memoryMb / MEGABYTES_PER_GIGABYTE)
+            tr(
+                "deskG.memory.manual",
+                memoryMb,
+                "%.1f".format(memoryMb / MEGABYTES_PER_GIGABYTE),
+            )
     }
 
 /** 内存策略说明：解释滑块为什么可调或只读。 */
 private fun memoryPolicyHint(policy: InstanceMemoryPolicy): String =
     when (policy) {
-        InstanceMemoryPolicy.Inherit ->
-            "当前继承全局内存策略；切换到「手动分配」后才能调整。"
-        InstanceMemoryPolicy.Automatic ->
-            "启动时根据系统可用内存分配；切回手动分配时按全局最大值重新设置。"
-        InstanceMemoryPolicy.Manual ->
-            "拖动滑块按 256 MB 步进；初始内存会自动收窄到最大值以内。"
+        InstanceMemoryPolicy.Inherit -> tr("deskG.memory.hintInherit")
+        InstanceMemoryPolicy.Automatic -> tr("deskG.memory.hintAuto")
+        InstanceMemoryPolicy.Manual -> tr("deskG.memory.hintManual")
     }
 
 /** 滑块显示值：手动分配取实例值，其它策略显示解析后的有效值。 */

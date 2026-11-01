@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.util.zip.ZipFile
 
 private const val MAX_CURSEFORGE_IDENTIFIER = 0xffffffffL
@@ -33,24 +34,24 @@ private fun validateModrinthManifest(
     require(
         index.get("formatVersion")?.asInt == 1 && index.string("game") == "minecraft",
     ) {
-        "modrinth.index.json 头部无效"
+        I18n.t("packsA1.packExportManifests.modrinthHeaderInvalid")
     }
     require(
         index.string("name") == plan.metadata.name &&
             index.string("versionId") == plan.metadata.version,
     ) {
-        "modrinth.index.json 名称或版本不符"
+        I18n.t("packsA1.packExportManifests.modrinthNameVersionMismatch")
     }
     require(
         index.obj("dependencies").string("minecraft") == plan.components.gameVersion,
     ) {
-        "modrinth.index.json 游戏版本不符"
+        I18n.t("packsA1.packExportManifests.modrinthGameVersionMismatch")
     }
     val listed =
         index.array("files").map { it.asJsonObject.string("path") }.toSet()
-    require(listed.size == index.array("files").size()) { "modrinth.index.json 文件重复" }
+    require(listed.size == index.array("files").size()) { I18n.t("packsA1.packExportManifests.modrinthDuplicateFiles") }
     require(listed.intersect(layout.payload.map { it.second.path }.toSet()).isEmpty()) {
-        "下载清单与包内文件重复"
+        I18n.t("packsA1.packExportManifests.downloadListOverlap")
     }
     require(
         index.array("files").all {
@@ -58,7 +59,7 @@ private fun validateModrinthManifest(
                 it.asJsonObject.array("downloads").size() == 1
         },
     ) {
-        "modrinth.index.json 文件条目缺少下载地址"
+        I18n.t("packsA1.packExportManifests.modrinthEntryWithoutDownload")
     }
 }
 
@@ -71,25 +72,25 @@ private fun validateCurseForgeManifest(
         manifest.string("manifestType") == "minecraftModpack" &&
             manifest.string("manifestVersion") == "1",
     ) {
-        "manifest.json 不是 CurseForge 整合包清单"
+        I18n.t("packsA1.packExportManifests.curseForgeManifestInvalid")
     }
     require(
         manifest.string("name") == plan.metadata.name &&
             manifest.string("version") == plan.metadata.version,
     ) {
-        "manifest.json 名称或版本不符"
+        I18n.t("packsA1.packExportManifests.curseForgeNameVersionMismatch")
     }
     require(
         manifest.string("overrides") == "overrides",
-    ) { "manifest.json overrides 路径无效" }
+    ) { I18n.t("packsA1.packExportManifests.curseForgeOverridesInvalid") }
     require(
         manifest.obj("minecraft").string("version") == plan.components.gameVersion,
     ) {
-        "manifest.json 游戏版本不符"
+        I18n.t("packsA1.packExportManifests.curseForgeGameVersionMismatch")
     }
     val entries = manifest.array("files").map { it.asJsonObject }
     require(entries.map { it.string("projectID") }.distinct().size == entries.size) {
-        "manifest.json 重复项目"
+        I18n.t("packsA1.packExportManifests.curseForgeDuplicateProject")
     }
     require(
         entries.all {
@@ -98,7 +99,7 @@ private fun validateCurseForgeManifest(
                 it.get("required")?.asBoolean == true
         },
     ) {
-        "manifest.json 文件条目缺少 projectID/fileID 或 required"
+        I18n.t("packsA1.packExportManifests.curseForgeEntryInvalid")
     }
 }
 
@@ -108,10 +109,12 @@ private fun validateMultiMcManifest(
     plan: MrpackExportPlan,
 ) {
     val pack = requireNotNull(packJson(zip, "mmc-pack.json"))
-    require(pack.get("formatVersion")?.asInt == 1) { "mmc-pack.json 版本无效" }
+    require(pack.get("formatVersion")?.asInt == 1) {
+        I18n.t("packsA1.packExportManifests.mmcPackFormatInvalid")
+    }
     val components = pack.array("components").map { it.asJsonObject }
     require(components.all { it.string("version").isNotBlank() }) {
-        "mmc-pack.json 组件缺少确切版本"
+        I18n.t("packsA1.packExportManifests.mmcPackComponentVersionMissing")
     }
     require(
         components.any {
@@ -119,7 +122,7 @@ private fun validateMultiMcManifest(
                 it.string("version") == plan.components.gameVersion
         },
     ) {
-        "mmc-pack.json 缺少匹配的 net.minecraft 组件"
+        I18n.t("packsA1.packExportManifests.mmcPackMinecraftComponentMissing")
     }
     multimcLoaderUid(plan.components.loader)?.let { uid ->
         require(
@@ -128,7 +131,7 @@ private fun validateMultiMcManifest(
                     it.string("version") == plan.components.loaderVersion
             },
         ) {
-            "mmc-pack.json 缺少匹配的加载器组件"
+            I18n.t("packsA1.packExportManifests.mmcPackLoaderComponentMissing")
         }
     }
     val config = instanceConfigText(zip)
@@ -140,7 +143,7 @@ private fun validateMultiMcManifest(
                     it.trim().removePrefix("name=").isNotBlank()
             },
     ) {
-        "instance.cfg 缺少实例名或 OneSix 类型"
+        I18n.t("packsA1.packExportManifests.instanceCfgNameMissing")
     }
     validateMultiMcInstanceConfig(zip, config, layout)
 }
@@ -159,22 +162,24 @@ private fun validateMultiMcInstanceConfig(
             .associate { it.substringBefore('=') to it.substringAfter('=') }
     val name = values["name"].orEmpty()
     require(name.isNotBlank() && name.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS) {
-        "instance.cfg 实例名超过 $MAX_MULTIMC_INSTANCE_NAME_CHARS 字或为空"
+        I18n.t("packsA1.packExportManifests.instanceCfgNameTooLong", MAX_MULTIMC_INSTANCE_NAME_CHARS)
     }
     require((values["OverrideJavaArgs"] == "true") == values.containsKey("JvmArgs")) {
-        "instance.cfg 的 OverrideJavaArgs 与 JvmArgs 不成对"
+        I18n.t("packsA1.packExportManifests.instanceCfgJavaArgsMismatch")
     }
     require((values["OverrideMemory"] == "true") == values.containsKey("MaxMemAlloc")) {
-        "instance.cfg 的 OverrideMemory 与 MaxMemAlloc 不成对"
+        I18n.t("packsA1.packExportManifests.instanceCfgMemoryMismatch")
     }
     val iconKey = values["iconKey"].orEmpty()
     if (layout.icon == null) {
-        require(iconKey == "default") { "instance.cfg 引用了未写入的实例图标" }
+        require(iconKey == "default") {
+            I18n.t("packsA1.packExportManifests.instanceCfgIconNotWritten")
+        }
     } else {
         require(
             iconKey == MULTIMC_ICON_KEY && zip.getEntry(layout.iconPath) != null,
         ) {
-            "instance.cfg 的 iconKey 与图标条目不一致"
+            I18n.t("packsA1.packExportManifests.instanceCfgIconKeyMismatch")
         }
     }
 }
@@ -191,7 +196,7 @@ private fun validateMcbbsManifest(
 ) {
     val info = requireNotNull(packJson(zip, "mcbbs.packmeta"))
     require(info.string("manifestType") == "minecraftModpack") {
-        "mcbbs.packmeta 不是整合包清单"
+        I18n.t("packsA1.packExportManifests.mcbbsManifestInvalid")
     }
     require(
         info.array("addons").any {
@@ -199,10 +204,10 @@ private fun validateMcbbsManifest(
                 it.asJsonObject.string("version") == plan.components.gameVersion
         },
     ) {
-        "mcbbs.packmeta 缺少游戏组件"
+        I18n.t("packsA1.packExportManifests.mcbbsGameComponentMissing")
     }
     require(info.array("files").size() == layout.payload.size) {
-        "mcbbs.packmeta 文件数与包内容不符"
+        I18n.t("packsA1.packExportManifests.mcbbsFileCountMismatch")
     }
 }
 
@@ -216,7 +221,7 @@ private fun validateBackupManifest(
             zip.getEntry("mmc-pack.json") == null &&
             zip.getEntry("mcbbs.packmeta") == null,
     ) {
-        "完整备份不应包含其他启动器的整合包清单"
+        I18n.t("packsA1.packExportManifests.backupContainsForeignManifest")
     }
     val info = requireNotNull(packJson(zip, "molifox-backup.json"))
     require(
@@ -224,9 +229,9 @@ private fun validateBackupManifest(
             "type",
         ) == "molifox-backup" && info.get("formatVersion")?.asInt == 1,
     ) {
-        "备份清单无效"
+        I18n.t("packsA1.packExportManifests.backupManifestInvalid")
     }
     require(info.array("files").size() == layout.payload.size) {
-        "备份清单文件数与包内容不符"
+        I18n.t("packsA1.packExportManifests.backupFileCountMismatch")
     }
 }

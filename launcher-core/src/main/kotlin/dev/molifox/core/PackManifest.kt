@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
@@ -70,7 +71,7 @@ private class PackManifestReader(
         val declared = readDeclared(formats)
         if (declared != null) return declared
         require(index != null || exported != null) {
-            "请选择 Modrinth、CurseForge、MultiMC/Prism、HMCL/MCBBS 或 MoliFox 整合包"
+            I18n.t("miscA2.packManifest.chooseSupportedPack")
         }
         validateOverrides(index)
         return if (index == null) readExported(exported) else readModrinth(index)
@@ -88,7 +89,7 @@ private class PackManifestReader(
         require(
             legacy.map { it.substringBeforeLast('/', "") }.distinct().size <= 1,
         ) {
-            "整合包包含多个实例的清单"
+            I18n.t("miscA2.packManifest.multipleInstanceManifests")
         }
         val legacyRoot =
             legacy.firstOrNull()?.substringBeforeLast('/', "").orEmpty().let {
@@ -105,7 +106,7 @@ private class PackManifestReader(
         val declaredFormats =
             listOfNotNull(index, exported, curseForge, multiMc, mcbbs, legacyPackPath)
         require(declaredFormats.size <= 1) {
-            "整合包含有冲突的格式清单"
+            I18n.t("miscA2.packManifest.conflictingFormatManifests")
         }
         return DetectedPackFormats(
             legacyRoot,
@@ -173,8 +174,10 @@ private class PackManifestReader(
     }
 
     private fun readExported(exported: JsonObject?): PackManifest {
-        requireNotNull(exported) { "MoliFox 整合包清单缺失" }
-        require(exported.int("formatVersion") == 1) { "MoliFox 整合包格式无效" }
+        requireNotNull(exported) { I18n.t("miscA2.packManifest.molifoxManifestMissing") }
+        require(exported.int("formatVersion") == 1) {
+            I18n.t("miscA2.packManifest.molifoxFormatInvalid")
+        }
         return PackManifest(
             null,
             gson.fromJson(exported.obj("instance"), InstallRequest::class.java),
@@ -218,7 +221,7 @@ private class PackManifestReader(
                 index.has("files") &&
                 index["files"].isJsonArray,
         ) {
-            "整合包清单格式无效或缺少版本标识"
+            I18n.t("miscA2.packManifest.invalidManifestFormat")
         }
     }
 
@@ -229,7 +232,7 @@ private class PackManifestReader(
                 it.value.isJsonPrimitive && it.value.asJsonPrimitive.isString
             },
         ) {
-            "整合包依赖版本必须是文本"
+            I18n.t("miscA2.packManifest.dependencyNotText")
         }
         val supported =
             linkedMapOf(
@@ -239,16 +242,18 @@ private class PackManifestReader(
                 "neoforge" to LoaderType.NeoForge,
             )
         require(dependencies.entrySet().all { it.key == "minecraft" || it.key in supported }) {
-            "整合包使用了不支持的依赖"
+            I18n.t("miscA2.packManifest.unsupportedDependency")
         }
         val loaders = supported.entries.filter { dependencies.has(it.key) }
-        require(loaders.size <= 1) { "整合包包含冲突的加载器" }
+        require(loaders.size <= 1) { I18n.t("miscA2.packManifest.conflictingLoaders") }
         return ModrinthPackDependencies(dependencies, loaders)
     }
 
     private fun validatedModrinthFiles(index: JsonObject): List<JsonObject> {
         val files = index.array("files").map { it.asJsonObject }
-        require(files.size <= MAX_MODRINTH_PACK_FILES) { "整合包文件过多" }
+        require(files.size <= MAX_MODRINTH_PACK_FILES) {
+            I18n.t("miscA2.packManifest.tooManyFiles")
+        }
         val paths = hashSetOf<String>()
         for (file in files) {
             val path = packPath(root, file.string("path"))
@@ -259,16 +264,18 @@ private class PackManifestReader(
                     .relativize(path)
                     .joinToString("/")
             val key = if (os == "windows") relative.lowercase() else relative
-            require(paths.add(key)) { "整合包包含重复文件：${file.string("path")}" }
+            require(paths.add(key)) {
+                I18n.t("miscA2.packManifest.duplicateFile", file.string("path"))
+            }
             require(file.array("downloads").size() > 0) {
-                "整合包缺少下载地址：${file.string("path")}"
+                I18n.t("miscA2.packManifest.missingDownloadUrl", file.string("path"))
             }
             file.array("downloads").forEach { packDownload(file, path, it.asString) }
         }
         for (path in paths) {
             var parent = path.substringBeforeLast('/', "")
             while (parent.isNotEmpty()) {
-                require(parent !in paths) { "整合包文件和目录冲突：$parent" }
+                require(parent !in paths) { I18n.t("miscA2.packManifest.fileDirectoryConflict", parent) }
                 parent = parent.substringBeforeLast('/', "")
             }
         }

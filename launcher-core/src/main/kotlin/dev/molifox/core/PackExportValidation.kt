@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
@@ -31,7 +32,9 @@ internal fun validatePackExport(
                 .map { it.name }
                 .toList()
         val payloadNames = names.filterNot { it.endsWith("/") }
-        require(payloadNames.size == payloadNames.distinct().size) { "导出包包含重复条目" }
+        require(payloadNames.size == payloadNames.distinct().size) {
+            I18n.t("packsA1.packExportValidation.duplicateEntries")
+        }
         validateRequiredEntries(zip, layout)
         validateSelectedPayload(layout, plan, format, selected)
         validatePayloadEntries(zip, layout)
@@ -45,7 +48,9 @@ private fun validateRequiredEntries(
     layout: PackExportLayout,
 ) {
     for (name in layout.requiredEntries) {
-        require(zip.getEntry(name) != null) { "导出包缺少必需条目：$name" }
+        require(zip.getEntry(name) != null) {
+            I18n.t("packsA1.packExportValidation.requiredEntryMissing", name)
+        }
     }
 }
 
@@ -58,14 +63,20 @@ private fun validateSelectedPayload(
 ) {
     val payloadPaths = layout.payload.map { it.second.path }
     require(payloadPaths.all { it in selected }) {
-        "导出包包含未选择的内容：${payloadPaths.first { it !in selected }}"
+        I18n.t(
+            "packsA1.packExportValidation.unselectedContent",
+            payloadPaths.first { it !in selected },
+        )
     }
     val embeddedSelected =
         selected.filter { path ->
             plan.files.any { it.path == path && it.embeddedIn(format) }
         }
     require(embeddedSelected.all { it in payloadPaths }) {
-        "导出包缺少已选择的内容：${embeddedSelected.first { it !in payloadPaths }}"
+        I18n.t(
+            "packsA1.packExportValidation.selectedContentMissing",
+            embeddedSelected.first { it !in payloadPaths },
+        )
     }
 }
 
@@ -76,12 +87,12 @@ private fun validatePayloadEntries(
     for ((archivePath, file) in layout.payload) {
         val entry = zip.getEntry(archivePath)
         require(entry != null && !entry.isDirectory && entry.size == file.size) {
-            "导出包条目缺失或大小不符：$archivePath"
+            I18n.t("packsA1.packExportValidation.entrySizeMismatch", archivePath)
         }
         require(
             zip.getInputStream(entry).use { it.readNBytes(1) }.size == 1 || file.size == 0L,
         ) {
-            "导出包条目为空：$archivePath"
+            I18n.t("packsA1.packExportValidation.entryEmpty", archivePath)
         }
     }
 }
@@ -98,7 +109,7 @@ private fun validateArchiveEntryNames(
                     name.startsWith(it) && forbiddenExportEntry(name, allowLogs)
                 },
         ) {
-            "导出包含有不应写入的条目：$name"
+            I18n.t("packsA1.packExportValidation.forbiddenEntry", name)
         }
     }
 }

@@ -15,9 +15,9 @@ private const val MAX_VERSION_COMPONENTS = 4
 
 internal fun contentChannelTitle(channel: String) =
     when (channel) {
-        "release" -> "正式版"
-        "beta" -> "测试版"
-        "alpha" -> "预览版"
+        "release" -> tr("pages.content.channel.release")
+        "beta" -> tr("pages.content.channel.beta")
+        "alpha" -> tr("pages.content.channel.alpha")
         else -> channel
     }
 
@@ -106,19 +106,19 @@ internal fun contentInstallHint(
     compatible: Boolean,
 ): String =
     if (hit.type == "modpack") {
-        "将先预览整合包，不会立即安装。"
+        tr("pages.content.installHint.modpack")
     } else if (hit.type == "world" && target == null) {
-        "请先在「安装到」里选择游戏实例。"
+        tr("pages.content.installHint.worldNoTarget")
     } else if (target == null) {
-        "先选实例或点「下载」挑一个保存文件夹。"
+        tr("pages.content.installHint.noTarget")
     } else if (!compatible) {
-        "所选文件不兼容此实例的游戏版本或加载器。"
+        tr("pages.content.installHint.incompatible")
     } else if (hit.type == "world") {
-        "世界会解压到实例的 saves/，同名世界不会覆盖。"
+        tr("pages.content.installHint.world")
     } else if (hit.type == "datapack") {
-        "数据包需要安装到具体存档。"
+        tr("pages.content.installHint.datapack")
     } else {
-        "下载前会确认目标文件夹，并检查前置与文件冲突。"
+        tr("pages.content.installHint.default")
     }
 
 /** 下载按钮的可用条件：版本已选、没有任务在跑、数据包还需要一个具体存档、世界需要一个已安装的实例。 */

@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.util.zip.ZipFile
 
 internal const val FABRIC_MOD = "fabric.mod.json"
@@ -103,7 +104,7 @@ internal object JarInJarDeclarations {
         val merged = merge(sources.flatMap { it.declarations })
         val safe = merged.filter { isSafeEmbeddedPath(it.path) }
         if (safe.size != merged.size) {
-            notes += "已忽略不安全的嵌入路径"
+            notes += I18n.t("diagA1.jarInJar.unsafeEmbeddedPath")
         }
         return EmbeddedCollection(
             declarations = safe,
@@ -193,11 +194,11 @@ internal object JarInJarDeclarations {
         try {
             EmbeddedSource(block())
         } catch (failure: JsonParseException) {
-            EmbeddedSource(failure = "$source 解析失败")
+            EmbeddedSource(failure = I18n.t("diagA1.jarInJar.parseFailed", source))
         } catch (failure: IllegalStateException) {
-            EmbeddedSource(failure = "$source 结构无法识别")
+            EmbeddedSource(failure = I18n.t("diagA1.jarInJar.unrecognizedStructure", source))
         } catch (failure: IllegalArgumentException) {
-            EmbeddedSource(failure = "$source 无法读取")
+            EmbeddedSource(failure = I18n.t("diagA1.jarInJar.unreadable", source))
         }
 }
 

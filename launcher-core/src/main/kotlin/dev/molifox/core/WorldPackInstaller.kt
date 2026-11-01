@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -36,11 +37,11 @@ internal class WorldPackInstaller(
         instanceId: String,
         context: JobContext,
     ) = withContext(Dispatchers.IO) {
-        require(hit.type == "world") { "只能安装世界项目" }
+        require(hit.type == "world") { I18n.t("packsB2.worldPack.notWorldProject") }
         val instance = store.instance(instanceId)
-        require(instance.installed) { "请先完成游戏实例安装" }
-        require(versionId.isNotBlank()) { "请选择要安装的世界版本" }
-        context.progress(0f, "读取世界包版本…")
+        require(instance.installed) { I18n.t("packsB2.worldPack.instanceNotInstalled") }
+        require(versionId.isNotBlank()) { I18n.t("packsB2.worldPack.versionRequired") }
+        context.progress(0f, I18n.t("packsB2.worldPack.readingVersion"))
         val version = backend.version(versionId)
         val project = backend.project(hit.id)
         requireWorldVersion(hit, versionId, instance, version, project)
@@ -61,11 +62,11 @@ internal class WorldPackInstaller(
                 version.string("project_id") == hit.id &&
                 version.string("id") == versionId,
         ) {
-            "世界包版本不属于此项目"
+            I18n.t("packsB2.worldPack.versionNotInProject")
         }
         val gameVersions = version.array("game_versions").map { it.asString }
         require(gameVersions.isEmpty() || instance.gameVersion in gameVersions) {
-            "世界包不支持实例的游戏版本 ${instance.gameVersion}"
+            I18n.t("packsB2.worldPack.versionUnsupported", instance.gameVersion)
         }
     }
 
@@ -80,9 +81,11 @@ internal class WorldPackInstaller(
                 .array("files")
                 .map { it.asJsonObject }
                 .let { files -> files.firstOrNull { it.boolean("primary") } ?: files.firstOrNull() }
-                ?: error("世界包没有可下载文件")
+                ?: error(I18n.t("packsB2.worldPack.noDownloadableFile"))
         val filename = safeFilename(file.string("filename"))
-        require(filename.endsWith(".zip", true)) { "世界包必须为 ZIP 压缩包：$filename" }
+        require(filename.endsWith(".zip", true)) {
+            I18n.t("packsB2.worldPack.notZip", filename)
+        }
         if (version.boolean("manual_download")) {
             throw ManualContentRequired(
                 listOf(ManualContentFile(hit.id, versionId, filename, version.string("website"))),
@@ -97,7 +100,7 @@ internal class WorldPackInstaller(
                 (hash1.isBlank() || hash1.matches(Regex("[a-fA-F0-9]{40}"))) &&
                 (hash512.isNotBlank() || hash1.isNotBlank()),
         ) {
-            "世界包缺少有效大小或校验信息，或文件超过 8 GB"
+            I18n.t("packsB2.worldPack.invalidSizeOrHash")
         }
         return WorldPackFile(file, filename, size, hash512, hash1)
     }
@@ -127,7 +130,7 @@ internal class WorldPackInstaller(
                     } else {
                         0f
                     },
-                    "下载世界包 · ${bytes / BYTES_PER_MEGABYTE} MB",
+                    I18n.t("packsB2.worldPack.downloadProgress", bytes / BYTES_PER_MEGABYTE),
                 )
             }
             context.checkCancelled()
@@ -148,7 +151,7 @@ internal class WorldPackInstaller(
         requireSaveGameStopped(store, instance.id)
         val layout = SaveArchive.inspect(archive)
         val saves = savesDirectoryOf(store, instance.id)
-        require(!isLinkPath(saves)) { "实例的存档目录是符号链接或目录联接，无法安装世界" }
+        require(!isLinkPath(saves)) { I18n.t("packsB2.worldPack.savesIsLink") }
         saves.createDirectories()
         val staging = saveStagingPath(saves)
         withSaveCleanup({ runCatching { deleteSaveTree(staging) } }) {
@@ -157,12 +160,12 @@ internal class WorldPackInstaller(
             val name = worldPackName(layout, staging, hit.title, archive.name)
             val target = saveTargetPath(saves, name)
             require(!target.exists(LinkOption.NOFOLLOW_LINKS)) {
-                "存档里已有同名世界「$name」，未安装；请先删除或重命名该世界"
+                I18n.t("packsB2.worldPack.duplicateSave", name)
             }
             requireSaveGameStopped(store, instance.id)
             commitSavePath(staging, target)
-            context.progress(1f, "世界已安装到 saves/$name")
-            store.log("世界安装完成：${instance.name} / $name ← ${hit.title}")
+            context.progress(1f, I18n.t("packsB2.worldPack.installedAt", name))
+            store.log(I18n.t("packsB2.worldPack.installLogged", instance.name, name, hit.title))
         }
     }
 }

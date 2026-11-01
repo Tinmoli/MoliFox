@@ -68,11 +68,11 @@ internal class InstanceUpdateCenter(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: IOException) {
-                    modsError = failure.message ?: "检查模组更新失败"
+                    modsError = failure.message ?: tr("deskF.updateCenter.modsFailed")
                 } catch (failure: IllegalStateException) {
-                    modsError = failure.message ?: "检查模组更新失败"
+                    modsError = failure.message ?: tr("deskF.updateCenter.modsFailed")
                 } catch (failure: JsonParseException) {
-                    modsError = failure.message ?: "检查模组更新失败"
+                    modsError = failure.message ?: tr("deskF.updateCenter.modsFailed")
                 } finally {
                     if (modsJob == coroutineContext[Job]) modsChecking = false
                 }
@@ -93,11 +93,11 @@ internal class InstanceUpdateCenter(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: IOException) {
-                    packsError = failure.message ?: "检查资源包与光影更新失败"
+                    packsError = failure.message ?: tr("deskF.updateCenter.packsFailed")
                 } catch (failure: IllegalStateException) {
-                    packsError = failure.message ?: "检查资源包与光影更新失败"
+                    packsError = failure.message ?: tr("deskF.updateCenter.packsFailed")
                 } catch (failure: JsonParseException) {
-                    packsError = failure.message ?: "检查资源包与光影更新失败"
+                    packsError = failure.message ?: tr("deskF.updateCenter.packsFailed")
                 } finally {
                     if (packsJob == coroutineContext[Job]) packsChecking = false
                 }

@@ -58,6 +58,7 @@ import dev.molifox.core.Account
 import dev.molifox.core.AccountService
 import dev.molifox.core.AccountType
 import dev.molifox.core.DeviceCode
+import dev.molifox.core.LauncherNoticeKind
 import dev.molifox.core.LauncherState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
@@ -90,6 +91,7 @@ fun ColumnScope.AccountListPage(
     actions: UiActions,
     onBack: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var offlineDialog by remember { mutableStateOf(false) }
     // 认证服务器入口的两种打开方式：已保存列表（默认含内置 LittleSkin）或直接填写新地址。
     var authlibEntry by remember { mutableStateOf<AuthlibEntry?>(null) }
@@ -113,15 +115,15 @@ fun ColumnScope.AccountListPage(
 
     LaunchedEffect(state.toast) {
         // 登录成功、验证码过期或流程失败后立刻收掉验证码，不留过期码在屏幕上。
-        if (loginSettled(state.toast)) deviceCode = null
+        if (loginSettled(actions.controller.store.noticeKind())) deviceCode = null
     }
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SmallIconButton(Icons.Outlined.ArrowBack, "返回上一页", onBack)
+        SmallIconButton(Icons.Outlined.ArrowBack, strings.t("dialogs.account.back"), onBack)
         Spacer(Modifier.width(8.dp))
         // 独立子页保留标题：18sp SemiBold 说明当前所在位置，与实例详情页头一致。
         Text(
-            "账户列表",
+            strings.t("dialogs.account.listTitle"),
             Modifier.weight(1f),
             fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
@@ -225,11 +227,11 @@ internal fun accountSubtitle(
     actions: UiActions,
 ): String =
     when (account.type) {
-        AccountType.Microsoft -> "微软账户"
-        AccountType.Offline -> "离线模式"
+        AccountType.Microsoft -> tr("dialogs.account.microsoft")
+        AccountType.Offline -> tr("dialogs.account.offlineMode")
         AccountType.Authlib ->
             actions.controller.accounts.authlibServerName(account.authlibServer).ifBlank {
-                account.authlibServer.ifBlank { "外置认证账户" }
+                account.authlibServer.ifBlank { tr("dialogs.account.authlibAccount") }
             }
     }
 
@@ -243,6 +245,7 @@ internal fun AccountCard(
     onSelect: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -271,7 +274,7 @@ internal fun AccountCard(
             ).hoverable(interaction)
             .clickable(
                 role = Role.RadioButton,
-                onClickLabel = "切换为当前账户",
+                onClickLabel = strings.t("dialogs.account.switchTo"),
                 onClick = onSelect,
             ).padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -280,7 +283,7 @@ internal fun AccountCard(
             Spacer(Modifier.width(12.dp))
             StaticSkinHead(
                 skinPath,
-                { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
+                { actions.controller.store.log(strings.t("dialogs.account.avatarReadFailed", it.message), true) },
                 0,
                 Modifier.size(40.dp).clip(RoundedCornerShape(Metrics.innerRadius)),
             )
@@ -315,6 +318,7 @@ private fun AccountRowActions(
     visible: Boolean,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AnimatedVisibility(
         visible,
         enter = fadeIn(tween(Motion.FAST)),
@@ -323,7 +327,7 @@ private fun AccountRowActions(
         Row {
             AccountIconAction(
                 Icons.Outlined.DeleteOutline,
-                "删除账户",
+                strings.t("dialogs.account.deleteConfirm"),
                 onDelete,
                 tint = MaterialTheme.colorScheme.error,
             )
@@ -353,22 +357,23 @@ private fun OfflineAccountDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var playerName by remember { mutableStateOf("") }
     val validName = Regex("[A-Za-z0-9_]{3,16}").matches(playerName)
-    Modal("添加离线账户", "离线角色只在本机生效，不会登录微软服务。", 460.dp, onDismiss) {
+    Modal(strings.t("dialogs.account.addOffline"), strings.t("dialogs.account.addOfflineHint"), 460.dp, onDismiss) {
         CompactTextField(
             playerName,
             { playerName = it.take(16) },
             Modifier.fillMaxWidth(),
-            label = "玩家名称",
-            placeholder = "例如 Steve",
+            label = strings.t("dialogs.account.playerName"),
+            placeholder = strings.t("dialogs.account.playerNamePlaceholder"),
         )
         // 输入不合法时就地给错误色说明，而不是只把按钮置灰。
         Text(
             if (playerName.isNotEmpty() && !validName) {
-                "只能使用 3–16 位字母、数字或下划线"
+                strings.t("dialogs.account.nameRule")
             } else {
-                "3–16 位字母、数字或下划线"
+                strings.t("dialogs.account.nameRuleShort")
             },
             fontSize = 11.sp,
             color =
@@ -380,9 +385,9 @@ private fun OfflineAccountDialog(
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Spacer(Modifier.weight(1f))
-            SecondaryButton(onDismiss) { Text("取消", fontSize = 13.sp) }
+            SecondaryButton(onDismiss) { Text(strings.t("dialogs.common.cancel"), fontSize = 13.sp) }
             PrimaryButton(
-                "添加账户",
+                strings.t("dialogs.account.add"),
                 enabled = validName,
                 onClick = {
                     actions.run {
@@ -402,14 +407,8 @@ internal fun copyToClipboard(text: String): Boolean =
     }.isSuccess
 
 /** 微软登录流程已经结束的提示：成功、验证码过期、被拒绝或失败都要收掉屏幕上的验证码。 */
-private fun loginSettled(toast: String?): Boolean =
-    toast != null &&
-        (
-            toast.startsWith("已登录：") ||
-                toast.startsWith("登录验证码已过期") ||
-                toast.startsWith("登录已过期") ||
-                toast.startsWith("微软登录失败")
-        )
+private fun loginSettled(notice: LauncherNoticeKind?): Boolean =
+    notice == LauncherNoticeKind.LoginSignedIn || notice == LauncherNoticeKind.LoginEnded
 
 /** 验证码剩余有效期：向上取整到秒，按 mm:ss 显示；已经过期时显示 00:00。 */
 internal fun remainingLabel(millis: Long): String {

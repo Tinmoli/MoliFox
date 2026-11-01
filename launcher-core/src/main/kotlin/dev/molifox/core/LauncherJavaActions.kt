@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.nio.file.Path
@@ -116,24 +117,25 @@ internal abstract class LauncherJavaActions(
 
     /** 从提示弹窗直接安装缺少的主版本；进度进入任务队列，成功后清除提示。 */
     override fun installJavaForPrompt(): String {
-        val prompt = state.value.javaPrompt ?: error("当前没有需要安装的 Java")
+        val prompt = state.value.javaPrompt ?: error(I18n.t("coreC.java.noneToInstall"))
         return jobs.enqueue(
-            "安装 Java ${prompt.requiredMajor}",
+            I18n.t("coreC.tasks.installJava", prompt.requiredMajor),
             setOf("java:${prompt.requiredMajor}"),
+            kind = LauncherTaskKind.InstallJava,
         ) {
             val runtime = java.install(prompt.requiredMajor, this)
             store.updateState { it.copy(javaPrompt = null) }
-            store.notify("已安装 ${runtime.displayName}，启动时会自动使用")
+            store.notify(I18n.t("coreC.java.installed", runtime.displayName))
         }
     }
 
     /** 用户从提示弹窗选择已有 Java：校验兼容后写进实例设置（显式路径优先于自动选择）。 */
     override fun chooseJavaForPrompt(path: String) =
         perform {
-            val prompt = state.value.javaPrompt ?: error("当前没有需要处理的 Java")
+            val prompt = state.value.javaPrompt ?: error(I18n.t("coreC.java.noneToHandle"))
             val runtime =
                 java.inspect(path, verifyRunnable = true)
-                    ?: error("这个文件不是可运行的 Java：$path")
+                    ?: error(I18n.t("coreC.java.notRunnable", path))
             val instance = store.instance(prompt.instanceId)
             runCatching {
                 VersionResolver(
@@ -144,14 +146,14 @@ internal abstract class LauncherJavaActions(
                 ?.let { profile ->
                     val requirement = JavaRequirement.from(profile)
                     val problem = requirement.problem(runtime, platform.architecture)
-                    require(problem == null) { "$problem，不能用于 ${instance.name}" }
+                    require(problem == null) { I18n.t("coreC.java.incompatible", problem, instance.name) }
                 }
             store.updateInstance(instance.id) {
                 it.copy(javaPath = path, suppressJavaPrompt = false)
             }
             java.invalidate()
             store.updateState { it.copy(javaPrompt = null) }
-            store.notify("已使用 ${runtime.displayName}：${runtime.path}")
+            store.notify(I18n.t("coreC.java.selected", runtime.displayName, runtime.path))
         }
 
     /**
@@ -208,16 +210,18 @@ internal abstract class LauncherJavaActions(
                     val removed = java.remove(runtime)
                     forgetPath()
                     store.notify(
-                        "已移除 ${removed.displayName}（释放 ${"%.0f MB".format(
-                            runtime.sizeBytes / BYTES_PER_MEGABYTE,
-                        )}）",
+                        I18n.t(
+                            "coreC.java.removed",
+                            removed.displayName,
+                            "%.0f MB".format(runtime.sizeBytes / BYTES_PER_MEGABYTE),
+                        ),
                     )
                 }
                 runtime.source == JavaRuntimeSource.Custom -> {
                     forgetPath()
-                    store.notify("已从列表移除 ${runtime.path}（只删记录，不删文件）")
+                    store.notify(I18n.t("coreC.java.removedFromList", runtime.path))
                 }
-                else -> error("系统安装的 Java 只读，不能移除")
+                else -> error(I18n.t("coreC.java.systemReadOnly"))
             }
             refreshJavaPrompt()
         }
@@ -226,11 +230,16 @@ internal abstract class LauncherJavaActions(
         major: Int,
         imageType: String?,
     ): String {
-        require(imageType == null || imageType in listOf("jre", "jdk")) { "Java 类型无效" }
+        require(imageType == null || imageType in listOf("jre", "jdk")) { I18n.t("coreC.java.invalidType") }
         val typeLabel = imageType?.uppercase().orEmpty()
         return jobs.enqueue(
-            "安装 Java $major" + if (typeLabel.isBlank()) "" else "（$typeLabel）",
+            if (typeLabel.isBlank()) {
+                I18n.t("coreC.tasks.installJava", major)
+            } else {
+                I18n.t("coreC.tasks.installJavaWithType", major, typeLabel)
+            },
             setOf("java:$major"),
+            kind = LauncherTaskKind.InstallJava,
         ) {
             java.install(major, this, imageType)
         }

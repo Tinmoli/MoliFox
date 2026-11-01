@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -27,6 +28,12 @@ private const val MAX_SKIN_UPLOAD_BYTES = 1024 * 1024
 
 /** GitHub 把 403 与 429 都当作限流。 */
 private const val HTTP_FORBIDDEN = 403
+
+/** 元数据端点返回非 2xx：保留状态码，供调用方区分“该版本不支持”和真正的网络故障。 */
+internal class HttpStatusException(
+    val statusCode: Int,
+    val host: String,
+) : IOException(I18n.t("core.networkEndpointActions.1", statusCode, host))
 
 /** 只读端点：文本与 JSON。 */
 internal interface NetworkTextApi {
@@ -78,10 +85,10 @@ internal abstract class NetworkTextActions(
             for (candidate in orderedCandidates(url, sourceOverride ?: settings.source())) {
                 try {
                     execute(builder(candidate).build()).use { response ->
-                        check(response.isSuccessful) {
-                            "网络请求失败 (${response.code})：${URI(url).host}"
+                        if (!response.isSuccessful) {
+                            throw HttpStatusException(response.code, URI(url).host)
                         }
-                        return@withContext response.body?.string() ?: error("网络响应为空")
+                        return@withContext response.body?.string() ?: error(I18n.t("core.networkEndpointActions.2"))
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -93,7 +100,7 @@ internal abstract class NetworkTextActions(
                     lastError = error
                 }
             }
-            throw IOException("无法连接 ${URI(url).host}：${lastError?.message}", lastError)
+            throw IOException(I18n.t("core.networkEndpointActions.3", URI(url).host, lastError?.message), lastError)
         }
 
     override suspend fun json(
@@ -108,20 +115,20 @@ internal abstract class NetworkTextActions(
                 (uri.scheme == "https" && uri.host == "api.github.com") ||
                     (uri.scheme == "http" && uri.host == "127.0.0.1"),
             ) {
-                "无效的 GitHub API 地址"
+                I18n.t("core.networkEndpointActions.4")
             }
             execute(builder(url).header("Accept", "application/vnd.github+json").build())
                 .use { response ->
                     check(response.isSuccessful) {
                         when (response.code) {
-                            NET_HTTP_NOT_FOUND -> "无法读取项目发布页；仓库尚未公开或尚无可读取的发布版本"
+                            NET_HTTP_NOT_FOUND -> I18n.t("core.networkEndpointActions.5")
                             HTTP_FORBIDDEN,
                             NET_HTTP_TOO_MANY_REQUESTS,
-                            -> "GitHub 请求次数受限，请稍后重试"
-                            else -> "GitHub 更新检查失败（HTTP ${response.code}）"
+                            -> I18n.t("core.networkEndpointActions.6")
+                            else -> I18n.t("core.networkEndpointActions.7", response.code)
                         }
                     }
-                    JsonParser.parseString(response.body?.string() ?: error("GitHub 返回了空响应"))
+                    JsonParser.parseString(response.body?.string() ?: error(I18n.t("core.networkEndpointActions.8")))
                 }
         }
 
@@ -134,8 +141,8 @@ internal abstract class NetworkTextActions(
                     uri.userInfo == null,
             )
             execute(builder(url).build(), attempts = 1).readCancellable { response ->
-                check(response.isSuccessful) { "百科页面暂不可用" }
-                val body = response.body ?: error("百科页面为空")
+                check(response.isSuccessful) { I18n.t("core.networkEndpointActions.9") }
+                val body = response.body ?: error(I18n.t("core.networkEndpointActions.10"))
                 require(body.contentLength() <= MAX_ENCYCLOPEDIA_BYTES)
                 val bytes = body.byteStream().readNBytes(MAX_ENCYCLOPEDIA_BYTES + 1)
                 require(bytes.size <= MAX_ENCYCLOPEDIA_BYTES)
@@ -168,7 +175,7 @@ internal abstract class NetworkPayloadActions(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: IOException) {
-                throw IOException("无法连接 CurseForge，请检查网络或代理设置")
+                throw IOException(I18n.t("core.networkEndpointActions.11"))
             }
         }
 
@@ -203,11 +210,11 @@ internal abstract class NetworkPayloadActions(
         withContext(Dispatchers.IO) {
             val normalized = normalizeSkinTextureUrl(url)
             execute(builder(normalized).build(), redirects = false).use { response ->
-                check(response.isSuccessful) { "皮肤纹理获取失败 (${response.code})" }
-                val body = response.body ?: error("皮肤纹理为空")
-                require(body.contentLength() <= MAX_SKIN_TEXTURE_BYTES) { "皮肤纹理过大" }
+                check(response.isSuccessful) { I18n.t("core.networkEndpointActions.12", response.code) }
+                val body = response.body ?: error(I18n.t("core.networkEndpointActions.13"))
+                require(body.contentLength() <= MAX_SKIN_TEXTURE_BYTES) { I18n.t("core.networkEndpointActions.14") }
                 val bytes = body.byteStream().readNBytes(MAX_SKIN_TEXTURE_BYTES + 1)
-                require(bytes.size <= MAX_SKIN_TEXTURE_BYTES) { "皮肤纹理过大" }
+                require(bytes.size <= MAX_SKIN_TEXTURE_BYTES) { I18n.t("core.networkEndpointActions.14") }
                 bytes
             }
         }
@@ -223,7 +230,7 @@ internal abstract class NetworkPayloadActions(
             bearer?.let { request.header("Authorization", "Bearer $it") }
             execute(request.build()).use { response ->
                 if (!response.isSuccessful) throw ServiceHttpException(response.code, URI(url).host)
-                val responseBody = requireNotNull(response.body) { "服务返回了空响应" }
+                val responseBody = requireNotNull(response.body) { I18n.t("core.networkEndpointActions.15") }
                 JsonParser.parseString(responseBody.string()).asJsonObject
             }
         }
@@ -250,10 +257,10 @@ internal abstract class NetworkPayloadActions(
                 uri.query == null &&
                 uri.fragment == null,
         ) {
-            "无效的皮肤上传地址"
+            I18n.t("core.networkEndpointActions.16")
         }
         require(variant in setOf("classic", "slim") && png.size in 1..MAX_SKIN_UPLOAD_BYTES) {
-            "皮肤上传参数无效"
+            I18n.t("core.networkEndpointActions.17")
         }
         val body =
             MultipartBody
@@ -280,10 +287,10 @@ internal abstract class NetworkPayloadActions(
         withContext(Dispatchers.IO) {
             execute(builder(url).header("Authorization", "Bearer $token").build()).use { response ->
                 if (response.code == NET_HTTP_NOT_FOUND) {
-                    error("此账户没有 Minecraft Java 版档案，请确认已拥有游戏并创建角色")
+                    error(I18n.t("core.networkEndpointActions.18"))
                 }
-                check(response.isSuccessful) { "读取游戏档案失败 (${response.code})" }
-                val responseBody = requireNotNull(response.body) { "服务返回了空响应" }
+                check(response.isSuccessful) { I18n.t("core.networkEndpointActions.19", response.code) }
+                val responseBody = requireNotNull(response.body) { I18n.t("core.networkEndpointActions.15") }
                 JsonParser.parseString(responseBody.string()).asJsonObject
             }
         }
@@ -299,10 +306,10 @@ internal abstract class NetworkPayloadActions(
                     .apply { fields.forEach { (key, value) -> add(key, value) } }
                     .build()
             execute(builder(url).post(form).build()).use { response ->
-                val responseBody = requireNotNull(response.body) { "服务返回了空响应" }
+                val responseBody = requireNotNull(response.body) { I18n.t("core.networkEndpointActions.15") }
                 val result = JsonParser.parseString(responseBody.string()).asJsonObject
                 if (!response.isSuccessful && !result.has("error")) {
-                    error("认证服务请求失败 (${response.code})")
+                    error(I18n.t("core.networkEndpointActions.20", response.code))
                 }
                 result
             }

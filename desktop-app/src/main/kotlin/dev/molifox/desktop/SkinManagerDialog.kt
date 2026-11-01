@@ -60,6 +60,7 @@ fun SkinManagerDialog(
     onUpdated: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val service = actions.controller.skins
     val scope = rememberCoroutineScope()
     var entries by remember(account.id) { mutableStateOf<List<LibrarySkin>>(emptyList()) }
@@ -119,7 +120,7 @@ fun SkinManagerDialog(
                 .onFailure { failure -> textureError = failure.message }
         }
     Modal(
-        "皮肤管理",
+        strings.t("dialogs.skin.title"),
         dialogSubtitle(account),
         width = 640.dp,
         onDismiss = { dismissIfIdle(busy, onDismiss) },
@@ -167,13 +168,13 @@ fun SkinManagerDialog(
                 {
                     act {
                         exportSkin(service, account, selected, actions) {
-                            message = "皮肤已导出"
+                            message = strings.t("dialogs.skin.exported")
                         }
                     }
                 },
                 enabled = canExport(busy, selected, image),
             ) {
-                Text("导出 PNG")
+                Text(strings.t("dialogs.skin.exportPng"))
             }
             if (account.type == AccountType.Microsoft) {
                 MicrosoftSkinActions(
@@ -184,7 +185,7 @@ fun SkinManagerDialog(
                             val profile = service.refreshProfile(account.id)
                             currentVariant = profile.variant
                             selectedId = null
-                            message = "正版档案已刷新"
+                            message = strings.t("dialogs.skin.profileRefreshed")
                         }
                     },
                     onUpload = { confirmUpload = selected },
@@ -197,14 +198,14 @@ fun SkinManagerDialog(
                     onUseLocalPreview = { skin ->
                         act(refreshAvatar = true) {
                             service.useOfflinePreview(account.id, skin.id)
-                            message = "已更新本地预览"
+                            message = strings.t("dialogs.skin.localPreviewUpdated")
                         }
                     },
                     onRestoreDefault = {
                         act(refreshAvatar = true) {
                             service.useOfflinePreview(account.id, null)
                             selectedId = null
-                            message = "已恢复默认头像"
+                            message = strings.t("dialogs.skin.defaultRestored")
                         }
                     },
                 )
@@ -214,13 +215,13 @@ fun SkinManagerDialog(
     }
     confirmUpload?.let { entry ->
         Modal(
-            "上传正版皮肤",
-            "将修改 ${account.name} 的 Minecraft Java 版皮肤。",
+            strings.t("dialogs.skin.uploadTitle"),
+            strings.t("dialogs.skin.uploadMessage", account.name),
             onDismiss = { confirmUpload = null },
         ) {
-            Text("上传「${entry.name}」（${entry.variant.title}）？这会更新微软账户的在线角色皮肤。")
+            Text(strings.t("dialogs.skin.uploadConfirm", entry.name, entry.variant.title))
             DialogActions(
-                "确认上传",
+                strings.t("dialogs.skin.uploadConfirmAction"),
                 onConfirm = {
                     confirmUpload = null
                     act(refreshAvatar = true) {
@@ -235,10 +236,10 @@ fun SkinManagerDialog(
         }
     }
     confirmRemove?.let { entry ->
-        Modal("移除本地皮肤", onDismiss = { confirmRemove = null }) {
-            Text("从本地皮肤库移除「${entry.name}」？不会删除原始导入文件或修改正版皮肤。")
+        Modal(strings.t("dialogs.skin.removeTitle"), onDismiss = { confirmRemove = null }) {
+            Text(strings.t("dialogs.skin.removeMessage", entry.name))
             DialogActions(
-                "移除",
+                strings.t("dialogs.common.remove"),
                 onConfirm = {
                     confirmRemove = null
                     act {
@@ -268,6 +269,7 @@ private fun SkinImportRow(
     enabled: Boolean,
     onImport: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 420.dp) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -275,8 +277,8 @@ private fun SkinImportRow(
                     name,
                     onNameChange,
                     Modifier.fillMaxWidth(),
-                    label = "皮肤名称",
-                    placeholder = "留空使用文件名",
+                    label = strings.t("dialogs.skin.name"),
+                    placeholder = strings.t("dialogs.skin.namePlaceholder"),
                     enabled = enabled,
                 )
                 Row(
@@ -284,7 +286,7 @@ private fun SkinImportRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     SkinVariantDropdown(variant, onVariantChange, enabled, Modifier.width(140.dp))
-                    SecondaryButton(onImport, enabled = enabled) { Text("导入皮肤") }
+                    SecondaryButton(onImport, enabled = enabled) { Text(strings.t("dialogs.skin.import")) }
                 }
             }
         } else {
@@ -297,12 +299,12 @@ private fun SkinImportRow(
                     name,
                     onNameChange,
                     Modifier.weight(1f),
-                    label = "皮肤名称",
-                    placeholder = "留空使用文件名",
+                    label = strings.t("dialogs.skin.name"),
+                    placeholder = strings.t("dialogs.skin.namePlaceholder"),
                     enabled = enabled,
                 )
                 SkinVariantDropdown(variant, onVariantChange, enabled, Modifier.width(140.dp))
-                SecondaryButton(onImport, enabled = enabled) { Text("导入皮肤") }
+                SecondaryButton(onImport, enabled = enabled) { Text(strings.t("dialogs.skin.import")) }
             }
         }
     }
@@ -331,11 +333,12 @@ private fun OfflineSkinNotice(
     revision: Int,
     service: SkinService,
 ) {
+    val strings = LocalStrings.current
     val libraryDirectory = service.library.directory
     val customSkinLoader = remember(account.id, revision) { service.customSkinLoaderDirectory() }
     MutedText(
-        "离线皮肤不会上传，只写入本地目录（$libraryDirectory），需皮肤模组才会在游戏中显示" +
-            (customSkinLoader?.let { "；CustomSkinLoader 已同步到 $it" } ?: ""),
+        strings.t("dialogs.skin.offlineNote", libraryDirectory) +
+            (customSkinLoader?.let { strings.t("dialogs.skin.customSkinLoaderSynced", it) } ?: ""),
     )
 }
 
@@ -348,6 +351,7 @@ private fun SkinPreviewPane(
     onOverlaysChange: (Boolean) -> Unit,
     textureError: String?,
 ) {
+    val strings = LocalStrings.current
     Column(Modifier.width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier
@@ -365,17 +369,17 @@ private fun SkinPreviewPane(
         }
         textureError?.let {
             Text(
-                "皮肤加载失败，暂用默认模型：$it",
+                strings.t("dialogs.skin.loadFailed", it),
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 11.sp,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("拖动旋转", fontSize = 11.sp)
+            Text(strings.t("dialogs.skin.dragRotate"), fontSize = 11.sp)
             Spacer(Modifier.width(10.dp))
             CompactSwitch(overlays, onOverlaysChange)
             Spacer(Modifier.width(4.dp))
-            Text("外层", fontSize = 11.sp)
+            Text(strings.t("dialogs.skin.outerLayer"), fontSize = 11.sp)
         }
     }
 }
@@ -389,10 +393,11 @@ private fun RowScope.SkinLibraryPane(
     onSelect: (String?) -> Unit,
     onRemove: (LibrarySkin) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("本地皮肤库", fontWeight = FontWeight.SemiBold)
-        TextButton({ onSelect(null) }, enabled = !busy) { Text("查看当前账户皮肤") }
-        if (entries.isEmpty()) MutedText("还没有皮肤，使用下方按钮导入 PNG。")
+        Text(strings.t("dialogs.skin.library"), fontWeight = FontWeight.SemiBold)
+        TextButton({ onSelect(null) }, enabled = !busy) { Text(strings.t("dialogs.skin.viewCurrent")) }
+        if (entries.isEmpty()) MutedText(strings.t("dialogs.skin.empty"))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(entries, key = { it.id }) { entry ->
                 Row(
@@ -423,7 +428,7 @@ private fun RowScope.SkinLibraryPane(
                     }
                     SmallIconButton(
                         Icons.Outlined.DeleteOutline,
-                        "移除皮肤 " + entry.name,
+                        strings.t("dialogs.skin.removeLabel", entry.name),
                         { onRemove(entry) },
                     )
                 }
@@ -440,9 +445,10 @@ private fun MicrosoftSkinActions(
     onRefreshProfile: () -> Unit,
     onUpload: () -> Unit,
 ) {
-    SecondaryButton(onRefreshProfile, enabled = !busy) { Text("刷新正版档案") }
+    val strings = LocalStrings.current
+    SecondaryButton(onRefreshProfile, enabled = !busy) { Text(strings.t("dialogs.skin.refreshProfile")) }
     PrimaryButton(
-        "上传到正版账户",
+        strings.t("dialogs.skin.uploadToOfficial"),
         Icons.Outlined.CloudUpload,
         enabled = !busy && selected != null,
         onClick = onUpload,
@@ -458,12 +464,17 @@ private fun OfflineSkinActions(
     onUseLocalPreview: (LibrarySkin) -> Unit,
     onRestoreDefault: () -> Unit,
 ) {
-    PrimaryButton("用于本地预览", Icons.Outlined.Check, enabled = !busy && selected != null) {
+    val strings = LocalStrings.current
+    PrimaryButton(
+        strings.t("dialogs.skin.useLocalPreview"),
+        Icons.Outlined.Check,
+        enabled = !busy && selected != null,
+    ) {
         val selectedSkin = selected ?: return@PrimaryButton
         onUseLocalPreview(selectedSkin)
     }
     SecondaryButton(onRestoreDefault, enabled = !busy && account.localSkinId.isNotBlank()) {
-        Text("恢复默认")
+        Text(strings.t("dialogs.skin.restoreDefault"))
     }
 }
 
@@ -475,11 +486,12 @@ private fun SkinDialogStatus(
     busy: Boolean,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
     message?.let { MutedText(it) }
     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-    DialogActions("完成", onConfirm = onDismiss, enabled = !busy)
+    DialogActions(strings.t("dialogs.common.done"), onConfirm = onDismiss, enabled = !busy)
 }
 
 /** 操作失败的提示：服务层通常带可读文案，缺失时给通用提示。 */
-private fun skinErrorMessage(failure: Throwable): String = failure.message ?: "皮肤操作失败"
+private fun skinErrorMessage(failure: Throwable): String = failure.message ?: tr("dialogs.skin.failed")

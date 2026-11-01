@@ -1,6 +1,7 @@
 // 局域网世界扫描：一次只运行一个发现会话，并定期剔除已经关闭的世界。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.LanWorld
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,11 +37,13 @@ internal class LobbyWorldScanner(
         stop()
         val created =
             factory.create { failure ->
-                logger("局域网世界发现失败：${failure.message}", true)
+                logger(I18n.t("multiplayerB.lobbyWorldScanner.discoveryFailed", failure.message), true)
             }
         created
             .start()
-            .onFailure { failure -> logger("无法监听局域网世界广播：${failure.message}", true) }
+            .onFailure { failure ->
+                logger(I18n.t("multiplayerB.lobbyWorldScanner.listenFailed", failure.message), true)
+            }
         discovery = created
         discoveryJob =
             scope.launch {
@@ -70,7 +73,9 @@ internal class LobbyWorldScanner(
         verifierJob = null
         discovery?.let { active ->
             runCatching { active.close() }
-                .onFailure { logger("停止局域网世界发现失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.lobbyWorldScanner.stopDiscoveryFailed", failure.message), true)
+                }
         }
         discovery = null
     }

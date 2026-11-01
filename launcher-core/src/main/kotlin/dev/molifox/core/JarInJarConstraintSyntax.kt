@@ -155,8 +155,7 @@ private fun wildcardMatches(
     version: String,
 ): Boolean = prefix.isEmpty() || version == prefix || version.startsWith("$prefix.")
 
-private fun hasWildcardSuffix(raw: String): Boolean =
-    raw.endsWith(".x") || raw.endsWith(".X") || raw.endsWith(".*")
+private fun hasWildcardSuffix(raw: String): Boolean = raw.endsWith(".x") || raw.endsWith(".X") || raw.endsWith(".*")
 
 private fun tildeOrCaretMatches(
     raw: String,

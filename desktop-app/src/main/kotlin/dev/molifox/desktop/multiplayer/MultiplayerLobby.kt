@@ -13,7 +13,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
@@ -60,7 +62,7 @@ private fun lobbyEntriesVisible(state: MultiplayerState): Boolean =
 
 private fun LazyListScope.playerItems(players: List<RoomPlayer>) {
     item("players-title") {
-        Text("房间玩家 · ${players.size}", style = MaterialTheme.typography.titleMedium)
+        Text(tr("dialogs.mp.lobby.players", players.size), style = MaterialTheme.typography.titleMedium)
     }
     items(players, key = { it.machineId }) { player -> PlayerRow(player) }
 }
@@ -70,32 +72,34 @@ private fun FailureGroup(
     state: MultiplayerState,
     actions: MultiplayerLobbyActions,
 ) {
-    MultiplayerGroup(Modifier.fillMaxWidth(), title = "失败原因") {
+    val strings = LocalStrings.current
+    MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.lobby.failureTitle")) {
         Text(
-            state.error ?: "出现了未知问题，请重试。",
+            state.error ?: strings.t("dialogs.mp.lobby.unknownError"),
             color = MaterialTheme.colorScheme.error,
         )
         MutedText(
-            "常见原因：邀请码无效或房间已关闭、房主不在大厅、连不上内置中继、双方打洞失败。" +
-                "修复后可在重新加入或创建房间。",
+            strings.t("dialogs.mp.lobby.failureHint"),
         )
-        TextButton(onClick = actions.leave) { Text("返回大厅") }
+        TextButton(onClick = actions.leave) { Text(strings.t("dialogs.mp.lobby.backToLobby")) }
     }
 }
 
 @Composable
 private fun DisabledNotice() {
-    MultiplayerGroup(Modifier.fillMaxWidth(), title = "联机已关闭") {
-        Text("联机功能已关闭，请先在“联机设置”里开启。")
+    val strings = LocalStrings.current
+    MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.lobby.disabledTitle")) {
+        Text(strings.t("dialogs.mp.lobby.disabledHint"))
     }
 }
 
 @Composable
 private fun NoticeGroup() {
-    MultiplayerGroup(Modifier.fillMaxWidth(), title = "联机说明") {
-        Text(MULTIPLAYER_TECHNOLOGY_NOTICE, style = MaterialTheme.typography.bodySmall)
-        Text(MULTIPLAYER_NETWORK_NOTICE, style = MaterialTheme.typography.bodySmall)
-        Text(MULTIPLAYER_BOUNDARY_NOTICE, style = MaterialTheme.typography.bodySmall)
-        Text(MULTIPLAYER_LEGAL_NOTICE, style = MaterialTheme.typography.bodySmall)
+    val strings = LocalStrings.current
+    MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.lobby.policyTitle")) {
+        Text(multiplayerTechnologyNotice(), style = MaterialTheme.typography.bodySmall)
+        Text(multiplayerNetworkNotice(), style = MaterialTheme.typography.bodySmall)
+        Text(multiplayerBoundaryNotice(), style = MaterialTheme.typography.bodySmall)
+        Text(multiplayerLegalNotice(), style = MaterialTheme.typography.bodySmall)
     }
 }

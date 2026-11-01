@@ -58,7 +58,7 @@ internal fun quickPlayArguments(
         target.kind == EntryKind.Server &&
             Regex("^1\\.(?:[0-9]|1[0-9])(?:[. -].*)?$").matches(version),
     ) {
-        "此游戏版本不支持直接进入该目标，请从游戏菜单进入"
+        "diagA2.quickPlay.unsupportedTarget"
     }
     val address = requireNotNull(parseServerAddress(target.key))
     return listOf("--server", address.host, "--port", address.port.toString())

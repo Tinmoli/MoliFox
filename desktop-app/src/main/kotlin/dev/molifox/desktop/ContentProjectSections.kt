@@ -52,6 +52,7 @@ internal fun ContentProjectHeader(
     actions: UiActions,
     clipboard: ClipboardManager,
 ) {
+    val strings = LocalStrings.current
     Text(
         hit.description,
         maxLines = 2,
@@ -74,7 +75,10 @@ internal fun ContentProjectHeader(
             clipboard.setText(AnnotatedString(hit.title))
             ui.copied = true
         }) {
-            Text(if (ui.copied) "名称已复制" else "复制名称", fontSize = 12.sp)
+            Text(
+                if (ui.copied) strings.t("dialogs.content.copyNameDone") else strings.t("dialogs.content.copyName"),
+                fontSize = 12.sp,
+            )
         }
     }
 }
@@ -85,6 +89,7 @@ internal fun ContentProjectFilters(
     hit: ContentHit,
     ui: ContentProjectUiState,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val gameVersions =
             ui.details
@@ -94,7 +99,7 @@ internal fun ContentProjectFilters(
                 .distinct()
         SimpleDropdown(
             ui.gameVersion,
-            listOf("" to "全部游戏版本") +
+            listOf("" to strings.t("dialogs.content.filter.allGameVersions")) +
                 (listOf(ui.gameVersion).filter { it.isNotBlank() } + gameVersions)
                     .distinct()
                     .map { it to it },
@@ -104,7 +109,7 @@ internal fun ContentProjectFilters(
         if (hit.type in setOf("mod", "modpack")) {
             SimpleDropdown(
                 ui.loader?.name.orEmpty(),
-                listOf("" to "全部加载器") +
+                listOf("" to strings.t("dialogs.content.filter.allLoaders")) +
                     LoaderType.entries
                         .filter { it != LoaderType.Vanilla }
                         .map { it.name to it.title },
@@ -115,20 +120,23 @@ internal fun ContentProjectFilters(
         SimpleDropdown(
             ui.channel,
             listOf(
-                "all" to "全部发布类型",
-                "release" to "正式版",
-                "beta" to "测试版",
-                "alpha" to "预览版",
+                "all" to strings.t("dialogs.content.filter.allReleaseTypes"),
+                "release" to strings.t("dialogs.content.releaseType.release"),
+                "beta" to strings.t("dialogs.content.releaseType.beta"),
+                "alpha" to strings.t("dialogs.content.releaseType.alpha"),
             ),
             { ui.channel = it },
             Modifier.width(140.dp),
         )
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("versions" to "版本列表", "description" to "项目介绍", "changelog" to "更新日志")
-            .forEach { (key, title) ->
-                FilterChip(ui.tab == key, { ui.tab = key }, { Text(title, fontSize = 12.sp) })
-            }
+        listOf(
+            "versions" to strings.t("dialogs.content.tab.versions"),
+            "description" to strings.t("dialogs.content.tab.description"),
+            "changelog" to strings.t("dialogs.content.tab.changelog"),
+        ).forEach { (key, title) ->
+            FilterChip(ui.tab == key, { ui.tab = key }, { Text(title, fontSize = 12.sp) })
+        }
     }
 }
 
@@ -230,16 +238,17 @@ internal fun ContentProjectTargetPickers(
     state: LauncherState,
     ui: ContentProjectUiState,
 ) {
+    val strings = LocalStrings.current
     if (hit.type != "modpack") {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("安装到", fontSize = 12.sp)
+            Text(strings.t("dialogs.content.installTo"), fontSize = 12.sp)
             SimpleDropdown(
                 ui.targetId,
-                listOf("" to "选择游戏实例") +
+                listOf("" to strings.t("dialogs.content.selectInstance")) +
                     state.data.instances
                         .filter { it.installed }
                         .map { it.id to "${it.name} · ${it.gameVersion}" },
@@ -254,11 +263,11 @@ internal fun ContentProjectTargetPickers(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("目标存档", fontSize = 12.sp)
+            Text(strings.t("dialogs.content.targetSave"), fontSize = 12.sp)
             SimpleDropdown(
                 ui.worldName,
                 if (ui.worlds.isEmpty()) {
-                    listOf("" to (ui.worldError ?: "此实例暂无可用世界"))
+                    listOf("" to (ui.worldError ?: strings.t("dialogs.content.noWorlds")))
                 } else {
                     ui.worlds.map { it.name to it.name }
                 },
@@ -282,6 +291,7 @@ internal fun ContentProjectFooter(
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val compatible = contentVersionCompatible(chosen, hit, target)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -290,9 +300,9 @@ internal fun ContentProjectFooter(
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onDismiss) { Text("关闭") }
+        TextButton(onDismiss) { Text(strings.t("dialogs.common.close")) }
         PrimaryButton(
-            "下载",
+            strings.t("dialogs.content.download"),
             enabled =
                 contentDownloadEnabled(
                     ui.loading,
@@ -333,26 +343,27 @@ internal fun ContentDatapackConfirmDialog(
     actions: UiActions,
     onInstallStarted: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Modal(
-        "安装数据包",
+        strings.t("dialogs.content.datapack.title"),
         "${target.name} / ${ui.worldName}",
         onDismiss = { ui.confirmDatapack = false },
     ) {
-        Text("将 ${hit.title} ${chosen.number} 安装到此存档的 datapacks 文件夹。不会覆盖同名文件。")
+        Text(strings.t("dialogs.content.datapack.message", hit.title, chosen.number))
         Text(
-            "进入世界后启用数据包或执行 /reload；请先在项目说明中确认玩法影响。",
+            strings.t("dialogs.content.datapack.hint"),
             style = MaterialTheme.typography.bodySmall,
         )
         defaultDestination?.let { folder ->
-            MutedText("下载位置 · $folder")
+            MutedText(strings.t("dialogs.content.downloadLocation", folder))
             if (ui.destination != null && ui.destination != folder) {
-                MutedText("数据包只能放进存档的 datapacks，安装时会使用上面的位置。")
+                MutedText(strings.t("dialogs.content.datapack.locationHint"))
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({ ui.confirmDatapack = false }) { Text("取消") }
+            TextButton({ ui.confirmDatapack = false }) { Text(strings.t("dialogs.common.cancel")) }
             PrimaryButton(
-                "安装到此存档",
+                strings.t("dialogs.content.datapack.confirm"),
                 enabled = !actions.controller.busy,
                 onClick = {
                     actions.run {

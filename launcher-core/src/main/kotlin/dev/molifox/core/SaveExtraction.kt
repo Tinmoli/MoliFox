@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import java.io.InputStream
 import java.io.OutputStream
@@ -38,8 +39,8 @@ internal suspend fun extractArchive(
     ArchiveZipFile.builder().setPath(archive).get().use { zip ->
         val entries =
             Collections.list(zip.entries).filter { !it.isDirectory && !it.name.endsWith("/") }
-        require(entries.isNotEmpty()) { "备份包是空的，无法恢复" }
-        require(entries.size <= MAX_SAVE_ENTRIES) { "备份包文件过多，无法恢复" }
+        require(entries.isNotEmpty()) { I18n.t("saveA2.extraction.empty") }
+        require(entries.size <= MAX_SAVE_ENTRIES) { I18n.t("saveA2.extraction.tooManyEntries") }
         val extraction = SaveExtraction(zip, destination, skipSessionLock, stripPrefix)
         for (entry in entries) {
             context?.checkCancelled()
@@ -47,7 +48,7 @@ internal suspend fun extractArchive(
             val written = extraction.writtenEntries
             context?.progress(
                 if (entries.isEmpty()) 1f else written.toFloat() / entries.size,
-                "恢复存档 · 文件 $written/${entries.size}",
+                I18n.t("saveA2.extraction.progress", written, entries.size),
             )
         }
     }
@@ -78,18 +79,18 @@ private class SaveExtraction(
     private fun relativeName(entry: ZipArchiveEntry): String {
         val name = entry.name.replace('\\', '/')
         require(name.split('/').none { it == ".." }) {
-            "备份包包含向上跳转的路径：${entry.name}"
+            I18n.t("saveA2.extraction.traversal", entry.name)
         }
         require(!name.startsWith('/') && !Regex("^[A-Za-z]:").containsMatchIn(name)) {
-            "备份包包含绝对路径：${entry.name}"
+            I18n.t("saveA2.extraction.absolutePath", entry.name)
         }
-        require(!entry.isUnixSymlink) { "备份包包含符号链接条目：${entry.name}" }
+        require(!entry.isUnixSymlink) { I18n.t("saveA2.extraction.symlinkEntry", entry.name) }
         if (entry.size > 0) declaredBytes += entry.size
-        require(declaredBytes <= MAX_SAVE_BYTES) { "备份包解压后体积超出限制" }
+        require(declaredBytes <= MAX_SAVE_BYTES) { I18n.t("saveA2.extraction.tooLarge") }
         // 导入的压缩包可能多出一层世界目录：只解压这一层里面的内容。
         if (stripPrefix.isBlank()) return name
         require(name.startsWith(stripPrefix, ignoreCase = true)) {
-            "压缩包条目不在世界目录内：${entry.name}"
+            I18n.t("saveA2.extraction.outsideWorld", entry.name)
         }
         return name.substring(stripPrefix.length)
     }
@@ -124,7 +125,7 @@ private class SaveExtraction(
             if (read < 0) return
             actual += read
             require(actual <= MAX_SAVE_ENTRY_BYTES) {
-                "备份包条目超出大小限制：${entry.name}"
+                I18n.t("saveA2.extraction.entryTooLarge", entry.name)
             }
             output.write(buffer, 0, read)
         }

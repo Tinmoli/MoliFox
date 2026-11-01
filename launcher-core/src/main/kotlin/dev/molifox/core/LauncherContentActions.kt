@@ -5,24 +5,19 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.io.path.name
 
 /** 内容、整合包与导出的后台任务入口。 */
-internal interface LauncherContentApi {
+internal interface LauncherContentApi : LauncherContentUpdateApi {
     fun installContent(
         hit: ContentHit,
         id: String?,
     ): String
 
     fun installContent(plan: ContentInstallPlan): String
-
-    /** 更新单个模组：下载校验通过后才替换旧文件；任务中心可取消，失败时旧文件保持原样。 */
-    fun updateMod(
-        instanceId: String,
-        item: ModUpdateItem,
-    ): String
 
     fun preparePack(
         hit: ContentHit,
@@ -76,21 +71,25 @@ internal interface LauncherContentApi {
 /** 实现由 [LauncherController] 委托调用；方法体与原实现一致。 */
 internal abstract class LauncherContentActions(
     core: LauncherControllerCore,
-) : LauncherDeletionActions(core),
+) : LauncherContentUpdateActions(core),
     LauncherContentApi {
     override fun installContent(
         hit: ContentHit,
         id: String?,
     ): String {
-        if (hit.type != "modpack") requireIdle(requireNotNull(id) { "请选择实例" })
+        if (hit.type != "modpack") requireIdle(requireNotNull(id) { I18n.t("coreC.content.chooseInstance") })
         val resources =
             if (hit.type == "modpack") {
                 setOf("new-pack:${UUID.randomUUID()}")
             } else {
-                taskResourcesForInstances(store, requireNotNull(id) { "请选择实例" })
+                taskResourcesForInstances(store, requireNotNull(id) { I18n.t("coreC.content.chooseInstance") })
             }
         val directoryId = store.data.activeGameDirectoryId
-        return jobs.enqueue("安装 ${hit.title}", resources) {
+        return jobs.enqueue(
+            I18n.t("coreC.tasks.install", hit.title),
+            resources,
+            kind = LauncherTaskKind.InstallContent,
+        ) {
             content.installContent(hit, id, this, directoryId)
         }
     }
@@ -98,24 +97,11 @@ internal abstract class LauncherContentActions(
     override fun installContent(plan: ContentInstallPlan): String {
         requireIdle(plan.instanceId)
         return jobs.enqueue(
-            "安装 ${plan.title}",
+            I18n.t("coreC.tasks.install", plan.title),
             taskResourcesForInstances(store, plan.instanceId),
+            kind = LauncherTaskKind.InstallContent,
         ) {
             content.installPlan(plan, this)
-        }
-    }
-
-    /** 更新单个模组：下载校验通过后才替换旧文件；任务中心可取消，失败时旧文件保持原样。 */
-    override fun updateMod(
-        instanceId: String,
-        item: ModUpdateItem,
-    ): String {
-        requireIdle(instanceId)
-        return jobs.enqueue(
-            "更新模组 ${item.title}",
-            taskResourcesForInstances(store, instanceId),
-        ) {
-            content.modUpdates.apply(instanceId, item, this)
         }
     }
 
@@ -124,7 +110,11 @@ internal abstract class LauncherContentActions(
         versionId: String,
         onReady: (PackPreview) -> Unit,
     ): String =
-        jobs.enqueue("准备 ${hit.title}", setOf("pack-download:${hit.id}:$versionId")) {
+        jobs.enqueue(
+            I18n.t("coreC.tasks.prepare", hit.title),
+            setOf("pack-download:${hit.id}:$versionId"),
+            kind = LauncherTaskKind.PrepareContent,
+        ) {
             val archive = content.downloadPack(hit, this, versionId)
             onReady(content.previewPack(archive))
         }
@@ -137,8 +127,9 @@ internal abstract class LauncherContentActions(
     ): String {
         requireIdle(instanceId)
         return jobs.enqueue(
-            "安装数据包 ${hit.title}",
+            I18n.t("coreC.tasks.installDatapack", hit.title),
             taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.InstallContent,
         ) {
             content.installDatapack(hit, versionId, instanceId, worldName, this)
         }
@@ -149,13 +140,14 @@ internal abstract class LauncherContentActions(
         versionId: String,
         instanceId: String,
     ): String {
-        require(hit.type == "world") { "所选项目不是世界" }
-        require(versionId.isNotBlank()) { "请选择要安装的世界版本" }
-        require(!game.isRunning(instanceId)) { "游戏正在运行，请先退出游戏再安装世界" }
+        require(hit.type == "world") { I18n.t("coreC.world.notAWorld") }
+        require(versionId.isNotBlank()) { I18n.t("coreC.world.chooseVersion") }
+        require(!game.isRunning(instanceId)) { I18n.t("coreC.world.gameRunning") }
         requireIdle(instanceId)
         return jobs.enqueue(
-            "安装世界 ${hit.title}",
+            I18n.t("coreC.tasks.installWorld", hit.title),
             taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.InstallContent,
         ) {
             content.installWorld(hit, versionId, instanceId, this)
         }
@@ -167,7 +159,11 @@ internal abstract class LauncherContentActions(
         expectedHash: String?,
     ): String {
         val directoryId = store.data.activeGameDirectoryId
-        return jobs.enqueue("导入 ${file.fileName}", setOf("new-pack:${UUID.randomUUID()}")) {
+        return jobs.enqueue(
+            I18n.t("coreC.tasks.import", file.fileName),
+            setOf("new-pack:${UUID.randomUUID()}"),
+            kind = LauncherTaskKind.ImportContent,
+        ) {
             content.importPack(
                 file,
                 this,
@@ -188,8 +184,13 @@ internal abstract class LauncherContentActions(
     ): String {
         requireIdle(plan.instanceId)
         return jobs.enqueue(
-            "导出${if (format.importable) "整合包" else "完整备份"} ${plan.metadata.name}",
+            if (format.importable) {
+                I18n.t("coreC.tasks.exportPack", plan.metadata.name)
+            } else {
+                I18n.t("coreC.tasks.exportFullBackup", plan.metadata.name)
+            },
             taskResourcesForInstances(store, plan.instanceId),
+            kind = LauncherTaskKind.ExportContent,
         ) {
             content.exportMrpack(
                 plan,
@@ -209,8 +210,9 @@ internal abstract class LauncherContentActions(
     ): String {
         requireIdle(id)
         return jobs.enqueue(
-            "导出 ${store.instance(id).name}",
+            I18n.t("coreC.tasks.exportInstance", store.instance(id).name),
             taskResourcesForInstances(store, id),
+            kind = LauncherTaskKind.ExportContent,
         ) {
             content.exportInstance(id, destination)
         }
@@ -230,8 +232,9 @@ internal abstract class LauncherContentActions(
     ): String {
         requireIdle(instanceId)
         return jobs.enqueue(
-            "升级整合包 ${store.instance(instanceId).name}",
+            I18n.t("coreC.tasks.upgradePack", store.instance(instanceId).name),
             taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.UpdateContent,
         ) {
             content.upgradePack(
                 instanceId,

@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -78,12 +79,12 @@ class AuthlibInjector(
     ): List<String> {
         val server =
             normalizeAuthlibServerUrl(serverUrl)
-                ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+                ?: throw AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
         val jar =
             ensureJar(cacheDir)
                 ?: throw AuthlibException(
                     AuthlibError.DownloadFailed,
-                    "无法下载 authlib-injector，请检查网络或代理后重试",
+                    I18n.t("core.authlibInjector.1"),
                 )
         val prefetched = prefetchedMetadata(cacheDir, server)
         return listOf(
@@ -121,10 +122,9 @@ class AuthlibInjector(
 
     private fun requireServer(serverUrl: String): String =
         normalizeAuthlibServerUrl(serverUrl)
-            ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+            ?: throw AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
 
-    private fun injectorFolder(cacheDir: Path): Path =
-        cacheDir.toAbsolutePath().normalize().resolve("authlib-injector")
+    private fun injectorFolder(cacheDir: Path): Path = cacheDir.toAbsolutePath().normalize().resolve("authlib-injector")
 
     private fun isUsableJar(path: Path): Boolean =
         runCatching {
@@ -159,7 +159,7 @@ class AuthlibInjector(
             val text = network.text(mirror, "official")
             val json = JsonParser.parseString(text).asJsonObject
             val raw = json.string("download_url").ifBlank { json.string("downloadUrl") }.trim()
-            check(raw.isNotBlank()) { "镜像未提供下载地址" }
+            check(raw.isNotBlank()) { I18n.t("core.authlibInjector.2") }
             URI(mirror).resolve(raw).toString().takeIf {
                 it.startsWith("https://") || it.startsWith("http://")
             }
@@ -222,8 +222,7 @@ private fun writeAtomically(
     }
 }
 
-private fun encodeBase64(text: String): String =
-    Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
+private fun encodeBase64(text: String): String = Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
 
 private fun sha256(text: String): String =
     java.security.MessageDigest

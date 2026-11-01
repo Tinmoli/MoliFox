@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -71,8 +72,12 @@ internal abstract class LauncherRuntimeActions(
     }
 
     override fun downloadUpdate(): String {
-        val release = requireNotNull(state.value.update.release) { "请先检查更新" }
-        return jobs.enqueue("更新 MoliFox ${release.version}", setOf("launcher-update")) {
+        val release = requireNotNull(state.value.update.release) { I18n.t("miscA1.runtimeActions.checkUpdateFirst") }
+        return jobs.enqueue(
+            I18n.t("miscA1.task.updateLauncher", release.version),
+            setOf("launcher-update"),
+            kind = LauncherTaskKind.UpdateLauncher,
+        ) {
             updater.download(release, this)
         }
     }
@@ -82,16 +87,18 @@ internal abstract class LauncherRuntimeActions(
             state.value.update.downloadedFile
                 ?.let(Path::of)
         if (downloaded == null) {
-            store.notify("请先下载更新包")
+            store.notify(I18n.t("miscA1.runtimeActions.downloadUpdateFirst"))
             return
         }
         UpdateApplier(store)
             .apply(downloaded)
             .onSuccess {
-                store.log("已创建更新替换脚本，启动器即将退出并重启")
-                platform.exitLauncher()
+                store.log(I18n.t("miscA1.runtimeActions.replaceScriptCreated"))
+                // 桌面层注册了优雅退出（停联机/后台任务）；没有注册时退回直接退出进程。
+                val gracefulExit = core.exitHandler
+                if (gracefulExit != null) gracefulExit() else platform.exitLauncher()
             }.onFailure { failure ->
-                val message = failure.message ?: "自动更新失败，请手动替换启动器文件"
+                val message = failure.message ?: I18n.t("miscA1.runtimeActions.autoUpdateFailed")
                 store.log(message, true)
                 store.notify(message)
             }
@@ -104,14 +111,14 @@ internal abstract class LauncherRuntimeActions(
                     // 界面的最后一道错误边界：action 由各页面传入，失败类型不可穷举，
                     // 必须一律转成日志与提示，不能让异常冒到 Compose 事件线程；取消沿用原样静默。
                     if (error is CancellationException) return@onFailure
-                    store.log(error.message ?: "操作失败", true)
-                    store.notify(error.message ?: "操作失败")
+                    store.log(error.message ?: I18n.t("miscA1.runtimeActions.operationFailed"), true)
+                    store.notify(error.message ?: I18n.t("miscA1.runtimeActions.operationFailed"))
                 }
         }
 
     override fun requireIdle(vararg instanceIds: String) {
         if (instanceIds.isEmpty()) {
-            check(!jobs.busy && !game.isRunning) { "此操作会修改游戏目录，请等待游戏或后台任务结束后再操作" }
+            check(!jobs.busy && !game.isRunning) { I18n.t("miscA1.runtimeActions.waitForIdle") }
             return
         }
         val resources = taskResourcesForInstances(store, *instanceIds)
@@ -124,7 +131,7 @@ internal abstract class LauncherRuntimeActions(
                     )
                 },
         ) {
-            "此实例或其共用文件正在被使用，请等待相关游戏或任务结束"
+            I18n.t("miscA1.runtimeActions.instanceInUse")
         }
     }
 
@@ -146,6 +153,6 @@ internal abstract class LauncherRuntimeActions(
 
     override fun exportDiagnostics(destination: Path) {
         exportDiagnosticBundle(store, destination)
-        store.notify("诊断包已导出")
+        store.notify(I18n.t("miscA1.runtimeActions.diagnosticsExported"))
     }
 }

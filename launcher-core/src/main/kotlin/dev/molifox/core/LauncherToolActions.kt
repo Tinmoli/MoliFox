@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import kotlin.io.path.name
 
@@ -75,8 +76,9 @@ internal abstract class LauncherToolActions(
     ): String {
         requireIdle(sourceId)
         return jobs.enqueue(
-            "复制 ${store.instance(sourceId).name}",
+            I18n.t("miscA2.task.copyInstance", store.instance(sourceId).name),
             taskResourcesForInstances(store, sourceId),
+            kind = LauncherTaskKind.CopyInstance,
         ) {
             tools.copyInstance(sourceId, name, copySaves, copyMods, this)
         }
@@ -110,7 +112,11 @@ internal abstract class LauncherToolActions(
         sources: List<Path>,
     ): String {
         requireIdle(instanceId)
-        return jobs.enqueue("导入${folder.title}", taskResourcesForInstances(store, instanceId)) {
+        return jobs.enqueue(
+            I18n.t("miscA2.task.importPacks", folder.title),
+            taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.ImportPacks,
+        ) {
             content.importPacks(instanceId, folder, sources, this)
         }
     }
@@ -139,7 +145,10 @@ internal abstract class LauncherToolActions(
         requireIdle()
         val plan = migration.planInstanceMove(instanceId, destinationGameDirectory)
         require(plan.blockers.isEmpty()) { plan.blockers.first() }
-        return jobs.enqueue("移动 ${store.instance(instanceId).name}") {
+        return jobs.enqueue(
+            I18n.t("miscA2.task.moveInstance", store.instance(instanceId).name),
+            kind = LauncherTaskKind.MoveInstance,
+        ) {
             migration.moveInstance(instanceId, destinationGameDirectory, this)
         }
     }

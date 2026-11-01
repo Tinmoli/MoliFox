@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** 设置的校验与落盘、账户皮肤。 */
@@ -61,7 +62,7 @@ internal abstract class LauncherSettingsActions(
             )
         }
         if (javaPathChanged) applyLaunchSettings()
-        store.notify("设置已保存")
+        store.notify(I18n.t("core.settings.saved"), LauncherNoticeKind.SettingsSaved)
     }
 
     private fun applyDownloadSettings(settings: LauncherSettings) {
@@ -84,10 +85,16 @@ internal abstract class LauncherSettingsActions(
 
     /** 切换内容（模组/整合包等）下载源；CurseForge 走设置里的公共镜像，无需 API Key。 */
     override fun setContentDownloadSource(source: String) {
-        require(source in listOf("modrinth", "curseforge")) { "未知的内容下载源" }
+        require(source in listOf("modrinth", "curseforge")) {
+            I18n.t("miscA1.settingsActions.unknownContentSource")
+        }
         store.mutate { it.copy(settings = it.settings.copy(contentDownloadSource = source)) }
         store.notify(
-            if (source == "curseforge") "内容下载源已切换为 CurseForge" else "内容下载源已切换为 Modrinth",
+            if (source == "curseforge") {
+                I18n.t("miscA1.settingsActions.contentSourceCurseForge")
+            } else {
+                I18n.t("miscA1.settingsActions.contentSourceModrinth")
+            },
         )
     }
 

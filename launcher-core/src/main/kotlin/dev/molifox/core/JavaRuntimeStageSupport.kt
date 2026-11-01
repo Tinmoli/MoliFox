@@ -5,9 +5,9 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Comparator
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.isDirectory
@@ -23,12 +23,17 @@ internal fun verifyStagedRuntime(
     platform: PlatformServices,
 ) {
     require(found.majorVersion == plan.major) {
-        "Java 版本校验失败：期望 ${plan.major}，实际 ${found.majorVersion}"
+        I18n.t("networkB2.javaRuntimeStageSupport.versionMismatch", plan.major, found.majorVersion)
     }
     require(
         normalizedJavaArchitecture(found.architecture) ==
             normalizedJavaArchitecture(platform.architecture),
-    ) { "Java 架构校验失败：${found.architecture}" }
+    ) {
+        I18n.t(
+            "networkB2.javaRuntimeStageSupport.architectureMismatch",
+            found.architecture,
+        )
+    }
 }
 
 /** 计算最终安装目录，并在存在旧目录时先做安全校验再删除。 */
@@ -42,21 +47,25 @@ internal fun prepareDestination(
             .toAbsolutePath()
             .normalize()
     require(destination.parent == plan.runtimes.toAbsolutePath().normalize()) {
-        "Java 安装目录异常"
+        I18n.t("networkB2.javaRuntimeStageSupport.invalidInstallDirectory")
     }
     if (destination.exists()) {
-        require(!Files.isSymbolicLink(destination)) { "Java 安装目录是符号链接，已拒绝替换" }
+        require(!Files.isSymbolicLink(destination)) {
+            I18n.t("networkB2.javaRuntimeStageSupport.symlinkInstallDirectory")
+        }
         removeExisting(destination)
     }
     return destination
 }
 
-/** 递归删除临时目录树；符号链接按文件删除，不跟随。 */
+/**
+ * 递归删除 Java 运行时暂存目录；符号链接与目录联接只删链接本身，不进入目标目录。
+ *
+ * 转发到 [deletionDeleteTree]，与实例删除共用同一套链接判据：裸 `Files.walk` 会进入 Windows
+ * 目录联接指向的真实目录，误删用户放在别处的内容。
+ */
 internal fun deleteTree(root: Path) {
-    if (!root.exists()) return
-    Files.walk(root).use { stream ->
-        stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
-    }
+    deletionDeleteTree(root)
 }
 
 /** 目录内普通文件的总字节数；不可读项按 0 计。 */

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 import kotlin.io.path.fileSize
@@ -76,8 +77,7 @@ internal class ModMetadataReader {
 
     private val cache =
         object : LinkedHashMap<Path, Cached>(64, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) =
-                size > 1024
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) = size > 1024
         }
 
     @Synchronized
@@ -94,7 +94,7 @@ internal class ModMetadataReader {
             runCatching {
                 parse(path)
             }.getOrElse {
-                ModMetadata(warning = "无法读取模组声明：${it.message.orEmpty().take(180)}")
+                ModMetadata(warning = I18n.t("packsC.modMetadata.unreadable", it.message.orEmpty().take(180)))
             }
         cache[key] = Cached(size, modified, metadata)
         return metadata
@@ -108,6 +108,6 @@ internal class ModMetadataReader {
                 ?: ModMetadataTomlFormats.parseNeoForge(zip)
                 ?: ModMetadataTomlFormats.parseForge(zip)
                 ?: ModMetadataJsonFormats.parseLegacy(zip)
-                ?: ModMetadata(warning = "未找到已支持的模组声明，仍可启用或禁用此文件")
+                ?: ModMetadata(warning = I18n.t("packsC.modMetadata.unsupported"))
         }
 }

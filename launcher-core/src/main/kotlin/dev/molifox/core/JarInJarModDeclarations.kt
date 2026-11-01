@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import java.util.zip.ZipFile
 
 /** 一个 JAR 里声明的单个 mod；Forge 多 mod JAR 会有多条。 */
@@ -55,16 +56,15 @@ internal object JarInJarModDeclarations {
         try {
             block()
         } catch (failure: JsonParseException) {
-            parseFailure("模组声明解析失败", failure)
+            parseFailure(I18n.t("diagA2.jarInJarModDeclarations.parseFailed"), failure)
         } catch (failure: IllegalStateException) {
-            parseFailure("模组声明结构无法识别", failure)
+            parseFailure(I18n.t("diagA2.jarInJarModDeclarations.unrecognizedStructure"), failure)
         } catch (failure: IllegalArgumentException) {
-            parseFailure("模组声明无法读取", failure)
+            parseFailure(I18n.t("diagA2.jarInJarModDeclarations.unreadable"), failure)
         }
 
     private fun parseFailure(
         summary: String,
         failure: Exception,
-    ): JarModReadResult =
-        JarModReadResult(complete = false, note = describeFailure(summary, failure))
+    ): JarModReadResult = JarModReadResult(complete = false, note = describeFailure(summary, failure))
 }

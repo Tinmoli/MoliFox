@@ -167,7 +167,11 @@ internal fun InstanceRailSectionHeader(
         )
         Icon(
             Icons.Outlined.ExpandMore,
-            if (expanded) "折叠$title" else "展开$title",
+            if (expanded) {
+                tr("pages.instance.rail.collapse", title)
+            } else {
+                tr("pages.instance.rail.expand", title)
+            },
             Modifier.size(14.dp).rotate(chevron),
             MaterialTheme.colorScheme.onSurfaceVariant,
         )

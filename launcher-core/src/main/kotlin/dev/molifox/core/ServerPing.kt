@@ -58,8 +58,8 @@ private const val MAX_SERVER_PORT = 65535
 /**
  * 解析服务器地址：`example.com` / `example.com:25566` / `[::1]:25565`。
  *
- * 只做字符串解析，**不查询 SRV 记录**：`_minecraft._tcp` 的 SRV 查询未在此实现， 直接使用用户填写的端口（缺省
- * [DEFAULT_SERVER_PORT]）。空串、含空白或控制字符、 端口越界、括号不成对都返回 null，从不抛异常。
+ * 只做字符串解析，**不查询 SRV 记录**：`_minecraft._tcp` 的 SRV 查询在 [pingAddress] 里进行， 因为只有真正连接时才需要它，且没有显式端口
+ * （25565）时才会查。空串、含空白或控制字符、 端口越界、括号不成对都返回 null，从不抛异常。
  */
 fun parseServerAddress(address: String): ServerAddress? {
     val raw = address.trim()
@@ -139,11 +139,16 @@ suspend fun ping(
     }
 }
 
-/** 直接查询 `servers.dat` 里那种 `host:port` 字符串；地址解析失败返回 null。 */
+/**
+ * 直接查询 `servers.dat` 里那种 `host:port` 字符串；地址解析失败返回 null。
+ *
+ * 没有写端口（缺省 25565）且主机是域名时先查 `_minecraft._tcp` SRV 记录，用记录里的真实主机与端口连接； 查询失败、没有记录或用户显式写了其他端口时回退到原地址。
+ */
 suspend fun pingAddress(
     address: String,
     timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
 ): ServerStatus? {
     val parsed = parseServerAddress(address) ?: return null
-    return ping(parsed.host, parsed.port, timeoutMillis)
+    val target = resolvePingTarget(parsed)
+    return ping(target.host, target.port, timeoutMillis)
 }

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -41,11 +42,16 @@ private const val STANDARD_SKIN_HEIGHT = 64
 private const val LEGACY_SKIN_HEIGHT = 32
 
 enum class SkinVariant(
-    val title: String,
+    private val titleKey: String,
     val apiValue: String,
 ) {
-    Classic("标准手臂", "classic"),
-    Slim("纤细手臂", "slim"),
+    Classic("core.skinVariant.classic", "classic"),
+    Slim("core.skinVariant.slim", "slim"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 data class LibrarySkin(
@@ -75,7 +81,7 @@ class SkinLibrary(
     private fun readEntries(): List<LibrarySkin> {
         if (!index.exists()) return emptyList()
         val json = readObject(index)
-        require(json.int("formatVersion") == 1) { "皮肤库格式无法识别，请保留原文件" }
+        require(json.int("formatVersion") == 1) { I18n.t("core.skinLibrary.3") }
         return json
             .array("skins")
             .map { gson.fromJson(it, LibrarySkin::class.java) }
@@ -84,7 +90,7 @@ class SkinLibrary(
                     entries.size <= MAX_SKIN_COUNT &&
                         entries.map { it.id }.distinct().size == entries.size,
                 ) {
-                    "皮肤库条目异常"
+                    I18n.t("core.skinLibrary.4")
                 }
                 entries.forEach { entry ->
                     require(
@@ -92,14 +98,13 @@ class SkinLibrary(
                             entry.name.length in 1..MAX_SKIN_NAME_LENGTH &&
                             entry.sha256.matches(Regex("[a-f0-9]{64}")),
                     ) {
-                        "皮肤库条目无效"
+                        I18n.t("core.skinLibrary.5")
                     }
                 }
             }
     }
 
-    private fun save(entries: List<LibrarySkin>) =
-        writeJson(index, mapOf("formatVersion" to 1, "skins" to entries))
+    private fun save(entries: List<LibrarySkin>) = writeJson(index, mapOf("formatVersion" to 1, "skins" to entries))
 
     suspend fun importSkin(
         source: Path,
@@ -108,23 +113,23 @@ class SkinLibrary(
     ): LibrarySkin =
         withContext(Dispatchers.IO) {
             require(name.isNotBlank() && name.trim().length <= MAX_SKIN_NAME_LENGTH) {
-                "皮肤名称需为 1–100 字"
+                I18n.t("core.skinLibrary.6")
             }
-            require(validSkinTexture(source)) { "请选择有效的 Minecraft PNG 皮肤（64×64、64×32 或等比例纹理）" }
+            require(validSkinTexture(source)) { I18n.t("core.skinLibrary.7") }
             // Snapshot once: do not trust a user-selected file to stay unchanged while being
             // imported.
             val bytes = Files.newInputStream(source).use { it.readNBytes(MAX_SKIN_FILE_BYTES + 1) }
-            require(bytes.size <= MAX_SKIN_FILE_BYTES) { "皮肤文件已改变或过大" }
+            require(bytes.size <= MAX_SKIN_FILE_BYTES) { I18n.t("core.skinLibrary.8") }
             synchronized(this@SkinLibrary) {
                 val entries = readEntries()
-                require(entries.size < MAX_SKIN_COUNT) { "皮肤库已达到 1000 项上限" }
+                require(entries.size < MAX_SKIN_COUNT) { I18n.t("core.skinLibrary.9") }
                 root.createDirectories()
                 val id = UUID.randomUUID().toString()
                 val target = safePath(root, "$id.png")
                 val staging = safePath(root, "$id.tmp")
                 try {
                     staging.writeBytes(bytes)
-                    require(validSkinTexture(staging)) { "所选文件已改变或不是有效皮肤" }
+                    require(validSkinTexture(staging)) { I18n.t("core.skinLibrary.10") }
                     val hash = digest(staging, "SHA-256")
                     entries
                         .find { it.sha256 == hash && it.variant == variant }
@@ -150,10 +155,10 @@ class SkinLibrary(
     suspend fun texture(id: String): Path =
         withContext(Dispatchers.IO) {
             synchronized(this@SkinLibrary) {
-                val entry = readEntries().find { it.id == id } ?: error("皮肤已不在皮肤库中")
+                val entry = readEntries().find { it.id == id } ?: error(I18n.t("core.skinLibrary.11"))
                 val file = safePath(root, "${entry.id}.png")
                 require(validSkinTexture(file) && digest(file, "SHA-256") == entry.sha256) {
-                    "皮肤文件已改变或损坏，请重新导入"
+                    I18n.t("core.skinLibrary.12")
                 }
                 file
             }
@@ -168,8 +173,8 @@ class SkinLibrary(
         withContext(Dispatchers.IO) {
             synchronized(this@SkinLibrary) {
                 val entries = readEntries()
-                require(entries.any { it.id == id }) { "皮肤已移除" }
-                require(store.data.accounts.none { it.localSkinId == id }) { "此皮肤正用于离线角色，请先恢复默认预览" }
+                require(entries.any { it.id == id }) { I18n.t("core.skinLibrary.13") }
+                require(store.data.accounts.none { it.localSkinId == id }) { I18n.t("core.skinLibrary.14") }
                 val file = safePath(root, "$id.png")
                 val holding = safePath(root, "$id.removed")
                 if (file.exists()) Files.move(file, holding, StandardCopyOption.REPLACE_EXISTING)
@@ -189,17 +194,17 @@ internal suspend fun exportSkinTexture(
     source: Path,
     destination: Path,
 ) = withContext(Dispatchers.IO) {
-    require(validSkinTexture(source)) { "没有可导出的皮肤纹理" }
-    require(destination.extension.equals("png", true)) { "皮肤请保存为 PNG 文件" }
+    require(validSkinTexture(source)) { I18n.t("core.skinLibrary.15") }
+    require(destination.extension.equals("png", true)) { I18n.t("core.skinLibrary.16") }
     val target = destination.toAbsolutePath().normalize()
     require(target != source.toAbsolutePath().normalize() && !Files.isSymbolicLink(target)) {
-        "请选择不同的导出文件"
+        I18n.t("core.skinLibrary.17")
     }
     target.parent.createDirectories()
     val staging = Files.createTempFile(target.parent, ".molifox-skin-", ".tmp")
     try {
         Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
-        require(validSkinTexture(staging)) { "皮肤在导出时改变" }
+        require(validSkinTexture(staging)) { I18n.t("core.skinLibrary.18") }
         Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
     } finally {
         staging.deleteIfExists()
@@ -210,16 +215,16 @@ internal fun validateUploadSkin(
     file: Path,
     variant: SkinVariant,
 ) {
-    require(validSkinTexture(file)) { "皮肤文件无效" }
+    require(validSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
     val image = ImageIO.read(file.toFile())
     require(
         image.width == STANDARD_SKIN_WIDTH &&
             image.height in setOf(LEGACY_SKIN_HEIGHT, STANDARD_SKIN_HEIGHT),
     ) {
-        "正版上传需要 64×64 或 64×32 皮肤，不支持高清纹理"
+        I18n.t("core.skinLibrary.20")
     }
     require(variant != SkinVariant.Slim || image.height == STANDARD_SKIN_HEIGHT) {
-        "纤细手臂需要 64×64 皮肤"
+        I18n.t("core.skinLibrary.21")
     }
 }
 
@@ -232,17 +237,17 @@ internal fun validateLocalSkinFile(
     file: Path,
     variant: SkinVariant,
 ) {
-    require(validSkinTexture(file)) { "皮肤文件无效" }
-    val image = ImageIO.read(file.toFile()) ?: error("皮肤文件无效")
+    require(validSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
+    val image = ImageIO.read(file.toFile()) ?: error(I18n.t("core.skinLibrary.19"))
     try {
         require(
             image.width == STANDARD_SKIN_WIDTH &&
                 image.height in setOf(LEGACY_SKIN_HEIGHT, STANDARD_SKIN_HEIGHT),
         ) {
-            "本地皮肤需要 64×64 或 64×32 的 PNG"
+            I18n.t("core.skinLibrary.22")
         }
         require(variant != SkinVariant.Slim || image.height == STANDARD_SKIN_HEIGHT) {
-            "纤细手臂需要 64×64 皮肤"
+            I18n.t("core.skinLibrary.21")
         }
     } finally {
         image.flush()

@@ -63,6 +63,7 @@ internal fun ModRow(
     onToggle: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val sourceName = mod.filename.removeSuffix(".disabled")
     val icon =
@@ -73,14 +74,14 @@ internal fun ModRow(
         }
     val details =
         listOf(
-            mod.metadata.versions.ifBlank { "版本未知" },
-            mod.metadata.loader.ifBlank { "加载器未知" },
+            mod.metadata.versions.ifBlank { strings.t("pages.instance.meta.versionUnknown") },
+            mod.metadata.loader.ifBlank { strings.t("deskA.modRow.loaderUnknown") },
             "%.1f MB".format(mod.size / 1048576f),
         ).filter { it.isNotBlank() }
             .joinToString(" · ")
     val metaDetails =
         listOf(
-            mod.metadata.loader.ifBlank { "加载器未知" },
+            mod.metadata.loader.ifBlank { strings.t("deskA.modRow.loaderUnknown") },
             "%.1f MB".format(mod.size / 1048576f),
         ).filter { it.isNotBlank() }
             .joinToString(" · ")
@@ -139,13 +140,13 @@ internal fun ModRow(
                     )
                     if (update?.possibleMatch == true) {
                         Spacer(Modifier.width(5.dp))
-                        Tag("可能匹配", MaterialTheme.colorScheme.tertiary)
+                        Tag(strings.t("deskA.row.possibleMatch"), MaterialTheme.colorScheme.tertiary)
                     }
                 }
                 if (updateItem != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            updateItem.currentVersion.ifBlank { "当前" } +
+                            updateItem.currentVersion.ifBlank { strings.t("deskA.row.currentVersion") } +
                                 " → " +
                                 updateItem.latestVersion.ifBlank {
                                     updateItem.candidate?.versionNumber.orEmpty()
@@ -159,7 +160,11 @@ internal fun ModRow(
                         Spacer(Modifier.width(4.dp))
                         Text(
                             metaDetails +
-                                if (updateItem.candidate == null) " · 需手动下载" else "",
+                                if (updateItem.candidate == null) {
+                                    " · " + strings.t("deskA.modRow.manualDownloadRequired")
+                                } else {
+                                    ""
+                                },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -170,8 +175,8 @@ internal fun ModRow(
                     Text(
                         details +
                             when (update?.status) {
-                                ModUpdateStatus.Latest -> " · 已是最新"
-                                ModUpdateStatus.Unknown -> " · 无法确认"
+                                ModUpdateStatus.Latest -> " · " + strings.t("core.modUpdateStatus.latest")
+                                ModUpdateStatus.Unknown -> " · " + strings.t("core.modUpdateStatus.unknown")
                                 else -> ""
                             },
                         fontSize = 12.sp,
@@ -196,12 +201,12 @@ internal fun ModRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 if (updateItem != null && updateItem.applicable) {
-                    RowTextAction("更新", enabled = !busy, onClick = onUpdate)
+                    RowTextAction(strings.t("deskA.row.update"), enabled = !busy, onClick = onUpdate)
                 }
                 CompactSwitch(mod.enabled, { onToggle() }, enabled = !busy)
                 RowIconAction(
                     Icons.Outlined.DeleteOutline,
-                    "将模组移至回收站",
+                    strings.t("deskA.modRow.trashMessage"),
                     enabled = !busy,
                     onClick = onDelete,
                 )

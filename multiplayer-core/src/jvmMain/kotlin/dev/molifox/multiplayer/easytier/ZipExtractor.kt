@@ -1,6 +1,7 @@
 // 解包 EasyTier 的 zip 安装包：只写普通文件，拒绝路径穿越、重复条目与超限内容。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.InputStream
@@ -63,15 +64,15 @@ object ZipExtractor {
                 val entry = input.nextEntry ?: break
                 val relative = if (entry.isDirectory) null else relativeName(entry.name, prefix)
                 if (relative != null) {
-                    require(seen.add(relative)) { "安装包存在重复条目：$relative" }
-                    require(files < limits.maxEntries) { "安装包条目过多：$relative" }
+                    require(seen.add(relative)) { I18n.t("multiplayer.zipExtractor.1", relative) }
+                    require(files < limits.maxEntries) { I18n.t("multiplayer.zipExtractor.2", relative) }
                     bytes += copyEntry(input, resolveInside(root, relative), limits.maxFileBytes)
-                    require(bytes <= limits.maxTotalBytes) { "安装包解压后过大：$relative" }
+                    require(bytes <= limits.maxTotalBytes) { I18n.t("multiplayer.zipExtractor.3", relative) }
                     files++
                 }
             }
         }
-        require(files > 0) { "EasyTier 安装包为空或缺少预期目录" }
+        require(files > 0) { I18n.t("multiplayer.zipExtractor.4") }
         return ZipExtractResult(files, bytes)
     }
 
@@ -83,11 +84,11 @@ object ZipExtractor {
         val normalized = name.replace(WINDOWS_SEPARATOR, SEPARATOR)
         val segments = normalized.split(SEPARATOR).filter { it.isNotEmpty() }
         require(normalized.isNotEmpty() && !normalized.startsWith(SEPARATOR)) {
-            "安装包条目使用了绝对路径：$name"
+            I18n.t("multiplayer.zipExtractor.5", name)
         }
-        require(!DRIVE_PREFIX.containsMatchIn(normalized)) { "安装包条目使用了绝对路径：$name" }
+        require(!DRIVE_PREFIX.containsMatchIn(normalized)) { I18n.t("multiplayer.zipExtractor.5", name) }
         require(segments.none { it == PARENT || it == CURRENT }) {
-            "安装包条目包含路径穿越：$name"
+            I18n.t("multiplayer.zipExtractor.6", name)
         }
         val insidePrefix = prefix.isEmpty() || segments.take(prefix.size) == prefix
         val relative = segments.drop(prefix.size)
@@ -104,7 +105,9 @@ object ZipExtractor {
         relative: String,
     ): Path {
         val target = root.resolve(relative).normalize()
-        require(target.startsWith(root) && target != root) { "安装包条目越界：$relative" }
+        require(target.startsWith(root) && target != root) {
+            I18n.t("multiplayerB.zipExtractor.entryOutside", relative)
+        }
         return target
     }
 
@@ -123,7 +126,7 @@ object ZipExtractor {
                 val count = input.read(buffer)
                 if (count < 0) break
                 written += count
-                require(written <= maxFileBytes) { "安装包条目过大：${target.fileName}" }
+                require(written <= maxFileBytes) { I18n.t("multiplayer.zipExtractor.7", target.fileName) }
                 output.write(buffer, 0, count)
             }
         }

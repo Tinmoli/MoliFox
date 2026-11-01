@@ -33,9 +33,13 @@ internal class ContentServiceCore(
             defaultModDownloader(network, api) { curseForge.api },
         )
 
-    // 资源包与光影的更新检查：与模组同样的内容源与镜像设置，只读，不下载文件。
+    // 资源包与光影的更新：与模组同样的内容源与镜像设置；检查只读，应用更新时才下载。
     val packUpdates =
-        PackUpdateService(store, defaultPackUpdateSources(network, api, curseForge))
+        PackUpdateService(
+            store,
+            defaultPackUpdateSources(network, api, curseForge),
+            defaultPackUpdateDownloader(network),
+        )
     internal val localPacks = LocalPackStore(store)
     internal val installedIcons =
         InstalledContentIcons(store, network, backend, api, identifyUnregistered = true)

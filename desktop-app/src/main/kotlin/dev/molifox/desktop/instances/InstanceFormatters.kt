@@ -7,6 +7,7 @@ package dev.molifox.desktop.instances
 
 import dev.molifox.core.GameDirectory
 import dev.molifox.core.GameInstance
+import dev.molifox.desktop.tr
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -31,9 +32,9 @@ internal fun instanceMetaLine(
         } else {
             ""
         }
-    return instance.gameVersion.ifBlank { "版本未知" } +
+    return instance.gameVersion.ifBlank { tr("pages.instance.meta.versionUnknown") } +
         " · " +
-        (if (instance.broken) "无法识别" else instance.loader.title) +
+        (if (instance.broken) tr("pages.instance.meta.broken") else instance.loader.title) +
         " · " +
         lastPlayedText(instance.lastPlayed) +
         " · " +
@@ -43,22 +44,22 @@ internal fun instanceMetaLine(
 
 /** 最后游玩：相对时间，例如「3 天前」；从未游玩（或时间无法解析）显示「未游玩」。 */
 private fun lastPlayedText(lastPlayed: String?): String {
-    val played = lastPlayed?.takeIf { it.isNotBlank() } ?: return "未游玩"
-    val instant = runCatching { Instant.parse(played) }.getOrNull() ?: return "未游玩"
+    val played = lastPlayed?.takeIf { it.isNotBlank() } ?: return tr("pages.instance.meta.neverPlayed")
+    val instant = runCatching { Instant.parse(played) }.getOrNull() ?: return tr("pages.instance.meta.neverPlayed")
     val seconds = Duration.between(instant, Instant.now()).seconds.coerceAtLeast(0)
     return when {
-        seconds < SECONDS_PER_MINUTE -> "刚刚"
-        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟前"
-        seconds < SECONDS_PER_DAY -> "${seconds / SECONDS_PER_HOUR} 小时前"
-        else -> "${seconds / SECONDS_PER_DAY} 天前"
+        seconds < SECONDS_PER_MINUTE -> tr("pages.instance.meta.justNow")
+        seconds < SECONDS_PER_HOUR -> tr("pages.instance.meta.minutesAgo", seconds / SECONDS_PER_MINUTE)
+        seconds < SECONDS_PER_DAY -> tr("pages.instance.meta.hoursAgo", seconds / SECONDS_PER_HOUR)
+        else -> tr("pages.instance.meta.daysAgo", seconds / SECONDS_PER_DAY)
     }
 }
 
 /** 占用文案：尚未统计完成时显示「统计中…」，目录读不到时如实显示「占用未知」。 */
 private fun instanceSizeText(bytes: Long?): String =
     when {
-        bytes == null -> "统计中…"
-        bytes < 0 -> "占用未知"
+        bytes == null -> tr("pages.instance.size.counting")
+        bytes < 0 -> tr("pages.instance.size.unknown")
         bytes >= BYTES_PER_GIB -> "%.1f GB".format(bytes / BYTES_PER_GIB.toFloat())
         bytes >= BYTES_PER_MIB -> "%.1f MB".format(bytes / BYTES_PER_MIB.toFloat())
         bytes >= BYTES_PER_KIB -> "%.0f KB".format(bytes / BYTES_PER_KIB.toFloat())
@@ -91,9 +92,9 @@ internal fun probeGameDirectory(directory: GameDirectory): String =
     runCatching {
         val path = Path.of(directory.path)
         when {
-            !Files.exists(path) -> "找不到游戏目录：" + directory.path
-            !Files.isDirectory(path) -> "这不是文件夹：" + directory.path
-            !Files.isReadable(path) -> "没有读取权限：" + directory.path
+            !Files.exists(path) -> tr("pages.instance.dir.missing", directory.path)
+            !Files.isDirectory(path) -> tr("pages.instance.dir.notFolder", directory.path)
+            !Files.isReadable(path) -> tr("pages.instance.dir.notReadable", directory.path)
             else -> ""
         }
-    }.getOrElse { "无法读取游戏目录：" + (it.message ?: directory.path) }
+    }.getOrElse { tr("pages.instance.dir.unreadable", it.message ?: directory.path) }

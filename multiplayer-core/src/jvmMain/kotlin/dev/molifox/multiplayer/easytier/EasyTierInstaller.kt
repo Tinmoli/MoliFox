@@ -1,6 +1,7 @@
 // 下载、校验并安装 EasyTier sidecar：官方 zip + SHA-256，失败不留下半成品。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.CoreStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -57,12 +58,10 @@ class EasyTierInstaller(
         runtimesRoot.resolve(RUNTIME_DIRECTORY).resolve(pkg.version).resolve(pkg.classifier)
 
     /** 主程序（`easytier-core`），后续 backend 用它启动 sidecar。 */
-    fun executable(pkg: EasyTierPackage = packageInfo()): Path =
-        directory(pkg).resolve(pkg.coreFile)
+    fun executable(pkg: EasyTierPackage = packageInfo()): Path = directory(pkg).resolve(pkg.coreFile)
 
     /** 命令行工具（`easytier-cli`），后续 backend 用它查询 peer 与添加端口转发。 */
-    fun cliExecutable(pkg: EasyTierPackage = packageInfo()): Path =
-        directory(pkg).resolve(pkg.cliFile)
+    fun cliExecutable(pkg: EasyTierPackage = packageInfo()): Path = directory(pkg).resolve(pkg.cliFile)
 
     /** 检查本地安装是否可用：只校验必需文件存在且非空，不读网络。 */
     fun inspect(pkg: EasyTierPackage = packageInfo()): CoreStatus {
@@ -112,8 +111,8 @@ class EasyTierInstaller(
         withContext(Dispatchers.IO) {
             runCatching {
                 val pkg = packageInfo()
-                require(Files.isRegularFile(archive)) { "找不到安装包：$archive" }
-                logger("从本地安装包安装 EasyTier：$archive", false)
+                require(Files.isRegularFile(archive)) { I18n.t("multiplayer.easyTierInstaller.1", archive) }
+                logger(I18n.t("multiplayer.easyTierInstaller.2", archive), false)
                 val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
                 try {
                     verifyArchive(pkg, archive)
@@ -124,8 +123,8 @@ class EasyTierInstaller(
                     requireRequiredFiles(pkg, staging)
                     moveIntoPlace(staging, directory(pkg))
                     val status = inspect(pkg)
-                    require(status.installed) { "EasyTier 安装完成后仍缺少必需文件，请检查安装包。" }
-                    logger("EasyTier ${pkg.version} 已从本地安装包安装到 ${status.directory}", false)
+                    require(status.installed) { I18n.t("multiplayer.easyTierInstaller.3") }
+                    logger(I18n.t("multiplayer.easyTierInstaller.4", pkg.version, status.directory), false)
                     onProgress(ONE)
                     status
                 } finally {
@@ -149,8 +148,8 @@ class EasyTierInstaller(
         requireRequiredFiles(pkg, staging)
         moveIntoPlace(staging, directory(pkg))
         val status = inspect(pkg)
-        require(status.installed) { "EasyTier 安装完成后仍缺少必需文件，请重试。" }
-        logger("EasyTier ${pkg.version} 已安装到 ${status.directory}", false)
+        require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
+        logger(I18n.t("multiplayer.easyTierInstaller.6", pkg.version, status.directory), false)
         onProgress(ONE)
         return status
     }
@@ -165,7 +164,7 @@ class EasyTierInstaller(
         onProgress: (Float?) -> Unit,
     ) {
         val sources = orderedSources(pkg, probe, logger, rankingCache, clock())
-        logger("EasyTier 下载源顺序：${sources.joinToString()}", false)
+        logger(I18n.t("multiplayerB.easyTierInstaller.sourceOrder", sources.joinToString()), false)
         var failure: Throwable? = null
         repeat(ATTEMPTS) { attempt ->
             val source = sources[attempt % sources.size]
@@ -173,7 +172,7 @@ class EasyTierInstaller(
             if (failure == null) return
         }
         val reason = failure?.message.orEmpty()
-        throw IOException("下载 EasyTier 失败：$reason。已尝试 ${sources.size} 个下载源，请检查网络后重试。", failure)
+        throw IOException(I18n.t("multiplayer.easyTierInstaller.7", reason, sources.size), failure)
     }
 
     /** 尝试一个来源；成功返回 null，失败返回异常并记录可读日志。 */
@@ -187,7 +186,14 @@ class EasyTierInstaller(
     ): Throwable? =
         try {
             logger(
-                "下载 EasyTier（第 ${attempt + 1}/$ATTEMPTS 次，${attempt + 1}/$sourceCount 个源）：$source",
+                I18n.t(
+                    "multiplayerB.easyTierInstaller.attempt",
+                    attempt + 1,
+                    ATTEMPTS,
+                    attempt + 1,
+                    sourceCount,
+                    source,
+                ),
                 false,
             )
             onProgress(null)
@@ -197,7 +203,7 @@ class EasyTierInstaller(
                 val percent = progress?.let { (it * PERCENT).toInt().coerceIn(0, PERCENT) }
                 if (percent != null && percent >= lastLoggedPercent + PROGRESS_LOG_STEP) {
                     lastLoggedPercent = percent
-                    logger("EasyTier 下载进度 $percent%", false)
+                    logger(I18n.t("multiplayerB.easyTierInstaller.downloadProgress", percent), false)
                 }
             }
             downloader.download(source, target, pkg.downloadBytes, reportProgress)
@@ -206,10 +212,16 @@ class EasyTierInstaller(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (downloadFailure: IOException) {
-            logger("EasyTier 来源失败（$source）：${downloadFailure.message}", true)
+            logger(
+                I18n.t("multiplayerB.easyTierInstaller.sourceFailed", source, downloadFailure.message),
+                true,
+            )
             downloadFailure
         } catch (downloadFailure: IllegalStateException) {
-            logger("EasyTier 来源校验失败（$source）：${downloadFailure.message}", true)
+            logger(
+                I18n.t("multiplayerB.easyTierInstaller.sourceVerifyFailed", source, downloadFailure.message),
+                true,
+            )
             downloadFailure
         }
 
@@ -293,7 +305,7 @@ private suspend fun orderedSources(
     now: Long,
 ): List<String> {
     cache.order?.takeIf { now - cache.rankedAt < RANKING_TTL_MILLIS }?.let { cached ->
-        logger("复用上次测速结果：${cached.joinToString()}", false)
+        logger(I18n.t("multiplayerB.easyTierInstaller.reuseRanking", cached.joinToString()), false)
         return cached
     }
     val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
@@ -305,11 +317,13 @@ private suspend fun orderedSources(
             }
         }
     measured.forEach { (source, speed) ->
-        logger("下载源测速：${speed / KIB} KiB/s  $source", false)
+        logger(I18n.t("multiplayerB.easyTierInstaller.speedMeasured", speed / KIB, source), false)
     }
     val ranked = measured.sortedByDescending { it.second }.map { it.first }
     val unscored = candidates.filterNot { it in ranked }
-    unscored.forEach { source -> logger("下载源未测速（作为兜底）：$source", false) }
+    unscored.forEach { source ->
+        logger(I18n.t("multiplayerB.easyTierInstaller.speedUnscored", source), false)
+    }
     val order = ranked + unscored
     cache.order = order
     cache.rankedAt = now
@@ -323,10 +337,10 @@ private fun verifyArchive(
 ) {
     val actualBytes = Files.size(archive)
     check(actualBytes == pkg.downloadBytes) {
-        "EasyTier 安装包大小不符（$actualBytes ≠ ${pkg.downloadBytes} 字节），请重新下载"
+        I18n.t("multiplayer.easyTierInstaller.8", actualBytes, pkg.downloadBytes)
     }
     check(sha256(archive) == pkg.sha256.lowercase(Locale.ROOT)) {
-        "EasyTier 安装包校验失败（SHA-256 不一致），请重新下载"
+        I18n.t("multiplayer.easyTierInstaller.9")
     }
 }
 
@@ -336,7 +350,7 @@ private fun requireRequiredFiles(
     staging: Path,
 ) {
     val missing = pkg.requiredFiles.filterNot { name -> isUsableFile(staging.resolve(name)) }
-    require(missing.isEmpty()) { "EasyTier 安装包缺少必需文件：${missing.joinToString()}" }
+    require(missing.isEmpty()) { I18n.t("multiplayer.easyTierInstaller.10", missing.joinToString()) }
 }
 
 /** Linux 上补可执行权限；Windows 忽略。 */
@@ -349,7 +363,14 @@ private fun applyExecutablePermissions(
         stream.filter { Files.isRegularFile(it) }.forEach { file ->
             runCatching { Files.setPosixFilePermissions(file, EXECUTABLE_PERMISSIONS) }
                 .onFailure { failure ->
-                    logger("无法为 ${file.fileName} 设置可执行权限：${failure.message}", true)
+                    logger(
+                        I18n.t(
+                            "multiplayerB.easyTierInstaller.executablePermissionFailed",
+                            file.fileName,
+                            failure.message,
+                        ),
+                        true,
+                    )
                 }
         }
     }
@@ -379,7 +400,9 @@ private fun deleteRecursively(
     Files.walk(path).use { stream ->
         stream.sorted(Comparator.reverseOrder()).forEach { child ->
             runCatching { Files.deleteIfExists(child) }
-                .onFailure { failure -> logger("清理安装临时文件失败：${failure.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.easyTierInstaller.cleanupFailed", failure.message), true)
+                }
         }
     }
 }

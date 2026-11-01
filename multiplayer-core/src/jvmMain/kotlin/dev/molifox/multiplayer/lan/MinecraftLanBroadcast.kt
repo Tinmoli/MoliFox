@@ -1,6 +1,7 @@
 // JVM 局域网广播注入：定时把本地转发端口伪装成 Minecraft LAN 世界发给本机客户端。
 package dev.molifox.multiplayer.lan
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,12 +42,12 @@ class MinecraftLanBroadcast(
 ) : AutoCloseable {
     init {
         require(localPort in MIN_PORT..MAX_PORT) {
-            "localPort 必须在 $MIN_PORT..$MAX_PORT 之间，收到 $localPort"
+            I18n.t("multiplayer.minecraftLanBroadcast.1", MIN_PORT, MAX_PORT, localPort)
         }
         require(targetPort in MIN_PORT..MAX_PORT) {
-            "targetPort 必须在 $MIN_PORT..$MAX_PORT 之间，收到 $targetPort"
+            I18n.t("multiplayer.minecraftLanBroadcast.2", MIN_PORT, MAX_PORT, targetPort)
         }
-        require(intervalMillis > 0) { "intervalMillis 必须为正数" }
+        require(intervalMillis > 0) { I18n.t("multiplayer.minecraftLanBroadcast.3") }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -67,7 +68,7 @@ class MinecraftLanBroadcast(
     fun start(): Result<Unit> =
         synchronized(stateLock) {
             when {
-                closed -> Result.failure(IllegalStateException("LAN 广播已关闭"))
+                closed -> Result.failure(IllegalStateException(I18n.t("multiplayer.minecraftLanBroadcast.4")))
                 running -> Result.success(Unit)
                 else -> openAndLaunch()
             }
@@ -115,7 +116,7 @@ class MinecraftLanBroadcast(
         } catch (failure: IOException) {
             running = false
             closeSockets()
-            Result.failure(IOException("LAN 广播发送 socket 创建失败: ${failure.message}", failure))
+            Result.failure(IOException(I18n.t("multiplayer.minecraftLanBroadcast.5", failure.message), failure))
         }
 
     private fun openMulticastSocket(): MulticastSocket? {
@@ -127,7 +128,7 @@ class MinecraftLanBroadcast(
             multicastTarget = InetSocketAddress(group, targetPort)
             MulticastSocket(0).apply { timeToLive = MULTICAST_TIME_TO_LIVE }
         } catch (failure: IOException) {
-            onError(IOException("组播广播不可用，仅向回环发送 LAN 广播: ${failure.message}", failure))
+            onError(IOException(I18n.t("multiplayer.minecraftLanBroadcast.6", failure.message), failure))
             null
         }
     }

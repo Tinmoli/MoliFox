@@ -36,19 +36,28 @@ fun AdvancedLaunchEditor(
             value.environmentVariables.entries.joinToString("\n") { "${it.key}=${it.value}" },
         )
     }
+    val strings = LocalStrings.current
     val error =
         runCatching {
-            require(timeoutText.toIntOrNull() in 1..3600) { "命令超时需为 1–3600 秒" }
+            require(timeoutText.toIntOrNull() in 1..3600) {
+                strings.t("settings.game.advanced.timeout")
+            }
             parseEnvironmentVariables(environmentText, os)
             validateAdvancedLaunchSettings(value, os)
         }.exceptionOrNull()
             ?.message
     LaunchedEffect(error) { onValidityChange(error == null) }
-    SettingRow("启动时校验文件摘要", "关闭后检查文件是否存在及大小；下载和修复仍进行完整校验。") {
+    SettingRow(
+        strings.t("settings.game.advanced.verify.title"),
+        strings.t("settings.game.advanced.verify.detail"),
+    ) {
         CompactSwitch(value.verifyFileHashes, { onChange(value.copy(verifyFileHashes = it)) })
     }
     if (os == "windows") {
-        SettingRow("使用 java.exe", "使用同一 Java 安装中的 java.exe 替代 javaw.exe，便于兼容和诊断。") {
+        SettingRow(
+            strings.t("settings.game.advanced.javaExe.title"),
+            strings.t("settings.game.advanced.javaExe.detail"),
+        ) {
             CompactSwitch(
                 value.useJavaConsoleExecutable,
                 { onChange(value.copy(useJavaConsoleExecutable = it)) },
@@ -59,26 +68,23 @@ fun AdvancedLaunchEditor(
         value.windowTitle,
         { onChange(value.copy(windowTitle = it.take(128))) },
         Modifier.fillMaxWidth(),
-        label = { Text("游戏窗口标题") },
-        placeholder = { Text("留空使用游戏默认标题") },
+        label = { Text(strings.t("settings.game.advanced.windowTitle")) },
+        placeholder = { Text(strings.t("settings.game.advanced.windowTitle.placeholder")) },
         singleLine = true,
     )
-    MutedText(
-        "支持 {name} 实例名、{user} 玩家名、{version} 版本、{date}、{time}。" +
-            "仅 Windows 支持修改窗口标题，且游戏窗口出现后生效。",
-    )
+    MutedText(strings.t("settings.game.advanced.windowTitleHint"))
     OutlinedTextField(
         value.customInfo,
         { onChange(value.copy(customInfo = it.take(64))) },
         Modifier.fillMaxWidth(),
-        label = { Text("自定义信息") },
-        placeholder = { Text("显示在游戏主界面左下角与 F3 调试页") },
+        label = { Text(strings.t("settings.game.advanced.customInfo")) },
+        placeholder = { Text(strings.t("settings.game.advanced.customInfo.placeholder")) },
         singleLine = true,
     )
     if (os == "windows") {
         SettingRow(
-            "使用高性能显卡",
-            "把本次使用的 Java 加入 Windows 显卡偏好；关闭后若曾设置过会恢复默认。",
+            strings.t("settings.game.advanced.gpu.title"),
+            strings.t("settings.game.advanced.gpu.detail"),
         ) {
             CompactSwitch(
                 value.highPerformanceGpu,
@@ -90,8 +96,8 @@ fun AdvancedLaunchEditor(
         value.extraGameArgs,
         { onChange(value.copy(extraGameArgs = it)) },
         Modifier.fillMaxWidth(),
-        label = { Text("附加游戏参数") },
-        placeholder = { Text("例如 --server example.org --port 25565") },
+        label = { Text(strings.t("settings.game.advanced.gameArgs")) },
+        placeholder = { Text(strings.t("settings.game.advanced.gameArgs.placeholder")) },
         minLines = 1,
         maxLines = 4,
     )
@@ -103,24 +109,24 @@ fun AdvancedLaunchEditor(
                 .onSuccess { onChange(value.copy(environmentVariables = it)) }
         },
         Modifier.fillMaxWidth(),
-        label = { Text("游戏环境变量") },
-        placeholder = { Text("每行一个 NAME=value") },
+        label = { Text(strings.t("settings.game.advanced.env")) },
+        placeholder = { Text(strings.t("settings.game.advanced.env.placeholder")) },
         minLines = 1,
         maxLines = 5,
     )
-    MutedText("参数中含空格的值请加引号。环境变量仅传给本次游戏；等号后的空格按原样保留。")
+    MutedText(strings.t("settings.game.advanced.envHint"))
     OutlinedTextField(
         value.preLaunchCommand,
         { onChange(value.copy(preLaunchCommand = it)) },
         Modifier.fillMaxWidth(),
-        label = { Text("启动前命令") },
+        label = { Text(strings.t("settings.game.advanced.preLaunch")) },
         singleLine = true,
     )
     OutlinedTextField(
         value.postExitCommand,
         { onChange(value.copy(postExitCommand = it)) },
         Modifier.fillMaxWidth(),
-        label = { Text("游戏退出后命令") },
+        label = { Text(strings.t("settings.game.advanced.postExit")) },
         singleLine = true,
     )
     OutlinedTextField(
@@ -132,28 +138,32 @@ fun AdvancedLaunchEditor(
                 ?.takeIf { seconds -> seconds in 1..3600 }
                 ?.let { seconds -> onChange(value.copy(commandTimeoutSeconds = seconds)) }
         },
-        label = { Text("命令超时（秒）") },
+        label = { Text(strings.t("settings.game.advanced.timeoutLabel")) },
         singleLine = true,
     )
-    MutedText(
-        "留空不执行；命令在游戏目录运行，不自动解析管道或变量。复杂操作请显式调用脚本解释器。" +
-            "可从环境读取 MOLIFOX_GAME_DIR、MOLIFOX_JAVA_PATH；退出后还提供 MOLIFOX_EXIT_CODE。",
-    )
-    SettingRow("游戏运行时的启动器") {
+    MutedText(strings.t("settings.game.advanced.commandHint"))
+    SettingRow(strings.t("settings.game.advanced.visibility.title")) {
         val visibility = value.launcherVisibility
         SimpleDropdown(
             visibility,
-            listOf("keep" to "保持显示", "minimize" to "最小化", "hide" to "隐藏到托盘"),
+            listOf(
+                "keep" to strings.t("settings.game.advanced.visibility.keep"),
+                "minimize" to strings.t("settings.game.advanced.visibility.minimize"),
+                "hide" to strings.t("settings.game.advanced.visibility.hide"),
+            ),
             { onChange(value.copy(launcherVisibility = it)) },
             Modifier.widthIn(min = 180.dp, max = 230.dp),
         )
     }
-    SettingRow("游戏正常退出后关闭启动器", "命令失败或游戏异常退出时保留窗口，便于查看原因") {
+    SettingRow(
+        strings.t("settings.game.advanced.closeAfterExit.title"),
+        strings.t("settings.game.advanced.closeAfterExit.detail"),
+    ) {
         Switch(
             value.closeLauncherAfterGameExit,
             { onChange(value.copy(closeLauncherAfterGameExit = it)) },
         )
     }
-    MutedText("最小化或隐藏时，游戏结束后恢复窗口；系统不支持托盘时使用最小化。")
+    MutedText(strings.t("settings.game.advanced.visibilityHint"))
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 }

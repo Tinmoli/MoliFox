@@ -46,10 +46,16 @@ internal fun buildPackExportLayout(
 private fun mrpackLoaderKey(loader: LoaderType): String? =
     when (loader) {
         LoaderType.Vanilla -> null
-        LoaderType.Fabric -> "fabric-loader"
+        LoaderType.Fabric,
+        LoaderType.LegacyFabric,
+        -> "fabric-loader"
         LoaderType.Quilt -> "quilt-loader"
         LoaderType.Forge -> "forge"
         LoaderType.NeoForge -> "neoforge"
+        LoaderType.OptiFine,
+        LoaderType.LiteLoader,
+        LoaderType.Cleanroom,
+        -> null
     }
 
 internal fun mrpackIndex(
@@ -86,10 +92,16 @@ internal fun mrpackIndex(
 private fun curseForgeLoaderId(loader: LoaderType): String? =
     when (loader) {
         LoaderType.Vanilla -> null
-        LoaderType.Fabric -> "fabric"
+        LoaderType.Fabric,
+        LoaderType.LegacyFabric,
+        -> "fabric"
         LoaderType.Quilt -> "quilt"
         LoaderType.Forge -> "forge"
         LoaderType.NeoForge -> "neoforge"
+        LoaderType.OptiFine,
+        LoaderType.LiteLoader,
+        LoaderType.Cleanroom,
+        -> null
     }
 
 internal fun curseForgeManifest(

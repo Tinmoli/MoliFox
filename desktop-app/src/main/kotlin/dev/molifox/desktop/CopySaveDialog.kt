@@ -32,6 +32,7 @@ fun CopySaveDialog(
     onDismiss: () -> Unit,
     onStarted: (String) -> Unit = {},
 ) {
+    val strings = LocalStrings.current
     val state by actions.controller.state.collectAsState()
     val targets =
         state.data.instances.filter {
@@ -52,21 +53,21 @@ fun CopySaveDialog(
     var error by remember(saveName) { mutableStateOf<String?>(null) }
     val trimmed = rename.trim()
     Modal(
-        "复制存档",
-        "把「" + saveName + "」复制到另一个实例 · 原存档不会被移动或删除",
+        strings.t("dialogs.copySave.title"),
+        strings.t("dialogs.copySave.subtitle", saveName),
         onDismiss = onDismiss,
     ) {
         if (targets.isEmpty()) {
             EmptyState(
-                "没有可用的目标实例",
-                "需要另一个已安装且使用不同游戏目录的实例。",
+                strings.t("dialogs.copySave.noTarget"),
+                strings.t("dialogs.copySave.noTargetHint"),
                 Icons.Outlined.Info,
             )
-            DialogActions(confirmText = "知道了", onConfirm = onDismiss, onCancel = null)
+            DialogActions(confirmText = strings.t("dialogs.common.gotIt"), onConfirm = onDismiss, onCancel = null)
         } else {
             SettingsSection(
-                "目标实例",
-                "支持外部实例；原存档保留，同名存档会自动加序号。",
+                strings.t("dialogs.copySave.target"),
+                strings.t("dialogs.copySave.targetHint"),
             ) {
                 SimpleDropdown(
                     value = targetId,
@@ -81,18 +82,18 @@ fun CopySaveDialog(
                 rename,
                 { rename = it.take(80) },
                 Modifier.fillMaxWidth(),
-                label = "新名称（可留空沿用原名）",
+                label = strings.t("dialogs.copySave.newNameLabel"),
                 placeholder = defaultName,
-                hint = if (trimmed.isEmpty()) "留空时沿用「" + defaultName + "」" else null,
+                hint = if (trimmed.isEmpty()) strings.t("dialogs.copySave.nameHint", defaultName) else null,
             )
             Text(
-                "目标已有同名存档时会自动加序号（如「World 2」），不会覆盖。",
+                strings.t("dialogs.copySave.sameNameNote"),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
             DialogActions(
-                confirmText = "开始复制",
+                confirmText = strings.t("dialogs.copySave.confirm"),
                 onConfirm = {
                     try {
                         val jobId =
@@ -105,7 +106,7 @@ fun CopySaveDialog(
                         onStarted(jobId)
                         onDismiss()
                     } catch (failure: IllegalStateException) {
-                        error = failure.message ?: "无法开始复制，请稍后重试"
+                        error = failure.message ?: strings.t("dialogs.copySave.failed")
                     }
                 },
                 onCancel = onDismiss,

@@ -5,25 +5,32 @@
 
 package dev.molifox.core
 
-private const val FALLBACK_EXPORT_INSTANCE_NAME = "整合包实例"
+import dev.molifox.core.i18n.I18n
+
+private const val FALLBACK_EXPORT_INSTANCE_NAME_KEY = "packsA1.multiMcExport.fallbackInstanceName"
 
 /** MultiMC / Prism 组件 uid。 */
 internal fun multimcLoaderUid(loader: LoaderType): String? =
     when (loader) {
         LoaderType.Vanilla -> null
-        LoaderType.Fabric -> "net.fabricmc.fabric-loader"
+        LoaderType.Fabric,
+        LoaderType.LegacyFabric,
+        -> "net.fabricmc.fabric-loader"
         LoaderType.Quilt -> "org.quiltmc.quilt-loader"
         LoaderType.Forge -> "net.minecraftforge"
         LoaderType.NeoForge -> "net.neoforged"
+        LoaderType.LiteLoader -> "com.mumfrey.liteloader"
+        LoaderType.Cleanroom -> "com.cleanroommc.cleanroom"
+        LoaderType.OptiFine -> null
     }
 
 internal fun multimcManifest(plan: MrpackExportPlan): Map<String, Any> {
     val gameVersion = plan.components.gameVersion
-    require(gameVersion.isNotBlank()) { "实例缺少游戏版本，不能导出 MultiMC/Prism 整合包" }
+    require(gameVersion.isNotBlank()) { I18n.t("packsA1.multiMcExport.gameVersionMissing") }
     val loaderUid = multimcLoaderUid(plan.components.loader)
     // 空版本会让 Prism 无法补全组件，导出的包连本启动器都读不回来：导出前就拒绝。
     require(loaderUid == null || plan.components.loaderVersion.isNotBlank()) {
-        "加载器版本未知，不能导出 MultiMC/Prism 整合包；请先用原启动器确认加载器版本"
+        I18n.t("packsA1.multiMcExport.loaderVersionUnknown")
     }
     val components = mutableListOf<Map<String, Any>>()
     components +=
@@ -80,7 +87,7 @@ private fun exportedInstanceName(name: String): String {
             .map { if (it.isISOControl()) ' ' else it }
             .joinToString("")
             .trim()
-            .ifBlank { FALLBACK_EXPORT_INSTANCE_NAME }
+            .ifBlank { I18n.t(FALLBACK_EXPORT_INSTANCE_NAME_KEY) }
     if (singleLine.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS) return singleLine
     val end =
         if (singleLine[MAX_MULTIMC_INSTANCE_NAME_CHARS - 1].isHighSurrogate()) {
@@ -106,7 +113,7 @@ private fun exportedJvmArguments(value: String): String? {
     if (singleLine.isEmpty()) return null
     val failure = runCatching { validateExtraJvmArguments(singleLine) }.exceptionOrNull()
     require(failure == null) {
-        "实例的额外 JVM 参数无法写入 MultiMC/Prism 整合包：${failure?.message}"
+        I18n.t("packsA1.multiMcExport.jvmArgumentsInvalid", failure?.message)
     }
     return singleLine
 }

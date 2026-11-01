@@ -22,8 +22,7 @@ internal class LocalModFileReader(
 
     private val cache =
         object : LinkedHashMap<Path, Cached>(64, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) =
-                size > 1024
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) = size > 1024
         }
 
     @Synchronized

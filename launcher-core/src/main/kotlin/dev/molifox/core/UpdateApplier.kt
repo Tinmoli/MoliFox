@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -25,7 +26,10 @@ internal object LauncherBundlePath {
         env: (String) -> String? = System::getenv,
     ): Path? =
         when (os) {
-            "windows" -> command?.takeIf(::isPortableWindowsExe)?.let(Path::of)
+            // 原生外壳把自身 exe 路径经环境变量传进来；开发环境（java -jar）没有该变量，只能手动更新。
+            "windows" ->
+                env("MOLIFOX_BUNDLE_PATH")?.takeIf(::isPortableWindowsExe)?.let(Path::of)
+                    ?: command?.takeIf(::isPortableWindowsExe)?.let(Path::of)
             "linux" ->
                 env("MOLIFOX_BUNDLE_PATH")?.takeIf { it.endsWith(".run") }?.let(Path::of)
                     ?: command?.takeIf { it.endsWith(".run") }?.let(Path::of)
@@ -56,11 +60,18 @@ internal class UpdateApplier(
 ) {
     fun apply(downloaded: Path): Result<Unit> =
         runCatching {
-            val target = requireNotNull(bundle) { "当前不是便携版启动器，无法自动替换，请手动更新。" }
-            require(downloaded.isRegularFile()) { "更新包不存在，请重新下载。" }
-            require(target.isRegularFile()) { "找不到当前启动器文件，请手动更新。" }
+            val target =
+                requireNotNull(bundle) {
+                    I18n.t("networkB2.updateApplier.notPortable")
+                }
+            require(downloaded.isRegularFile()) {
+                I18n.t("networkB2.updateApplier.updateMissing")
+            }
+            require(target.isRegularFile()) {
+                I18n.t("networkB2.updateApplier.currentLauncherMissing")
+            }
             require(target.toAbsolutePath() != downloaded.toAbsolutePath()) {
-                "更新包与当前启动器是同一个文件。"
+                I18n.t("networkB2.updateApplier.sameFile")
             }
             launch(writeScript(target, downloaded))
         }
@@ -157,8 +168,7 @@ internal class UpdateApplier(
 
     private fun psLiteral(path: Path): String = path.toAbsolutePath().toString().replace("'", "''")
 
-    private fun shLiteral(path: Path): String =
-        path.toAbsolutePath().toString().replace("'", "'\''")
+    private fun shLiteral(path: Path): String = path.toAbsolutePath().toString().replace("'", "'\''")
 
     private companion object {
         const val NEWLINE = "\n"

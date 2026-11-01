@@ -72,6 +72,7 @@ internal fun InstancePackTab(
     folder: PackFolder,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     var entries by remember(
         instance.id,
         folder,
@@ -129,9 +130,9 @@ internal fun InstancePackTab(
             try {
                 watchingJob = actions.controller.importPacks(instance.id, folder, chosen)
             } catch (failure: IllegalStateException) {
-                actionError = failure.message ?: "无法导入"
+                actionError = failure.message ?: strings.t("deskC.import.failed")
             } catch (failure: IllegalArgumentException) {
-                actionError = failure.message ?: "无法导入"
+                actionError = failure.message ?: strings.t("deskC.import.failed")
             }
         }
     }
@@ -152,23 +153,31 @@ internal fun InstancePackTab(
             .fillMaxHeight()
             .contentDropTarget(
                 enabled = !busy,
-                hint = "请拖入 .zip 或文件夹",
+                hint = strings.t("deskC.drop.hint"),
                 onError = { actionError = it },
             ) { dropped -> startImport(dropped) },
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         ContentToolbar(
             flexible = {
-                ToolbarSearchField(query, { query = it }, "搜索已安装${folder.title}")
+                ToolbarSearchField(
+                    query,
+                    { query = it },
+                    strings.t("deskC.search.placeholder", folder.title),
+                )
             },
             refresh =
-                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+                ToolbarAction(
+                    strings.t("deskC.toolbar.refresh"),
+                    icon = Icons.Outlined.Refresh,
+                    enabled = !busy,
+                ) { refresh++ },
             importAction =
-                ToolbarAction("导入", icon = Icons.Outlined.FileDownload, enabled = !busy) {
+                ToolbarAction(strings.t("deskC.toolbar.import"), icon = Icons.Outlined.FileDownload, enabled = !busy) {
                     actions.run {
                         val chosen =
                             actions.choose(
-                                "导入${folder.title}（.zip）",
+                                strings.t("deskC.toolbar.importDialogTitle", folder.title),
                                 multiple = true,
                                 extensions = listOf("zip"),
                             )
@@ -176,7 +185,11 @@ internal fun InstancePackTab(
                     }
                 },
             openFolder =
-                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+                ToolbarAction(
+                    strings.t("deskC.toolbar.openFolder"),
+                    icon = Icons.Outlined.FolderOpen,
+                    enabled = !busy,
+                ) {
                     actions.run { actions.controller.openFolder(instance.id, folder.directory) }
                 },
         )
@@ -218,7 +231,7 @@ internal fun InstancePackTab(
             onDelete = { deleting = it },
         )
         Text(
-            "共 ${entries.size} 项 · ${folder.directory}",
+            strings.t("deskC.footer.summary", entries.size, folder.directory),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -246,11 +259,13 @@ private fun packStatusText(
     uncertain: Int,
 ): String =
     when {
-        checking -> "正在检查更新…"
+        checking -> tr("deskC.status.checking")
         !hasReport -> ""
-        updatable > 0 -> "$updatable 项可更新" + if (uncertain > 0) " · $uncertain 项无法确认" else ""
-        uncertain > 0 -> "$uncertain 项无法确认"
-        else -> "全部为最新"
+        updatable > 0 ->
+            tr("deskC.status.updatable", updatable) +
+                if (uncertain > 0) " · " + tr("deskC.status.uncertain", uncertain) else ""
+        uncertain > 0 -> tr("deskC.status.uncertain", uncertain)
+        else -> tr("deskC.status.allLatest")
     }
 
 private fun filteredPackEntries(
@@ -274,7 +289,7 @@ private fun filteredPackEntries(
         }
 
 /** 把后台导入/删除任务的状态变化翻译成界面动作；任务未结束时不处理。 */
-private fun watchPackJob(
+internal fun watchPackJob(
     watchingJob: String?,
     jobs: List<DownloadJob>,
     onFailed: (String?) -> Unit,
@@ -284,7 +299,7 @@ private fun watchPackJob(
     val job = jobs.firstOrNull { it.id == watchingJob } ?: return
     when (job.status) {
         JobStatus.Failed -> {
-            onFailed(job.error ?: "操作失败，详情见日志")
+            onFailed(job.error ?: tr("deskC.action.failed"))
             onCleared()
         }
         JobStatus.Completed,
@@ -312,15 +327,17 @@ private suspend fun deletePackEntry(
     val removed =
         runCatching { actions.controller.deletePack(instanceId, folder, entry.filename) }
             .getOrElse { failure ->
-                withContext(Dispatchers.Swing) { onError(failure.message ?: "无法删除") }
+                withContext(Dispatchers.Swing) { onError(failure.message ?: tr("deskC.delete.failed")) }
                 reported = true
                 false
             }
     withContext(Dispatchers.Swing) {
         if (!removed && !reported) {
             onError(
-                "「${entry.filename}」没有移入回收站：文件可能已不存在，" +
-                    "或回收站不可用；详情见日志。",
+                tr(
+                    "deskC.delete.notMoved",
+                    entry.filename,
+                ),
             )
         }
         // 报告里的旧条目同步移除，避免「N 项可更新」把已删除的文件算进去。
@@ -372,6 +389,7 @@ private fun PackUpdateErrorRow(
     checking: Boolean,
     scope: CoroutineScope,
 ) {
+    val strings = LocalStrings.current
     updates.packsError?.let { failure ->
         Row(
             Modifier.fillMaxWidth(),
@@ -393,7 +411,7 @@ private fun PackUpdateErrorRow(
                 },
                 enabled = !busy && !checking,
             ) {
-                Text("重新检查", fontSize = 12.sp)
+                Text(strings.t("deskC.errorRow.recheck"), fontSize = 12.sp)
             }
         }
     }
@@ -411,10 +429,11 @@ private fun PackDeleteDialog(
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("移入回收站？") },
-        text = { Text("「${entry.filename}」会移到回收站，需要时可以再找回。") },
+        title = { Text(strings.t("deskC.deleteDialog.title")) },
+        text = { Text(strings.t("deskC.deleteDialog.message", entry.filename)) },
         confirmButton = {
             TextButton({
                 onDismiss()
@@ -431,10 +450,10 @@ private fun PackDeleteDialog(
                     )
                 }
             }) {
-                Text("移至回收站", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("deskC.deleteDialog.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -462,23 +481,24 @@ private fun ColumnScope.PackContentArea(
     onClearFilters: () -> Unit,
     onDelete: (LocalPackEntry) -> Unit,
 ) {
+    val strings = LocalStrings.current
     when {
         ui.loading && ui.entries.isEmpty() -> ListSkeleton()
         ui.error != null ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
-                    "无法读取${ui.folder.title}目录",
+                    strings.t("deskC.list.loadFailed", ui.folder.title),
                     ui.error.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton(onRetry) { Text("重试") }
+                    TextButton(onRetry) { Text(strings.t("deskC.list.retry")) }
                 }
             }
         ui.entries.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
-                    "还没有${ui.folder.title}",
-                    "点「导入」选择 .zip，或把 .zip / 文件夹直接拖进这个页面。",
+                    strings.t("deskC.list.emptyTitle", ui.folder.title),
+                    strings.t("deskC.list.emptyHint"),
                     if (ui.folder == PackFolder.ShaderPacks) {
                         Icons.Outlined.AutoAwesome
                     } else {
@@ -490,19 +510,19 @@ private fun ColumnScope.PackContentArea(
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
                     if (ui.chip != ContentChip.All && ui.query.isBlank()) {
-                        "没有「${ui.chip.title}」的${ui.folder.title}"
+                        strings.t("deskC.list.noChipMatch", ui.chip.title, ui.folder.title)
                     } else {
-                        "没有匹配的${ui.folder.title}"
+                        strings.t("deskC.list.noQueryMatch", ui.folder.title)
                     },
                     if (ui.chip != ContentChip.All && ui.query.isBlank()) {
-                        "切换到「全部」查看全部内容。"
+                        strings.t("deskC.list.switchToAll")
                     } else {
-                        "换个关键词试试"
+                        strings.t("deskC.list.tryOtherKeyword")
                     },
                     Icons.Outlined.SearchOff,
                 ) {
                     TextButton(onClearFilters) {
-                        Text("清除筛选")
+                        Text(strings.t("deskC.list.clearFilter"))
                     }
                 }
             }
@@ -527,7 +547,7 @@ private fun ColumnScope.PackContentArea(
                         },
                         onIconFailure = {
                             actions.controller.store.log(
-                                "本地包头像解码失败：${it.message}",
+                                strings.t("deskC.icon.decodeFailed", it.message),
                                 true,
                             )
                         },

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -95,7 +96,10 @@ internal abstract class LauncherDirectoryActions(
 
     override fun importExisting(source: Path): String {
         requireIdle()
-        return jobs.enqueue("识别游戏目录") {
+        return jobs.enqueue(
+            I18n.t("miscA1.directoryActions.discoverGameDirectory"),
+            kind = LauncherTaskKind.DiscoverDirectory,
+        ) {
             directories.add(source)
             store.refreshInstances()
         }
@@ -124,7 +128,7 @@ internal abstract class LauncherDirectoryActions(
         val target = store.instancePath(id).resolve(subfolder)
         try {
             require(Files.readAttributes(target, BasicFileAttributes::class.java).isDirectory) {
-                "目标不是文件夹：$target"
+                I18n.t("miscA1.directoryActions.targetNotDirectory", target)
             }
         } catch (_: NoSuchFileException) {
             target.createDirectories()

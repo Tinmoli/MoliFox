@@ -69,6 +69,7 @@ import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentSearch
 import dev.molifox.desktop.EmptyState
 import dev.molifox.desktop.LocalAnimationsEnabled
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.Panel
@@ -90,6 +91,7 @@ private fun ContentResultRow(
     onInstall: () -> Unit,
     onOpen: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Row(
@@ -157,9 +159,13 @@ private fun ContentResultRow(
         TextButton(onInstall, enabled = canInstall) {
             Icon(Icons.Outlined.Add, null, Modifier.size(14.dp))
             Spacer(Modifier.width(3.dp))
-            Text("选择版本", fontSize = 12.sp)
+            Text(strings.t("pages.content.row.chooseVersion"), fontSize = 12.sp)
         }
-        SmallIconButton(Icons.Outlined.Info, "查看 " + hit.title + " 的详情与版本", onOpen)
+        SmallIconButton(
+            Icons.Outlined.Info,
+            strings.t("pages.content.row.details", hit.title),
+            onOpen,
+        )
     }
 }
 
@@ -175,6 +181,7 @@ private fun ContentResultCard(
     onInstall: () -> Unit,
     onOpen: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val interaction = remember { MutableInteractionSource() }
@@ -221,7 +228,11 @@ private fun ContentResultCard(
                         )
                     }
                 }
-                SmallIconButton(Icons.Outlined.Info, "查看 " + hit.title + " 的详情与版本", onOpen)
+                SmallIconButton(
+                    Icons.Outlined.Info,
+                    strings.t("pages.content.row.details", hit.title),
+                    onOpen,
+                )
             }
             if (showDescriptions) {
                 Spacer(Modifier.height(10.dp))
@@ -251,7 +262,7 @@ private fun ContentResultCard(
                 TextButton(onInstall, enabled = canInstall) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(3.dp))
-                    Text("选择版本", fontSize = 12.sp)
+                    Text(strings.t("pages.content.row.chooseVersion"), fontSize = 12.sp)
                 }
             }
         }
@@ -323,15 +334,21 @@ private fun ResultsHeader(
     listView: Boolean,
     onListViewChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (loading && !loadedOnce) "正在检索资源…" else "共 ${result.total} 个结果",
+            if (loading && !loadedOnce) {
+                strings.t("pages.content.search.checking")
+            } else {
+                strings.t("pages.content.results.count", result.total)
+            },
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (query.isNotBlank()) {
             Text(
-                " · 「" + query + "」",
+                // 前置分隔符留在代码里，避免 properties 值首尾空格被裁掉。
+                " · " + strings.t("pages.content.results.query", query),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
@@ -340,7 +357,7 @@ private fun ResultsHeader(
         }
         Spacer(Modifier.weight(1f))
         Text(
-            "第 ${offset / 12 + 1} 页",
+            strings.t("pages.content.results.page", offset / 12 + 1),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -438,17 +455,18 @@ private fun SearchErrorPanel(
     failure: String,
     onRetry: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.fillMaxWidth()) {
         EmptyState(
             if (failure.startsWith("CurseForge")) {
-                "资源库返回的数据无法识别"
+                strings.t("pages.content.error.mapping")
             } else {
-                "暂时无法连接资源库"
+                strings.t("pages.content.error.network")
             },
             failure,
             Icons.Outlined.CloudOff,
         ) {
-            TextButton(onRetry) { Text("重试") }
+            TextButton(onRetry) { Text(strings.t("pages.content.error.retry")) }
         }
     }
 }
@@ -458,29 +476,33 @@ private fun NoResultsState(
     query: String,
     onClearQuery: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Box(
         Modifier.fillMaxWidth().fillMaxHeight(),
         contentAlignment = Alignment.TopCenter,
     ) {
         EmptyState(
-            "没有找到合适的资源",
-            "试试英文名称，或切换游戏版本与加载器。",
+            strings.t("pages.content.empty.title"),
+            strings.t("pages.content.empty.body"),
             Icons.Outlined.SearchOff,
         ) {
-            if (query.isNotBlank()) TextButton(onClearQuery) { Text("清除搜索条件") }
+            if (query.isNotBlank()) {
+                TextButton(onClearQuery) { Text(strings.t("pages.content.empty.clear")) }
+            }
         }
     }
 }
 
 @Composable
 private fun FilteredEmptyState() {
+    val strings = LocalStrings.current
     Box(
         Modifier.fillMaxWidth().fillMaxHeight(),
         contentAlignment = Alignment.TopCenter,
     ) {
         EmptyState(
-            "没有符合筛选条件的资源",
-            "换个关键词或清除筛选条件。",
+            strings.t("pages.content.filtered.title"),
+            strings.t("pages.content.filtered.body"),
             Icons.Outlined.FilterAlt,
         )
     }
@@ -512,15 +534,16 @@ private fun ResultsPager(
     offset: Int,
     onOffsetChange: (Int) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        MutedText("每页 12 条 · 共 ${result.total} 个资源", Modifier)
+        MutedText(strings.t("pages.content.pager.summary", result.total), Modifier)
         Spacer(Modifier.weight(1f))
         TextButton({ onOffsetChange(maxOf(0, offset - 12)) }, enabled = offset > 0) {
-            Text("上一页", fontSize = 12.sp)
+            Text(strings.t("pages.content.pager.prev"), fontSize = 12.sp)
         }
         val next = offset + 12
         TextButton({ onOffsetChange(next) }, enabled = next < result.total && offset < 9996) {
-            Text("下一页", fontSize = 12.sp)
+            Text(strings.t("pages.content.pager.next"), fontSize = 12.sp)
         }
     }
 }

@@ -42,6 +42,7 @@ internal fun javaSettingCards(
     onRefresh: () -> Unit,
 ): List<SettingCard> {
     val state by actions.controller.state.collectAsState()
+    val strings = LocalStrings.current
     var installVersion by remember { mutableStateOf("auto") }
     var installType by remember { mutableStateOf("jre") }
     var installJob by remember { mutableStateOf<String?>(null) }
@@ -49,10 +50,10 @@ internal fun javaSettingCards(
     val active = job?.status in setOf(JobStatus.Queued, JobStatus.Running)
     return listOf(
         SettingCard(
-            "Java 与运行环境",
+            strings.t("settings.java.section.title"),
             "",
             listOf(
-                settingField("游戏 Java") {
+                settingField(strings.t("settings.java.gameJava")) {
                     JavaPicker(
                         actions,
                         settings.javaPath,
@@ -72,20 +73,20 @@ internal fun javaSettingCards(
                     )
                 },
                 settingField(
-                    "Java 下载源",
-                    "自动会先测速，再从 Azul 与 Adoptium Temurin 官方源中选择。",
+                    strings.t("settings.java.downloadSource.title"),
+                    strings.t("settings.java.downloadSource.detail"),
                 ) {
                     SimpleDropdown(
                         settings.effectiveJavaDownloadSource,
                         listOf(
-                            "auto" to "自动",
+                            "auto" to strings.t("settings.java.auto"),
                             "azul" to "Azul",
                             "adoptium" to "Adoptium",
                         ),
                         { value -> writer.commit { it.copy(javaDownloadSource = value) } },
                     )
                 },
-                settingField("安装 Java") {
+                settingField(strings.t("settings.java.install.title")) {
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -94,7 +95,7 @@ internal fun javaSettingCards(
                         SimpleDropdown(
                             installVersion,
                             listOf(
-                                "auto" to "自动",
+                                "auto" to strings.t("settings.java.auto"),
                                 "8" to "Java 8",
                                 "17" to "Java 17",
                                 "21" to "Java 21",
@@ -111,7 +112,7 @@ internal fun javaSettingCards(
                             Modifier.width(110.dp),
                             enabled = !active,
                         )
-                        PrimaryButton("下载并安装", enabled = !active) {
+                        PrimaryButton(strings.t("settings.java.install.action"), enabled = !active) {
                             val type = if (installType == "jdk") "jdk" else "jre"
                             installJob =
                                 if (installVersion == "auto") {
@@ -134,9 +135,12 @@ internal fun javaSettingCards(
                         ) {
                             Text(
                                 when (job.status) {
-                                    JobStatus.Completed -> "安装完成"
+                                    JobStatus.Completed -> strings.t("settings.java.install.done")
                                     JobStatus.Failed, JobStatus.Cancelled ->
-                                        "安装未完成：" + (job.error ?: job.detail)
+                                        strings.t(
+                                            "settings.java.install.failed",
+                                            job.error ?: job.detail,
+                                        )
                                     else -> "${(job.progress * 100).toInt()}% · ${job.detail}"
                                 },
                                 Modifier.weight(1f),
@@ -159,7 +163,7 @@ internal fun javaSettingCards(
                                     contentPadding =
                                         PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                 ) {
-                                    Text("取消", fontSize = 12.sp)
+                                    Text(strings.t("settings.common.cancel"), fontSize = 12.sp)
                                 }
                             }
                         }

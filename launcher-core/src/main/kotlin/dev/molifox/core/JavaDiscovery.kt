@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -23,8 +24,7 @@ internal class JavaDiscovery(
 ) {
     private val collector = JavaCandidateCollector(store)
 
-    fun runtimeIndex() =
-        JavaRuntimeIndex(store.dataDirectory.resolve("runtimes"), store.platform.javaExecutable)
+    fun runtimeIndex() = JavaRuntimeIndex(store.dataDirectory.resolve("runtimes"), store.platform.javaExecutable)
 
     /** 按来源收集候选、并发探测，再按来源/可用性/主版本排序。 */
     suspend fun discover(): List<JavaRuntime> {
@@ -37,8 +37,7 @@ internal class JavaDiscovery(
     suspend fun probeExecutable(
         executable: String,
         verifyRunnable: Boolean,
-    ): JavaProbe? =
-        if (verifyRunnable) runJavaVersionProbe(Path.of(executable)) else probe(executable)
+    ): JavaProbe? = if (verifyRunnable) runJavaVersionProbe(Path.of(executable)) else probe(executable)
 
     /** 已存在路径的探测：优先读 JDK/JRE 的 release，缺版本或架构信息时再运行 java -version。 */
     private suspend fun probe(executable: String): JavaProbe? =
@@ -67,7 +66,9 @@ internal class JavaDiscovery(
                                 process.inputStream.bufferedReader().readText()
                             }
                         }
-                    check(process.waitFor(2, TimeUnit.SECONDS)) { "Java 检测超时" }
+                    check(process.waitFor(2, TimeUnit.SECONDS)) {
+                        I18n.t("networkB1.javaDiscovery.probeTimeout")
+                    }
                     parseJavaProbe(output)
                 } finally {
                     if (process.isAlive) process.destroyForcibly()
@@ -76,9 +77,7 @@ internal class JavaDiscovery(
         }
 
     /** 只探测真实存在的候选；并发探测不改变候选顺序。 */
-    private suspend fun probeAll(
-        candidates: List<JavaCandidate>,
-    ): List<Pair<JavaCandidate, JavaProbe?>> =
+    private suspend fun probeAll(candidates: List<JavaCandidate>): List<Pair<JavaCandidate, JavaProbe?>> =
         coroutineScope {
             candidates
                 .map { candidate ->
@@ -106,7 +105,11 @@ internal class JavaDiscovery(
                             invalidRuntime(
                                 candidate.path,
                                 candidate.source,
-                                if (candidate.exists) "无效" else "路径不存在",
+                                if (candidate.exists) {
+                                    I18n.t("networkB1.javaDiscovery.invalidRuntime")
+                                } else {
+                                    I18n.t("networkB1.javaDiscovery.pathMissing")
+                                },
                             )
                         else -> null
                     }

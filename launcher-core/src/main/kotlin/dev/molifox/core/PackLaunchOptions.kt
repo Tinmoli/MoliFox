@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 private const val MAX_PACK_LAUNCH_ARGUMENTS = 256
 private const val MAX_PACK_LAUNCH_ARGUMENT_CHARS = 4096
 
@@ -54,20 +56,20 @@ internal data class PackLaunchDefaults(
 
 /** The existing text editor supports single or double quoting; refuse lossy conversions. */
 internal fun packArgumentsText(arguments: List<String>): String {
-    require(arguments.size <= MAX_PACK_LAUNCH_ARGUMENTS) { "整合包启动参数过多" }
+    require(arguments.size <= MAX_PACK_LAUNCH_ARGUMENTS) { I18n.t("packsA2.packLaunchOptions.tooManyArguments") }
     val text =
         arguments.joinToString(" ") { value ->
             require(
                 value.isNotEmpty() && value.none { it == '\u0000' || it == '\r' || it == '\n' },
             ) {
-                "整合包参数不能包含空参数、空字符或换行"
+                I18n.t("packsA2.packLaunchOptions.argumentInvalid")
             }
             when {
                 '\'' !in value -> "'$value'"
                 '"' !in value -> "\"$value\""
-                else -> error("整合包参数同时含单双引号，暂不能无损导入")
+                else -> error(I18n.t("packsA2.packLaunchOptions.mixedQuotes"))
             }
         }
-    require(text.length <= MAX_PACK_LAUNCH_ARGUMENT_CHARS) { "整合包启动参数过长" }
+    require(text.length <= MAX_PACK_LAUNCH_ARGUMENT_CHARS) { I18n.t("packsA2.packLaunchOptions.argumentsTooLong") }
     return text
 }

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
@@ -83,12 +84,12 @@ internal class JarInJarArchiveCopier(
         budget: JarInJarScanBudget,
     ): Boolean {
         if (isCancelled()) {
-            budget.hostFailure("扫描已取消")
+            budget.hostFailure(I18n.t("diagA1.jarInJar.scanCancelled"))
             return false
         }
         // 按实际读出的字节扣预算：压缩包声明的 size 可能被伪造。
         if (!budget.addBytes(count.toLong())) {
-            budget.hostFailure("内嵌 JAR 解压体积超过限制")
+            budget.hostFailure(I18n.t("diagA1.jarInJar.embeddedTooLarge"))
             return false
         }
         output.write(buffer, 0, count)

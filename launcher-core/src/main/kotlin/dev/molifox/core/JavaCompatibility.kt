@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 /** 需要安装/校验的 Java 主版本；名称即版本号，避免在规则表里散落裸数字。 */
 private const val JAVA_MAJOR_8 = 8
 private const val JAVA_MAJOR_17 = 17
@@ -42,6 +44,9 @@ internal fun normalizedJavaArchitecture(value: String): String =
         else -> value.lowercase()
     }
 
+/** 远古 Alpha/Beta 版本 ID：a1.2.6、b1.7.3、c0.30 等，统一按 Java 8 处理。 */
+private val LEGACY_VERSION_ID = Regex("^[abc]\\d+(?:\\.\\d+)+")
+
 /**
  * 游戏版本 → 游戏 Java 主版本。规则来源：
  * - ≤ 1.16.5：Mojang version manifest（piston-meta）的 `javaVersion.majorVersion` 为 8；
@@ -56,6 +61,8 @@ fun gameJavaMajor(gameVersion: String): Int? {
     val id = gameVersion.trim()
     return if (id.isEmpty()) {
         null
+    } else if (LEGACY_VERSION_ID.containsMatchIn(id)) {
+        JAVA_MAJOR_8
     } else {
         snapshotJavaMajor(id) ?: headlineJavaMajor(id)
     }
@@ -131,11 +138,20 @@ internal data class JavaRequirement(
         when {
             normalizedJavaArchitecture(runtime.architecture) !=
                 normalizedJavaArchitecture(architecture) ->
-                "Java 架构 ${runtime.architecture.ifBlank { "未知" }} 与当前平台 $architecture 不匹配"
+                I18n.t(
+                    "networkB1.javaCompatibility.architectureMismatch",
+                    runtime.architecture.ifBlank { I18n.t("dialogs.common.unknown") },
+                    architecture,
+                )
             runtime.majorVersion < minimum ->
-                "游戏至少需要 Java $minimum，当前是 Java ${runtime.majorVersion}"
+                I18n.t("networkB1.javaCompatibility.minimumRequired", minimum, runtime.majorVersion)
             maximum != null && runtime.majorVersion > maximum ->
-                "此加载器只支持 Java $minimum–$maximum，当前是 Java ${runtime.majorVersion}"
+                I18n.t(
+                    "networkB1.javaCompatibility.rangeSupported",
+                    minimum,
+                    maximum,
+                    runtime.majorVersion,
+                )
             else -> null
         }
 

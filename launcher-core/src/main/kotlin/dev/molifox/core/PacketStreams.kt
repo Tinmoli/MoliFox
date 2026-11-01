@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -25,21 +26,21 @@ internal fun InputStream.readVarInt(): Int {
     var shift = 0
     while (true) {
         val byte = read()
-        if (byte < 0) throw EOFException("服务器响应提前结束")
+        if (byte < 0) throw EOFException(I18n.t("miscA2.packetStream.unexpectedEof"))
         result = result or ((byte and VAR_INT_VALUE_MASK) shl shift)
         if ((byte and VAR_INT_CONTINUATION_BIT) == 0) return result
         shift += VAR_INT_BITS_PER_BYTE
-        if (shift > VAR_INT_MAX_SHIFT) throw IOException("VarInt 过长")
+        if (shift > VAR_INT_MAX_SHIFT) throw IOException(I18n.t("miscA2.packetStream.varIntTooLong"))
     }
 }
 
 internal fun InputStream.readFully(length: Int): ByteArray {
-    if (length < 0) throw IOException("长度为负")
+    if (length < 0) throw IOException(I18n.t("miscA2.packetStream.negativeLength"))
     val bytes = ByteArray(length)
     var read = 0
     while (read < length) {
         val count = read(bytes, read, length - read)
-        if (count < 0) throw EOFException("服务器响应提前结束")
+        if (count < 0) throw EOFException(I18n.t("miscA2.packetStream.unexpectedEof"))
         read += count
     }
     return bytes

@@ -1,16 +1,15 @@
 package dev.molifox.core
 
+import dev.molifox.core.i18n.AppLanguage
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.UUID
 
 // 校验边界：各设置项允许的取值，数值与界面选项保持一致。
-private const val MAX_DOWNLOAD_ATTEMPTS = 8
 private const val MIN_TIMEOUT_SECONDS = 10
 private const val MAX_TIMEOUT_SECONDS = 180
-private const val DOWNLOAD_SEGMENT_OPTION_FOUR = 4
-private const val DOWNLOAD_SEGMENT_OPTION_EIGHT = 8
-private const val MIRROR_CONCURRENCY_OPTION_FOUR = 4
-private const val MIRROR_CONCURRENCY_OPTION_EIGHT = 8
+private const val MIN_DOWNLOAD_SEGMENTS = 1
+private const val MAX_DOWNLOAD_SEGMENTS = 16
 private const val MIN_MEMORY_MB = 512
 private const val MIN_GAME_WINDOW_WIDTH = 640
 private const val MAX_GAME_WINDOW_WIDTH = 7680
@@ -29,7 +28,6 @@ private const val MAX_FONT_CHOICE_LENGTH = 2048
 private const val MAX_CUSTOM_FONT_COUNT = 12
 private const val MIN_LOG_FONT_SIZE = 10
 private const val MAX_LOG_FONT_SIZE = 18
-private const val MAX_CONCURRENT_DOWNLOADS = 32
 private const val MAX_PROXY_PORT = 65535
 
 /**
@@ -43,9 +41,13 @@ internal fun normalizedSettings(input: LauncherSettings): LauncherSettings =
         javaDownloadSource = input.effectiveJavaDownloadSource,
         downloadSource = input.effectiveDownloadSource,
         versionListSource = input.effectiveVersionListSource,
-        mirrorConcurrency = normalizedMirrorConcurrency(input.mirrorConcurrency),
         // 旧配置里可能残留越界值：读入时收敛到可执行范围，避免整份设置校验失败。
         downloadThreads = input.downloadThreads.coerceIn(1, MAX_DOWNLOAD_THREADS),
+        downloadSegments =
+            input.downloadSegments.coerceIn(
+                MIN_DOWNLOAD_SEGMENTS,
+                MAX_DOWNLOAD_SEGMENTS,
+            ),
     )
 
 internal fun validateSettings(
@@ -73,20 +75,12 @@ private fun validateEngineSettings(
     osName: String,
     isIdle: () -> Unit,
 ) {
-    require(
-        settings.downloadAttempts in 1..MAX_DOWNLOAD_ATTEMPTS &&
-            settings.networkTimeoutSeconds in MIN_TIMEOUT_SECONDS..MAX_TIMEOUT_SECONDS,
-    ) {
-        "重试次数或网络超时无效"
+    require(settings.networkTimeoutSeconds in MIN_TIMEOUT_SECONDS..MAX_TIMEOUT_SECONDS) {
+        I18n.t("core.settingsValidation.1")
     }
-    require(
-        settings.downloadSegments in
-            setOf(1, 2, DOWNLOAD_SEGMENT_OPTION_FOUR, DOWNLOAD_SEGMENT_OPTION_EIGHT),
-    ) { "单文件分段数无效" }
-    require(
-        settings.mirrorConcurrency in
-            setOf(2, MIRROR_CONCURRENCY_OPTION_FOUR, MIRROR_CONCURRENCY_OPTION_EIGHT),
-    ) { "镜像并发无效" }
+    require(settings.downloadSegments in MIN_DOWNLOAD_SEGMENTS..MAX_DOWNLOAD_SEGMENTS) {
+        I18n.t("core.settingsValidation.2")
+    }
     validateAdvancedLaunchSettings(settings.advancedLaunch, osName)
     if (settings.isolateVersions != current.isolateVersions) isIdle()
 }
@@ -98,11 +92,11 @@ private fun validateGameRootSettings(
     isIdle: () -> Unit,
 ) {
     require(Path.of(settings.gameRoot).isAbsolute && Path.of(settings.gameRoot).parent != null) {
-        "请选择专用的游戏文件夹"
+        I18n.t("core.settingsValidation.4")
     }
     if (settings.gameRoot != current.gameRoot) {
         isIdle()
-        require(instancesEmpty) { "已有实例时不能直接切换目录，请先导出并删除实例" }
+        require(instancesEmpty) { I18n.t("core.settingsValidation.5") }
     }
 }
 
@@ -113,21 +107,21 @@ private fun validateMemoryAndWindowSettings(
     require(
         settings.memoryMb in MIN_MEMORY_MB..maxOf(MIN_MEMORY_MB, totalMemoryMb - MIN_MEMORY_MB),
     ) {
-        "内存需在 512 MB 到物理内存减 512 MB 之间"
+        I18n.t("core.settingsValidation.6")
     }
     require(
         settings.width in MIN_GAME_WINDOW_WIDTH..MAX_GAME_WINDOW_WIDTH &&
             settings.height in MIN_GAME_WINDOW_HEIGHT..MAX_GAME_WINDOW_HEIGHT,
-    ) { "游戏窗口尺寸无效" }
+    ) { I18n.t("core.settingsValidation.7") }
     require(settings.initialMemoryMb in MIN_INITIAL_MEMORY_MB..settings.memoryMb) {
-        "初始内存需在 128 MB 到最大内存之间"
+        I18n.t("core.settingsValidation.8")
     }
 }
 
 private fun validateBackgroundSettings(settings: LauncherSettings) {
-    require(settings.themeMode in listOf("", "light", "dark", "system")) { "主题模式无效" }
-    require(settings.backgroundFit in listOf("crop", "fit", "stretch")) { "背景适配模式无效" }
-    require(settings.cornerRadiusDp in 0..MAX_CORNER_RADIUS_DP) { "界面圆角需在 0–24 dp 之间" }
+    require(settings.themeMode in listOf("", "light", "dark", "system")) { I18n.t("core.settingsValidation.9") }
+    require(settings.backgroundFit in listOf("crop", "fit", "stretch")) { I18n.t("core.settingsValidation.10") }
+    require(settings.cornerRadiusDp in 0..MAX_CORNER_RADIUS_DP) { I18n.t("core.settingsValidation.11") }
     require(
         settings.backgroundAlignment in
             listOf(
@@ -142,39 +136,39 @@ private fun validateBackgroundSettings(settings: LauncherSettings) {
                 "bottomRight",
             ),
     ) {
-        "背景对齐位置无效"
+        I18n.t("core.settingsValidation.12")
     }
 }
 
 private fun validateScaleSettings(settings: LauncherSettings) {
     require(settings.uiScale.isFinite() && settings.uiScale in MIN_UI_SCALE..MAX_UI_SCALE) {
-        "界面缩放需在 85%–120% 之间"
+        I18n.t("core.settingsValidation.13")
     }
     require(settings.backgroundOpacity.isFinite() && settings.backgroundOpacity in 0f..1f) {
-        "背景浓度需在 0–100% 之间"
+        I18n.t("core.settingsValidation.14")
     }
     require(
         settings.surfaceOpacity.isFinite() &&
             settings.surfaceOpacity in MIN_SURFACE_OPACITY..MAX_SURFACE_OPACITY,
     ) {
-        "面板不透明度需在 60%–100% 之间"
+        I18n.t("core.settingsValidation.15")
     }
     require(
         settings.backgroundBlur.isFinite() &&
             settings.backgroundBlur in 0f..MAX_BACKGROUND_BLUR,
     ) {
-        "磨砂强度需在 0–40 之间"
+        I18n.t("core.settingsValidation.16")
     }
     require(
         settings.fontScale.isFinite() && settings.fontScale in MIN_FONT_SCALE..MAX_FONT_SCALE,
     ) {
-        "字号需在 85%–125% 之间"
+        I18n.t("core.settingsValidation.17")
     }
     require(
         settings.fontChoice.length <= MAX_FONT_CHOICE_LENGTH &&
             settings.customFonts.size <= MAX_CUSTOM_FONT_COUNT,
     ) {
-        "字体设置无效"
+        I18n.t("core.settingsValidation.18")
     }
     require(
         settings.pages.versions.view in listOf("list", "grid") &&
@@ -182,21 +176,20 @@ private fun validateScaleSettings(settings: LauncherSettings) {
             settings.pages.logs.defaultTab in listOf("tasks", "logs") &&
             settings.pages.logs.fontSize in MIN_LOG_FONT_SIZE..MAX_LOG_FONT_SIZE,
     ) {
-        "页面设置无效"
+        I18n.t("core.settingsValidation.19")
     }
 }
 
 private fun validateDownloadSettings(settings: LauncherSettings) {
     require(
-        settings.maxConcurrent in 1..MAX_CONCURRENT_DOWNLOADS &&
-            settings.downloadThreads in 1..MAX_DOWNLOAD_THREADS &&
+        settings.downloadThreads in 1..MAX_DOWNLOAD_THREADS &&
             settings.downloadSource in listOf("auto", "official", "bmclapi") &&
             settings.versionListSource in listOf("auto", "official", "bmclapi") &&
             settings.contentDownloadSource in listOf("modrinth", "curseforge"),
     ) {
-        "下载设置无效"
+        I18n.t("core.settingsValidation.20")
     }
-    require(settings.javaDownloadSource in listOf("auto", "azul", "adoptium")) { "Java 下载源无效" }
+    require(settings.javaDownloadSource in listOf("auto", "azul", "adoptium")) { I18n.t("core.settingsValidation.21") }
 }
 
 private fun validateInterfaceSettings(settings: LauncherSettings) {
@@ -212,39 +205,41 @@ private fun validateInterfaceSettings(settings: LauncherSettings) {
                 "graphite",
             ),
     ) {
-        "主题颜色无效"
+        I18n.t("core.settingsValidation.22")
     }
-    require(settings.language == "zh-CN") { "当前版本仅提供简体中文界面" }
+    require(AppLanguage.options.any { it.settingValue.equals(settings.language.trim(), ignoreCase = true) }) {
+        I18n.t("core.settingsValidation.23")
+    }
     require(settings.gameWindowMode in listOf("launcher", "fullscreen", "custom")) {
-        "游戏窗口模式无效"
+        I18n.t("core.settingsValidation.24")
     }
 }
 
 private fun validateProxySettings(settings: LauncherSettings) {
-    require(settings.proxyType in listOf("http", "socks")) { "代理类型无效" }
-    require(settings.proxyMode in listOf("", "system", "direct", "manual")) { "代理模式无效" }
+    require(settings.proxyType in listOf("http", "socks")) { I18n.t("core.settingsValidation.25") }
+    require(settings.proxyMode in listOf("", "system", "direct", "manual")) { I18n.t("core.settingsValidation.26") }
     if (settings.effectiveProxyMode() == "manual") {
         require(
             settings.proxyHost.isNotBlank() &&
                 !settings.proxyHost.contains(':') &&
                 settings.proxyPort in 1..MAX_PROXY_PORT,
         ) {
-            "代理地址或端口无效"
+            I18n.t("core.settingsValidation.27")
         }
     }
     if (settings.downloadCachePath.isNotBlank()) {
-        require(Path.of(settings.downloadCachePath).isAbsolute) { "下载缓存文件夹必须是绝对路径" }
+        require(Path.of(settings.downloadCachePath).isAbsolute) { I18n.t("core.settingsValidation.28") }
     }
     require(
         settings.curseForgeBaseUrl.isBlank() ||
             isValidCurseForgeBaseUrl(settings.curseForgeBaseUrl),
     ) {
-        "CurseForge 服务地址需为 http:// 或 https:// 开头的完整地址"
+        I18n.t("core.settingsValidation.29")
     }
     require(
         settings.microsoftClientId.isBlank() ||
             runCatching { UUID.fromString(settings.microsoftClientId) }.isSuccess,
     ) {
-        "Microsoft 客户端 ID 格式无效"
+        I18n.t("core.settingsValidation.30")
     }
 }

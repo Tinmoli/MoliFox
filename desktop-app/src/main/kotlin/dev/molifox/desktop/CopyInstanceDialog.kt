@@ -24,51 +24,58 @@ fun CopyInstanceDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
-    var name by remember(instance.id) { mutableStateOf("${instance.name} - 副本") }
+    val strings = LocalStrings.current
+    var name by remember(instance.id, strings) {
+        mutableStateOf(strings.t("dialogs.copyInstance.defaultName", instance.name))
+    }
     var copySaves by remember(instance.id) { mutableStateOf(true) }
     var copyMods by remember(instance.id) { mutableStateOf(true) }
     var error by remember(instance.id) { mutableStateOf<String?>(null) }
     val trimmed = name.trim()
     val valid = trimmed.isNotEmpty() && trimmed.length <= 80
-    Modal("复制实例", "以「${instance.name}」为模板新建独立实例", onDismiss = onDismiss) {
+    Modal(
+        strings.t("dialogs.copyInstance.title"),
+        strings.t("dialogs.copyInstance.subtitle", instance.name),
+        onDismiss = onDismiss,
+    ) {
         CompactTextField(
             name,
             { name = it.take(80) },
             Modifier.fillMaxWidth(),
-            label = "新实例名称",
-            placeholder = "${instance.name} - 副本",
+            label = strings.t("dialogs.copyInstance.nameLabel"),
+            placeholder = strings.t("dialogs.copyInstance.defaultName", instance.name),
         )
-        SettingsSection("复制内容", "日志、崩溃报告、缓存、升级备份与链接都不会复制。") {
-            SettingRow("复制存档", "saves 目录中的世界存档") {
+        SettingsSection(strings.t("dialogs.copyInstance.section"), strings.t("dialogs.copyInstance.sectionHint")) {
+            SettingRow(strings.t("dialogs.copyInstance.saves"), strings.t("dialogs.copyInstance.savesHint")) {
                 CompactSwitch(copySaves, { copySaves = it })
             }
-            SettingRow("复制模组", "mods 目录中的模组与已停用模组") {
+            SettingRow(strings.t("dialogs.copyInstance.mods"), strings.t("dialogs.copyInstance.modsHint")) {
                 CompactSwitch(copyMods, { copyMods = it })
             }
         }
         Text(
-            "副本拥有独立目录、文件账本与整合包归档；复制在后台任务中进行，进度显示在日志页。",
+            strings.t("dialogs.copyInstance.note"),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         DialogActions(
-            confirmText = "开始复制",
+            confirmText = strings.t("dialogs.copyInstance.confirm"),
             onConfirm = {
                 try {
                     actions.controller.copyInstance(instance.id, trimmed, copySaves, copyMods)
                     onDismiss()
                 } catch (failure: IllegalStateException) {
                     // 后台任务繁忙、实例不存在或队列拒绝登记时只更新对话框内的错误文案。
-                    error = failure.message ?: "无法开始复制，请稍后重试"
+                    error = failure.message ?: strings.t("dialogs.copyInstance.failed")
                 } catch (failure: IllegalArgumentException) {
                     // 参数校验失败（与 requireIdle 的取值检查同类）同样只提示，不关闭对话框。
-                    error = failure.message ?: "无法开始复制，请稍后重试"
+                    error = failure.message ?: strings.t("dialogs.copyInstance.failed")
                 }
             },
             onCancel = onDismiss,
             enabled = valid,
-            hint = if (valid) "" else "名称需要 1–80 个字符",
+            hint = if (valid) "" else strings.t("dialogs.copyInstance.nameInvalid"),
         )
     }
 }

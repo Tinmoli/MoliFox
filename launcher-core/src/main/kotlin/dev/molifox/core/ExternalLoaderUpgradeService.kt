@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -30,7 +31,8 @@ private const val EXTERNAL_LOADER_PROGRESS_END = 0.60f
 private const val EXTERNAL_DEPENDENCIES_PROGRESS_END = 0.99f
 
 /** 引用链预检失败时统一成一句可读原因。 */
-private fun externalMergeFailure(error: Exception): String = "外部版本配置无法安全合并：${error.message}"
+private fun externalMergeFailure(error: Exception): String =
+    I18n.t("networkB1.externalLoaderUpgrade.mergeFailed", error.message)
 
 /**
  * 升级外部目录实例的加载器：加载器配置合并进原版本 JSON，保留 `id`、`inheritsFrom`
@@ -53,7 +55,10 @@ internal class ExternalLoaderUpgradeService(
         val folderResult = runCatching { store.versionGamePath(instance) }
         val folder = folderResult.getOrNull()
         return if (folder == null) {
-            "实例目录不可用：${folderResult.exceptionOrNull()?.message}"
+            I18n.t(
+                "networkB1.externalLoaderUpgrade.instanceFolderUnavailable",
+                folderResult.exceptionOrNull()?.message,
+            )
         } else {
             externalConfigBlocker(instance, folder)
         }
@@ -66,7 +71,7 @@ internal class ExternalLoaderUpgradeService(
     ): String? {
         val json = folder.resolve("${folder.fileName}.json")
         if (!json.isRegularFile(NOFOLLOW_LINKS) || json.isSymbolicLink()) {
-            return "外部版本配置缺失或不是普通文件：$json"
+            return I18n.t("networkB1.externalLoaderUpgrade.missingProfile", json)
         }
         val rootResult = runCatching { store.minecraftRoot(instance) }
         val root = rootResult.getOrNull()
@@ -99,13 +104,14 @@ internal class ExternalLoaderUpgradeService(
         val parent = original.string("inheritsFrom").takeIf { it.isNotBlank() }
         return if (parent != null) {
             when {
-                parent == folder.fileName.toString() -> "版本配置继承了自身（$parent），无法安全合并。"
+                parent == folder.fileName.toString() ->
+                    I18n.t("networkB1.externalLoaderUpgrade.selfInheritance", parent)
                 !root
                     .resolve("versions")
                     .resolve(parent)
                     .resolve("$parent.json")
                     .isRegularFile(NOFOLLOW_LINKS) ->
-                    "它继承的基础版本 $parent 在本地不存在；请先在原目录补齐该版本，再进行升级。"
+                    I18n.t("networkB1.externalLoaderUpgrade.parentMissing", parent)
                 else -> {
                     // 校验整条 inheritsFrom 链，断链或循环都给出可读原因。
                     VersionResolver(root, store.platform).resolve(parent)
@@ -115,7 +121,7 @@ internal class ExternalLoaderUpgradeService(
         } else if (
             original.string("mainClass").isBlank() && original.array("libraries").isEmpty()
         ) {
-            "版本配置缺少 mainClass 与 libraries，无法安全合并。"
+            I18n.t("networkB1.externalLoaderUpgrade.missingMainClass")
         } else {
             null
         }
@@ -159,22 +165,33 @@ internal class ExternalLoaderUpgradeService(
         context: JobContext,
     ): JsonObject =
         when (target.loader) {
-            LoaderType.Vanilla -> error("原版实例没有可升级的加载器")
+            LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
             LoaderType.Fabric,
             LoaderType.Quilt,
-            ->
-                loaders.fetchFabricProfile(
-                    target,
-                    context,
-                    EXTERNAL_LOADER_PROGRESS_START,
-                    EXTERNAL_LOADER_PROGRESS_END,
-                )
+            LoaderType.LegacyFabric,
+            -> loaders.fetchFabricProfile(target, context, EXTERNAL_LOADER_PROGRESS_START, EXTERNAL_LOADER_PROGRESS_END)
             LoaderType.Forge,
             LoaderType.NeoForge,
+            LoaderType.Cleanroom,
             ->
                 loaders.fetchForgeProfile(
                     target,
                     base,
+                    context,
+                    EXTERNAL_LOADER_PROGRESS_START,
+                    EXTERNAL_LOADER_PROGRESS_END,
+                )
+            LoaderType.OptiFine ->
+                loaders.optiFine.fetchProfile(
+                    target,
+                    base,
+                    context,
+                    EXTERNAL_LOADER_PROGRESS_START,
+                    EXTERNAL_LOADER_PROGRESS_END,
+                )
+            LoaderType.LiteLoader ->
+                loaders.liteLoader.fetchProfile(
+                    target,
                     context,
                     EXTERNAL_LOADER_PROGRESS_START,
                     EXTERNAL_LOADER_PROGRESS_END,
@@ -211,7 +228,14 @@ internal class ExternalLoaderUpgradeService(
                 it.copy(loaderVersion = loaderVersion, installed = true)
             }
             store.refreshInstances()
-            context.progress(1f, "${current.loader.title} 已升级到 $loaderVersion（原配置已备份）")
+            context.progress(
+                1f,
+                I18n.t(
+                    "networkB1.externalLoaderUpgrade.upgradedWithBackup",
+                    current.loader.title,
+                    loaderVersion,
+                ),
+            )
         } catch (expected: Throwable) {
             restoreExternalProfileBackup(backup, jsonPath)
             throw expected
@@ -233,7 +257,7 @@ internal class ExternalLoaderUpgradeService(
                 store.refreshInstances()
             }.onFailure {
                 store.log(
-                    "外部版本升级失败后恢复备份也失败：${it.message}；备份文件：$backup",
+                    I18n.t("networkB1.externalLoaderUpgrade.restoreFailed", it.message, backup),
                     true,
                 )
             }
@@ -243,7 +267,7 @@ internal class ExternalLoaderUpgradeService(
     /** 把外部版本 JSON 原样复制到同目录的时间戳备份；同一秒内重名时追加序号。 */
     private fun backupExternalProfile(jsonPath: Path): Path {
         require(jsonPath.isRegularFile(NOFOLLOW_LINKS) && !jsonPath.isSymbolicLink()) {
-            "外部版本配置缺失或不是普通文件：$jsonPath"
+            I18n.t("networkB1.externalLoaderUpgrade.missingProfile", jsonPath)
         }
         val stamp =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now())
@@ -255,7 +279,7 @@ internal class ExternalLoaderUpgradeService(
             index++
         }
         Files.copy(jsonPath, backup)
-        store.log("外部版本配置已备份：$backup")
+        store.log(I18n.t("networkB1.externalLoaderUpgrade.backedUp", backup))
         return backup
     }
 }

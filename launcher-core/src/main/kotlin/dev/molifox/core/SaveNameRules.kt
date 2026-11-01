@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -36,7 +37,7 @@ internal fun uniqueSaveName(
             return withExtension(candidate)
         }
     }
-    error("同名存档过多，请改用其他名称")
+    error(I18n.t("saveA2.nameRules.tooManyDuplicates"))
 }
 
 /** 存档名必须是单层名称：不含分隔符、盘符与 Windows 保留名。 */

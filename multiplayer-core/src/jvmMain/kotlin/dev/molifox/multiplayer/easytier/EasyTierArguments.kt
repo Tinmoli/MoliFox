@@ -1,6 +1,7 @@
 // EasyTier 启动参数集中构建：角色、网络码、hostname 与端口白名单只在这里拼装。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.protocol.ScaffoldingCode
 import java.util.UUID
 
@@ -181,18 +182,18 @@ object EasyTierArguments {
         request: EasyTierNodeRequest,
         rpcPort: Int,
     ) {
-        require(request.networkName.isNotBlank()) { "EasyTier 网络名不能为空" }
-        require(request.networkSecret.isNotBlank()) { "EasyTier 网络密钥不能为空" }
-        require(request.machineId.isNotBlank()) { "EasyTier machine-id 不能为空" }
-        require(request.hostname.isNotBlank()) { "EasyTier hostname 不能为空" }
-        require(rpcPort in MIN_PORT..MAX_PORT) { "EasyTier RPC 端口必须在 $MIN_PORT..$MAX_PORT 之间" }
+        require(request.networkName.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.1") }
+        require(request.networkSecret.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.2") }
+        require(request.machineId.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.3") }
+        require(request.hostname.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.4") }
+        require(rpcPort in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.easyTierArguments.5", MIN_PORT, MAX_PORT) }
         request.whitelistedPorts.forEach { port ->
-            require(port in MIN_PORT..MAX_PORT) { "EasyTier 白名单端口非法：$port" }
+            require(port in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.easyTierArguments.6", port) }
         }
         if (request.role == EasyTierRole.HOST) {
-            require(request.whitelistedPorts.isNotEmpty()) { "房主必须声明需要放行的端口" }
+            require(request.whitelistedPorts.isNotEmpty()) { I18n.t("multiplayer.easyTierArguments.7") }
             require(request.hostname.startsWith(HOST_HOSTNAME_PREFIX)) {
-                "房主 hostname 必须以 $HOST_HOSTNAME_PREFIX 开头，房客才能解析 Scaffolding 端口"
+                I18n.t("multiplayer.easyTierArguments.8", HOST_HOSTNAME_PREFIX)
             }
         }
     }

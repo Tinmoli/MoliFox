@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 
 /** 搜索与文件分页共用的结果窗口上限，超出部分镜像不会返回。 */
 internal const val CURSE_FORGE_RESULT_LIMIT = 10000
@@ -71,7 +72,7 @@ internal class CurseForgeApi(
         val effective = normalizedCurseForgeBaseUrl(raw)
         if (effective == DEFAULT_CURSE_FORGE_BASE_URL && raw.trim().trimEnd('/') != effective) {
             if (fallbackLoggedFor != raw) {
-                store.log("CurseForge 服务地址无效，已使用默认镜像：$DEFAULT_CURSE_FORGE_BASE_URL", true)
+                store.log(I18n.t("packsB1.curseForgeApi.invalidBaseUrl", DEFAULT_CURSE_FORGE_BASE_URL), true)
                 fallbackLoggedFor = raw
             }
         } else {
@@ -102,7 +103,8 @@ internal class CurseForgeApi(
         detail: String,
         payload: Any,
     ): Nothing {
-        val message = "CurseForge $stage 失败：$detail；响应片段：${snippet(payload)}"
+        val message =
+            I18n.t("packsB1.curseForgeApi.requestFailed", stage, detail, snippet(payload))
         store.log(message, true)
         throw IllegalStateException(message)
     }
@@ -125,7 +127,11 @@ internal class CurseForgeApi(
                         ?.let { category.int("id") to it.key }
                 }.toMap()
         if (kinds.isEmpty()) {
-            fail("分类映射", "镜像没有返回可识别的资源类型（mc-mods、modpacks 等）", payload)
+            fail(
+                I18n.t("packsB1.curseForgeApi.stageClassMapping"),
+                I18n.t("packsB1.curseForgeApi.noRecognizableKinds"),
+                payload,
+            )
         }
         return CurseForgeClassIndex(kinds, payload)
     }
@@ -140,7 +146,7 @@ internal class CurseForgeApi(
             .find { it.value == kind }
             ?.key
             ?: curseForgeClassIds[kind]
-            ?: fail(stage, "镜像没有 $kind 对应的资源类型", index.payload)
+            ?: fail(stage, I18n.t("packsB1.curseForgeApi.noKindClass", kind), index.payload)
 
     /** 项目 classId → 资源类型：镜像分类表缺失时使用固定编号兜底，避免世界项目无法打开详情。 */
     fun kindOfClassId(
@@ -162,7 +168,7 @@ internal class CurseForgeApi(
     suspend fun rawProject(id: String): JsonObject =
         request("mods/${curseForgeProjectId(id)}").obj("data").also {
             require(it.isMinecraftProject() && it.string("id") == curseForgeProjectId(id)) {
-                "CurseForge 项目不属于 Minecraft 或标识不匹配"
+                I18n.t("packsB1.curseForgeApi.projectNotMinecraft")
             }
         }
 
@@ -176,8 +182,9 @@ internal class CurseForgeApi(
         val resolved = minecraftVersionTag(value)
         when {
             resolved == null ->
-                store.log("CurseForge 已忽略无法识别的游戏版本筛选：$value", true)
-            resolved != value -> store.log("CurseForge 游戏版本筛选按识别结果发送：$value → $resolved")
+                store.log(I18n.t("packsB1.curseForgeApi.versionFilterIgnored", value), true)
+            resolved != value ->
+                store.log(I18n.t("packsB1.curseForgeApi.versionFilterResolved", value, resolved))
         }
         return resolved
     }
@@ -194,8 +201,7 @@ internal class CurseForgeApi(
 }
 
 /** 镜像省略 gameId 时按 Minecraft 处理；明确给了别的游戏 ID 才算不匹配。 */
-internal fun JsonObject.isMinecraftProject(): Boolean =
-    intOrNull("gameId")?.let { it == MINECRAFT_GAME_ID } != false
+internal fun JsonObject.isMinecraftProject(): Boolean = intOrNull("gameId")?.let { it == MINECRAFT_GAME_ID } != false
 
 /** 缺失或为 null 的数字字段按「没有」处理，不把 0 当成有效值。 */
 internal fun JsonObject.intOrNull(key: String): Int? =

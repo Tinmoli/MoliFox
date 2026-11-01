@@ -1,6 +1,5 @@
 .gradle/
-.work/
-.tooling/
+.dev/
 /MoliFox/
 /.minecraft/
 MoliFox.exe
@@ -8,7 +7,12 @@ MoliFox-*.exe
 MoliFox-linux-*.run
 MoliFox-*-linux-x86_64.run
 MoliFox-*-windows-x86_64.exe
-.gradle-home/
+# 测试临时目录与发布包输出
+tests/.tmp/
+dist/
+# 测试源码与本地交接文档只留在工作区，不发布到 GitHub；构建仍从 tests/ 读取测试源码。
+/tests/
+/docs/
 # 本机构建密钥（Microsoft Client ID 等），不提交。
 local.properties
 .kotlin/

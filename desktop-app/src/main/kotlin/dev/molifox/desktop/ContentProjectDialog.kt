@@ -55,6 +55,7 @@ fun ContentProjectDialog(
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val ui =
         remember(hit.id) {
             ContentProjectUiState(initialFilter, state.data.selectedInstanceId)
@@ -114,7 +115,7 @@ fun ContentProjectDialog(
     if (overlayShown) return
     Modal(
         hit.title,
-        "项目详情 · 先选游戏与资源版本，再安装",
+        strings.t("dialogs.content.project.subtitle"),
         width = 740.dp,
         onDismiss = onDismiss,
     ) {
@@ -152,11 +153,12 @@ private fun ColumnScope.ContentProjectModalBody(
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (ui.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
     if (ui.error != null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(ui.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-            TextButton({ ui.retry++ }) { Text("重试") }
+            TextButton({ ui.retry++ }) { Text(strings.t("dialogs.common.retry")) }
         }
     }
     Column(
@@ -188,6 +190,7 @@ private fun ContentProjectEffects(
     hit: ContentHit,
     actions: UiActions,
 ) {
+    val strings = LocalStrings.current
     LaunchedEffect(ui.copied) {
         if (ui.copied) {
             delay(1800)
@@ -206,13 +209,13 @@ private fun ContentProjectEffects(
         } catch (cancelled: CancellationException) {
             rethrowCancellation(cancelled)
         } catch (failure: IOException) {
-            ui.error = failure.message ?: "项目详情暂不可用"
+            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
         } catch (failure: JsonParseException) {
-            ui.error = failure.message ?: "项目详情暂不可用"
+            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
         } catch (failure: IllegalStateException) {
-            ui.error = failure.message ?: "项目详情暂不可用"
+            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
         } catch (failure: IllegalArgumentException) {
-            ui.error = failure.message ?: "项目详情暂不可用"
+            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
         } finally {
             if (isActive) ui.loading = false
         }

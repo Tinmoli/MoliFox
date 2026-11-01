@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -27,29 +28,33 @@ internal fun validatePackArchive(archive: Path): Int =
         ZipFile(archive.toFile()).use { zip ->
             val manifest =
                 zip.getEntry("pack.mcmeta")
-                    ?: throw IllegalArgumentException("数据包缺少 pack.mcmeta（必须在 ZIP 根目录）")
+                    ?: throw IllegalArgumentException(I18n.t("saveA1.datapackArchive.missingManifest"))
             require(!manifest.isDirectory && manifest.size in 1..MAX_PACK_META_BYTES) {
-                "pack.mcmeta 大小异常"
+                I18n.t("saveA1.datapackArchive.manifestSize")
             }
             val text = zip.getInputStream(manifest).use { it.readNBytes(PACK_META_PROBE_BYTES) }
-            require(text.size <= MAX_PACK_META_BYTES) { "pack.mcmeta 过大" }
+            require(text.size <= MAX_PACK_META_BYTES) {
+                I18n.t("saveA1.datapackArchive.manifestTooLarge")
+            }
             val json = JsonParser.parseString(text.toString(Charsets.UTF_8)).asJsonObject
             val pack =
                 json.getAsJsonObject("pack")
-                    ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack 对象")
+                    ?: throw IllegalArgumentException(I18n.t("saveA1.datapackArchive.missingPack"))
             val format =
                 pack.get("pack_format")
-                    ?: throw IllegalArgumentException("pack.mcmeta 缺少 pack_format")
+                    ?: throw IllegalArgumentException(I18n.t("saveA1.datapackArchive.missingPackFormat"))
             require(format.isJsonPrimitive && format.asJsonPrimitive.isNumber) {
-                "pack.mcmeta 的 pack_format 不是数字"
+                I18n.t("saveA1.datapackArchive.packFormatNotNumber")
             }
             val value = format.asInt
-            require(value in 1..MAX_PACK_FORMAT) { "pack_format 超出支持范围：$value" }
+            require(value in 1..MAX_PACK_FORMAT) {
+                I18n.t("saveA1.datapackArchive.packFormatUnsupported", value)
+            }
             value
         }
     }.getOrElse { failure ->
         if (failure is IllegalArgumentException) throw failure
-        throw IllegalArgumentException("数据包不是有效的 ZIP：${archive.name}", failure)
+        throw IllegalArgumentException(I18n.t("saveA1.datapackArchive.invalidZip", archive.name), failure)
     }
 
 /** 先尝试原子改名，文件系统不支持时退回覆盖替换。 */

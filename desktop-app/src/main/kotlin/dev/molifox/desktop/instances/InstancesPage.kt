@@ -22,13 +22,18 @@ import dev.molifox.core.DownloadJob
 import dev.molifox.core.GameInstance
 import dev.molifox.core.JobStatus
 import dev.molifox.core.LauncherState
+import dev.molifox.core.LauncherTaskKind
+import dev.molifox.core.LoaderType
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Page
 import dev.molifox.desktop.UiActions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// 这是筛选用的内部取值，不直接显示；用非中文哨兵，避免与翻译后的加载器显示名冲突。
+
 /** 加载器筛选里「无法识别」实例单独成组：它不冒充任何加载器，也不参与按加载器的筛选。 */
-private const val BROKEN_LOADER_FILTER = "无法识别"
+private const val BROKEN_LOADER_FILTER = "__broken__"
 
 /**
  * 实例页：顶部是页头（返回 / 标题 / 计数），其下依次是单行筛选栏（搜索 + 版本 + 加载器 + 排序）、
@@ -49,6 +54,7 @@ fun ColumnScope.InstancesPage(
     navigate: (Page) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
+    val strings = LocalStrings.current
     // 版本 / 加载器筛选与搜索都只活在本次页面组合里，不写入偏好；排序沿用既有做法：
     // 初始值来自设置页的「默认排序」，本次会话内切换不落盘。
     var versionFilter by remember { mutableStateOf("") }
@@ -86,8 +92,9 @@ fun ColumnScope.InstancesPage(
             it.gameDirectoryId == activeDirectoryId
         }
     // 版本筛选只列真实解析出的游戏版本；无法识别（版本为空）的实例单独落在「无法识别」加载器分组里。
+    // 选项文案随语言变化，因此把 strings 也作为 remember 的 key。
     val versionOptions =
-        remember(all) {
+        remember(all, strings) {
             val versions =
                 all
                     .map { it.gameVersion }
@@ -95,19 +102,24 @@ fun ColumnScope.InstancesPage(
                     .distinct()
                     .sortedWith(instanceVersionOrder)
             buildList {
-                add("" to "版本：全部")
-                versions.forEach { add(it to "版本：" + it) }
+                add("" to strings.t("pages.instances.version.all"))
+                versions.forEach { add(it to strings.t("pages.instances.version.item", it)) }
             }
         }
     // 加载器筛选从当前实例的 loader 派生，按原版 / Forge / NeoForge / Fabric / Quilt 固定次序显示；
     // 存在无法识别实例时再追加一组，选择它只列出损坏实例。
+    // 筛选取值用枚举名而不是显示名，显示名翻译后筛选仍然有效。
     val loaderOptions =
-        remember(all) {
-            val present = all.filter { !it.broken }.map { it.loader.title }.toSet()
+        remember(all, strings) {
+            val present = all.filter { !it.broken }.map { it.loader }.toSet()
             buildList {
-                add("" to "加载器：全部")
-                LoaderFilterOrder.filter { it in present }.forEach { add(it to "加载器：" + it) }
-                if (all.any { it.broken }) add(BROKEN_LOADER_FILTER to "加载器：无法识别")
+                add("" to strings.t("pages.instances.loader.all"))
+                LoaderFilterOrder.filter { it in present }.forEach {
+                    add(it.name to strings.t("pages.instances.loader.item", it.title))
+                }
+                if (all.any { it.broken }) {
+                    add(BROKEN_LOADER_FILTER to strings.t("pages.instances.loader.broken"))
+                }
             }
         }
     // 实例被删除或目录切换后，当前筛选值可能已经不存在：自动回到「全部」，避免下拉显示内部取值。
@@ -215,7 +227,7 @@ private fun filteredInstances(
                     if (loaderFilter == BROKEN_LOADER_FILTER) {
                         instance.broken
                     } else {
-                        !instance.broken && instance.loader.title == loaderFilter
+                        !instance.broken && instance.loader.name == loaderFilter
                     }
             )
     }
@@ -240,8 +252,15 @@ private fun sortedInstances(
 private fun pendingInstallOrRepair(jobs: List<DownloadJob>): Boolean =
     jobs.any {
         it.status == JobStatus.Running &&
-            (it.title.startsWith("安装") || it.title.startsWith("修复"))
+            (it.kind == LauncherTaskKind.InstallInstance || it.kind == LauncherTaskKind.RepairInstance)
     }
 
 /** 加载器筛选的固定显示次序（不含始终在前的「全部」与末尾的「无法识别」分组）。 */
-private val LoaderFilterOrder = listOf("原版", "Forge", "NeoForge", "Fabric", "Quilt")
+private val LoaderFilterOrder =
+    listOf(
+        LoaderType.Vanilla,
+        LoaderType.Forge,
+        LoaderType.NeoForge,
+        LoaderType.Fabric,
+        LoaderType.Quilt,
+    )

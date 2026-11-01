@@ -76,6 +76,7 @@ internal fun ExportMrpackPageBody(
     onStarted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp),
@@ -90,11 +91,11 @@ internal fun ExportMrpackPageBody(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     HeaderIconButton(
                         Icons.AutoMirrored.Outlined.ArrowBack,
-                        "返回实例",
+                        strings.t("pages.export.back"),
                         onClick = onDismiss,
                     )
                     Text(
-                        "导出整合包",
+                        strings.t("pages.export.title"),
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.padding(start = 10.dp),
                     )
@@ -188,6 +189,7 @@ private fun ExportMrpackInputs(
     onFormatChosen: (String) -> Unit,
     onOptionsChange: (PackExportOptions) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -197,14 +199,14 @@ private fun ExportMrpackInputs(
             packName,
             { onPackNameChange(it.take(200)) },
             Modifier.weight(1f),
-            label = "整合包名称",
+            label = strings.t("pages.export.name"),
             enabled = !exporting,
         )
         CompactTextField(
             version,
             { onVersionChange(it.take(100)) },
             Modifier.width(150.dp),
-            label = "整合包版本",
+            label = strings.t("pages.export.version"),
             placeholder = "1.0.0",
             enabled = !exporting,
         )
@@ -225,14 +227,14 @@ private fun ExportMrpackInputs(
             target,
             onTargetChange,
             Modifier.weight(1f),
-            label = "目标文件",
+            label = strings.t("pages.export.target"),
             placeholder = "$stem.${format.extension}",
             enabled = !exporting,
         )
         SecondaryButton(
             {
                 actions.run {
-                    actions.choose("选择整合包导出目录", directory = true).firstOrNull()?.let {
+                    actions.choose(strings.t("pages.export.chooseDir"), directory = true).firstOrNull()?.let {
                         val name = fileName.ifBlank { "$stem.${format.extension}" }
                         onTargetChange(it.resolve(name).toString())
                     }
@@ -241,7 +243,7 @@ private fun ExportMrpackInputs(
             Modifier.width(150.dp),
             enabled = !exporting,
         ) {
-            Text("选择文件夹…", fontSize = 12.sp)
+            Text(strings.t("pages.export.chooseFolder"), fontSize = 12.sp)
         }
         if (format == PackExportFormat.Modrinth) {
             Column(
@@ -249,15 +251,15 @@ private fun ExportMrpackInputs(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 ExportCompactToggle(
-                    title = "Modrinth 上传模式",
-                    checked = options.modrinthUploadMode,
+                    title = strings.t("pages.export.remote"),
+                    checked = options.remoteResources,
                     enabled = !exporting,
                     onCheckedChange = { checked ->
                         onOptionsChange(
                             options.copy(
-                                remoteResources = true,
-                                modrinthUploadMode = checked,
-                                includeLocalResources = !checked,
+                                remoteResources = checked,
+                                // 关闭远程查询后，所有勾选内容直接由本地文件写入。
+                                includeLocalResources = true,
                             ),
                         )
                     },
@@ -322,6 +324,7 @@ private fun ExportMrpackActions(
     onStarted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     DialogActions(
         confirmText = exportConfirmText(exporting, format),
         enabled = canConfirm,
@@ -345,11 +348,11 @@ private fun ExportMrpackActions(
                     onStarted = onStarted,
                     onDismiss = onDismiss,
                     onFailure = { failure ->
-                        onExportFailure(failure.message ?: "无法开始导出，请稍后重试")
+                        onExportFailure(failure.message ?: strings.t("pages.export.failed"))
                     },
                 )
             }
         },
-        hint = if (loading) "正在读取导出内容…" else "",
+        hint = if (loading) strings.t("pages.export.loading") else "",
     )
 }

@@ -26,13 +26,20 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.SaveDetails
 import dev.molifox.core.SaveSettingsChanges
 
-internal val DIFFICULTY_LABELS =
-    listOf(
-        0 to "和平",
-        1 to "简单",
-        2 to "普通",
-        3 to "困难",
-    )
+/** 难度档位（0–3，对应 level.dat 数值）；显示文案随语言变化，不能做成静态标签表。 */
+private const val DIFFICULTY_HARD = 3
+
+internal val DIFFICULTY_LEVELS = listOf(0, 1, 2, 3)
+
+/** 难度档位文案：写回仍用数值，这里只负责显示。 */
+internal fun difficultyLabel(value: Int): String =
+    when (value) {
+        0 -> tr("dialogs.saveSettings.difficulty.peaceful")
+        1 -> tr("dialogs.saveSettings.difficulty.easy")
+        2 -> tr("dialogs.saveSettings.difficulty.normal")
+        DIFFICULTY_HARD -> tr("dialogs.saveSettings.difficulty.hard")
+        else -> tr("dialogs.common.unknown")
+    }
 
 /** 存档设置卡片；只写回 level.dat 里真实存在的字段。 */
 @Composable
@@ -45,11 +52,12 @@ internal fun SaveSettingsCard(
     onDismissNotice: () -> Unit,
     onSave: (SaveSettingsChanges) -> Unit,
 ) {
+    val strings = LocalStrings.current
     var allowCommands by remember(details) { mutableStateOf(details.allowCommands) }
     var difficulty by remember(details) { mutableStateOf(details.difficulty) }
     var locked by remember(details) { mutableStateOf(details.difficultyLocked) }
     val changes = changesBetween(details, allowCommands, difficulty, locked)
-    Panel(Modifier.fillMaxWidth(), title = "存档设置") {
+    Panel(Modifier.fillMaxWidth(), title = strings.t("dialogs.saveSettings.title")) {
         if (settingsWritable(details)) {
             AllowCommandsControl(details, allowCommands, canEdit, saving) { allowCommands = it }
             DifficultyControl(details, difficulty, canEdit, saving) { difficulty = it }
@@ -57,8 +65,7 @@ internal fun SaveSettingsCard(
             SaveActions(canEdit, saving, saveError, saveDone, changes, onDismissNotice, onSave)
         } else {
             Text(
-                "这个世界的 level.dat 没有可修改的难度或作弊字段" +
-                    "（旧版本或模组改过结构），只能查看。",
+                strings.t("dialogs.saveSettings.notWritable"),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -74,10 +81,11 @@ private fun AllowCommandsControl(
     saving: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (details.allowCommands == null) return
     SettingLine(
-        "允许作弊",
-        "写入 level.dat 的 allowCommands；开启后进入世界可以输入命令。",
+        strings.t("dialogs.saveInfo.allowCommands"),
+        strings.t("dialogs.saveSettings.allowCommandsHint"),
     ) {
         CompactSwitch(
             checked = value ?: false,
@@ -95,15 +103,16 @@ private fun DifficultyControl(
     saving: Boolean,
     onChange: (Int) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (details.difficulty == null) return
-    Text("难度", fontSize = 12.sp)
+    Text(strings.t("dialogs.saveSettings.difficulty"), fontSize = 12.sp)
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        DIFFICULTY_LABELS.forEach { (level, label) ->
+        DIFFICULTY_LEVELS.forEach { level ->
             FilterChip(
                 selected = value == level,
                 onClick = { onChange(level) },
                 enabled = canEdit && !saving,
-                label = { Text(label, fontSize = 11.sp) },
+                label = { Text(difficultyLabel(level), fontSize = 11.sp) },
             )
         }
     }
@@ -117,14 +126,15 @@ private fun DifficultyLockedControl(
     saving: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (details.difficultyLocked == null) return
     val hardcore = details.hardcore
     SettingLine(
-        "锁定难度",
+        strings.t("dialogs.saveSettings.lockDifficulty"),
         if (hardcore) {
-            "硬核世界的难度固定为困难并锁定，不能在这里修改。"
+            strings.t("dialogs.saveSettings.lockHardcoreHint")
         } else {
-            "锁定后游戏内不能再改难度；对应 level.dat 的 DifficultyLocked。"
+            strings.t("dialogs.saveSettings.lockHint")
         },
     ) {
         CompactSwitch(
@@ -145,8 +155,9 @@ private fun SaveActions(
     onDismissNotice: () -> Unit,
     onSave: (SaveSettingsChanges) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Text(
-        "保存前会把原 level.dat 备份到 MoliFox/backups/level-dat/；写入用临时文件原子替换。",
+        strings.t("dialogs.saveSettings.backupNote"),
         fontSize = 11.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -159,15 +170,18 @@ private fun SaveActions(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("已保存", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-            TextButton(onDismissNotice) { Text("知道了", fontSize = 11.sp) }
+            Text(strings.t("dialogs.saveSettings.saved"), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            TextButton(onDismissNotice) { Text(strings.t("dialogs.common.gotIt"), fontSize = 11.sp) }
         }
     }
     Button(
         onClick = { changes?.let(onSave) },
         enabled = canEdit && !saving && changes != null,
     ) {
-        Text(if (saving) "保存中…" else "保存设置", fontSize = 12.sp)
+        Text(
+            if (saving) strings.t("dialogs.saveSettings.saving") else strings.t("dialogs.saveSettings.save"),
+            fontSize = 12.sp,
+        )
     }
 }
 

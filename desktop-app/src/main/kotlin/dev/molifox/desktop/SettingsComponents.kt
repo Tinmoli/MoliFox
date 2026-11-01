@@ -64,6 +64,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
@@ -74,6 +79,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.LauncherNoticeKind
 import dev.molifox.core.LauncherSettings
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -99,7 +105,7 @@ internal fun applySetting(
     if (next == current) return null
     val failure = runCatching { actions.controller.saveSettings(next) }.exceptionOrNull()
     // 即时保存不显示成功提示：连续调整滑块或输入时提示会一直挂着，反而盖住真正的失败原因。
-    if (actions.controller.state.value.toast == "设置已保存") {
+    if (actions.controller.store.noticeKind() == LauncherNoticeKind.SettingsSaved) {
         actions.controller.store.dismissNotification()
     }
     return failure?.message
@@ -224,6 +230,7 @@ internal fun LiveNumberField(
             val parsed = text.toIntOrNull()
             if (parsed == null || parsed !in range) null else onCommit(parsed)
         }
+    val strings = LocalStrings.current
     Column(modifier) {
         CompactTextField(
             live.text,
@@ -235,7 +242,8 @@ internal fun LiveNumberField(
         val parsed = live.text.toIntOrNull()
         val message =
             when {
-                parsed == null || parsed !in range -> "范围 " + range.first + "–" + range.last
+                parsed == null || parsed !in range ->
+                    strings.t("settings.numberField.range", range.first, range.last)
                 else -> live.error
             }
         if (message != null) {
@@ -270,6 +278,19 @@ fun NumberField(
     )
 }
 
+/** 桌面端物理回车提交：BasicTextField 不一定把回车转成 IME Done，这里显式兜住。 */
+private fun Modifier.submitOnEnter(onSubmit: () -> Unit): Modifier =
+    onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown &&
+            (event.key == Key.Enter || event.key == Key.NumPadEnter)
+        ) {
+            onSubmit()
+            true
+        } else {
+            false
+        }
+    }
+
 /** 通用单行输入框：高 34dp、圆角 4、1dp 边（聚焦变主题色），标签与提示 11sp。 所有设置分区共用，替代 M3 `OutlinedTextField` 的 56dp 默认高度。 */
 @Composable
 fun CompactTextField(
@@ -288,6 +309,8 @@ fun CompactTextField(
     // 可选的 IME 动作：例如认证服务器登录框的密码栏用 Done，让软键盘「完成」与回车都走同一个提交函数。
     imeAction: ImeAction = ImeAction.Default,
     onImeAction: (() -> Unit)? = null,
+    // 可选的硬件回车提交：桌面端 BasicTextField 不保证把回车转成 IME Done，这里显式兜住。
+    onSubmit: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
@@ -386,6 +409,12 @@ fun CompactTextField(
                                 Modifier
                             } else {
                                 Modifier.onFocusChanged { onFocusChange(it.isFocused) }
+                            },
+                        ).then(
+                            if (onSubmit == null) {
+                                Modifier
+                            } else {
+                                Modifier.submitOnEnter(onSubmit)
                             },
                         ).then(
                             if (label.isBlank()) {

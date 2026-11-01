@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.util.zip.ZipFile
 import kotlin.io.path.extension
@@ -16,8 +17,8 @@ internal fun artifactProblem(artifact: DownloadArtifact): String? =
     runCatching {
         val file = artifact.target
         when {
-            !file.isRegularFile() -> "文件缺失"
-            artifact.size > 0 && file.fileSize() != artifact.size -> "文件大小不符"
+            !file.isRegularFile() -> I18n.t("core.gameFileVerifier.1")
+            artifact.size > 0 && file.fileSize() != artifact.size -> I18n.t("core.gameFileVerifier.2")
             artifact.sha1.isNotBlank() ->
                 if (digest(
                         file,
@@ -26,20 +27,20 @@ internal fun artifactProblem(artifact: DownloadArtifact): String? =
                 ) {
                     null
                 } else {
-                    "文件校验失败"
+                    I18n.t("core.gameFileVerifier.3")
                 }
-            file.fileSize() == 0L -> "文件为空"
+            file.fileSize() == 0L -> I18n.t("core.gameFileVerifier.4")
             file.extension.equals("jar", true) ->
                 ZipFile(
                     file.toFile(),
-                ).use { if (it.entries().hasMoreElements()) null else "JAR 内容为空" }
+                ).use { if (it.entries().hasMoreElements()) null else I18n.t("core.gameFileVerifier.5") }
             file.extension.equals("json", true) -> {
                 readObject(file)
                 null
             }
             else -> null
         }
-    }.getOrElse { "文件无法读取：${it.message}" }
+    }.getOrElse { I18n.t("core.gameFileVerifier.6", it.message) }
 
 internal class GameFileVerifier(
     private val network: NetworkClient,
@@ -108,8 +109,10 @@ internal class GameFileVerifier(
         if (broken.isEmpty()) return
         val unavailable = broken.filter { it.url.isBlank() }
         check(unavailable.isEmpty()) {
-            "本地游戏文件缺失或损坏，版本未提供下载地址，请从原来源恢复：\n" +
-                unavailable.joinToString("\n") { it.target.toString() }
+            I18n.t(
+                "diagA1.gameFileVerifier.missingWithoutUrl",
+                unavailable.joinToString("\n") { it.target.toString() },
+            )
         }
         progress?.begin(label)
         val failures =
@@ -133,7 +136,7 @@ internal class GameFileVerifier(
                 } else {
                     remaining.take(8).joinToString("\n") { it.target.toString() }
                 }
-            throw IOException("游戏文件自动补全失败，请检查网络或使用修复功能。\n$details")
+            throw IOException(I18n.t("core.gameFileVerifier.7", details))
         }
     }
 
@@ -154,11 +157,11 @@ internal class GameFileVerifier(
         val downloadable = pending.filter { it.url.isNotBlank() }
         pending
             .filter { it.url.isBlank() }
-            .forEach { warn("可选文件缺少下载地址，已跳过：${it.target}") }
+            .forEach { warn(I18n.t("core.gameFileVerifier.8", it.target)) }
         if (downloadable.isEmpty()) return
         val failures = scheduler.run(downloadable, context, concurrency)
         failures.forEach { failure ->
-            warn("可选文件未补全，已跳过：${failure.target}（${failure.reason}）")
+            warn(I18n.t("core.gameFileVerifier.9", failure.target, failure.reason))
         }
     }
 }

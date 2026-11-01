@@ -58,6 +58,7 @@ internal fun RecentPlayRow(
     refresh: Int,
     actions: RecentPlayActions,
 ) {
+    val strings = LocalStrings.current
     val server = item.kind == EntryKind.Server
     val snapshot =
         if (server) {
@@ -75,7 +76,7 @@ internal fun RecentPlayRow(
             .fillMaxWidth()
             .hoverHighlight(shape)
             .padding(horizontal = 8.dp, vertical = 8.dp)
-            .semantics { contentDescription = "最近游玩条目 ${item.title}" },
+            .semantics { contentDescription = strings.t("pages.recent.row.label", item.title) },
     ) {
         val compact = maxWidth < 550.dp
         Column(
@@ -94,7 +95,7 @@ internal fun RecentPlayRow(
                             RecentMotd(snapshot?.status?.motd.orEmpty())
                         } else {
                             Text(
-                                "单人存档",
+                                strings.t("pages.recent.row.singleplayer"),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -113,11 +114,13 @@ internal fun RecentPlayRow(
                         TextButton(
                             { actions.play(item) },
                             modifier =
-                                Modifier.semantics { contentDescription = "开始游戏 ${item.title}" },
+                                Modifier.semantics {
+                                    contentDescription = strings.t("pages.recent.row.playLabel", item.title)
+                                },
                             enabled = !busy,
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                         ) {
-                            Text("开始游戏", fontSize = 12.sp, maxLines = 1)
+                            Text(strings.t("pages.recent.row.play"), fontSize = 12.sp, maxLines = 1)
                         }
                         RecentRowMenu(item, busy, actions)
                     }
@@ -135,6 +138,7 @@ private fun RecentIdentity(
     item: RecentPlayItem,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     Row(
         modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -161,7 +165,7 @@ private fun RecentIdentity(
         Column(Modifier.width(204.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             RecentTooltip(item.title) {
                 Text(
-                    item.title + if (item.hidden) " · 已隐藏" else "",
+                    item.title + if (item.hidden) " · " + strings.t("pages.recent.row.hidden") else "",
                     Modifier.width(204.dp),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
@@ -184,7 +188,9 @@ private fun RecentIdentity(
                     )
                 }
                 RecentTooltip(
-                    item.usage.lastEntered?.let { "最近进入：$it" } ?: "尚未记录进入时间",
+                    item.usage.lastEntered?.let {
+                        strings.t("pages.recent.row.lastEntered", it)
+                    } ?: strings.t("pages.recent.row.neverEntered"),
                     Modifier.width(96.dp),
                 ) {
                     Text(
@@ -200,9 +206,19 @@ private fun RecentIdentity(
             val usage = item.usage
             if (usage.totalSeconds > 0 || usage.active) {
                 Text(
-                    (if (usage.active) "本次 ${durationLabel(usage.activeSeconds)} · " else "") +
-                        (if (usage.estimated) "累计约 " else "累计 ") +
-                        durationLabel(usage.totalSeconds),
+                    (
+                        if (usage.active) {
+                            strings.t("pages.recent.usage.active", durationLabel(usage.activeSeconds)) +
+                                " · "
+                        } else {
+                            ""
+                        }
+                    ) +
+                        if (usage.estimated) {
+                            strings.t("pages.recent.usage.totalApprox", durationLabel(usage.totalSeconds))
+                        } else {
+                            strings.t("pages.recent.usage.total", durationLabel(usage.totalSeconds))
+                        },
                     fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -218,6 +234,7 @@ private fun RecentServerMetrics(
     title: String,
     snapshot: RecentServerStatus?,
 ) {
+    val strings = LocalStrings.current
     val status = snapshot?.status
     Row(
         Modifier.fillMaxWidth(),
@@ -226,7 +243,11 @@ private fun RecentServerMetrics(
     ) {
         if (status == null) {
             Text(
-                if (snapshot == null) "查询中…" else "离线",
+                if (snapshot == null) {
+                    strings.t("pages.recent.row.querying")
+                } else {
+                    strings.t("pages.recent.row.offline")
+                },
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -245,10 +266,10 @@ private fun RecentServerMetrics(
                     status.ping < 200 -> 3
                     else -> 2
                 }
-            RecentTooltip("延迟 ${status.ping} ms") {
+            RecentTooltip(strings.t("pages.recent.row.ping", status.ping)) {
                 Row(
                     Modifier.height(14.dp).semantics {
-                        contentDescription = "服务器延迟信号 $title"
+                        contentDescription = strings.t("pages.recent.row.pingSignal", title)
                     },
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(1.5.dp),
@@ -276,26 +297,47 @@ private fun RecentRowMenu(
     busy: Boolean,
     actions: RecentPlayActions,
 ) {
+    val strings = LocalStrings.current
     var open by remember { mutableStateOf(false) }
     Box {
-        SmallIconButton(Icons.Outlined.MoreHoriz, "更多操作 ${item.title}", onClick = { open = true })
+        SmallIconButton(
+            Icons.Outlined.MoreHoriz,
+            strings.t("pages.recent.row.more", item.title),
+            onClick = { open = true },
+        )
         DropdownMenu(open, { open = false }) {
             DropdownMenuItem(
-                { Text(if (item.kind == EntryKind.Server) "复制地址" else "打开文件夹") },
+                {
+                    Text(
+                        if (item.kind == EntryKind.Server) {
+                            strings.t("pages.recent.row.copyAddress")
+                        } else {
+                            strings.t("pages.recent.row.openFolder")
+                        },
+                    )
+                },
                 {
                     open = false
                     actions.primary(item)
                 },
             )
             DropdownMenuItem(
-                { Text(if (item.hidden) "取消隐藏" else "隐藏") },
+                {
+                    Text(
+                        if (item.hidden) {
+                            strings.t("pages.recent.row.unhide")
+                        } else {
+                            strings.t("pages.recent.row.hide")
+                        },
+                    )
+                },
                 {
                     open = false
                     actions.hide(item)
                 },
             )
             DropdownMenuItem(
-                { Text("删除", color = MaterialTheme.colorScheme.error) },
+                { Text(strings.t("pages.recent.row.delete"), color = MaterialTheme.colorScheme.error) },
                 {
                     open = false
                     actions.delete(item)
@@ -308,20 +350,24 @@ private fun RecentRowMenu(
 
 private fun durationLabel(seconds: Long): String =
     when {
-        seconds < SECONDS_PER_MINUTE -> "不足 1 分钟"
-        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟"
+        seconds < SECONDS_PER_MINUTE -> tr("pages.recent.duration.lessThanMinute")
+        seconds < SECONDS_PER_HOUR ->
+            tr("pages.recent.duration.minutes", seconds / SECONDS_PER_MINUTE)
         else ->
-            "${seconds / SECONDS_PER_HOUR} 小时 " +
-                "${(seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE} 分钟"
+            tr(
+                "pages.recent.duration.hoursMinutes",
+                seconds / SECONDS_PER_HOUR,
+                (seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE,
+            )
     }
 
 private fun recentTimeLabel(time: Instant?): String {
-    if (time == null) return "尚未游玩"
+    if (time == null) return tr("pages.recent.time.never")
     val seconds = Duration.between(time, Instant.now()).seconds.coerceAtLeast(0)
     return when {
-        seconds < SECONDS_PER_MINUTE -> "刚刚"
-        seconds < SECONDS_PER_HOUR -> "${seconds / SECONDS_PER_MINUTE} 分钟前"
-        seconds < SECONDS_PER_DAY -> "${seconds / SECONDS_PER_HOUR} 小时前"
-        else -> "${seconds / SECONDS_PER_DAY} 天前"
+        seconds < SECONDS_PER_MINUTE -> tr("pages.recent.time.justNow")
+        seconds < SECONDS_PER_HOUR -> tr("pages.recent.time.minutesAgo", seconds / SECONDS_PER_MINUTE)
+        seconds < SECONDS_PER_DAY -> tr("pages.recent.time.hoursAgo", seconds / SECONDS_PER_HOUR)
+        else -> tr("pages.recent.time.daysAgo", seconds / SECONDS_PER_DAY)
     }
 }

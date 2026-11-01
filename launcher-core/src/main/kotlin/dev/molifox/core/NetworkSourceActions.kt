@@ -75,6 +75,9 @@ internal abstract class NetworkSourceActions(
     /** 自动模式：只对官方/BMCLAPI 这一对做测速，Maven 镜像仍排在回退位。 */
     private suspend fun orderByProbe(candidates: List<CandidateSource>): List<CandidateSource> {
         if (candidates.none { it.source.key == DownloadSourceCatalog.BMCLAPI }) return candidates
+        // 中国网络默认镜像优先（与 HMCL 一致）：不再用一次延迟测速把官方源抬到前面，
+        // 测速只用于非镜像优先地区；镜像失败时仍由 SourceHealth/候选回退处理。
+        if (candidates.first().source.key == DownloadSourceCatalog.BMCLAPI) return candidates
         val rank = autoMirrorOrder()
         val primary =
             candidates.filter { it.source.key in rank }.sortedBy { rank.indexOf(it.source.key) }
@@ -104,6 +107,5 @@ internal abstract class NetworkSourceActions(
             ?: measure()
 
     /** 单源测速：取版本清单开头的一小段确认真的能取到内容，返回毫秒；不可达返回 null。 */
-    private suspend fun measureSource(source: String): Long? =
-        measureUrl(mirrorUrl(AUTO_PROBE_URL, source))
+    private suspend fun measureSource(source: String): Long? = measureUrl(mirrorUrl(AUTO_PROBE_URL, source))
 }

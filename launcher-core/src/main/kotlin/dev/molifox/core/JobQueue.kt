@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -81,11 +82,11 @@ class JobContext
             publishTransfers()
         }
 
-        /** 阶段推进时追加预计文件数（不清空已统计的传输），任务中心的「剩余文件」才准。 */
+        /** 阶段推进时追加预计文件数（可为负，用于验收后释放不需要下载的文件）。 */
         @Synchronized
         internal fun expectFiles(count: Int) {
-            if (count <= 0) return
-            transferCount += count
+            if (count == 0) return
+            transferCount = (transferCount + count).coerceAtLeast(0)
             publishTransfers()
         }
 
@@ -201,7 +202,7 @@ private suspend fun runCancellationAction(
         true
     }.getOrElse { error ->
         // cleanup 由各任务自行注册，失败类型无法枚举；这里必须兜底并继续清理其余产物。
-        store.log("取消任务时清理文件失败：${error.message}", true)
+        store.log(I18n.t("miscA1.jobQueue.cancelCleanupFileFailed", error.message), true)
         false
     }
 
@@ -214,11 +215,11 @@ private suspend fun cleanOutputs(
         outputs.cleanEmptyDirectories()
         true
     } catch (error: IOException) {
-        store.log("取消任务时清理产物失败：${error.message}", true)
+        store.log(I18n.t("miscA1.jobQueue.cancelCleanupOutputsFailed", error.message), true)
         false
     } catch (error: IllegalStateException) {
         // 引用关系在清理时可能发现实例/游戏目录已被移除（error(...)），同样只记录并继续。
-        store.log("取消任务时清理产物失败：${error.message}", true)
+        store.log(I18n.t("miscA1.jobQueue.cancelCleanupOutputsFailed", error.message), true)
         false
     }
 
@@ -256,6 +257,7 @@ class JobQueue(
     fun enqueue(
         title: String,
         resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
+        kind: LauncherTaskKind = LauncherTaskKind.Generic,
         prepare: (JobContext) -> Unit = {},
         action: suspend JobContext.() -> Unit,
     ): String {
@@ -263,7 +265,7 @@ class JobQueue(
         val reserved = resources.toSet()
         gate.register(id, reserved)
         store.updateState {
-            it.copy(jobs = listOf(DownloadJob(id, title, resources = reserved)) + it.jobs)
+            it.copy(jobs = listOf(DownloadJob(id, title, kind = kind, resources = reserved)) + it.jobs)
         }
         val context =
             JobContext(store, id) { updated ->
@@ -316,39 +318,53 @@ class JobQueue(
             runCatching {
                 gate.acquire(id)
                 coroutineContext.ensureActive()
-                update(id, JobStatus.Running, "准备中…")
-                store.log("任务开始：$title", level = LogLevel.Debug)
+                update(id, JobStatus.Running, I18n.t("miscA1.jobQueue.preparing"))
+                store.log(I18n.t("miscA1.jobQueue.started", title), level = LogLevel.Debug)
                 withContext(TaskDownloadContext(context) + TaskSourceSelection()) {
                     context.action()
                 }
                 coroutineContext.ensureActive()
-                update(id, JobStatus.Completed, "已完成")
-                store.log("任务完成：$title", level = LogLevel.Debug)
+                update(id, JobStatus.Completed, I18n.t("pages.tasks.status.completed"))
+                store.log(I18n.t("miscA1.jobQueue.completed", title), level = LogLevel.Debug)
             }.onFailure { error ->
                 // 任务体来自调用方，失败类型不可枚举；取消先清理产物，其它失败必须兜底为 Failed，
                 // 不能让任务停在 Running。
-                if (error is CancellationException) {
-                    cancelled = true
-                    val cleaned =
-                        withContext(NonCancellable + Dispatchers.IO) { context.finish(true) }
-                    update(
-                        id,
-                        JobStatus.Cancelled,
-                        if (cleaned) "已取消，本次下载文件已清理" else "已取消；部分文件无法清理，请查看日志",
-                    )
-                    store.log("任务已取消：$title")
-                    if (!cleaned) store.notify("任务已取消，部分文件未能清理，请查看日志")
-                } else {
-                    val message = error.message ?: error.javaClass.simpleName
-                    update(id, JobStatus.Failed, message, message)
-                    store.log("$title：$message", true)
-                    store.log(error.stackTraceToString(), true)
-                    store.notify(message)
-                }
+                cancelled = error is CancellationException
+                handleWorkerFailure(id, title, context, error)
             }
         } finally {
             if (!cancelled) context.finish(false)
         }
+    }
+
+    /** 取消先清理产物；其它失败兜底为 Failed，不能让任务停在 Running。 */
+    private suspend fun handleWorkerFailure(
+        id: String,
+        title: String,
+        context: JobContext,
+        error: Throwable,
+    ) {
+        if (error !is CancellationException) {
+            val message = error.message ?: error.javaClass.simpleName
+            update(id, JobStatus.Failed, message, message)
+            store.log("$title：$message", true)
+            store.log(error.stackTraceToString(), true)
+            store.notify(message)
+            return
+        }
+        val cleaned =
+            withContext(NonCancellable + Dispatchers.IO) { context.finish(true) }
+        update(
+            id,
+            JobStatus.Cancelled,
+            if (cleaned) {
+                I18n.t("miscA1.jobQueue.cancelledCleaned")
+            } else {
+                I18n.t("miscA1.jobQueue.cancelledPartial")
+            },
+        )
+        store.log(I18n.t("miscA1.jobQueue.cancelled", title))
+        if (!cleaned) store.notify(I18n.t("miscA1.jobQueue.cancelledNotice"))
     }
 
     private fun whenWorkerFinished(
@@ -363,7 +379,7 @@ class JobQueue(
                 it.id == id && it.status in setOf(JobStatus.Queued, JobStatus.Running)
             }
         ) {
-            update(id, JobStatus.Cancelled, "已取消")
+            update(id, JobStatus.Cancelled, I18n.t("pages.tasks.status.cancelled"))
         }
     }
 

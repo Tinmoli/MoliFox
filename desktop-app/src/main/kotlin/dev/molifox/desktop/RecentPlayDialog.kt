@@ -56,8 +56,12 @@ internal fun RecentKindSwitch(
     kind: EntryKind,
     onChange: (EntryKind) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(verticalAlignment = Alignment.CenterVertically) {
-        listOf(EntryKind.World to "存档", EntryKind.Server to "服务器").forEach { (entry, label) ->
+        listOf(
+            EntryKind.World to strings.t("dialogs.recent.worlds"),
+            EntryKind.Server to strings.t("dialogs.recent.servers"),
+        ).forEach { (entry, label) ->
             TextButton(
                 { onChange(entry) },
                 contentPadding = PaddingValues(horizontal = 8.dp),
@@ -115,6 +119,7 @@ internal fun RecentPlayDialog(
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var kind by remember { mutableStateOf(initialKind) }
     var search by remember { mutableStateOf("") }
     var showHidden by remember { mutableStateOf(false) }
@@ -128,7 +133,7 @@ internal fun RecentPlayDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             Modifier
-                .semantics { contentDescription = "完整存档与服务器列表" }
+                .semantics { contentDescription = strings.t("dialogs.recent.fullList") }
                 .width(minOf(760.dp, (window.width - 48.dp).coerceAtLeast(420.dp)))
                 .height((window.height * .75f).coerceIn(320.dp, 700.dp)),
             shape = MaterialTheme.shapes.medium,
@@ -140,12 +145,12 @@ internal fun RecentPlayDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "存档与服务器",
+                        strings.t("dialogs.recent.title"),
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    SmallIconButton(Icons.Outlined.Refresh, "刷新全部存档与服务器", onClick = onRefresh)
-                    SmallIconButton(Icons.Outlined.Close, "关闭存档与服务器列表", onClick = onDismiss)
+                    SmallIconButton(Icons.Outlined.Refresh, strings.t("dialogs.recent.refresh"), onClick = onRefresh)
+                    SmallIconButton(Icons.Outlined.Close, strings.t("dialogs.recent.close"), onClick = onDismiss)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RecentKindSwitch(kind) { kind = it }
@@ -156,26 +161,26 @@ internal fun RecentPlayDialog(
                                 showHidden,
                                 role = Role.Checkbox,
                                 onValueChange = { showHidden = it },
-                            ).semantics { contentDescription = "显示已隐藏" },
+                            ).semantics { contentDescription = strings.t("dialogs.recent.showHidden") },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(showHidden, null)
-                        Text("显示已隐藏", fontSize = 12.sp)
+                        Text(strings.t("dialogs.recent.showHidden"), fontSize = 12.sp)
                     }
                 }
                 CompactSearchField(
                     search,
                     { search = it },
-                    Modifier.fillMaxWidth().semantics { contentDescription = "搜索存档或服务器" },
-                    "搜索名称或地址",
+                    Modifier.fillMaxWidth().semantics { contentDescription = strings.t("dialogs.recent.searchLabel") },
+                    strings.t("dialogs.recent.searchPlaceholder"),
                 )
                 if (visible.isEmpty()) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text(
                             when {
-                                loading -> "正在读取…"
-                                search.isNotBlank() -> "没有匹配的结果"
-                                else -> "此分类暂无条目，可勾选显示已隐藏"
+                                loading -> strings.t("dialogs.recent.loading")
+                                search.isNotBlank() -> strings.t("dialogs.recent.noResults")
+                                else -> strings.t("dialogs.recent.emptyCategory")
                             },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -190,7 +195,7 @@ internal fun RecentPlayDialog(
                     )
                 }
                 Text(
-                    "${visible.size} 个条目",
+                    strings.t("dialogs.recent.count", visible.size),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

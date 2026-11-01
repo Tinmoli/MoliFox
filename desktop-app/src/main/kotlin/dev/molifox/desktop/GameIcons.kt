@@ -17,5 +17,6 @@ fun GrassBlockIcon(
     modifier: Modifier = Modifier,
     size: Dp = 20.dp,
 ) {
-    BundledBlockIcon("icons/blocks/grass.png", "草方块", modifier.size(size))
+    val strings = LocalStrings.current
+    BundledBlockIcon("icons/blocks/grass.png", strings.t("core.instanceIconStyle.grass"), modifier.size(size))
 }

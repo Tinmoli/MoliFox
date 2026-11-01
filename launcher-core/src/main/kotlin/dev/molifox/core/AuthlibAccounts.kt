@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.util.UUID
@@ -39,11 +40,11 @@ internal class AuthlibAccounts(
         val playerName = username.trim()
         if (playerName.isBlank() || playerName.length > MAX_PLAYER_NAME_LENGTH) {
             return Result.failure(
-                AuthlibException(AuthlibError.InvalidCredentials, "请输入认证服务器上的用户名或邮箱"),
+                AuthlibException(AuthlibError.InvalidCredentials, I18n.t("core.authlibAccounts.1")),
             )
         }
         if (password.isEmpty()) {
-            return Result.failure(AuthlibException(AuthlibError.InvalidCredentials, "请输入密码"))
+            return Result.failure(AuthlibException(AuthlibError.InvalidCredentials, I18n.t("core.authlibAccounts.2")))
         }
         return try {
             Result.success(login(serverUrl, playerName, password))
@@ -77,7 +78,7 @@ internal class AuthlibAccounts(
                 ?: session.availableProfiles.firstOrNull()
                 ?: throw AuthlibException(
                     AuthlibError.NoProfile,
-                    "该账户在认证服务器上没有可用的游戏角色",
+                    I18n.t("core.authlibAccounts.3"),
                 )
         val account = accountFor(server, profile)
         vault.save(account.id, encodeSession(session, server.url, playerName))
@@ -87,8 +88,8 @@ internal class AuthlibAccounts(
                 activeAccountId = account.id,
             )
         }
-        store.notify("已登录外置账户：${account.name}")
-        store.log("外置账户登录成功：${account.name}（${server.name}）")
+        store.notify(I18n.t("core.authlibAccounts.4", account.name), LauncherNoticeKind.LoginSignedIn)
+        store.log(I18n.t("core.authlibAccounts.5", account.name, server.name))
         return account
     }
 
@@ -116,7 +117,7 @@ internal class AuthlibAccounts(
 
     /** 登录阶段的未预期失败统一归为无效响应，界面只看到可操作的提示。 */
     private fun loginFailure(error: Exception): AuthlibException =
-        AuthlibException(AuthlibError.InvalidResponse, error.message ?: "外置账户登录失败")
+        AuthlibException(AuthlibError.InvalidResponse, error.message ?: I18n.t("core.authlibAccounts.6"))
 
     /**
      * 启动凭据：校验令牌，过期则续期；续期失败抛出 [AuthlibError.SessionExpired]， 网络失败抛出
@@ -201,19 +202,19 @@ internal class AuthlibAccounts(
             normalizeAuthlibServerUrl(account.authlibServer)
                 ?: throw AuthlibException(
                     AuthlibError.InvalidServer,
-                    "此账户缺少有效的认证服务器地址，请重新添加账户",
+                    I18n.t("core.authlibAccounts.7"),
                 )
         val stored =
             readSession(account.id)
                 ?: throw AuthlibException(
                     AuthlibError.SessionExpired,
-                    "外置账户登录已过期，请重新登录",
+                    I18n.t("core.authlibAccounts.8"),
                 )
         return server to stored
     }
 
     private fun invalidSessionFailure(): AuthlibException =
-        AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+        AuthlibException(AuthlibError.InvalidResponse, I18n.t("core.authlibAccounts.9"))
 
     private fun readSession(accountId: String): StoredAuthlibSession? {
         val raw = vault.read(accountId) ?: return null

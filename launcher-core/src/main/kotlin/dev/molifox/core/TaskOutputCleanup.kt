@@ -91,7 +91,7 @@ internal class TaskOutputCleanup(
         runCatching {
             val paths = Files.walk(path).use { it.toList() }
             require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
-                "新建版本目录包含链接，未删除"
+                "diagA2.taskOutputCleanup.versionContainsLink"
             }
             paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
         }

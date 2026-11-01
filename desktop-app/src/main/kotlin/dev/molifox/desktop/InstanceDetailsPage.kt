@@ -265,9 +265,10 @@ private fun InstanceDetailsHeader(
     onBack: () -> Unit,
     onEditIcon: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // 返回目标由导航状态决定（实例列表或开始页的版本设置），所以标签保持中性。
-        HeaderIconButton(Icons.Outlined.ArrowBack, "返回", onClick = onBack)
+        HeaderIconButton(Icons.Outlined.ArrowBack, strings.t("pages.instance.details.back"), onClick = onBack)
         Spacer(Modifier.width(10.dp))
         // 实例页头也显示图标：默认草方块，自定义图片或加载器图标会替换它。
         IconButton(
@@ -280,7 +281,7 @@ private fun InstanceDetailsHeader(
             { onEditIcon() },
             enabled = !actions.controller.isInstanceBusy(instance.id),
         ) {
-            Text("更换图标", fontSize = 12.sp)
+            Text(strings.t("pages.instance.details.changeIcon"), fontSize = 12.sp)
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -296,20 +297,24 @@ private fun InstanceDetailsHeader(
                 Spacer(Modifier.width(8.dp))
                 Tag(
                     when {
-                        instance.broken -> "无法识别"
-                        instance.installed -> "已安装"
-                        else -> "需要修复"
+                        instance.broken -> strings.t("pages.instance.details.broken")
+                        instance.installed -> strings.t("pages.instance.details.installed")
+                        else -> strings.t("pages.instance.details.needsRepair")
                     },
                 )
             }
             Text(
-                "Minecraft " +
-                    instance.gameVersion +
-                    " · " +
-                    instance.loader.title +
-                    (if (instance.loaderVersion.isBlank()) "" else " " + instance.loaderVersion) +
-                    " · " +
+                // 加载器名与版本号都属于产品名，不翻译；由占位符拼成一行摘要。
+                strings.t(
+                    "pages.instance.details.summary",
+                    instance.gameVersion,
+                    if (instance.loaderVersion.isBlank()) {
+                        instance.loader.title
+                    } else {
+                        instance.loader.title + " " + instance.loaderVersion
+                    },
                     actions.controller.store.gamePath(instance),
+                ),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -350,6 +355,7 @@ private fun RowScope.InstanceTabContent(
     updateCenter: InstanceUpdateCenter,
     navigate: (Page) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Box(Modifier.weight(1f).fillMaxHeight()) {
         // 页签对应的内容目录缺失时先建成，再列目录；这样左栏「游戏文件夹」只会出现真正存在的目录。
         val tabFolder = instanceTabFolder(tab)
@@ -401,7 +407,7 @@ private fun RowScope.InstanceTabContent(
                                         "schematic",
                                         "nbt",
                                     ),
-                                importLabel = "导入原理图",
+                                importLabel = strings.t("pages.instance.details.importSchematic"),
                                 allowDelete = true,
                             )
                         else ->

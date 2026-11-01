@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlin.io.path.exists
 
 /** 内容搜索、分类与安装计划。 */
@@ -60,7 +61,7 @@ internal abstract class ContentSearchActions(
                 kind in listOf("mod", "modpack", "resourcepack", "shader", "datapack", "world") &&
                 offset in 0..SEARCH_OFFSET_MAX,
         ) {
-            "搜索参数无效"
+            I18n.t("contentA2.contentSearchActions.invalidSearch")
         }
         // 世界只有 CurseForge 提供：即使设置里选了 Modrinth，世界分类也固定走 CurseForge。
         if (kind == "world" || store.data.settings.contentDownloadSource == "curseforge") {
@@ -107,7 +108,10 @@ internal abstract class ContentSearchActions(
         val gameVersion = minecraftVersionTag(selection.gameVersion)
         if (selection.gameVersion.isNotBlank()) {
             if (gameVersion == null) {
-                store.log("Modrinth 已忽略无法识别的游戏版本筛选：${selection.gameVersion}", true)
+                store.log(
+                    I18n.t("contentA2.contentSearchActions.versionFilterIgnored", selection.gameVersion),
+                    true,
+                )
             } else {
                 facets += listOf("versions:${gson.toJson(gameVersion)}")
             }
@@ -157,7 +161,7 @@ internal abstract class ContentSearchActions(
             contentSignature(store, store.instance(report.instanceId)) == report.signature &&
                 (if (registryFile.exists()) digest(registryFile) else "") == report.registryHash,
         ) {
-            "资源列表已改变，请重新检查更新"
+            I18n.t("contentA2.contentSearchActions.contentChanged")
         }
         val items = report.items.filter { it.key in selected }
         require(
@@ -165,7 +169,7 @@ internal abstract class ContentSearchActions(
                 items.size == selected.size &&
                 items.all { it.update != null && it.source != null && !it.source.locked },
         ) {
-            "更新选择无效"
+            I18n.t("contentA2.contentSearchActions.invalidUpdateSelection")
         }
         val requests =
             items.map { item ->

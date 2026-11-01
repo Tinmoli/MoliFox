@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.SimpleDropdown
 import dev.molifox.desktop.UiActions
 
@@ -30,7 +31,7 @@ internal fun ContentSourceControl(
 ) {
     if (kind == "world") {
         Text(
-            "内容源 · CurseForge",
+            LocalStrings.current.t("pages.content.source.curseforgeFixed"),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

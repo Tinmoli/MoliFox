@@ -32,6 +32,7 @@ import com.google.gson.JsonParseException
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
+import dev.molifox.core.launchOnly
 import dev.molifox.core.loaderUpgradeCandidates
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -41,9 +42,10 @@ import java.io.IOException
 
 internal fun packSourceOf(instance: GameInstance): String =
     when {
-        instance.packFile.isNotBlank() -> "整合包：" + instance.packFile.substringAfterLast('/')
-        instance.externalProfile -> "外部目录导入"
-        else -> "启动器安装"
+        instance.packFile.isNotBlank() ->
+            tr("pages.instance.install.packsource.pack", instance.packFile.substringAfterLast('/'))
+        instance.externalProfile -> tr("pages.instance.install.packsource.external")
+        else -> tr("pages.instance.install.packsource.launcher")
     }
 
 /** 设置页签的「当前安装」与「升级加载器」卡片：只展示当前组件，并提供同加载器的小版本升级。 */
@@ -56,6 +58,11 @@ internal fun ColumnScope.InstanceInstallSections(
     var loadingVersions by remember(instance.id) { mutableStateOf(false) }
     var versionError by remember(instance.id) { mutableStateOf<String?>(null) }
     var versionRetry by remember(instance.id) { mutableIntStateOf(0) }
+    // LiteLoader/Cleanroom 只识别和启动已有实例，不显示升级卡片，也不请求加载器版本。
+    if (instance.loader.launchOnly) {
+        CurrentInstallSection(instance, actions)
+        return
+    }
     // 外部实例能否合并进原 JSON（继承链缺失等）由核心预检给出具体原因；只读，不改文件。
     var externalBlocker by remember(instance.id) { mutableStateOf<String?>(null) }
     // 只有已安装、非整合包且有加载器的实例才能升级；外部实例额外要求原 JSON 可安全合并。
@@ -73,7 +80,7 @@ internal fun ColumnScope.InstanceInstallSections(
                 withContext(Dispatchers.IO) {
                     runCatching {
                         actions.controller.installer.externalLoaderUpgradeBlocker(instance)
-                    }.getOrElse { it.message ?: "外部版本配置无法读取" }
+                    }.getOrElse { it.message ?: tr("pages.instance.install.externalConfigUnreadable") }
                 }
             } else {
                 null
@@ -145,20 +152,21 @@ private fun CurrentInstallSection(
     instance: GameInstance,
     actions: UiActions,
 ) {
-    SettingsSection("当前安装") {
-        SettingRow("游戏版本", instance.gameVersion) {
+    val strings = LocalStrings.current
+    SettingsSection(strings.t("pages.instance.install.current.title")) {
+        SettingRow(strings.t("pages.instance.install.current.gameVersion"), instance.gameVersion) {
             InstanceArtwork(instance, actions, Modifier.size(24.dp))
         }
         SettingRow(
-            "模组加载器",
+            strings.t("pages.instance.install.current.loader"),
             if (instance.loader == LoaderType.Vanilla) {
-                "原版（未安装加载器）"
+                strings.t("pages.instance.install.current.vanillaLoader")
             } else {
                 instance.loader.title + " " + instance.loaderVersion
             },
         ) {}
         Text(
-            "版本 ID：" + instance.versionId,
+            strings.t("pages.instance.install.current.versionId", instance.versionId),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -170,7 +178,7 @@ private fun CurrentInstallSection(
                 },
                 enabled = !actions.controller.isInstanceBusy(instance.id),
             ) {
-                Text("修复游戏", fontSize = 12.sp)
+                Text(strings.t("pages.instance.install.current.repair"), fontSize = 12.sp)
             }
         }
     }
@@ -185,7 +193,11 @@ private fun LoaderUpgradeSection(
     candidates: List<LoaderVersion>,
     ui: LoaderUpgradeUi,
 ) {
-    SettingsSection("升级加载器", "只升级同一加载器的版本；游戏版本、模组与存档保持不变。") {
+    val strings = LocalStrings.current
+    SettingsSection(
+        strings.t("pages.instance.install.upgrade.title"),
+        strings.t("pages.instance.install.upgrade.detail"),
+    ) {
         val blocker = upgradeBlocker(instance, ui)
         if (blocker != null) {
             Text(
@@ -194,7 +206,10 @@ private fun LoaderUpgradeSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            SettingRow("当前加载器", instance.loader.title + " " + instance.loaderVersion) {}
+            SettingRow(
+                strings.t("pages.instance.install.upgrade.currentLoader"),
+                instance.loader.title + " " + instance.loaderVersion,
+            ) {}
             LoaderCandidateStatus(instance, actions, versions, candidates, ui)
         }
     }
@@ -207,17 +222,15 @@ private fun upgradeBlocker(
 ): String? =
     when {
         instance.broken && instance.externalProfile ->
-            (instance.brokenReason.ifBlank { "外部版本配置无法识别" }) +
-                "。请先在原目录补齐该版本，再进行升级。"
-        instance.loader == LoaderType.Vanilla ->
-            "原版实例没有可升级的加载器。"
-        instance.packFile.isNotBlank() ->
-            "整合包的加载器由包清单定义，请通过整合包更新维护。"
+            tr(
+                "pages.instance.install.blocker.externalBroken",
+                instance.brokenReason.ifBlank { tr("pages.instance.install.externalBrokenDefault") },
+            )
+        instance.loader == LoaderType.Vanilla -> tr("pages.instance.install.blocker.vanilla")
+        instance.packFile.isNotBlank() -> tr("pages.instance.install.blocker.modpack")
         instance.externalProfile && ui.externalBlocker != null -> ui.externalBlocker.orEmpty()
-        !ui.upgradeable ->
-            "请先完成游戏安装，再升级加载器。"
-        instance.loaderVersion.isBlank() ->
-            "无法识别当前加载器版本，请先修复游戏。"
+        !ui.upgradeable -> tr("pages.instance.install.blocker.notInstalled")
+        instance.loaderVersion.isBlank() -> tr("pages.instance.install.blocker.versionUnknown")
         else -> null
     }
 
@@ -230,6 +243,7 @@ private fun LoaderCandidateStatus(
     candidates: List<LoaderVersion>,
     ui: LoaderUpgradeUi,
 ) {
+    val strings = LocalStrings.current
     val latest = candidates.firstOrNull()
     when {
         ui.loadingVersions ->
@@ -237,7 +251,7 @@ private fun LoaderCandidateStatus(
                 LinearProgressIndicator(Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "正在获取" + instance.loader.title + "版本列表",
+                    strings.t("pages.instance.install.loadingVersions", instance.loader.title),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -250,30 +264,35 @@ private fun LoaderCandidateStatus(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.error,
                 )
-                TextButton({ ui.onRetry() }) { Text("重试", fontSize = 12.sp) }
+                TextButton({ ui.onRetry() }) { Text(strings.t("pages.instance.install.retry"), fontSize = 12.sp) }
             }
         versions.isEmpty() ->
             Text(
-                "该游戏版本暂无可用的 " + instance.loader.title + " 版本",
+                strings.t("pages.instance.install.noVersions", instance.loader.title),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         latest == null ->
             Text(
-                "已是此游戏版本下最新的 " +
-                    instance.loader.title +
-                    " " +
+                strings.t(
+                    "pages.instance.install.upToDate",
+                    instance.loader.title,
                     instance.loaderVersion,
+                ),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         else ->
             SettingRow(
-                "可升级至",
-                latest.version + if (latest.stable) "" else "（测试版）",
+                strings.t("pages.instance.install.upgradeTo"),
+                if (latest.stable) {
+                    latest.version
+                } else {
+                    strings.t("pages.instance.install.versionBeta", latest.version)
+                },
             ) {
                 PrimaryButton(
-                    "升级",
+                    strings.t("pages.instance.install.upgrade"),
                     Icons.Outlined.ArrowUpward,
                     !actions.controller.isInstanceBusy(instance.id),
                 ) {

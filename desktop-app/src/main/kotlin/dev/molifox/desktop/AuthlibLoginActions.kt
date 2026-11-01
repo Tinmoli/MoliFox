@@ -22,17 +22,17 @@ import java.io.IOException
 
 /** 把 [AuthlibException] 的类别折算成一步就能照做的中文提示；未知异常保留原始文案。 密码错误与网络错误必须能区分开，避免用户反复重试密码。 */
 private fun authlibErrorMessage(failure: Throwable): String {
-    if (failure !is AuthlibException) return failure.message ?: "操作失败，请稍后重试"
+    if (failure !is AuthlibException) return failure.message ?: tr("dialogs.authlib.opFailed")
     return when (failure.error) {
-        AuthlibError.InvalidServer -> "不是有效的认证服务器地址"
-        AuthlibError.NotYggdrasil -> "该地址不是 Yggdrasil 认证服务器"
-        AuthlibError.Network -> "无法连接认证服务器，请检查网络后重试"
-        AuthlibError.InvalidCredentials -> "用户名或密码错误"
-        AuthlibError.SessionExpired -> "登录已过期，请重新输入密码"
-        AuthlibError.NoProfile -> "该账户在认证服务器上没有可用的游戏角色"
-        AuthlibError.DownloadFailed -> failure.message ?: "认证组件下载失败"
-        AuthlibError.InvalidResponse -> "认证服务器返回的数据无效"
-        AuthlibError.ServerError -> failure.message ?: "认证服务器返回错误"
+        AuthlibError.InvalidServer -> tr("dialogs.authlib.invalidServer")
+        AuthlibError.NotYggdrasil -> tr("dialogs.authlib.notYggdrasil")
+        AuthlibError.Network -> tr("dialogs.authlib.networkError")
+        AuthlibError.InvalidCredentials -> tr("dialogs.authlib.invalidCredentials")
+        AuthlibError.SessionExpired -> tr("dialogs.authlib.sessionExpired")
+        AuthlibError.NoProfile -> tr("dialogs.authlib.noProfile")
+        AuthlibError.DownloadFailed -> failure.message ?: tr("dialogs.authlib.downloadFailed")
+        AuthlibError.InvalidResponse -> tr("dialogs.authlib.invalidResponse")
+        AuthlibError.ServerError -> failure.message ?: tr("dialogs.authlib.serverError")
     }
 }
 
@@ -48,7 +48,7 @@ internal fun validateAuthlibServer(
     if (isBusy()) return
     val candidate = address.trim()
     if (candidate.isEmpty()) {
-        onError("请输入认证服务器地址")
+        onError(tr("dialogs.authlib.enterAddress"))
         return
     }
     onBusy(true)
@@ -96,7 +96,7 @@ internal fun submitAuthlibLogin(
     val name = username.trim()
     val secret = password
     if (name.isEmpty() || secret.isEmpty()) {
-        onError("请输入用户名和密码")
+        onError(tr("dialogs.authlib.enterCredentials"))
         return
     }
     onBusy(true)
@@ -137,12 +137,12 @@ internal fun removeAuthlibServer(
     onError: (String) -> Unit,
 ) {
     if (!actions.controller.accounts.removeAuthlibServer(server.url)) {
-        onError("内置服务器不可删除")
+        onError(tr("dialogs.authlib.builtinLocked"))
         return
     }
     if (isSelected) onClearSelected()
     if (isResolved) onClearResolved()
-    actions.controller.store.notify("已移除认证服务器「" + label + "」")
+    actions.controller.store.notify(tr("dialogs.authlib.removed", label))
 }
 
 /** 弹窗键盘：Esc 关闭，Enter 执行当前一步（第 2 步密码已填时直接提交）。 */
@@ -187,13 +187,13 @@ internal fun authlibKeyEvent(
 }
 
 internal fun authlibDialogTitle(presetLabel: String?): String =
-    if (presetLabel != null) "登录 " + presetLabel else "添加认证服务器"
+    if (presetLabel != null) tr("dialogs.authlib.loginServer", presetLabel) else tr("dialogs.account.addServer")
 
 internal fun authlibDialogHint(presetLabel: String?): String =
     if (presetLabel != null) {
-        "输入该服务器上的用户名与密码，登录后账户会出现在列表里。"
+        tr("dialogs.authlib.loginTitleHint")
     } else {
-        "连接外置认证（Yggdrasil）服务器，登录后账户会出现在列表里。"
+        tr("dialogs.authlib.addServerHint")
     }
 
 internal fun authlibStepTitle(
@@ -201,7 +201,7 @@ internal fun authlibStepTitle(
     preset: Boolean,
 ): String =
     when {
-        preset -> "用户名与密码"
-        step == AuthlibLoginStep.Server -> "第 1 步 / 共 2 步 · 认证服务器"
-        else -> "第 2 步 / 共 2 步 · 用户名与密码"
+        preset -> tr("dialogs.authlib.credentialsStep")
+        step == AuthlibLoginStep.Server -> tr("dialogs.authlib.stepServer")
+        else -> tr("dialogs.authlib.stepCredentials")
     }

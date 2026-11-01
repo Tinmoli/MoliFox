@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -94,12 +95,12 @@ data class NbtDocument(
 )
 
 internal fun readNbtDocument(path: Path): NbtDocument {
-    require(path.fileSize() <= MAX_NBT_FILE_BYTES) { "服务器列表过大" }
+    require(path.fileSize() <= MAX_NBT_FILE_BYTES) { I18n.t("saveA1.nbt.serversTooLarge") }
     val compressed = Files.newInputStream(path).use { it.read() == 0x1f && it.read() == 0x8b }
-    val bytes = requireNotNull(readNbtBytes(path)) { "NBT 数据过大" }
+    val bytes = requireNotNull(readNbtBytes(path)) { I18n.t("saveA1.nbt.dataTooLarge") }
     val name =
         DataInputStream(ByteArrayInputStream(bytes)).use {
-            require(it.readUnsignedByte() == 10) { "NBT 根标签无效" }
+            require(it.readUnsignedByte() == 10) { I18n.t("saveA1.nbt.invalidRootTag") }
             it.readUTF()
         }
     return NbtDocument(name, parseNbtRoot(bytes), compressed)

@@ -27,18 +27,23 @@ fun LaunchPreviewDialog(
     plan: LaunchPlan,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val text =
         buildString {
             appendLine("Java：${plan.executable}")
-            appendLine("工作目录：${plan.gameDirectory}")
-            appendLine("\n参数（每行一项）：")
+            appendLine(strings.t("dialogs.launchPreview.workingDir", plan.gameDirectory))
+            appendLine(strings.t("dialogs.launchPreview.arguments"))
             plan.arguments.forEach { appendLine(it) }
             if (plan.environment.isNotEmpty()) {
-                appendLine("\n附加环境变量：")
+                appendLine(strings.t("dialogs.launchPreview.env"))
                 plan.environment.forEach { (name, value) -> appendLine("$name=$value") }
             }
         }
-    Modal("启动参数预览", "显示已保存配置；登录令牌使用占位符，自动 Java 在实际启动时检测。", onDismiss = onDismiss) {
+    Modal(
+        strings.t("dialogs.launchPreview.title"),
+        strings.t("dialogs.launchPreview.subtitle"),
+        onDismiss = onDismiss,
+    ) {
         SelectionContainer {
             Text(
                 text,
@@ -54,9 +59,9 @@ fun LaunchPreviewDialog(
             TextButton({
                 Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
             }) {
-                Text("复制预览")
+                Text(strings.t("dialogs.launchPreview.copy"))
             }
-            TextButton(onDismiss) { Text("关闭预览") }
+            TextButton(onDismiss) { Text(strings.t("dialogs.launchPreview.close")) }
         }
     }
 }

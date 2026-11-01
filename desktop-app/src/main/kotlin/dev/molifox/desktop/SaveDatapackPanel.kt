@@ -104,11 +104,11 @@ private class DatapackPanelState(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: IOException) {
-            loadError = failure.message ?: "无法读取数据包"
+            loadError = failure.message ?: tr("saveA1.datapackPanel.loadFailed")
         } catch (failure: IllegalArgumentException) {
-            loadError = failure.message ?: "无法读取数据包"
+            loadError = failure.message ?: tr("saveA1.datapackPanel.loadFailed")
         } catch (failure: IllegalStateException) {
-            loadError = failure.message ?: "无法读取数据包"
+            loadError = failure.message ?: tr("saveA1.datapackPanel.loadFailed")
         } finally {
             loading = false
         }
@@ -120,7 +120,7 @@ private class DatapackPanelState(
         instance: GameInstance,
     ) {
         val chosen =
-            actions.choose("选择数据包 ZIP", extensions = listOf("zip")).firstOrNull()
+            actions.choose(tr("saveA1.datapackPanel.chooseZip"), extensions = listOf("zip")).firstOrNull()
         if (chosen == null) return
         try {
             withContext(Dispatchers.IO) {
@@ -128,11 +128,11 @@ private class DatapackPanelState(
             }
             withContext(Dispatchers.Swing) { refresh++ }
         } catch (failure: IOException) {
-            reportActionFailure(failure, "安装数据包失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.installFailed"))
         } catch (failure: IllegalArgumentException) {
-            reportActionFailure(failure, "安装数据包失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.installFailed"))
         } catch (failure: IllegalStateException) {
-            reportActionFailure(failure, "安装数据包失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.installFailed"))
         }
     }
 
@@ -150,11 +150,11 @@ private class DatapackPanelState(
             }
             withContext(Dispatchers.Swing) { refresh++ }
         } catch (failure: IOException) {
-            reportActionFailure(failure, "切换数据包状态失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.toggleFailed"))
         } catch (failure: IllegalArgumentException) {
-            reportActionFailure(failure, "切换数据包状态失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.toggleFailed"))
         } catch (failure: IllegalStateException) {
-            reportActionFailure(failure, "切换数据包状态失败")
+            reportActionFailure(failure, tr("saveA1.datapackPanel.toggleFailed"))
         } finally {
             withContext(Dispatchers.Swing) { working = null }
         }
@@ -183,19 +183,19 @@ private class DatapackPanelState(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: IOException) {
-                    reportActionFailure(failure, "删除数据包失败，详情见日志")
+                    reportActionFailure(failure, tr("saveA1.datapackPanel.deleteFailed"))
                     false
                 } catch (failure: IllegalArgumentException) {
-                    reportActionFailure(failure, "删除数据包失败，详情见日志")
+                    reportActionFailure(failure, tr("saveA1.datapackPanel.deleteFailed"))
                     false
                 } catch (failure: IllegalStateException) {
-                    reportActionFailure(failure, "删除数据包失败，详情见日志")
+                    reportActionFailure(failure, tr("saveA1.datapackPanel.deleteFailed"))
                     false
                 }
             }
         withContext(Dispatchers.Swing) {
             if (!moved && actionError == null) {
-                actionError = "「${entry.name}」没有移入回收站：文件可能已不存在，或回收站不可用。"
+                actionError = tr("saveA1.datapackPanel.trashFailed", entry.name)
             }
             refresh++
         }
@@ -213,10 +213,11 @@ private fun SaveDatapackBody(
     val busy = actions.controller.isInstanceBusy(instance.id)
     val running = actions.controller.game.isRunning(instance.id)
     val canEdit = !busy && !running
+    val strings = LocalStrings.current
     val blockedNote =
         when {
-            running -> "游戏正在使用存档，请先退出游戏再管理数据包。"
-            busy -> "任务进行中，数据包操作暂时不可用。"
+            running -> strings.t("saveA1.datapackPanel.blocked.running")
+            busy -> strings.t("saveA1.datapackPanel.blocked.busy")
             else -> ""
         }
     val savesDirectory =
@@ -227,7 +228,11 @@ private fun SaveDatapackBody(
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DatapackToolbar(instance, actions, state, canEdit, busy)
         Text(
-            "${state.listing?.entries?.size ?: 0} 个数据包 · $datapacksDirectory",
+            strings.t(
+                "saveA1.datapackPanel.summary",
+                state.listing?.entries?.size ?: 0,
+                datapacksDirectory,
+            ),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -258,6 +263,7 @@ private fun DatapackToolbar(
     canEdit: Boolean,
     busy: Boolean,
 ) {
+    val strings = LocalStrings.current
     ContentToolbar(
         flexible = {
             Row(
@@ -276,7 +282,7 @@ private fun DatapackToolbar(
         },
         importAction =
             ToolbarAction(
-                "安装数据包",
+                strings.t("dialogs.content.datapack.title"),
                 icon = Icons.Outlined.FileDownload,
                 enabled = canEdit,
             ) {
@@ -284,12 +290,20 @@ private fun DatapackToolbar(
                 actions.run { state.installDatapack(actions, instance) }
             },
         refresh =
-            ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) {
+            ToolbarAction(
+                strings.t("pages.saves.toolbar.refresh"),
+                icon = Icons.Outlined.Refresh,
+                enabled = !busy,
+            ) {
                 state.actionError = null
                 state.refresh++
             },
         openFolder =
-            ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+            ToolbarAction(
+                strings.t("pages.saves.toolbar.openFolder"),
+                icon = Icons.Outlined.FolderOpen,
+                enabled = !busy,
+            ) {
                 actions.run { actions.controller.openWorldDatapacks(instance.id, state.world) }
             },
     )
@@ -303,23 +317,32 @@ private fun ColumnScope.DatapackListingBody(
     canEdit: Boolean,
     onDeleteRequest: (DatapackEntry) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val current = state.listing
     when {
         state.loadError != null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("无法读取数据包", state.loadError.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton({ state.refresh++ }) { Text("重试") }
+                EmptyState(
+                    strings.t("saveA1.datapackPanel.loadFailed"),
+                    state.loadError.orEmpty(),
+                    Icons.Outlined.CloudOff,
+                ) {
+                    TextButton({ state.refresh++ }) { Text(strings.t("pages.saves.load.retry")) }
                 }
             }
         state.loading && current == null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("正在读取数据包", "稍候…", Icons.Outlined.FolderZip)
+                EmptyState(
+                    strings.t("saveA1.datapackPanel.loadingTitle"),
+                    strings.t("saveA1.datapackPanel.loadingBody"),
+                    Icons.Outlined.FolderZip,
+                )
             }
         current != null && current.entries.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
-                    "这个存档还没有数据包",
-                    "点「安装数据包」选一个 .zip；也可以把文件夹放进 datapacks/。",
+                    strings.t("saveA1.datapackPanel.emptyTitle"),
+                    strings.t("saveA1.datapackPanel.emptyBody"),
                     Icons.Outlined.FolderZip,
                 )
             }
@@ -376,15 +399,16 @@ private fun DeleteDatapackDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("移入回收站？") },
-        text = { Text("「${entry.name}」会从该存档的 datapacks 目录移入回收站，可从回收站恢复。") },
+        title = { Text(strings.t("pages.saves.trash.title")) },
+        text = { Text(strings.t("saveA1.datapackPanel.trashMessage", entry.name)) },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("移入回收站", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("pages.saves.trash.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) } },
     )
 }

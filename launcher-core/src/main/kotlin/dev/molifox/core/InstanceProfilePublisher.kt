@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -46,7 +47,7 @@ internal class InstanceProfilePublisher(
         return localClientJarUrl(candidates, root)
             ?: remoteClientJarUrl(candidates)
             ?: throw IOException(
-                "版本配置缺少客户端 JAR 下载地址，请检查版本 JSON 或使用修复功能：${profile.id}",
+                I18n.t("instA2.profilePublisher.missingClientJar", profile.id),
             )
     }
 

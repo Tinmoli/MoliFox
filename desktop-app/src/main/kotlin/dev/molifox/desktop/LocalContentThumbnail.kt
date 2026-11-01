@@ -110,9 +110,8 @@ internal object LocalIconCache {
     private const val LOAD_FACTOR = .75f
     private val entries =
         object : LinkedHashMap<String, Entry>(MAX_ENTRIES, LOAD_FACTOR, true) {
-            override fun removeEldestEntry(
-                eldest: MutableMap.MutableEntry<String, Entry>?,
-            ): Boolean = size > MAX_ENTRIES
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?): Boolean =
+                size > MAX_ENTRIES
         }
 
     private fun key(

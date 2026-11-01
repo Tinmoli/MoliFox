@@ -2,6 +2,7 @@
 package dev.molifox.multiplayer.data
 
 import com.google.gson.Gson
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.normalized
 import kotlinx.coroutines.Dispatchers
@@ -19,11 +20,11 @@ class FileMultiplayerSettings(
     override suspend fun load(): MultiplayerSettings =
         withContext(Dispatchers.IO) {
             if (!Files.exists(configuration)) return@withContext MultiplayerSettings()
-            require(Files.size(configuration) <= MAX_CONFIG_BYTES) { "联机配置文件过大，请检查文件内容" }
+            require(Files.size(configuration) <= MAX_CONFIG_BYTES) { I18n.t("multiplayer.fileMultiplayerSettings.1") }
             Files.newBufferedReader(configuration).use { reader ->
                 val decoded =
                     gson.fromJson(reader, MultiplayerSettings::class.java)
-                        ?: throw IllegalArgumentException("联机配置文件为空，请检查文件内容")
+                        ?: throw IllegalArgumentException(I18n.t("multiplayer.fileMultiplayerSettings.2"))
                 decoded.normalized()
             }
         }

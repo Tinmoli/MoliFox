@@ -53,35 +53,36 @@ internal fun PackRow(
     onIconFailure: (Throwable) -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val shader = folder == PackFolder.ShaderPacks
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val details =
         listOf(
-            if (entry.isDirectory) "文件夹" else "ZIP",
+            if (entry.isDirectory) strings.t("deskC.row.folder") else "ZIP",
             formatFileSize(entry.size),
-            "修改于 " +
-                if (entry.modified >
-                    0
-                ) {
+            strings.t(
+                "deskC.row.modifiedAt",
+                if (entry.modified > 0) {
                     formatSaveTime(java.time.Instant.ofEpochMilli(entry.modified))
                 } else {
-                    "未知时间"
+                    strings.t("deskC.row.unknownTime")
                 },
+            ),
         ).joinToString(" · ")
     // 更新信息与文件信息合成一行，行高与模组/存档一致；「可更新」用主题色，失败原因如实附在后面。
     val meta =
         buildString {
             if (update?.status == PackUpdateStatus.Updatable) {
-                append(update.currentVersion.ifBlank { "当前" })
+                append(update.currentVersion.ifBlank { strings.t("deskC.row.currentVersion") })
                 append(" → ")
                 append(update.latestVersion.ifBlank { update.candidate?.versionNumber.orEmpty() })
                 append(" · ")
             }
             append(details)
             when (update?.status) {
-                PackUpdateStatus.Latest -> append(" · 已是最新")
+                PackUpdateStatus.Latest -> append(" · ").append(strings.t("deskC.row.latest"))
                 PackUpdateStatus.Unknown -> {
-                    append(" · 无法确认")
+                    append(" · ").append(strings.t("deskC.row.uncertain"))
                     if (update.warning.isNotBlank()) append(" · ").append(update.warning)
                 }
                 else -> Unit
@@ -132,7 +133,7 @@ internal fun PackRow(
                     )
                     if (update?.possibleMatch == true) {
                         Spacer(Modifier.width(5.dp))
-                        Tag("可能匹配", MaterialTheme.colorScheme.tertiary)
+                        Tag(strings.t("deskC.row.possibleMatch"), MaterialTheme.colorScheme.tertiary)
                     }
                 }
                 Text(
@@ -151,7 +152,7 @@ internal fun PackRow(
             Spacer(Modifier.width(8.dp))
             RowIconAction(
                 Icons.Outlined.DeleteOutline,
-                "将${entry.filename}移至回收站",
+                strings.t("deskC.row.trashMessage", entry.filename),
                 enabled = !busy,
                 onClick = onDelete,
             )

@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.nio.file.Files
 import java.nio.file.Path
@@ -109,7 +110,7 @@ internal class LauncherStoreCore(
                     pruneDamagedConfigurations()
                     runCatching { readData(backup) }
                         .getOrElse { defaults }
-                        .also { recoveryMessage = "原配置已保留，已恢复备份或默认配置。" }
+                        .also { recoveryMessage = I18n.t("miscA2.launcherStore.recoveredBackup") }
                 }
             } else {
                 defaults
@@ -139,10 +140,18 @@ internal class LauncherStoreCore(
         require(
             json.int("schemaVersion") == 2 && json.has("accounts") && json.has("settings"),
         ) {
-            "配置格式无效"
+            I18n.t("miscA2.launcherStore.invalidConfigFormat")
         }
         val value = gson.fromJson(json, LauncherData::class.java)
         require(value.settings.gameRoot.isNotBlank() && Path.of(value.settings.gameRoot).isAbsolute)
+        return value.copy(settings = normalizedReadSettings(json, value.settings))
+    }
+
+    /** 读取旧配置时补齐已拆分或带默认值的设置，并在写回前保持与保存路径一致。 */
+    private fun normalizedReadSettings(
+        json: JsonObject,
+        settings: LauncherSettings,
+    ): LauncherSettings {
         // 已删除的 mirror 取值读入即按 official 处理；后续任意一次保存会把新值写回配置。
         // 旧配置只有一个 downloadSource：拆成「版本列表源」与「文件下载源」时两边都沿用它的值。
         val raw = runCatching { json.getAsJsonObject("settings") }.getOrNull() ?: JsonObject()
@@ -154,24 +163,26 @@ internal class LauncherStoreCore(
                 legacyFileSource
             }
         // 版本隔离默认开启：旧配置里没有这个键表示用户从未选择，按开启读入；显式保存的 false 原样保留。
-        val isolateVersions =
-            if (raw.has("isolateVersions")) value.settings.isolateVersions else true
-        val rawCurseForgeBase = value.settings.curseForgeBaseUrl.orEmpty()
+        val isolateVersions = if (raw.has("isolateVersions")) settings.isolateVersions else true
+        // 游戏语言跟随启动器默认开启：Gson 会把缺失的布尔字段填成 false，旧配置里没有这个键时
+        // 必须按默认开启读入，否则老用户看到的开关是关的、游戏语言也不会跟随界面语言。
+        val gameLanguageFollows =
+            if (raw.has("gameLanguageFollowsLauncher")) {
+                settings.gameLanguageFollowsLauncher
+            } else {
+                true
+            }
+        val rawCurseForgeBase = settings.curseForgeBaseUrl.orEmpty()
         val curseForgeBase = normalizedCurseForgeBaseUrl(rawCurseForgeBase)
-        curseForgeBaseFallback =
-            curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
-        return value.copy(
-            settings =
-                value.settings.copy(
-                    isolateVersions = isolateVersions,
-                    javaDownloadSource = value.settings.effectiveJavaDownloadSource,
-                    downloadSource = normalizedDownloadSource(value.settings.downloadSource),
-                    versionListSource = versionListSource,
-                    mirrorConcurrency =
-                        normalizedMirrorConcurrency(value.settings.mirrorConcurrency),
-                    // 旧配置没有这个字段（或手改成了非法值）时直接显示默认镜像。
-                    curseForgeBaseUrl = curseForgeBase,
-                ),
+        curseForgeBaseFallback = curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
+        return settings.copy(
+            isolateVersions = isolateVersions,
+            gameLanguageFollowsLauncher = gameLanguageFollows,
+            javaDownloadSource = settings.effectiveJavaDownloadSource,
+            downloadSource = normalizedDownloadSource(settings.downloadSource),
+            versionListSource = versionListSource,
+            // 旧配置没有这个字段（或手改成了非法值）时直接显示默认镜像。
+            curseForgeBaseUrl = curseForgeBase,
         )
     }
 

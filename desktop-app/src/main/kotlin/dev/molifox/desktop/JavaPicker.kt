@@ -79,9 +79,6 @@ import dev.molifox.core.JavaRuntime
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** 自动项的固定文案：设置页与实例页共用，避免出现两种说法。 */
-internal const val AUTO_JAVA_LABEL = "自动"
-
 /**
  * Java 单选列表（扁平，不折叠）：第一行是当前生效的选择与来源，下面是所有候选，最后是「添加」。
  *
@@ -103,6 +100,7 @@ internal fun JavaPicker(
     inheritedPath: String = "",
 ) {
     val colors = MaterialTheme.colorScheme
+    val strings = LocalStrings.current
     val platform = actions.controller.platform
     val windows = platform.osName == "windows"
     val canManage = onAddCustom != null
@@ -131,18 +129,14 @@ internal fun JavaPicker(
     val autoDetail = javaPickerAutoDetail(inheritedPath, runtimes, windows)
     // 当前生效的选择、来源与占用（实例作用域可能继承全局设置）。
     val headerMeta =
-        buildString {
-            effectiveRuntime?.let { runtime ->
-                if (!runtime.usable) {
-                    append(runtime.invalidReason)
-                } else {
-                    append(javaSourceTitle(runtime.source))
-                    if (runtime.sizeBytes > 0) {
-                        append("，")
-                        append(readableJavaSize(runtime.sizeBytes))
-                    }
-                }
-            }
+        if (effectiveRuntime == null) {
+            ""
+        } else if (!effectiveRuntime.usable) {
+            effectiveRuntime.invalidReason
+        } else {
+            listOf(javaSourceTitle(effectiveRuntime.source), readableJavaSize(effectiveRuntime.sizeBytes))
+                .filter { it.isNotBlank() }
+                .joinToString(strings.t("settings.java.picker.metaSeparator"))
         }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         JavaPickerHeader(
@@ -159,7 +153,7 @@ internal fun JavaPicker(
         )
         JavaChoiceRow(
             selected = value.isBlank(),
-            label = AUTO_JAVA_LABEL,
+            label = strings.t("settings.java.auto"),
             detail = autoDetail,
             onClick = {
                 error = null
@@ -226,16 +220,17 @@ internal fun JavaPickerRow(
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(Metrics.innerRadius)
     val effectivePath = value.ifBlank { inheritedPath }
     val runtime = runtimes.firstOrNull { sameJavaPath(it.path, effectivePath, ignoreCase) }
     val resolved =
         when {
-            detecting && runtimes.isEmpty() -> "正在检测…"
-            effectivePath.isBlank() -> "自动按游戏版本匹配"
+            detecting && runtimes.isEmpty() -> strings.t("settings.java.picker.row.detecting")
+            effectivePath.isBlank() -> strings.t("settings.java.picker.row.auto")
             runtime != null && runtime.usable -> javaRuntimeHeading(runtime)
-            runtime != null -> "不可用：" + runtime.invalidReason
-            else -> "自定义 Java"
+            runtime != null -> strings.t("settings.java.picker.row.invalid", runtime.invalidReason)
+            else -> strings.t("settings.java.picker.row.custom")
         }
     Row(
         Modifier
@@ -250,7 +245,11 @@ internal fun JavaPickerRow(
     ) {
         Text("Java", fontSize = 14.sp)
         Tag(
-            if (value.isBlank()) "继承全局" else "仅此实例",
+            if (value.isBlank()) {
+                strings.t("settings.java.picker.inherit")
+            } else {
+                strings.t("settings.java.picker.instanceOnly")
+            },
             if (value.isBlank()) colors.onSurfaceVariant else colors.primary,
         )
         Text(
@@ -410,20 +409,21 @@ internal fun JavaSheetSlot(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(
         Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("选择 Java", style = MaterialTheme.typography.titleMedium)
+                Text(strings.t("settings.java.sheet.title"), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "只影响当前实例，选择后立即生效",
+                    strings.t("settings.java.sheet.detail"),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            SmallIconButton(Icons.Outlined.Close, "关闭 Java 选择器", onDismiss)
+            SmallIconButton(Icons.Outlined.Close, strings.t("settings.java.sheet.close"), onDismiss)
         }
         HorizontalDivider(color = hairline())
         Column(
@@ -432,11 +432,8 @@ internal fun JavaSheetSlot(
         ) {
             JavaSheetOption(
                 selected = value.isBlank(),
-                title =
-                    "继承全局（当前：" +
-                        javaChoiceName(inheritedPath, runtimes, ignoreCase) +
-                        "）",
-                detail = "之后修改全局 Java 会自动跟随",
+                title = strings.t("settings.java.sheet.inherit", javaChoiceName(inheritedPath, runtimes, ignoreCase)),
+                detail = strings.t("settings.java.sheet.inheritDetail"),
                 onClick = { onPick("") },
             )
             HorizontalDivider(
@@ -444,11 +441,20 @@ internal fun JavaSheetSlot(
                 modifier = Modifier.padding(vertical = 2.dp),
             )
             if (currentInvalid != null) {
-                MutedText("当前 Java 不可用：" + currentInvalid.invalidReason + "，请重新选择。")
+                MutedText(
+                    strings.t(
+                        "settings.java.sheet.currentInvalid",
+                        currentInvalid.invalidReason,
+                    ),
+                )
             }
             if (usable.isEmpty()) {
                 MutedText(
-                    if (detecting) "正在检测 Java…" else "未检测到其它 Java，可在设置页添加或安装。",
+                    if (detecting) {
+                        strings.t("settings.java.sheet.detecting")
+                    } else {
+                        strings.t("settings.java.sheet.empty")
+                    },
                 )
             } else {
                 usable.forEach { runtime ->

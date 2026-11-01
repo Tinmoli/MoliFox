@@ -12,10 +12,21 @@ internal fun detectLoader(
     id: String,
     libraries: List<String>,
     mainClass: String = "",
-): Pair<LoaderType, String> =
-    detectLoaderByLibrary(libraries)
+): Pair<LoaderType, String> {
+    val named = detectLoaderByName(id)
+    // Legacy Fabric 与 Fabric 的库坐标相同，只能先看实例名/目录名；版本仍从同一坐标读取。
+    if (named == LoaderType.LegacyFabric) {
+        val version =
+            libraries
+                .firstOrNull { it.startsWith("net.fabricmc:fabric-loader:") }
+                ?.let(::loaderVersionOf)
+                .orEmpty()
+        return named to version
+    }
+    return detectLoaderByLibrary(libraries)
         ?: detectLoaderByMainClass(mainClass)
-        ?: (detectLoaderByName(id) to "")
+        ?: (named to "")
+}
 
 private fun detectLoaderByLibrary(libraries: List<String>): Pair<LoaderType, String>? {
     val prefixes =
@@ -27,6 +38,9 @@ private fun detectLoaderByLibrary(libraries: List<String>): Pair<LoaderType, Str
             "net.minecraftforge:forge:" to LoaderType.Forge,
             "net.minecraftforge:fmlloader:" to LoaderType.Forge,
             "net.minecraftforge:minecraftforge:" to LoaderType.Forge,
+            "optifine:OptiFine:" to LoaderType.OptiFine,
+            "com.mumfrey:liteloader:" to LoaderType.LiteLoader,
+            "com.cleanroommc:cleanroom:" to LoaderType.Cleanroom,
         )
     prefixes.forEach { (prefix, loader) ->
         libraries.firstOrNull { it.startsWith(prefix) }?.let { coordinate ->
@@ -53,6 +67,10 @@ private fun detectLoaderByName(id: String): LoaderType {
     val lower = id.lowercase()
     return when {
         "neoforge" in lower -> LoaderType.NeoForge
+        "legacy-fabric" in lower || "legacyfabric" in lower -> LoaderType.LegacyFabric
+        "optifine" in lower -> LoaderType.OptiFine
+        "liteloader" in lower -> LoaderType.LiteLoader
+        "cleanroom" in lower -> LoaderType.Cleanroom
         "fabric" in lower -> LoaderType.Fabric
         "quilt" in lower -> LoaderType.Quilt
         "forge" in lower -> LoaderType.Forge

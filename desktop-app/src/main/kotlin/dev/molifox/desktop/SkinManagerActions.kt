@@ -70,7 +70,7 @@ internal suspend fun importSkinFromPicker(
     variant: SkinVariant,
 ): SkinImportResult? {
     val file =
-        actions.choose("导入 PNG 皮肤", extensions = listOf("png")).firstOrNull() ?: return null
+        actions.choose(tr("dialogs.skin.importDialogTitle"), extensions = listOf("png")).firstOrNull() ?: return null
     val imported =
         service.library.importSkin(
             file,
@@ -80,10 +80,10 @@ internal suspend fun importSkinFromPicker(
     val message =
         if (account.type == AccountType.Offline) {
             val placement = service.useOfflinePreview(account.id, imported.id)
-            "已导入 ${imported.name}" +
-                (placement?.customSkinLoader?.let { "，已同步 CustomSkinLoader" } ?: "")
+            tr("dialogs.skin.imported", imported.name) +
+                (placement?.customSkinLoader?.let { tr("dialogs.skin.importedSynced", it) } ?: "")
         } else {
-            "已导入 ${imported.name}"
+            tr("dialogs.skin.imported", imported.name)
         }
     return SkinImportResult(imported, message)
 }
@@ -99,7 +99,7 @@ internal suspend fun exportSkin(
     val file =
         actions
             .choose(
-                "导出 PNG 皮肤",
+                tr("dialogs.skin.exportDialogTitle"),
                 save = true,
                 extensions = listOf("png"),
                 defaultName = "skin.png",
@@ -115,7 +115,11 @@ internal suspend fun exportSkin(
 /** 弹窗副标题：正版账户说明档案与皮肤库，离线账户只做本地预览。 */
 internal fun dialogSubtitle(account: Account): String =
     account.name +
-        if (account.type == AccountType.Microsoft) " · 正版档案与本地皮肤库" else " · 离线角色本地预览"
+        if (account.type == AccountType.Microsoft) {
+            tr("dialogs.skin.accountSuffix.official")
+        } else {
+            tr("dialogs.skin.accountSuffix.offline")
+        }
 
 /** 忙时不关闭弹窗，避免操作中的界面被直接销毁。 */
 internal fun dismissIfIdle(
@@ -140,7 +144,7 @@ internal fun canExport(
 
 /** 上传成功后的提示：空纹理地址表示还需要再刷新一次正版档案。 */
 internal fun uploadResultMessage(textureUrl: String): String =
-    if (textureUrl.isBlank()) "皮肤已上传，请稍后刷新正版档案。" else "正版皮肤已更新"
+    if (textureUrl.isBlank()) tr("dialogs.skin.uploadedRefresh") else tr("dialogs.skin.uploaded")
 
 /** 移除的正好是当前选中项时清空选中。 */
 internal fun selectedAfterRemove(

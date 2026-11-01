@@ -47,6 +47,7 @@ internal fun SettingCardFlow(
     query: String,
     onClearSearch: () -> Unit = {},
 ) {
+    val strings = LocalStrings.current
     val matched =
         cards.mapNotNull { card ->
             val cardHit = card.title.contains(query, true) || card.detail.contains(query, true)
@@ -62,16 +63,20 @@ internal fun SettingCardFlow(
         }
     if (query.isNotBlank() && matched.isNotEmpty()) {
         MutedText(
-            "搜索「" +
-                query +
-                "」：命中 " +
-                matched.sumOf { it.second.size } +
-                " 个设置项。外观与日志分区由子页面提供，不参与搜索。",
+            strings.t(
+                "settings.search.hit",
+                query,
+                matched.sumOf { it.second.size },
+            ),
         )
     }
     if (matched.isEmpty()) {
-        EmptyState("没有匹配的设置项", "换个关键词，或清空搜索框。", Icons.Outlined.SearchOff) {
-            SecondaryButton(onClearSearch) { Text("清空搜索") }
+        EmptyState(
+            strings.t("settings.search.empty.title"),
+            strings.t("settings.search.empty.detail"),
+            Icons.Outlined.SearchOff,
+        ) {
+            SecondaryButton(onClearSearch) { Text(strings.t("settings.search.clear")) }
         }
         return
     }

@@ -1,6 +1,7 @@
 // 组播相关小工具：发现侧加入组播组，广播侧按本机 IPv4 网络接口发送。
 package dev.molifox.multiplayer.lan
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -23,7 +24,7 @@ internal object LanMulticast {
             try {
                 InetAddress.getByName(groupAddress)
             } catch (failure: UnknownHostException) {
-                onError(IOException("组播地址 $groupAddress 无效，LAN 发现仅依赖回环 UDP", failure))
+                onError(IOException(I18n.t("multiplayer.lanMulticast.1", groupAddress), failure))
                 return
             }
         val interfaces = usableInterfaces(onError) ?: return
@@ -40,7 +41,7 @@ internal object LanMulticast {
                 }
             }
         if (!joined) {
-            onError(IOException("没有可用的 IPv4 组播接口，LAN 发现仅依赖回环 UDP"))
+            onError(IOException(I18n.t("multiplayer.lanMulticast.2")))
         }
     }
 
@@ -69,7 +70,7 @@ internal object LanMulticast {
         try {
             NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
         } catch (failure: IOException) {
-            onError(IOException("无法枚举网络接口: ${failure.message}", failure))
+            onError(IOException(I18n.t("multiplayer.lanMulticast.3", failure.message), failure))
             null
         }
 

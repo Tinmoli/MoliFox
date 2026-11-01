@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -85,7 +86,9 @@ internal class GameRuntimeDirectories(
                                 data.string("startedAt")
                         )
                 if (!alive) release(directory)
-            }.onFailure { store.log("保留无法确认的游戏运行缓存：${directory.fileName}") }
+            }.onFailure {
+                store.log(I18n.t("instA1.runtimeDirectories.keepUnconfirmed", directory.fileName))
+            }
         }
     }
 }

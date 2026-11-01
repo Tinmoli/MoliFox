@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 
@@ -38,9 +39,12 @@ internal class LaunchProfileResolver(
         error: Exception,
     ): ResolvedProfile {
         if (instance.externalProfile) {
-            throw IOException("外部版本配置缺失或损坏，请修复原版本：${instance.versionId}", error)
+            throw IOException(
+                I18n.t("diagA2.launchProfileResolver.externalProfileBroken", instance.versionId),
+                error,
+            )
         }
-        context.progress(0f, "恢复游戏版本配置…")
+        context.progress(0f, I18n.t("diagA2.launchProfileResolver.restoreProfile"))
         pipeline.install(instance.id, context)
         return resolver.resolve(store.instance(instance.id).versionId)
     }

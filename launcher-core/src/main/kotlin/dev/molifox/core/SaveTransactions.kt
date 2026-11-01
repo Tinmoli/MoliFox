@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -59,7 +60,7 @@ internal suspend fun replaceSaveWorld(
         val keptName =
             uniqueSaveName(
                 saves,
-                "$name（替换前 ${replaceSuffixFormat.format(Instant.now())}）",
+                I18n.t("saveC.replace.keptName", name, replaceSuffixFormat.format(Instant.now())),
                 isZip = false,
             )
         val keptPath = saveTargetPath(saves, keptName)
@@ -95,15 +96,19 @@ private fun rollbackReplaceWorld(
         }.onFailure { failure ->
             failures += failure
             throwReplaceFailure(
-                "替换存档失败，且旧世界没有放回原位：请手动把 ${previousWorld.fileName} 改回 $name，" +
-                    "备份在 $backupArchiveName",
+                I18n.t(
+                    "saveA2.transactions.rollbackManual",
+                    previousWorld.fileName,
+                    name,
+                    backupArchiveName,
+                ),
                 error,
                 failures,
             )
         }
     }
     if (failures.isEmpty()) throw error
-    throwReplaceFailure("替换存档失败，清理未完成：请检查 $saves", error, failures)
+    throwReplaceFailure(I18n.t("saveA2.transactions.cleanupIncomplete", saves), error, failures)
 }
 
 private fun throwReplaceFailure(
@@ -125,7 +130,7 @@ internal fun requireDistinctSaveDirectories(
     require(
         taskPathKey(store.gamePath(source)) != taskPathKey(store.gamePath(destination)),
     ) {
-        "源和目标使用同一个存档目录，无需复制"
+        I18n.t("saveA2.transactions.sameSaveDirectory")
     }
 }
 
@@ -147,25 +152,25 @@ internal fun prepareSaveCopy(
     rename: String?,
 ): SaveCopyPlan {
     val sourceSaves = savesDirectoryOf(store, sourceInstanceId)
-    requireSaveDirectory(sourceSaves, "源实例的存档目录不存在，无法复制")
+    requireSaveDirectory(sourceSaves, I18n.t("saveA2.transactions.sourceMissing"))
     val sourcePath = saveSourcePath(sourceSaves, saveName)
     val targetSaves = savesDirectoryOf(store, targetInstanceId)
-    require(!isLinkPath(targetSaves)) { "目标实例的存档目录是符号链接或目录联接，无法复制" }
+    require(!isLinkPath(targetSaves)) { I18n.t("saveA2.transactions.targetIsLink") }
     targetSaves.createDirectories()
     val isZip = !sourcePath.isDirectory(LinkOption.NOFOLLOW_LINKS)
     // 未指定新名称时沿用存档名：目录名，或去掉 `.zip` 的文件名（`uniqueSaveName` 会补回后缀）。
     val defaultName = sourcePath.name.removeSuffixIgnoreCase(".zip")
     val requested = rename?.trim().orEmpty().ifBlank { defaultName }
-    require(requested.length <= MAX_SAVE_NAME_LENGTH) { "存档名称需要 1–80 个字符" }
+    require(requested.length <= MAX_SAVE_NAME_LENGTH) { I18n.t("saveA2.transactions.nameLength") }
     val base = if (isZip) requested.removeSuffixIgnoreCase(".zip") else requested
     val finalName = uniqueSaveName(targetSaves, base, isZip)
     val target =
         safePath(targetSaves, finalName).also {
             require(it.parent.toAbsolutePath().normalize() == absoluteSavePath(targetSaves)) {
-                "存档名称无效：$finalName"
+                I18n.t("diagA2.savePathRules.invalidSaveNameDetail", finalName)
             }
         }
-    require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { "目标存档已存在：$finalName" }
+    require(!target.exists(LinkOption.NOFOLLOW_LINKS)) { I18n.t("core.saveManager.7", finalName) }
     return SaveCopyPlan(sourcePath, isZip, targetSaves, target, finalName)
 }
 
@@ -181,13 +186,13 @@ internal data class SaveImportPlan(
 internal fun prepareSaveImport(source: Path): SaveImportPlan {
     val incoming = source.toAbsolutePath().normalize()
     require(incoming.exists(LinkOption.NOFOLLOW_LINKS) && !isLinkPath(incoming)) {
-        "找不到要导入的存档：${source.fileName}"
+        I18n.t("saveA2.transactions.importSourceMissing", source.fileName)
     }
     val isDirectory = incoming.isDirectory(LinkOption.NOFOLLOW_LINKS)
     if (isDirectory) {
         val level = incoming.resolve("level.dat")
         require(level.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLinkPath(level)) {
-            "文件夹里没有 level.dat，不是有效的世界：${incoming.fileName}"
+            I18n.t("saveA2.transactions.importMissingLevelDat", incoming.fileName)
         }
         return SaveImportPlan(incoming, true, "", safeSaveLabel(incoming.name))
     }
@@ -195,7 +200,7 @@ internal fun prepareSaveImport(source: Path): SaveImportPlan {
         incoming.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
             incoming.name.endsWith(".zip", true),
     ) {
-        "存档只能导入 .zip 或世界文件夹：${incoming.fileName}"
+        I18n.t("saveA2.transactions.importUnsupported", incoming.fileName)
     }
     return SaveImportPlan(
         incoming,

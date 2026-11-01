@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -63,8 +64,8 @@ class DatapackManager(
         val locked = sessionLockHeld(world)
         val note =
             when {
-                packs == null -> "level.dat 无法解析，数据包开关暂时只读；可用「打开文件夹」手动整理。"
-                locked -> "世界正在游戏中打开，退出游戏后才能切换数据包。"
+                packs == null -> I18n.t("saveA1.datapackManager.packsUnreadable")
+                locked -> I18n.t("saveA1.datapackManager.locked")
                 else -> ""
             }
         return DatapackListing(
@@ -88,20 +89,22 @@ class DatapackManager(
         paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
-            "世界「$worldName」正在游戏中打开，请先退出游戏再安装数据包"
+            I18n.t("saveA1.datapackManager.installLocked", worldName)
         }
-        require(archive.isRegularFile(LinkOption.NOFOLLOW_LINKS)) { "找不到数据包文件：$archive" }
-        require(archive.name.endsWith(".zip", true)) { "数据包必须是 .zip 文件" }
-        require(!paths.isLink(archive)) { "数据包文件不能是符号链接或目录联接" }
+        require(archive.isRegularFile(LinkOption.NOFOLLOW_LINKS)) {
+            I18n.t("saveA1.datapackManager.fileNotFound", archive)
+        }
+        require(archive.name.endsWith(".zip", true)) { I18n.t("saveA1.datapackManager.mustBeZip") }
+        require(!paths.isLink(archive)) { I18n.t("saveA1.datapackManager.noLinks") }
         val packFormat = validatePackArchive(archive)
         val name = archive.name
         val directory = paths.datapacksDirectory(world, create = true)
         val target = directory.resolve(name)
         require(target.parent.toAbsolutePath().normalize() == paths.absolute(directory)) {
-            "数据包文件名无效：$name"
+            I18n.t("saveA1.datapackManager.invalidName", name)
         }
         require(!target.exists(LinkOption.NOFOLLOW_LINKS)) {
-            "存档里已有同名数据包，请先删除或改名：$name"
+            I18n.t("saveA1.datapackManager.nameConflict", name)
         }
         val staging = directory.resolve(".molifox-${UUID.randomUUID()}.tmp")
         try {
@@ -111,9 +114,13 @@ class DatapackManager(
             Files.deleteIfExists(staging)
         }
         store.log(
-            "已安装数据包：${store.instance(
-                instanceId,
-            ).name} / $worldName / $name（pack_format $packFormat）",
+            I18n.t(
+                "saveA1.datapackManager.logInstalled",
+                store.instance(instanceId).name,
+                worldName,
+                name,
+                packFormat,
+            ),
         )
         return name
     }
@@ -133,11 +140,9 @@ class DatapackManager(
         val world = enabledWorld(instanceId, worldName)
         paths.requireEntry(world, name)
         if (!levelDat.toggle(world, name, enabled)) return
-        store.log(
-            "数据包已${if (enabled) "启用" else "禁用"}：${store.instance(
-                instanceId,
-            ).name} / $worldName / $name",
-        )
+        val logKey =
+            if (enabled) "saveA1.datapackManager.logEnabled" else "saveA1.datapackManager.logDisabled"
+        store.log(I18n.t(logKey, store.instance(instanceId).name, worldName, name))
     }
 
     /** 删除一个数据包（移入回收站），并尽力清理 `level.dat` 里的旧条目；找不到或失败返回 false。 */
@@ -149,19 +154,29 @@ class DatapackManager(
         paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
-            "世界「$worldName」正在游戏中打开，请先退出游戏再删除数据包"
+            I18n.t("saveA1.datapackManager.deleteLocked", worldName)
         }
         val entry = runCatching { paths.datapackEntry(world, name) }.getOrNull() ?: return false
         return runCatching {
             store.platform.moveToTrash(entry)
-            store.log("数据包已移入回收站：${store.instance(instanceId).name} / $worldName / $name")
+            store.log(
+                I18n.t(
+                    "saveA1.datapackManager.logTrashed",
+                    store.instance(instanceId).name,
+                    worldName,
+                    name,
+                ),
+            )
             runCatching { levelDat.forget(world, name) }
                 .onFailure {
-                    store.log("清理 level.dat 里的数据包条目失败：${it.message ?: name}", true)
+                    store.log(
+                        I18n.t("saveA1.datapackManager.logForgetFailed", it.message ?: name),
+                        true,
+                    )
                 }
             true
         }.getOrElse {
-            store.log("删除数据包失败：${it.message ?: name}", true)
+            store.log(I18n.t("saveA1.datapackManager.logDeleteFailed", it.message ?: name), true)
             false
         }
     }
@@ -174,7 +189,7 @@ class DatapackManager(
         paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
-            "世界「$worldName」正在游戏中打开，请先退出游戏再切换数据包"
+            I18n.t("saveA1.datapackManager.toggleLocked", worldName)
         }
         return world
     }

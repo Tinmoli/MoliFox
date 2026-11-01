@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.desktop.EmptyState
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SecondaryButton
 
@@ -44,7 +45,7 @@ internal fun InstanceLoadingState(modifier: Modifier) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "正在读取实例…",
+            LocalStrings.current.t("pages.instances.loading"),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -57,6 +58,7 @@ internal fun InstanceErrorState(
     message: String,
     onRetry: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(
         modifier.padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -69,7 +71,7 @@ internal fun InstanceErrorState(
             MaterialTheme.colorScheme.error,
         )
         Spacer(Modifier.height(10.dp))
-        Text("无法读取游戏目录", style = MaterialTheme.typography.titleMedium)
+        Text(strings.t("pages.instances.error.title"), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(4.dp))
         Text(
             message,
@@ -80,7 +82,7 @@ internal fun InstanceErrorState(
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(12.dp))
-        SecondaryButton(onRetry) { Text("重试", fontSize = 13.sp) }
+        SecondaryButton(onRetry) { Text(strings.t("pages.instances.error.retry"), fontSize = 13.sp) }
     }
 }
 
@@ -92,29 +94,34 @@ internal fun InstanceEmptyState(
     onNew: () -> Unit,
     onClearFilter: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(
         modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         EmptyState(
-            if (noInstance) "还没有游戏实例" else "没有匹配的实例",
             if (noInstance) {
-                "安装一个新版本，从游戏目录导入，或直接新建实例。"
+                strings.t("pages.instances.empty.title")
             } else {
-                "调整关键词、版本、加载器或收藏筛选后再试。"
+                strings.t("pages.instances.empty.filteredTitle")
+            },
+            if (noInstance) {
+                strings.t("pages.instances.empty.body")
+            } else {
+                strings.t("pages.instances.empty.filteredBody")
             },
             Icons.Outlined.Widgets,
         )
         if (noInstance) {
             PrimaryButton(
-                "安装第一个版本",
+                strings.t("pages.instances.empty.new"),
                 Icons.Outlined.Add,
                 enabled = !busy,
                 onClick = onNew,
             )
         } else {
-            SecondaryButton(onClearFilter) { Text("清除筛选", fontSize = 13.sp) }
+            SecondaryButton(onClearFilter) { Text(strings.t("pages.instances.empty.clearFilter"), fontSize = 13.sp) }
         }
     }
 }

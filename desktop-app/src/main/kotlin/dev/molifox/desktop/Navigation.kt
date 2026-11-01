@@ -247,7 +247,7 @@ fun AppHeader(
                 ) {
                     if (showBetaNotice) {
                         Text(
-                            BETA_NOTICE,
+                            LocalStrings.current.t("app.betaNotice"),
                             modifier = Modifier.fillMaxWidth(),
                             color = colors.onSurfaceVariant,
                             fontSize = 12.sp,
@@ -263,9 +263,6 @@ fun AppHeader(
         HorizontalDivider(color = hairline())
     }
 }
-
-/** 顶部测试阶段提示；窗口过窄时整条不渲染。 */
-private const val BETA_NOTICE = "当前启动器为测试阶段，BUG 较多，请及时反馈"
 
 /** 顶部导航项：32dp 高、圆角 6、图标 17、文字 13，选中与悬停都用 120ms 颜色过渡。 */
 @Composable
@@ -316,7 +313,7 @@ private fun TopNavItem(
         Icon(page.icon, null, Modifier.size(17.dp), content)
         Spacer(Modifier.width(6.dp))
         Text(
-            page.title,
+            LocalStrings.current.t(page.titleKey),
             color = content,
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,

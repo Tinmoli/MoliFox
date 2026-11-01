@@ -5,6 +5,7 @@
 
 package dev.molifox.core.platform.files
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -16,7 +17,7 @@ fun readBoundedImage(
         require(maximumBytes in 1 until Int.MAX_VALUE)
         Files.newInputStream(path).use { input ->
             val bytes = input.readNBytes(maximumBytes + 1)
-            require(bytes.isNotEmpty() && bytes.size <= maximumBytes) { "图像文件为空或超过大小限制" }
+            require(bytes.isNotEmpty() && bytes.size <= maximumBytes) { I18n.t("coreD.image.emptyOrTooLarge") }
             bytes
         }
     }

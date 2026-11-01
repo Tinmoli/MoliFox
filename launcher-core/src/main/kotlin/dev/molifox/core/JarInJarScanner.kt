@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -120,16 +121,16 @@ internal class JarInJarScanner(
     ): JarInJarHostScan {
         budget.resetHost()
         if (!Files.isRegularFile(host, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(host)) {
-            return failedScan(budget, "模组文件不可读")
+            return failedScan(budget, I18n.t("diagA2.jarInJarScanner.modUnreadable"))
         }
         return try {
             ZipFile(host.toFile()).use { zip ->
                 readHost(zip, preferred, isCancelled, budget)
             }
         } catch (failure: ZipException) {
-            failedScan(budget, describeFailure("不是有效的 JAR 文件", failure))
+            failedScan(budget, describeFailure(I18n.t("diagA2.jarInJarScanner.invalidJar"), failure))
         } catch (failure: IOException) {
-            failedScan(budget, describeFailure("无法读取模组文件", failure))
+            failedScan(budget, describeFailure(I18n.t("diagA2.jarInJarScanner.modFileUnreadable"), failure))
         }
     }
 
@@ -167,9 +168,9 @@ internal class JarInJarScanner(
         for (declaration in declarations) {
             val limitReason =
                 when {
-                    isCancelled() -> "扫描已取消"
-                    budget.timedOut() -> "扫描超时"
-                    !budget.canAddNode() -> "内嵌节点过多"
+                    isCancelled() -> I18n.t("diagA2.jarInJarScanner.scanCancelled")
+                    budget.timedOut() -> I18n.t("diagA2.jarInJarScanner.scanTimedOut")
+                    !budget.canAddNode() -> I18n.t("diagA2.jarInJarScanner.tooManyNodes")
                     else -> null
                 }
             if (limitReason != null) {
@@ -177,7 +178,7 @@ internal class JarInJarScanner(
                 break
             }
             if (!isSafeEmbeddedPath(declaration.path)) {
-                budget.hostFailure("已拒绝不安全的嵌入路径")
+                budget.hostFailure(I18n.t("diagA2.jarInJarScanner.unsafeEmbeddedPath"))
             } else {
                 // 先扣节点预算再读出内容：子节点会在递归中优先被读出，事后计数会漏掉嵌套层级。
                 budget.addNode()
@@ -198,11 +199,11 @@ internal class JarInJarScanner(
     ): EmbeddedJar? {
         val entry = parent.getEntry(declaration.path)
         if (entry == null || entry.isDirectory) {
-            budget.hostFailure("声明的内嵌 JAR 不存在")
+            budget.hostFailure(I18n.t("diagA2.jarInJarScanner.embeddedMissing"))
             return null
         }
         if (!budget.canCopy(entry.size)) {
-            budget.hostFailure("内嵌 JAR 超过单条或剩余预算")
+            budget.hostFailure(I18n.t("diagA2.jarInJarScanner.embeddedOverBudget"))
             return null
         }
         val temporary = copier.createTemporaryFile()
@@ -228,10 +229,10 @@ internal class JarInJarScanner(
         try {
             readNode(zip, declaration, depth, preferred, isCancelled, budget)
         } catch (failure: ZipException) {
-            budget.hostFailure(describeFailure("内嵌 JAR 解析失败", failure))
+            budget.hostFailure(describeFailure(I18n.t("diagA2.jarInJarScanner.embeddedParseFailed"), failure))
             null
         } catch (failure: IOException) {
-            budget.hostFailure(describeFailure("内嵌 JAR 无法读取", failure))
+            budget.hostFailure(describeFailure(I18n.t("diagA2.jarInJarScanner.embeddedUnreadable"), failure))
             null
         }
 
@@ -245,7 +246,7 @@ internal class JarInJarScanner(
     ): EmbeddedJar? =
         ZipFile(temporary.toFile()).use { zip ->
             if (!budget.addArchiveEntries(copier.countEntries(zip, limits.maxArchiveEntries + 1))) {
-                budget.hostFailure("内嵌 JAR 条目过多")
+                budget.hostFailure(I18n.t("diagA2.jarInJarScanner.embeddedTooManyEntries"))
                 return@use null
             }
             val child = JarInJarDeclarations.read(zip, preferred)
@@ -253,7 +254,7 @@ internal class JarInJarScanner(
                 when {
                     child.embedded.isEmpty() -> emptyList()
                     depth >= limits.maxDepth -> {
-                        budget.hostFailure("嵌套层级超过限制")
+                        budget.hostFailure(I18n.t("diagA2.jarInJarScanner.depthExceeded"))
                         emptyList()
                     }
                     else -> resolve(zip, child.embedded, depth + 1, preferred, isCancelled, budget)

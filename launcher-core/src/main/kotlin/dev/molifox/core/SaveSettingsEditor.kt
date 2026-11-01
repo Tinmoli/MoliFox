@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
@@ -28,13 +29,18 @@ internal class SaveSettingsEditor(
         saveName: String,
         changes: SaveSettingsChanges,
     ): Boolean {
-        require(!changes.isEmpty) { "没有需要保存的设置" }
+        require(!changes.isEmpty) { I18n.t("saveA2.settingsEditor.noChanges") }
         val world = requireEditableWorld(instanceId, saveName)
         val level = world.resolve("level.dat")
         val before = Files.readAllBytes(level)
         val document =
             runCatching { readNbtDocument(level) }.getOrElse { failure ->
-                throw IllegalArgumentException("level.dat 无法解析：${failure.message ?: "格式错误"}；未写入")
+                throw IllegalArgumentException(
+                    I18n.t(
+                        "saveA2.settingsEditor.parseFailed",
+                        failure.message ?: I18n.t("saveA2.common.malformed"),
+                    ),
+                )
             }
         val data = document.root.compound("Data") ?: NbtCompound(emptyMap())
         val updated = withChanges(data, changes)
@@ -43,7 +49,7 @@ internal class SaveSettingsEditor(
         val bytes = encodeNbt(document.copy(root = root))
         backupLevelDat(store, world, before)
         replaceLevelDat(level, before, bytes)
-        store.log("已修改存档设置：$saveName（${changeSummary(changes)}）")
+        store.log(I18n.t("saveA2.settingsEditor.logChanged", saveName, changeSummary(changes)))
         return true
     }
 
@@ -54,12 +60,12 @@ internal class SaveSettingsEditor(
         store.instance(instanceId)
         requireSaveGameStopped(store, instanceId)
         require(!hasActiveInstanceJobs(instanceId)) {
-            "实例有任务进行中，暂时不能修改存档设置"
+            I18n.t("saveA2.settingsEditor.jobsRunning")
         }
         val world = saveSourcePath(savesDirectoryOf(store, instanceId), saveName)
-        require(world.isDirectory()) { "只有世界文件夹可以修改设置" }
+        require(world.isDirectory()) { I18n.t("saveA2.settingsEditor.notDirectory") }
         require(!sessionLockHeld(world)) {
-            "世界「${world.fileName}」正在游戏中打开，请先退出游戏"
+            I18n.t("core.saveManager.13", world.fileName)
         }
         return world
     }
@@ -79,7 +85,9 @@ internal class SaveSettingsEditor(
         val entries = LinkedHashMap(data.entries)
         changes.allowCommands?.let { entries.writeByteIfPresent(data, "allowCommands", it) }
         changes.difficulty?.let { difficulty ->
-            require(difficulty in MIN_DIFFICULTY..MAX_DIFFICULTY) { "难度取值无效：$difficulty" }
+            require(difficulty in MIN_DIFFICULTY..MAX_DIFFICULTY) {
+                I18n.t("saveA2.settingsEditor.invalidDifficulty", difficulty)
+            }
             entries.writeByteIfPresent(data, "Difficulty", difficulty)
         }
         changes.difficultyLocked?.let { entries.writeByteIfPresent(data, "DifficultyLocked", it) }
@@ -104,8 +112,11 @@ internal class SaveSettingsEditor(
 
     private fun changeSummary(changes: SaveSettingsChanges): String =
         buildList {
-            changes.allowCommands?.let { add("允许作弊=${if (it) "开" else "关"}") }
-            changes.difficulty?.let { add("难度=$it") }
-            changes.difficultyLocked?.let { add("锁定难度=${if (it) "开" else "关"}") }
+            changes.allowCommands?.let { add(I18n.t("saveA2.settingsEditor.allowCommands", onOff(it))) }
+            changes.difficulty?.let { add(I18n.t("saveA2.settingsEditor.difficulty", it)) }
+            changes.difficultyLocked?.let { add(I18n.t("saveA2.settingsEditor.difficultyLocked", onOff(it))) }
         }.joinToString("，")
+
+    /** 布尔标签在汇总里显示为「开 / 关」。 */
+    private fun onOff(value: Boolean): String = I18n.t(if (value) "saveA2.common.on" else "saveA2.common.off")
 }

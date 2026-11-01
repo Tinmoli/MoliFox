@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -52,13 +53,13 @@ class SkinService
         private fun microsoftAccount(id: String): Account =
             store.data.accounts
                 .find { it.id == id }
-                ?.also { require(it.type == AccountType.Microsoft) { "正版皮肤上传需要微软账户" } }
-                ?: error("账户已移除")
+                ?.also { require(it.type == AccountType.Microsoft) { I18n.t("core.skinService.1") } }
+                ?: error(I18n.t("core.skinService.2"))
 
         suspend fun refreshProfile(id: String): MinecraftSkinProfile {
             val account = microsoftAccount(id)
             val credential = credentials(id)
-            require(credential.uuid == account.uuid) { "授权档案与所选账户不匹配" }
+            require(credential.uuid == account.uuid) { I18n.t("core.skinService.3") }
             return saveProfile(
                 account,
                 network.authorizedJson("$api/minecraft/profile", credential.accessToken),
@@ -72,7 +73,7 @@ class SkinService
             require(
                 json.string("id").replace("-", "").equals(account.uuid.replace("-", ""), true),
             ) {
-                "服务器返回的角色与所选账户不匹配"
+                I18n.t("core.skinService.4")
             }
             val active =
                 json
@@ -115,7 +116,7 @@ class SkinService
         ): MinecraftSkinProfile =
             withContext(Dispatchers.IO) {
                 val account = microsoftAccount(id)
-                val entry = library.list().find { it.id == skinId } ?: error("皮肤已移除")
+                val entry = library.list().find { it.id == skinId } ?: error(I18n.t("core.skinLibrary.13"))
                 val file = library.texture(skinId)
                 validateUploadSkin(file, entry.variant)
                 val bytes = Files.newInputStream(file).use { it.readNBytes(1024 * 1024 + 1) }
@@ -125,10 +126,10 @@ class SkinService
                             "%02x".format(it)
                         } == entry.sha256,
                 ) {
-                    "皮肤已改变，请重新选择"
+                    I18n.t("core.skinService.5")
                 }
                 val credential = credentials(id)
-                require(credential.uuid == account.uuid) { "授权档案与所选账户不匹配" }
+                require(credential.uuid == account.uuid) { I18n.t("core.skinService.3") }
                 network.uploadMinecraftSkin(
                     "$api/minecraft/profile/skins",
                     credential.accessToken,
@@ -166,7 +167,12 @@ class SkinService
             variant: SkinVariant,
             failure: Throwable,
         ): MinecraftSkinProfile {
-            store.log("皮肤已上传，但档案刷新失败，请稍后刷新头像：${failure.message}")
+            store.log(
+                I18n.t(
+                    "miscA2.skinService.uploadedProfileRefreshFailed",
+                    failure.message,
+                ),
+            )
             return MinecraftSkinProfile(account.name, account.uuid, "", variant)
         }
 
@@ -180,8 +186,8 @@ class SkinService
             accountId: String,
             skinId: String?,
         ): OfflineSkinPlacement? {
-            val account = store.data.accounts.find { it.id == accountId } ?: error("账户已移除")
-            require(account.type == AccountType.Offline) { "此选项仅设置离线角色的本地预览" }
+            val account = store.data.accounts.find { it.id == accountId } ?: error(I18n.t("core.skinService.2"))
+            require(account.type == AccountType.Offline) { I18n.t("core.skinService.6") }
             if (skinId == null) {
                 store.mutate { data ->
                     data.copy(
@@ -198,7 +204,7 @@ class SkinService
                 return null
             }
             val entry =
-                library.list().find { it.id == skinId } ?: error("皮肤已不在皮肤库中")
+                library.list().find { it.id == skinId } ?: error(I18n.t("core.skinLibrary.11"))
             val file = library.texture(skinId)
             store.mutate { data ->
                 data.copy(
@@ -251,7 +257,7 @@ class SkinService
                 val directory = customSkinLoaderDirectory() ?: return@withContext null
                 val target = directory.resolve("$playerName.png")
                 if (Files.isSymbolicLink(target)) {
-                    store.log("未写入 CustomSkinLoader 本地皮肤：目标文件是符号链接")
+                    store.log(I18n.t("miscA2.skinService.customSkinLoaderSymlink"))
                     return@withContext null
                 }
                 try {
@@ -264,16 +270,16 @@ class SkinService
                     } finally {
                         staging.deleteIfExists()
                     }
-                    store.log("离线皮肤已写入 CustomSkinLoader：$target")
+                    store.log(I18n.t("miscA2.skinService.customSkinLoaderWritten", target))
                     target
                 } catch (failure: IOException) {
-                    store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.customSkinLoaderWriteFailed", failure.message))
                     null
                 } catch (failure: IllegalArgumentException) {
-                    store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.customSkinLoaderWriteFailed", failure.message))
                     null
                 } catch (failure: IllegalStateException) {
-                    store.log("未写入 CustomSkinLoader 本地皮肤：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.customSkinLoaderWriteFailed", failure.message))
                     null
                 }
             }
@@ -286,13 +292,13 @@ class SkinService
                 try {
                     account.localSkinId.takeIf { it.isNotBlank() }?.let { library.texture(it) }
                 } catch (failure: IOException) {
-                    store.log("离线皮肤预览不可用：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.offlinePreviewUnavailable", failure.message))
                     null
                 } catch (failure: IllegalArgumentException) {
-                    store.log("离线皮肤预览不可用：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.offlinePreviewUnavailable", failure.message))
                     null
                 } catch (failure: IllegalStateException) {
-                    store.log("离线皮肤预览不可用：${failure.message}")
+                    store.log(I18n.t("miscA2.skinService.offlinePreviewUnavailable", failure.message))
                     null
                 }
             } else {
@@ -303,8 +309,8 @@ class SkinService
             accountId: String,
             destination: Path,
         ) {
-            val account = store.data.accounts.find { it.id == accountId } ?: error("账户已移除")
-            val file = texture(account) ?: error("当前账户没有可导出的皮肤纹理，请先刷新档案或导入本地皮肤")
+            val account = store.data.accounts.find { it.id == accountId } ?: error(I18n.t("core.skinService.2"))
+            val file = texture(account) ?: error(I18n.t("core.skinService.7"))
             exportSkinTexture(file, destination)
         }
     }

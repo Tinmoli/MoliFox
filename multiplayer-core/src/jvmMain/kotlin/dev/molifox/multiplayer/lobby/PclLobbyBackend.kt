@@ -1,6 +1,7 @@
 // 联机后端：编排世界发现、房主/房客会话与 EasyTier 运行时，向上只暴露中性状态。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.MultiplayerSettings
@@ -150,7 +151,7 @@ class PclLobbyBackend(
 
     /** 下载/安装统一在后台作用域执行：切换页面不会中断，只有显式取消或关闭启动器才会停。 */
     override suspend fun prepareRuntime(): Result<Unit> =
-        startRuntimeInstall("下载 EasyTier 失败") { onProgress ->
+        startRuntimeInstall(I18n.t("multiplayer.pclLobbyBackend.1")) { onProgress ->
             installRunner?.invoke(onProgress)
                 ?: withContext(Dispatchers.IO) { installer.install(onProgress).getOrThrow() }
         }.await()
@@ -189,7 +190,7 @@ class PclLobbyBackend(
     override suspend fun refreshWorlds(): Result<Unit> =
         runCatching {
             if (store.current.connected || store.current.busy) {
-                throw IOException("联机正在进行中，无法刷新世界列表。")
+                throw IOException(I18n.t("multiplayer.pclLobbyBackend.2"))
             }
             store.update {
                 it.copy(
@@ -208,10 +209,10 @@ class PclLobbyBackend(
     override suspend fun host(worldPort: Int?): Result<Unit> =
         commandMutex.withLock {
             if (store.current.connected || store.current.busy) {
-                return@withLock store.fail("联机正在进行中，请先退出当前房间。")
+                return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.3"))
             }
             if (store.current.runtime?.installed != true) {
-                return@withLock store.fail("请先下载 EasyTier 运行时。")
+                return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.4"))
             }
             val world =
                 resolveWorld(store.current.worlds, worldPort)
@@ -225,13 +226,13 @@ class PclLobbyBackend(
     override suspend fun join(roomCode: String): Result<Unit> =
         commandMutex.withLock {
             if (store.current.connected || store.current.busy) {
-                return@withLock store.fail("联机正在进行中，请先退出当前房间。")
+                return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.3"))
             }
             val code =
                 RoomCode.parse(roomCode)
-                    ?: return@withLock store.fail("邀请码无效，请检查是否为 21 字符的联机邀请码。")
+                    ?: return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.5"))
             if (store.current.runtime?.installed != true) {
-                return@withLock store.fail("请先下载 EasyTier 运行时。")
+                return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.4"))
             }
             scanner.stop()
             coordinator.joinRoom(code).also { result ->
@@ -259,7 +260,7 @@ class PclLobbyBackend(
     }
 
     override suspend fun importRuntime(archivePath: String): Result<Unit> =
-        startRuntimeInstall("安装本地 EasyTier 安装包失败") { onProgress ->
+        startRuntimeInstall(I18n.t("multiplayer.pclLobbyBackend.6")) { onProgress ->
             importRunner?.invoke(archivePath, onProgress)
                 ?: withContext(Dispatchers.IO) {
                     installer.installFromArchive(Path.of(archivePath), onProgress).getOrThrow()

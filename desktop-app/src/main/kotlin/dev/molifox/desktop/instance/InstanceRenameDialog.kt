@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.validateInstanceDirectoryName
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.UiActions
 
 /** 重命名实例：确认后由控制器移动目录，失败时保留输入并显示原因。 */
@@ -33,6 +34,7 @@ internal fun InstanceRenameDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var name by remember { mutableStateOf(instance.name) }
     var renameError by remember { mutableStateOf("") }
     val trimmed = name.trim()
@@ -51,7 +53,7 @@ internal fun InstanceRenameDialog(
         }.getOrDefault(instance.gameDirectoryName)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("重命名实例") },
+        title = { Text(strings.t("dialogs.rename.title")) },
         text = {
             Column {
                 OutlinedTextField(
@@ -61,7 +63,7 @@ internal fun InstanceRenameDialog(
                         renameError = ""
                     },
                     Modifier.fillMaxWidth(),
-                    label = { Text("实例名称") },
+                    label = { Text(strings.t("dialogs.rename.nameLabel")) },
                     singleLine = true,
                     isError = validation != null || renameError.isNotBlank(),
                 )
@@ -71,13 +73,11 @@ internal fun InstanceRenameDialog(
                         validation != null -> validation
                         renameError.isNotBlank() -> renameError
                         trimmed == instance.name ->
-                            "输入新的名称；保存时会把 versions/$currentDirectory 一并改名。"
+                            strings.t("dialogs.rename.inputHint", currentDirectory)
                         actions.controller.isInstanceBusy(instance.id) ->
-                            "请等待当前任务结束后再重命名。"
+                            strings.t("dialogs.rename.busyHint")
                         else ->
-                            "会把 versions/$currentDirectory 重命名为 versions/$trimmed，" +
-                                "并同步同名 JSON/JAR、" +
-                                "版本配置和其他版本对它的引用。"
+                            strings.t("dialogs.rename.message", currentDirectory, trimmed)
                     },
                     fontSize = 11.sp,
                     color =
@@ -102,13 +102,13 @@ internal fun InstanceRenameDialog(
                     if (failure == null) {
                         onDismiss()
                     } else {
-                        renameError = failure.message ?: "重命名失败"
+                        renameError = failure.message ?: strings.t("dialogs.rename.failed")
                     }
                 },
             ) {
-                Text("保存")
+                Text(strings.t("dialogs.common.save"))
             }
         },
-        dismissButton = { TextButton({ onDismiss() }) { Text("取消") } },
+        dismissButton = { TextButton({ onDismiss() }) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }

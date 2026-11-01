@@ -13,6 +13,7 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.JavaRuntimeSource
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import kotlin.math.max
 
@@ -30,9 +31,9 @@ internal fun javaRuntimeLabel(
     runtime: JavaRuntime,
     fallbackArchitecture: String,
 ): String {
-    if (runtime.majorVersion <= 0) return "未知版本"
+    if (runtime.majorVersion <= 0) return I18n.t("settings.java.runtime.unknown")
     val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
-    return version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
+    return I18n.t("settings.java.runtime.label", version, javaBits(runtime, fallbackArchitecture))
 }
 
 internal fun javaBits(
@@ -70,9 +71,9 @@ internal fun javaBits(
 /** 来源文案：启动器自己安装的 Java 标成「启动器安装」，与系统安装区分开。 */
 internal fun javaSourceTitle(source: JavaRuntimeSource): String =
     when (source) {
-        JavaRuntimeSource.Bundled -> "启动器安装"
-        JavaRuntimeSource.System -> "系统"
-        JavaRuntimeSource.Custom -> "自定义"
+        JavaRuntimeSource.Bundled -> I18n.t("settings.java.source.bundled")
+        JavaRuntimeSource.System -> I18n.t("settings.java.source.system")
+        JavaRuntimeSource.Custom -> I18n.t("settings.java.source.custom")
     }
 
 /** 占用文案：只有启动器安装的运行时能可靠统计；未知时返回空串。 */
@@ -96,9 +97,9 @@ internal fun javaRuntimeHeading(
     runtime: JavaRuntime,
     fallbackArchitecture: String = "x64",
 ): String {
-    if (!runtime.usable) return "不可用的 Java（" + runtime.invalidReason + "）"
+    if (!runtime.usable) return I18n.t("settings.java.runtime.unusable", runtime.invalidReason)
     val version = runtime.version.ifBlank { runtime.majorVersion.toString() }
-    return "Java " + version + "（" + javaBits(runtime, fallbackArchitecture) + " 位）"
+    return I18n.t("settings.java.heading", version, javaBits(runtime, fallbackArchitecture))
 }
 
 /** 当前 Java 的可读名称：空路径表示自动，找不到运行时按自定义处理。 */
@@ -107,10 +108,10 @@ internal fun javaChoiceName(
     runtimes: List<JavaRuntime>,
     ignoreCase: Boolean,
 ): String {
-    if (path.isBlank()) return "自动按游戏版本匹配"
+    if (path.isBlank()) return I18n.t("settings.java.picker.row.auto")
     return runtimes.firstOrNull { sameJavaPath(it.path, path, ignoreCase) }?.let {
         javaRuntimeHeading(it)
-    } ?: "自定义 Java"
+    } ?: I18n.t("settings.java.picker.row.custom")
 }
 
 /** 路径比较：Windows 忽略大小写；解析失败时只比较原文。 */

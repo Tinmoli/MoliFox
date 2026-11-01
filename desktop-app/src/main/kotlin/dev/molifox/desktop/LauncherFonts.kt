@@ -4,6 +4,7 @@ package dev.molifox.desktop
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.text.platform.Typeface
+import dev.molifox.core.i18n.I18n
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.FontStyle
 import java.io.File
@@ -30,13 +31,13 @@ fun launcherFontFamily(choice: String): FontFamily =
                 val name = canonicalSystemFontName(choice.removePrefix("system:"))
                 val native =
                     requireNotNull(FontMgr.default.matchFamilyStyle(name, FontStyle.NORMAL)) {
-                        "无法加载系统字体：$name"
+                        I18n.t("settings.font.loadFailed", name)
                     }
                 FontFamily(Typeface(native, name))
             }
         }
     }.getOrElse {
-        System.err.println("加载界面字体失败，使用系统默认字体：${it.stackTraceToString()}")
+        System.err.println(I18n.t("logs.font.loadFailed", it.stackTraceToString()))
         FontFamily.Default
     }
 
@@ -61,15 +62,17 @@ internal fun fontSupportMessage(choice: String): String? {
         if (font.canDisplayUpTo(CHINESE_FONT_SAMPLE) == -1) {
             null
         } else {
-            "此字体缺少部分中文字形：这些汉字会使用系统后备字体。请选含中文的字体以统一中英文外观。"
+            I18n.t("settings.font.support.missing")
         }
     }.getOrElse {
-        System.err.println("检查字体字形失败：${it.stackTraceToString()}")
-        "未能读取所选字体，请重新选择或导入有效字体。"
+        System.err.println(I18n.t("logs.font.supportCheckFailed", it.stackTraceToString()))
+        I18n.t("settings.font.support.unreadable")
     }
 }
 
 private fun selectedFontFile(choice: String): File =
     File(choice.removePrefix("file:")).also {
-        require(it.isFile && it.length() <= MAX_FONT_FILE_SIZE_BYTES) { "字体文件不存在或超过大小限制" }
+        require(it.isFile && it.length() <= MAX_FONT_FILE_SIZE_BYTES) {
+            I18n.t("settings.font.fileInvalid")
+        }
     }

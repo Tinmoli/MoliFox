@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 
@@ -57,7 +58,7 @@ internal class ModUpdateBatchLookup(
         val failure = lookup.failure
         if (failure != null) {
             store.log(
-                "${source.provider} 批量版本查询失败，回退到逐项目查询：$failure",
+                I18n.t("packsC.batchLookup.fallback", source.provider, failure),
                 true,
             )
             return null
@@ -76,11 +77,11 @@ internal class ModUpdateBatchLookup(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: IOException) {
-            BatchLookup(null, shortErrorMessage(error).ifBlank { "请求失败" })
+            BatchLookup(null, shortErrorMessage(error).ifBlank { I18n.t("packsB2.packUpdates.requestFailed") })
         } catch (error: IllegalStateException) {
-            BatchLookup(null, shortErrorMessage(error).ifBlank { "请求失败" })
+            BatchLookup(null, shortErrorMessage(error).ifBlank { I18n.t("packsB2.packUpdates.requestFailed") })
         } catch (error: JsonParseException) {
-            BatchLookup(null, shortErrorMessage(error).ifBlank { "请求失败" })
+            BatchLookup(null, shortErrorMessage(error).ifBlank { I18n.t("packsB2.packUpdates.requestFailed") })
         }
 }
 

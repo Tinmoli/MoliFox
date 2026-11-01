@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import okhttp3.Response
 import java.io.IOException
 import java.net.URI
@@ -50,7 +51,7 @@ internal fun requireCurseForgeUrl(url: String) {
             uri.userInfo == null &&
             uri.rawFragment == null,
     ) {
-        "无效的 CurseForge 服务地址"
+        I18n.t("networkA.curseForge.invalidUrl")
     }
 }
 
@@ -59,12 +60,14 @@ internal fun readCurseForgeJson(response: Response): JsonObject {
     if (!response.isSuccessful) throw curseForgeHttpException(response.code)
     val bytes =
         response.body?.byteStream()?.use { it.readNBytes(MAX_CURSEFORGE_RESPONSE_BYTES + 1) }
-            ?: error("CurseForge 响应为空")
-    require(bytes.size <= MAX_CURSEFORGE_RESPONSE_BYTES) { "CurseForge 响应过大" }
+            ?: error(I18n.t("networkA.curseForge.emptyResponse"))
+    require(bytes.size <= MAX_CURSEFORGE_RESPONSE_BYTES) {
+        I18n.t("networkA.curseForge.responseTooLarge")
+    }
     return try {
         JsonParser.parseString(bytes.toString(Charsets.UTF_8)).asJsonObject
     } catch (_: Exception) {
-        error("CurseForge 响应格式无效")
+        error(I18n.t("networkA.curseForge.invalidResponse"))
     }
 }
 
@@ -72,9 +75,9 @@ internal fun curseForgeHttpException(code: Int): CurseForgeHttpException =
     CurseForgeHttpException(
         code,
         when (code) {
-            NET_HTTP_NOT_FOUND -> "CurseForge 项目或文件不存在"
-            NET_HTTP_TOO_MANY_REQUESTS -> "CurseForge 请求过于频繁，请稍后重试"
-            in HTTP_REDIRECT_MIN..HTTP_REDIRECT_MAX -> "CurseForge 服务返回重定向，已停止请求"
-            else -> "CurseForge 请求失败 ($code)"
+            NET_HTTP_NOT_FOUND -> I18n.t("networkA.curseForge.notFound")
+            NET_HTTP_TOO_MANY_REQUESTS -> I18n.t("networkA.curseForge.rateLimited")
+            in HTTP_REDIRECT_MIN..HTTP_REDIRECT_MAX -> I18n.t("networkA.curseForge.redirected")
+            else -> I18n.t("networkA.curseForge.requestFailed", code)
         },
     )

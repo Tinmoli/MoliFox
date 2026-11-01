@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 
 private const val MAX_DEPENDENCY_RESOLUTION_PASSES = 40
 private const val MAX_CONTENT_DEPENDENCIES = 100
@@ -49,7 +50,7 @@ internal class ContentDependencyResolver(
             val plan = runPass()
             if (plan != null) return plan
         }
-        error("依赖版本无法收敛，请选择其他资源版本")
+        error(I18n.t("core.contentDependencyResolver.1"))
     }
 
     /** 跑一轮依赖遍历；版本仍在变化时返回 null，由 [resolve] 进入下一轮。 */
@@ -86,15 +87,17 @@ internal class ContentDependencyResolver(
             val conflict =
                 listOfNotNull(planned, installed).any { versionId.isBlank() || it == versionId }
             require(!conflict) {
-                "资源与已安装或待安装项目冲突：$id" +
-                    (if (versionId.isBlank()) "" else " / $versionId") + "，请先处理冲突"
+                I18n.t(
+                    "contentA1.dependency.conflict",
+                    if (versionId.isBlank()) id else "$id / $versionId",
+                )
             }
         }
     }
 
     private fun requireUniqueFilenames(state: ContentPassState) {
         val names = state.files.values.map { "${it.folder}/${it.filename}" }
-        require(names.distinct().size == state.files.size) { "不同项目包含同名文件，无法安全安装" }
+        require(names.distinct().size == state.files.size) { I18n.t("core.contentDependencyResolver.3") }
     }
 
     private fun buildPlan(state: ContentPassState): ContentInstallPlan {
@@ -104,7 +107,7 @@ internal class ContentDependencyResolver(
                     .first()
                     .hit.title
             } else {
-                "更新 ${batch.requests.size} 项资源"
+                I18n.t("core.contentDependencyResolver.4", batch.requests.size)
             }
         return ContentInstallPlan(
             batch.instanceId,
@@ -152,11 +155,11 @@ internal class ContentDependencyResolver(
             id: String,
             requested: String,
         ): Boolean {
-            require(state.chosen.size < MAX_CONTENT_DEPENDENCIES) { "资源依赖过多" }
+            require(state.chosen.size < MAX_CONTENT_DEPENDENCIES) { I18n.t("core.contentDependencyResolver.5") }
             if (requested.isNotBlank()) {
                 val previous = state.required.putIfAbsent(id, requested)
                 require(previous == null || previous == requested) {
-                    "同一依赖要求不同版本：$id ($previous / $requested)，请更换资源版本"
+                    I18n.t("core.contentDependencyResolver.6", id, previous, requested)
                 }
             }
             val chosen = state.chosen[id] ?: return false
@@ -166,10 +169,10 @@ internal class ContentDependencyResolver(
 
         private fun requireSupported(kind: String) {
             require(kind in setOf("mod", "resourcepack", "shader")) {
-                "不支持作为前置安装的资源类型：$kind"
+                I18n.t("core.contentDependencyResolver.7", kind)
             }
             require(kind != "mod" || batch.instance.loader != LoaderType.Vanilla) {
-                "此资源需要模组加载器，请先选择带加载器的实例"
+                I18n.t("core.contentDependencyResolver.8")
             }
         }
 
@@ -186,7 +189,7 @@ internal class ContentDependencyResolver(
                     ?.takeIf { it.isNotBlank() }
             val pinned = state.required[id] ?: guesses[id] ?: lockedVersion
             require(lockedVersion == null || pinned == lockedVersion) {
-                "依赖或项目版本已锁定：$id，请先解锁再更换"
+                I18n.t("core.contentDependencyResolver.9", id)
             }
             val info =
                 if (pinned != null) {
@@ -194,9 +197,9 @@ internal class ContentDependencyResolver(
                 } else {
                     cache.latestCompatible(id, kind, batch.instance)
                 }
-            require(info.string("project_id") == id) { "资源版本与项目不匹配：$id" }
+            require(info.string("project_id") == id) { I18n.t("core.contentDependencyResolver.10", id) }
             require(isCompatibleVersion(info, batch.instance, kind)) {
-                "${info.string("name")} 与当前游戏版本或加载器不兼容"
+                I18n.t("core.contentDependencyResolver.11", info.string("name"))
             }
             return info
         }
@@ -238,7 +241,7 @@ internal class ContentDependencyResolver(
         ) {
             if (dependencyId.isBlank()) {
                 require(relation != "required") {
-                    "此资源需要手动提供外部依赖：${dependency.string("file_name")}"
+                    I18n.t("core.contentDependencyResolver.12", dependency.string("file_name"))
                 }
                 return
             }
@@ -268,14 +271,16 @@ internal class ContentDependencyResolver(
             val file =
                 availableFiles.firstOrNull { it.boolean("primary") }
                     ?: availableFiles.firstOrNull()
-                    ?: error("资源没有可下载文件")
+                    ?: error(I18n.t("core.contentDependencyResolver.13"))
             val filename = safeFilename(file.string("filename"))
             if (info.boolean("manual_download")) {
                 state.manual[id] =
                     ManualContentFile(id, info.string("id"), filename, info.string("website"))
                 return
             }
-            require(kind != "mod" || filename.endsWith(".jar", true)) { "模组文件必须是 JAR" }
+            require(kind != "mod" || filename.endsWith(".jar", true)) {
+                I18n.t("contentA1.dependency.modFileNotJar")
+            }
             state.files[id] = plannedFile(id, kind, info, file, filename)
         }
 
@@ -290,7 +295,7 @@ internal class ContentDependencyResolver(
             val sha512 = hashes.string("sha512")
             val hash = sha512.ifBlank { hashes.string("sha1") }
             val pattern = if (sha512.isNotBlank()) SHA512_HEX_PATTERN else SHA1_HEX_PATTERN
-            require(hash.matches(Regex(pattern))) { "资源文件缺少有效校验信息" }
+            require(hash.matches(Regex(pattern))) { I18n.t("contentA1.dependency.missingHash") }
             return PlannedContentFile(
                 id,
                 info.string("name"),
@@ -344,7 +349,7 @@ private class ContentLookupCache(
                 }
             available.firstOrNull { it.string("version_type") == "release" }
                 ?: available.firstOrNull()
-                ?: error("资源 $id 没有兼容当前游戏的版本")
+                ?: error(I18n.t("core.contentDependencyResolver.14", id))
         }
 }
 

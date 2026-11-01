@@ -103,11 +103,15 @@ fun TaskProgressButton(
         }
     }
     if (state.jobs.isEmpty()) return
+    val strings = LocalStrings.current
     Surface(
         modifier
             .padding(bottom = 60.dp)
-            .semantics { contentDescription = "打开任务中心" }
-            .clickable(role = Role.Button, onClickLabel = "打开任务中心") { actions.showTasks() },
+            .semantics { contentDescription = strings.t("pages.tasks.open") }
+            .clickable(
+                role = Role.Button,
+                onClickLabel = strings.t("pages.tasks.open"),
+            ) { actions.showTasks() },
         shape = RoundedCornerShape(Metrics.cardRadius),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .35f)),
@@ -139,16 +143,24 @@ fun TaskProgressButton(
             }
             Column {
                 Text(
-                    if (active.isNotEmpty()) "${active.size} 个任务进行中" else "任务已结束",
+                    if (active.isNotEmpty()) {
+                        strings.t("pages.tasks.active", active.size)
+                    } else {
+                        strings.t("pages.tasks.finished")
+                    },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
                     if (active.isNotEmpty()) {
                         // 长阶段（数千个资源文件）必须露出阶段名，否则看起来像卡死。
-                        "${(progress * 100).toInt()}% · ${active.first().detail}"
+                        strings.t(
+                            "pages.tasks.progressDetail",
+                            (progress * 100).toInt(),
+                            active.first().detail,
+                        )
                     } else {
-                        "即将自动收起"
+                        strings.t("pages.tasks.autoHide")
                     },
                     fontSize = 11.sp,
                     maxLines = 1,
@@ -165,6 +177,7 @@ fun TaskCenterDialog(
     state: LauncherState,
     actions: UiActions,
 ) {
+    val strings = LocalStrings.current
     val active = state.jobs.filter { it.active() }
     var cancelling by remember { mutableStateOf<DownloadJob?>(null) }
     Dialog(
@@ -189,11 +202,15 @@ fun TaskCenterDialog(
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text("任务中心", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        strings.t("pages.tasks.title"),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                     Spacer(Modifier.weight(1f))
                     SmallIconButton(
                         Icons.Outlined.Close,
-                        "关闭任务中心",
+                        strings.t("pages.tasks.close"),
                         onClick = { actions.taskCenterOpen = false },
                     )
                 }
@@ -208,7 +225,7 @@ fun TaskCenterDialog(
                         verticalArrangement = Arrangement.spacedBy(22.dp),
                     ) {
                         TaskStatistic(
-                            "当前进度",
+                            strings.t("pages.tasks.stat.progress"),
                             if (active.isEmpty()) {
                                 "—"
                             } else {
@@ -216,7 +233,7 @@ fun TaskCenterDialog(
                             },
                         )
                         TaskStatistic(
-                            "下载速度",
+                            strings.t("pages.tasks.stat.speed"),
                             if (active.any { it.totalFiles > 0 }) {
                                 transferSize(active.sumOf { it.bytesPerSecond }) + "/s"
                             } else {
@@ -224,7 +241,7 @@ fun TaskCenterDialog(
                             },
                         )
                         TaskStatistic(
-                            "剩余文件",
+                            strings.t("pages.tasks.stat.remaining"),
                             if (active.any { it.totalFiles > 0 }) {
                                 active
                                     .sumOf { (it.totalFiles - it.completedFiles).coerceAtLeast(0) }
@@ -235,7 +252,7 @@ fun TaskCenterDialog(
                         )
                         Spacer(Modifier.weight(1f))
                         Text(
-                            "下载、校验和安装会在后台继续进行。",
+                            strings.t("pages.tasks.backgroundNote"),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -258,9 +275,9 @@ fun TaskCenterDialog(
                                         Modifier.size(36.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Text("这里暂时没有任务", fontSize = 14.sp)
+                                    Text(strings.t("pages.tasks.empty.title"), fontSize = 14.sp)
                                     Text(
-                                        "安装游戏或下载资源后，进度会显示在这里。",
+                                        strings.t("pages.tasks.empty.body"),
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -287,17 +304,21 @@ fun TaskCenterDialog(
     cancelling?.let { job ->
         AlertDialog(
             onDismissRequest = { cancelling = null },
-            title = { Text("取消任务？") },
-            text = { Text(job.title + "\n取消后删除本次下载的文件和分段缓存。已有文件与其他实例共用的文件会保留。") },
+            title = { Text(strings.t("pages.tasks.cancel.title")) },
+            text = { Text(strings.t("pages.tasks.cancel.message", job.title)) },
             confirmButton = {
                 TextButton({
                     actions.controller.jobs.cancel(job.id)
                     cancelling = null
                 }) {
-                    Text("确定取消")
+                    Text(strings.t("pages.tasks.cancel.confirm"))
                 }
             },
-            dismissButton = { TextButton({ cancelling = null }) { Text("继续任务") } },
+            dismissButton = {
+                TextButton({ cancelling = null }) {
+                    Text(strings.t("pages.tasks.cancel.keep"))
+                }
+            },
         )
     }
 }
@@ -323,6 +344,7 @@ private fun TaskDetailCard(
     job: DownloadJob,
     onCancel: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Surface(
         shape = RoundedCornerShape(Metrics.cardRadius),
         border = BorderStroke(1.dp, hairline()),
@@ -339,7 +361,11 @@ private fun TaskDetailCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (job.active()) {
-                    SmallIconButton(Icons.Outlined.Close, "取消任务 ${job.title}", onClick = onCancel)
+                    SmallIconButton(
+                        Icons.Outlined.Close,
+                        strings.t("pages.tasks.cancel.action", job.title),
+                        onClick = onCancel,
+                    )
                 }
             }
             Text(
@@ -366,19 +392,26 @@ private fun TaskDetailCard(
             ) {
                 val label =
                     when (job.status) {
-                        JobStatus.Queued -> "等待中"
-                        JobStatus.Running -> "进行中"
-                        JobStatus.Completed -> "已完成"
-                        JobStatus.Cancelled -> "已取消"
-                        JobStatus.Failed -> "失败"
+                        JobStatus.Queued -> strings.t("pages.tasks.status.queued")
+                        JobStatus.Running -> strings.t("pages.tasks.status.running")
+                        JobStatus.Completed -> strings.t("pages.tasks.status.completed")
+                        JobStatus.Cancelled -> strings.t("pages.tasks.status.cancelled")
+                        JobStatus.Failed -> strings.t("pages.tasks.status.failed")
                     }
                 Text(
-                    "$label · ${(job.progress * 100).toInt()}%",
+                    strings.t("pages.tasks.status.progress", label, (job.progress * 100).toInt()),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (job.totalFiles > 0) {
-                    Text("文件 ${job.completedFiles}/${job.totalFiles}", fontSize = 11.sp)
+                    Text(
+                        strings.t(
+                            "pages.tasks.files",
+                            job.completedFiles,
+                            job.totalFiles,
+                        ),
+                        fontSize = 11.sp,
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 if (job.totalBytes > 0) {

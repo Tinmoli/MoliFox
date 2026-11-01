@@ -1,6 +1,7 @@
 // 使用同一网络会话并行抽样下载源，按小块传输速度排序；取消会关闭探测请求，不落盘。
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -76,7 +77,7 @@ private class DownloadProbeCallback(
         call: Call,
         e: IOException,
     ) {
-        report("下载源测速未完成：${request.url.host} · ${e.message}")
+        report(I18n.t("networkA.probe.incomplete", request.url.host, e.message))
         if (continuation.isActive) continuation.resumeWith(Result.success(null))
     }
 
@@ -88,10 +89,16 @@ private class DownloadProbeCallback(
             try {
                 response.use { sampleDownloadSpeed(it, started) }
             } catch (failure: IOException) {
-                report("下载源测速读取失败：${request.url.host} · ${failure.message}")
+                report(I18n.t("networkA.probe.readFailed", request.url.host, failure.message))
                 null
             }
-        report("下载源测速：${request.url.host} · ${speed?.toLong()?.let { "$it B/s" } ?: "不可用"}")
+        report(
+            I18n.t(
+                "networkA.probe.result",
+                request.url.host,
+                speed?.toLong()?.let { "$it B/s" } ?: I18n.t("networkA.probe.unavailable"),
+            ),
+        )
         if (continuation.isActive) continuation.resumeWith(Result.success(speed))
     }
 }

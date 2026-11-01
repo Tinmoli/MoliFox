@@ -1,6 +1,7 @@
 // 房客的端口编排：EasyTier 转发、本机转发与局域网广播，统一关闭顺序。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.easytier.EasyTierForwardProtocol
 import dev.molifox.multiplayer.lan.MinecraftLanBroadcast
 import dev.molifox.multiplayer.net.LocalPortForward
@@ -32,7 +33,7 @@ internal class GuestPortTransport(
         forwarder
             .addPortForward(EasyTierForwardProtocol.TCP, localPort, targetHost, targetPort)
             .getOrElse { failure ->
-                throw IOException("无法建立 EasyTier 端口转发：${failure.message}", failure)
+                throw IOException(I18n.t("multiplayer.guestPortTransport.1", failure.message), failure)
             }
     }
 
@@ -44,7 +45,9 @@ internal class GuestPortTransport(
     ) {
         forwarder
             .addPortForward(EasyTierForwardProtocol.UDP, localPort, targetHost, targetPort)
-            .onFailure { logger("UDP 端口转发失败，仅使用 TCP：${it.message}", true) }
+            .onFailure { failure ->
+                logger(I18n.t("multiplayerB.guestPortTransport.udpForwardFailed", failure.message), true)
+            }
     }
 
     /** 建立本机端口转发并返回可展示的端口。 */
@@ -52,7 +55,7 @@ internal class GuestPortTransport(
         val created = localForwardFactory(minecraftLocalPort)
         created.start().getOrElse { failure ->
             created.close()
-            throw IOException("无法建立本机端口转发：${failure.message}", failure)
+            throw IOException(I18n.t("multiplayer.guestPortTransport.2", failure.message), failure)
         }
         localForward = created
         return created.port
@@ -66,7 +69,7 @@ internal class GuestPortTransport(
         val created = broadcastFactory(description, localPort)
         created.start().getOrElse { failure ->
             created.close()
-            throw IOException("无法向本机游戏广播房间：${failure.message}", failure)
+            throw IOException(I18n.t("multiplayer.guestPortTransport.3", failure.message), failure)
         }
         broadcast = created
     }
@@ -74,12 +77,16 @@ internal class GuestPortTransport(
     override fun close() {
         broadcast?.let { active ->
             runCatching { active.stop() }
-                .onFailure { logger("停止局域网广播失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.guestPortTransport.stopBroadcastFailed", failure.message), true)
+                }
         }
         broadcast = null
         localForward?.let { active ->
             runCatching { active.close() }
-                .onFailure { logger("关闭本机端口转发失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.guestPortTransport.closeLocalForwardFailed", failure.message), true)
+                }
         }
         localForward = null
     }

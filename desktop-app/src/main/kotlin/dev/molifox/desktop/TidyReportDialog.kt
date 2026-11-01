@@ -75,28 +75,29 @@ fun TidyReportDialog(
     report: TidyReport,
     onDismiss: () -> Unit,
 ) {
-    Modal("整理实例目录", instanceName, onDismiss = onDismiss) {
+    val strings = LocalStrings.current
+    Modal(strings.t("dialogs.tidy.title"), instanceName, onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SettingsSection("整理结果", "只清理实例目录内的空目录，模组与存档一律不动。") {
-                SettingRow("删除空目录", "实例目录中不再使用的空文件夹") {
-                    Text("${report.removedEmptyDirs} 个", fontSize = 13.sp)
+            SettingsSection(strings.t("dialogs.tidy.result"), strings.t("dialogs.tidy.resultHint")) {
+                SettingRow(strings.t("dialogs.tidy.emptyDirs"), strings.t("dialogs.tidy.emptyDirsHint")) {
+                    Text(strings.t("dialogs.tidy.count", report.removedEmptyDirs), fontSize = 13.sp)
                 }
-                SettingRow("已停用模组", "mods/ 中以 .jar.disabled 结尾的文件，仅统计") {
-                    Text("${report.movedDisabledMods} 个", fontSize = 13.sp)
+                SettingRow(strings.t("dialogs.tidy.disabledMods"), strings.t("dialogs.tidy.disabledModsHint")) {
+                    Text(strings.t("dialogs.tidy.disabledCount", report.movedDisabledMods), fontSize = 13.sp)
                 }
-                SettingRow("重复模组可回收", "内容完全相同（同 SHA-1）的多余副本") {
+                SettingRow(strings.t("dialogs.tidy.duplicateMods"), strings.t("dialogs.tidy.duplicateModsHint")) {
                     Text(reportBytes(report.totalBytes), fontSize = 13.sp)
                 }
             }
             SettingsSection(
-                "重复模组（${report.duplicateMods.size} 组）",
-                "每组内容相同，只报告，不会自动清理或删除。",
+                strings.t("dialogs.tidy.duplicateTitle", report.duplicateMods.size),
+                strings.t("dialogs.tidy.duplicateHint"),
             ) {
                 if (report.duplicateMods.isEmpty()) {
-                    MutedText("没有发现内容重复的模组。")
+                    MutedText(strings.t("dialogs.tidy.noDuplicates"))
                 } else {
                     report.duplicateMods.forEach { group ->
                         Column(
@@ -114,7 +115,10 @@ fun TidyReportDialog(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Tag("${group.size} 份", MaterialTheme.colorScheme.onSurfaceVariant)
+                                Tag(
+                                    strings.t("dialogs.tidy.copyCount", group.size),
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             if (group.size > 1) {
                                 Text(
@@ -130,31 +134,31 @@ fun TidyReportDialog(
                 }
             }
             SettingsSection(
-                "残留文件（${report.orphanFiles.size} 个）",
-                "mods/ 中既不是 .jar 也不是 .jar.disabled 的文件，只报告。",
+                strings.t("dialogs.tidy.orphanTitle", report.orphanFiles.size),
+                strings.t("dialogs.tidy.orphanHint"),
             ) {
                 val orphans = report.orphanFiles.visible(50)
                 if (orphans.isEmpty()) {
-                    MutedText("没有发现残留文件。")
+                    MutedText(strings.t("dialogs.tidy.noOrphans"))
                 } else {
                     orphans.forEach { path ->
                         ReportFileRow(
                             path,
-                            "只报告",
+                            strings.t("dialogs.tidy.reportOnly"),
                             MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 if (report.orphanFiles.size > orphans.size) {
-                    MutedText("还有 ${report.orphanFiles.size - orphans.size} 条未显示。")
+                    MutedText(strings.t("dialogs.tidy.moreHidden", report.orphanFiles.size - orphans.size))
                 }
             }
         }
         Text(
-            "整理不会删除模组或存档。需要清理重复模组时，请自己确认后在文件管理器中处理。",
+            strings.t("dialogs.tidy.footnote"),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        DialogActions(confirmText = "知道了", onConfirm = onDismiss, onCancel = null)
+        DialogActions(confirmText = strings.t("dialogs.common.gotIt"), onConfirm = onDismiss, onCancel = null)
     }
 }

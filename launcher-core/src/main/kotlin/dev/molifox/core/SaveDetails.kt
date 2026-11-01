@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.time.Instant
 import kotlin.io.path.isDirectory
@@ -66,10 +67,12 @@ internal class SaveDetailsReader(
         store.instance(instanceId)
         val world = worldOf(instanceId, saveName)
         val level = world.resolve("level.dat")
-        require(level.toFile().isFile) { "存档没有 level.dat，无法读取详情" }
+        require(level.toFile().isFile) { I18n.t("saveA2.details.missingLevelDat") }
         val document =
             runCatching { readNbtDocument(level) }.getOrElse { failure ->
-                throw IllegalArgumentException("level.dat 无法解析：${failure.message ?: "格式错误"}")
+                throw IllegalArgumentException(
+                    I18n.t("saveA2.details.parseFailed", failure.message ?: I18n.t("saveA2.common.malformed")),
+                )
             }
         return detailsOf(world, document)
     }
@@ -79,7 +82,7 @@ internal class SaveDetailsReader(
         saveName: String,
     ): Path {
         val world = saveSourcePath(savesDirectoryOf(store, instanceId), saveName)
-        require(world.isDirectory()) { "压缩包存档不支持详情，请先解压成世界文件夹" }
+        require(world.isDirectory()) { I18n.t("saveA2.details.zipUnsupported") }
         return world
     }
 

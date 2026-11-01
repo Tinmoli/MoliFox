@@ -54,6 +54,7 @@ fun GameDirectoryControls(
 ) {
     val selected = state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }
     var removing by remember { mutableStateOf<GameDirectory?>(null) }
+    val strings = LocalStrings.current
     val busy = actions.controller.busy
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -64,7 +65,8 @@ fun GameDirectoryControls(
             Icon(Icons.Outlined.FolderOpen, null, Modifier.size(16.dp), MutedGreen)
             CompactSelect(
                 selected?.id.orEmpty(),
-                listOf("" to "MoliFox 默认目录") + state.data.gameDirectories.map { it.id to it.name },
+                listOf("" to strings.t("settings.game.directory.default")) +
+                    state.data.gameDirectories.map { it.id to it.name },
                 { id ->
                     actions.run { actions.controller.selectGameDirectory(id.ifBlank { null }) }
                 },
@@ -73,20 +75,20 @@ fun GameDirectoryControls(
             )
             SmallIconButton(
                 Icons.Outlined.CreateNewFolder,
-                "选择游戏目录",
+                strings.t("settings.game.directory.pick"),
                 { actions.importExisting() },
                 enabled = !busy,
             )
             SmallIconButton(
                 Icons.Outlined.Refresh,
-                "刷新游戏目录",
+                strings.t("settings.game.directory.refresh"),
                 { actions.run { actions.controller.refreshGameDirectory() } },
                 enabled = selected != null && !busy,
             )
             if (selected != null) {
                 SmallIconButton(
                     Icons.Outlined.LinkOff,
-                    "移除游戏目录",
+                    strings.t("settings.game.directory.detach"),
                     { removing = selected },
                     enabled = !busy,
                 )
@@ -94,7 +96,7 @@ fun GameDirectoryControls(
         }
         // 当前目录行：路径单行省略，行尾保留解绑入口
         DirectoryRow(
-            name = selected?.name ?: "MoliFox 默认目录",
+            name = selected?.name ?: strings.t("settings.game.directory.default"),
             path =
                 selected?.path ?: actions.controller.store.minecraftRoot
                     .toString(),
@@ -120,17 +122,19 @@ fun GameDirectoryControls(
     removing?.let { directory ->
         AlertDialog(
             onDismissRequest = { removing = null },
-            title = { Text("移除目录「" + directory.name + "」？") },
-            text = { Text("移除该目录及其版本在 MoliFox 中的记录，游戏文件保留在原位置。") },
+            title = { Text(strings.t("settings.game.directory.remove.title", directory.name)) },
+            text = { Text(strings.t("settings.game.directory.remove.detail")) },
             confirmButton = {
                 TextButton({
                     actions.run { actions.controller.removeGameDirectory(directory.id) }
                     removing = null
                 }) {
-                    Text("移除目录记录")
+                    Text(strings.t("settings.game.directory.remove.confirm"))
                 }
             },
-            dismissButton = { TextButton({ removing = null }) { Text("取消") } },
+            dismissButton = {
+                TextButton({ removing = null }) { Text(strings.t("settings.common.cancel")) }
+            },
         )
     }
 }
@@ -157,6 +161,7 @@ private fun DirectoryRow(
     onRemove: (() -> Unit)?,
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
+    val strings = LocalStrings.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -207,10 +212,16 @@ private fun DirectoryRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (current) Tag("当前")
+        if (current) Tag(strings.t("settings.game.directory.currentTag"))
         if (onMakeDefault != null) {
-            SmallIconButton(Icons.Outlined.CheckCircle, "设为默认目录", onMakeDefault)
+            SmallIconButton(
+                Icons.Outlined.CheckCircle,
+                strings.t("settings.game.directory.makeDefault"),
+                onMakeDefault,
+            )
         }
-        if (onRemove != null) SmallIconButton(Icons.Outlined.DeleteOutline, "移除目录", onRemove)
+        if (onRemove != null) {
+            SmallIconButton(Icons.Outlined.DeleteOutline, strings.t("settings.game.directory.remove"), onRemove)
+        }
     }
 }

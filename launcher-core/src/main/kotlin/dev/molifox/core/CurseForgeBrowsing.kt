@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 
 /** 搜索单页最多返回的条目数。 */
 private const val SEARCH_PAGE_SIZE = 12
@@ -23,7 +24,7 @@ internal class CurseForgeBrowsing(
         filter: ContentFilter? = null,
     ): ContentSearch {
         val index = api.classIndex()
-        val classId = api.classId(index, kind, "搜索分类")
+        val classId = api.classId(index, kind, I18n.t("packsB1.curseForgeBrowsing.stageSearchClass"))
         val pageSize = minOf(SEARCH_PAGE_SIZE, CURSE_FORGE_RESULT_LIMIT - offset)
         if (pageSize <= 0) return ContentSearch(emptyList(), CURSE_FORGE_RESULT_LIMIT)
         val selection = filter ?: ContentFilter(instance?.gameVersion.orEmpty(), instance?.loader)
@@ -37,22 +38,43 @@ internal class CurseForgeBrowsing(
             )
         val data = result.array("data").toList()
         val (hits, failures) = collectHits(data, kind)
-        // 映射问题不能变成「没有结果」：一条都没认出来时按错误上报，并带上响应片段。
-        if (hits.isEmpty() && data.isNotEmpty()) {
-            api.fail("搜索结果映射", "全部 ${data.size} 条无法识别（${failures.first()}）", result)
-        }
-        if (failures.isNotEmpty()) {
-            store.log(
-                "CurseForge 搜索结果有 ${failures.size} 条无法识别，已跳过：${failures.first()}",
-                true,
-            )
-        }
+        reportCollectOutcome(result, data, hits.size, failures)
         val total =
             result.obj("pagination").int("totalCount").coerceIn(0, CURSE_FORGE_RESULT_LIMIT)
         if (data.isEmpty() && total > 0) {
-            store.log("CurseForge 返回 totalCount=$total 但没有条目，请稍后重试：$offset", true)
+            store.log(I18n.t("packsB1.curseForgeBrowsing.emptyPage", total, offset), true)
         }
         return ContentSearch(hits, total)
+    }
+
+    /** 映射问题不能变成「没有结果」：一条都没认出来时按错误上报，并带上响应片段。 */
+    private fun reportCollectOutcome(
+        result: JsonObject,
+        data: List<JsonElement>,
+        hitCount: Int,
+        failures: List<String>,
+    ) {
+        if (hitCount == 0 && data.isNotEmpty()) {
+            api.fail(
+                I18n.t("packsB1.curseForgeBrowsing.stageSearchMapping"),
+                I18n.t(
+                    "packsB1.curseForgeBrowsing.allEntriesUnrecognized",
+                    data.size,
+                    failures.first(),
+                ),
+                result,
+            )
+        }
+        if (failures.isNotEmpty()) {
+            store.log(
+                I18n.t(
+                    "packsB1.curseForgeBrowsing.entriesSkipped",
+                    failures.size,
+                    failures.first(),
+                ),
+                true,
+            )
+        }
     }
 
     private suspend fun searchFilters(
@@ -82,7 +104,7 @@ internal class CurseForgeBrowsing(
         for (element in data) {
             val info = element.takeIf { it.isJsonObject }?.asJsonObject
             if (info == null) {
-                failures += "条目不是 JSON 对象"
+                failures += I18n.t("packsB1.curseForgeBrowsing.entryNotJson")
                 continue
             }
             val outcome = runCatching { hitOrNull(info, kind) }
@@ -90,7 +112,9 @@ internal class CurseForgeBrowsing(
             if (hit != null) {
                 hits += hit
             } else {
-                failures += outcome.exceptionOrNull()?.message ?: "项目标识或游戏 ID 无效"
+                failures +=
+                    outcome.exceptionOrNull()?.message
+                        ?: I18n.t("packsB1.curseForgeBrowsing.invalidProjectOrGameId")
             }
         }
         return hits to failures
@@ -102,7 +126,9 @@ internal class CurseForgeBrowsing(
         kind: String,
     ): ContentHit? {
         info.intOrNull("gameId")?.let {
-            require(it == MINECRAFT_GAME_ID) { "搜索结果不属于 Minecraft" }
+            require(it == MINECRAFT_GAME_ID) {
+                I18n.t("packsB1.curseForgeBrowsing.searchNotMinecraft")
+            }
         }
         val rawId = info.string("id")
         val id = "curseforge:$rawId"
@@ -132,14 +158,17 @@ internal class CurseForgeBrowsing(
     fun hit(
         info: JsonObject,
         kind: String,
-    ): ContentHit = requireNotNull(hitOrNull(info, kind)) { "CurseForge 项目标识无效" }
+    ): ContentHit =
+        requireNotNull(hitOrNull(info, kind)) {
+            I18n.t("packsB1.curseForgeBrowsing.invalidProjectId")
+        }
 
     /**
      * 某个资源类型下的可选分类。编号与名称都取自内容源本身，镜像新增的分类自动出现。
      */
     suspend fun categories(kind: String): List<ContentCategoryOption> {
         val index = api.classIndex()
-        val classId = api.classId(index, kind, "分类映射")
+        val classId = api.classId(index, kind, I18n.t("packsB1.curseForgeApi.stageClassMapping"))
         return categoryOptions(classId)
     }
 
@@ -168,11 +197,17 @@ internal class CurseForgeBrowsing(
         val matched =
             selected.mapNotNull { it.trim().toIntOrNull() }.filter { it.toString() in known }
         if (matched.isEmpty()) {
-            store.log("CurseForge 分类筛选无法映射到当前资源类型，已忽略：${selected.joinToString()}", true)
+            store.log(
+                I18n.t(
+                    "packsB1.curseForgeBrowsing.categoryFilterIgnored",
+                    selected.joinToString(),
+                ),
+                true,
+            )
             return null
         }
         if (matched.size > 1) {
-            store.log("CurseForge 一次只按一个分类筛选，已使用分类 ${matched.first()}")
+            store.log(I18n.t("packsB1.curseForgeBrowsing.singleCategoryFilter", matched.first()))
         }
         return matched.first()
     }

@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -71,8 +72,12 @@ internal object PackOwnershipStore {
         root: Path,
         ownership: PackOwnership,
     ) {
-        require(ownership.formatVersion == FORMAT_VERSION) { "文件归属账本版本无效" }
-        ownership.files.forEach { require(it.path.isNotBlank()) { "文件归属账本包含空路径" } }
+        require(ownership.formatVersion == FORMAT_VERSION) {
+            I18n.t("packsA2.packOwnership.formatVersionInvalid")
+        }
+        ownership.files.forEach {
+            require(it.path.isNotBlank()) { I18n.t("packsA2.packOwnership.emptyPath") }
+        }
         root.createDirectories()
         val target = safePath(root, PACK_OWNERSHIP_FILE)
         val temporary = safePath(root, "$PACK_OWNERSHIP_FILE.${UUID.randomUUID()}.part")
@@ -101,7 +106,10 @@ internal object PackOwnershipStore {
             try {
                 safePath(root, PACK_OWNERSHIP_FILE)
             } catch (error: IllegalArgumentException) {
-                store?.log("整合包文件归属账本路径无效：${error.message}", true)
+                store?.log(
+                    I18n.t("packsA2.packOwnership.pathInvalid", error.message),
+                    true,
+                )
                 return null
             }
         if (!file.exists()) return null
@@ -135,7 +143,10 @@ internal object PackOwnershipStore {
         store: LauncherStore?,
         error: Exception,
     ): PackOwnership? {
-        store?.log("整合包文件归属账本损坏，已按无账本模式处理：${error.message}", true)
+        store?.log(
+            I18n.t("packsA2.packOwnership.corruptTreatedAsMissing", error.message),
+            true,
+        )
         return null
     }
 
@@ -143,8 +154,12 @@ internal object PackOwnershipStore {
         json: JsonObject,
         root: Path,
     ): PackOwnership {
-        require(json.int("formatVersion") == FORMAT_VERSION) { "文件归属账本版本不受支持" }
-        require(json["files"]?.isJsonArray == true) { "文件归属账本缺少文件列表" }
+        require(json.int("formatVersion") == FORMAT_VERSION) {
+            I18n.t("packsA2.packOwnership.versionUnsupported")
+        }
+        require(json["files"]?.isJsonArray == true) {
+            I18n.t("packsA2.packOwnership.missingFileList")
+        }
         val files = json.array("files").map { element -> readOwnedFile(element.asJsonObject, root) }
         return PackOwnership(
             formatVersion = FORMAT_VERSION,
@@ -306,7 +321,7 @@ private fun readOwnedFile(
     val path = packRelative(item.string("path"))
     val sha1 = item.string("sha1")
     require(path.isNotBlank() && sha1.matches(packSha1Pattern)) {
-        "文件归属账本条目无效"
+        I18n.t("packsA2.packOwnership.entryInvalid")
     }
     safePath(root, path)
     return PackOwnedFile(

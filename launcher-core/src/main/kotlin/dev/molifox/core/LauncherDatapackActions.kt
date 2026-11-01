@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
@@ -103,21 +104,23 @@ internal abstract class LauncherDatapackActions(
     ): Path {
         require(
             worldName.isNotBlank() && worldName.length <= MAX_WORLD_NAME_LENGTH,
-        ) { "世界名称无效" }
+        ) { I18n.t("saveA1.datapackPaths.worldNameInvalid") }
         require('/' !in worldName && '\\' !in worldName && ':' !in worldName) {
-            "世界名称无效：$worldName"
+            I18n.t("saveA1.datapackPaths.worldNameInvalidNamed", worldName)
         }
         val saves = store.instancePath(instanceId).resolve("saves")
         val world =
             runCatching { safePath(saves, worldName) }.getOrElse {
-                error("世界名称不安全：$worldName")
+                error(I18n.t("saveA1.datapackPaths.worldNameUnsafe", worldName))
             }
         require(
             world.parent.toAbsolutePath().normalize() == saves.toAbsolutePath().normalize(),
         ) {
-            "只能打开 saves 目录下的世界：$worldName"
+            I18n.t("instA2.datapacks.worldOutsideSaves", worldName)
         }
-        require(world.isDirectory(LinkOption.NOFOLLOW_LINKS)) { "找不到世界存档：$worldName" }
+        require(world.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
+            I18n.t("saveA1.datapackPaths.worldNotFound", worldName)
+        }
         return world
     }
 }

@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.importAppearanceFont
 import dev.molifox.core.removeAppearanceFont
 import kotlinx.coroutines.Dispatchers
@@ -84,10 +85,10 @@ fun FontPreferences(
 /** 当前字体在界面上显示的名字。 */
 private fun selectedFontName(settings: LauncherSettings): String =
     when {
-        settings.fontChoice.isBlank() -> "系统默认"
+        settings.fontChoice.isBlank() -> I18n.t("settings.font.systemDefault")
         settings.fontChoice.startsWith("file:") ->
             settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name
-                ?: "自定义字体"
+                ?: I18n.t("settings.font.custom")
         else -> settings.fontChoice.removePrefix("system:")
     }
 
@@ -99,19 +100,26 @@ private fun FontFamilySection(
     apply: AppearanceChange,
     onPick: () -> Unit,
 ) {
-    SettingsSection("界面字体", "使用本机字体，也可以导入 TTF / OTF；离线可用。", contentGap = 0.dp) {
-        SettingRow("当前字体", selectedName) {
-            SecondaryButton(onPick) { Text("选择字体") }
+    val strings = LocalStrings.current
+    SettingsSection(
+        strings.t("settings.font.section.title"),
+        strings.t("settings.font.section.detail"),
+        contentGap = 0.dp,
+    ) {
+        SettingRow(strings.t("settings.font.current"), selectedName) {
+            SecondaryButton(onPick) { Text(strings.t("settings.font.choose")) }
         }
         SettingDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SecondaryButton({
                 actions.run {
                     require(actions.controller.store.data.settings.customFonts.size < 12) {
-                        "最多保留 12 种导入字体，请先移除不需要的字体"
+                        strings.t("settings.font.importLimit")
                     }
                     val source =
-                        actions.choose("导入字体", extensions = listOf("ttf", "otf")).firstOrNull()
+                        actions
+                            .choose(strings.t("settings.font.import"), extensions = listOf("ttf", "otf"))
+                            .firstOrNull()
                     if (source != null) {
                         val imported =
                             importAppearanceFont(actions.controller.store.dataDirectory, source)
@@ -127,13 +135,15 @@ private fun FontFamilySection(
             }) {
                 Icon(Icons.Outlined.FileUpload, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text("导入字体")
+                Text(strings.t("settings.font.import"))
             }
-            TextButton({ apply { it.copy(fontChoice = "", fontScale = 1f) } }) { Text("恢复系统字体") }
+            TextButton({ apply { it.copy(fontChoice = "", fontScale = 1f) } }) {
+                Text(strings.t("settings.font.restoreSystem"))
+            }
         }
         SettingDivider()
         PreferenceSlider(
-            "文字大小",
+            strings.t("settings.font.size"),
             settings.fontScale,
             .85f..1.25f,
             { (it * 100).toInt().toString() + "%" },
@@ -145,7 +155,7 @@ private fun FontFamilySection(
             Text("MoliFox Minecraft Launcher", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(10.dp))
             Text("Minecraft Java Edition  Aa Bb Cc  0123456789", fontSize = 15.sp)
-            MutedText("这是一段界面字体预览。字体缺少的字符会使用系统回退字体。")
+            MutedText(strings.t("settings.font.preview"))
         }
     }
 }
@@ -157,10 +167,11 @@ private fun ImportedFontsSection(
     apply: AppearanceChange,
 ) {
     if (settings.customFonts.isNotEmpty()) {
+        val strings = LocalStrings.current
         // 每个字体一行，行间用 1dp 细线分隔：N 行 → N-1 条，首末不加。
         SettingsSection(
-            "已导入字体",
-            "原字体保留在原位置，这里管理启动器内的副本。",
+            strings.t("settings.font.imported.title"),
+            strings.t("settings.font.imported.detail"),
             contentGap = 0.dp,
         ) {
             settings.customFonts.forEachIndexed { index, font ->
@@ -168,11 +179,11 @@ private fun ImportedFontsSection(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(font.name, Modifier.weight(1f))
                     TextButton({ apply { it.copy(fontChoice = "file:" + font.path) } }) {
-                        Text("使用")
+                        Text(strings.t("settings.font.use"))
                     }
                     SmallIconButton(
                         Icons.Outlined.DeleteOutline,
-                        "移除字体 " + font.name,
+                        strings.t("settings.font.removeA11y", font.name),
                         {
                             actions.run {
                                 apply {
@@ -202,9 +213,14 @@ private fun DisplayScaleSection(
     settings: LauncherSettings,
     apply: AppearanceChange,
 ) {
-    SettingsSection("显示大小", "界面缩放同时调整控件与文字，文字大小只影响字体。", contentGap = 0.dp) {
+    val strings = LocalStrings.current
+    SettingsSection(
+        strings.t("settings.font.display.title"),
+        strings.t("settings.font.display.detail"),
+        contentGap = 0.dp,
+    ) {
         PreferenceSlider(
-            "界面缩放",
+            strings.t("settings.font.display.scale"),
             settings.uiScale,
             .85f..1.2f,
             { (it * 100).toInt().toString() + "%" },
@@ -231,9 +247,10 @@ private fun FontPickerDialog(
     onDismiss: () -> Unit,
     apply: AppearanceChange,
 ) {
+    val strings = LocalStrings.current
     Modal(
-        "选择界面字体",
-        families.size.toString() + " 种系统字体 · 支持搜索与预览",
+        strings.t("settings.font.picker.title"),
+        strings.t("settings.font.picker.detail", families.size),
         710.dp,
         onDismiss,
     ) {
@@ -241,12 +258,12 @@ private fun FontPickerDialog(
             query,
             { onQueryChange(it) },
             Modifier.fillMaxWidth(),
-            label = { Text("搜索字体") },
+            label = { Text(strings.t("settings.font.picker.search")) },
             singleLine = true,
         )
         val choices =
-            listOf("" to "系统默认") +
-                settings.customFonts.map { ("file:" + it.path) to (it.name + " · 已导入") } +
+            listOf("" to strings.t("settings.font.systemDefault")) +
+                settings.customFonts.map { ("file:" + it.path) to strings.t("settings.font.importedSuffix", it.name) } +
                 families.map { ("system:" + it) to it }
         LazyColumn(
             Modifier.fillMaxWidth().height(340.dp),
@@ -272,7 +289,7 @@ private fun FontPickerDialog(
                         value = withContext(Dispatchers.IO) { launcherFontFamily(id) }
                     }
                     Text(
-                        "Aa 中文示例",
+                        strings.t("settings.font.previewSample"),
                         fontFamily = previewFont,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -280,6 +297,6 @@ private fun FontPickerDialog(
                 }
             }
         }
-        TextButton(onDismiss, Modifier.align(Alignment.End)) { Text("关闭") }
+        TextButton(onDismiss, Modifier.align(Alignment.End)) { Text(strings.t("settings.common.close")) }
     }
 }

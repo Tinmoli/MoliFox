@@ -1,6 +1,7 @@
 // 房主会话：Scaffolding 服务端 + EasyTier 房主节点 + 存档退出看门狗。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierNodeRequest
@@ -60,7 +61,7 @@ class LobbyHostSession(
     override val scaffoldingPort: Int
         get() =
             synchronized(lock) { server?.port }
-                ?: throw IllegalStateException("房间尚未创建")
+                ?: throw IllegalStateException(I18n.t("multiplayer.lobbyHostSession.1"))
 
     override suspend fun start(): Result<Unit> =
         runCatching {
@@ -69,7 +70,7 @@ class LobbyHostSession(
                     ScaffoldingPlayer(machineId, playerName, kind = ScaffoldingPlayerKind.HOST),
                 )
             created.start().getOrElse { failure ->
-                throw IOException("无法建立 Scaffolding 服务端：${failure.message}", failure)
+                throw IOException(I18n.t("multiplayer.lobbyHostSession.2", failure.message), failure)
             }
             created.setMinecraftPort(world.port)
             synchronized(lock) { server = created }
@@ -88,9 +89,9 @@ class LobbyHostSession(
                 extraRelays,
             )
         runtime.start(request, ::onRuntimeExit).getOrElse { failure ->
-            throw IOException("无法启动 EasyTier：${failure.message}", failure)
+            throw IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure)
         }
-        logger("房间已开启：Scaffolding 端口 $scaffoldingPort，世界 ${world.name}(${world.port})", false)
+        logger(I18n.t("multiplayer.lobbyHostSession.3", scaffoldingPort, world.name, world.port), false)
     }
 
     private fun startWatchdog() {
@@ -99,7 +100,7 @@ class LobbyHostSession(
                 while (isActive) {
                     delay(watchdogIntervalMillis)
                     if (!probe.isAvailable(world.port)) {
-                        report("存档已退出，房间已关闭。")
+                        report(I18n.t("multiplayer.lobbyHostSession.4"))
                         return@launch
                     }
                 }
@@ -110,8 +111,8 @@ class LobbyHostSession(
         code: Int,
         output: String,
     ) {
-        logger("EasyTier 房主进程退出（退出码 $code）：$output", true)
-        report("EasyTier 进程已退出，房间已关闭。")
+        logger(I18n.t("multiplayerB.lobbyHostSession.runtimeExited", code, output), true)
+        report(I18n.t("multiplayerB.lobbySession.runtimeExitedRoomClosed"))
     }
 
     private fun report(message: String) {
@@ -138,10 +139,14 @@ class LobbyHostSession(
         scope.cancel()
         current.second?.let { active ->
             runCatching { active.close() }
-                .onFailure { logger("关闭 Scaffolding 服务端失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.lobbyHostSession.closeServerFailed", failure.message), true)
+                }
         }
         runCatching { runtime.stop() }
-            .onFailure { logger("停止 EasyTier 房主进程失败：${it.message}", true) }
+            .onFailure { failure ->
+                logger(I18n.t("multiplayerB.lobbyHostSession.stopRuntimeFailed", failure.message), true)
+            }
     }
 
     private companion object {

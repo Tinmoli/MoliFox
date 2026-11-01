@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.hairline
 
 internal enum class InstanceMenuAnchor {
@@ -57,6 +58,7 @@ internal fun InstanceContextMenu(
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
@@ -64,7 +66,7 @@ internal fun InstanceContextMenu(
         offset = offset,
     ) {
         DropdownMenuItem(
-            { Text("启动", fontSize = 13.sp) },
+            { Text(strings.t("pages.instances.menu.launch"), fontSize = 13.sp) },
             {
                 onDismiss()
                 onLaunch()
@@ -74,7 +76,7 @@ internal fun InstanceContextMenu(
             enabled = !instance.broken && !busy,
         )
         DropdownMenuItem(
-            { Text("重命名…", fontSize = 13.sp) },
+            { Text(strings.t("pages.instances.menu.rename"), fontSize = 13.sp) },
             {
                 onDismiss()
                 onRename()
@@ -84,7 +86,7 @@ internal fun InstanceContextMenu(
             enabled = !busy,
         )
         DropdownMenuItem(
-            { Text("复制实例…", fontSize = 13.sp) },
+            { Text(strings.t("pages.instances.menu.copy"), fontSize = 13.sp) },
             {
                 onDismiss()
                 onCopy()
@@ -94,7 +96,7 @@ internal fun InstanceContextMenu(
             enabled = !busy,
         )
         DropdownMenuItem(
-            { Text("打开游戏目录", fontSize = 13.sp) },
+            { Text(strings.t("pages.instances.menu.openFolder"), fontSize = 13.sp) },
             {
                 onDismiss()
                 onOpenFolder()
@@ -104,7 +106,7 @@ internal fun InstanceContextMenu(
         )
         HorizontalDivider(color = hairline())
         DropdownMenuItem(
-            { Text("导出整合包…", fontSize = 13.sp) },
+            { Text(strings.t("pages.instances.menu.export"), fontSize = 13.sp) },
             {
                 onDismiss()
                 onExport()
@@ -114,7 +116,13 @@ internal fun InstanceContextMenu(
             enabled = !busy,
         )
         DropdownMenuItem(
-            { Text("删除…", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) },
+            {
+                Text(
+                    strings.t("pages.instances.menu.delete"),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            },
             {
                 onDismiss()
                 onDelete()

@@ -52,31 +52,31 @@ internal fun importBrandIcon(
     dataDirectory: Path,
     source: Path,
 ): Path {
-    require(Files.isRegularFile(source)) { "请选择 PNG 或 JPEG 图片" }
-    require(Files.size(source) in 1..BRAND_ICON_MAX_BYTES) { "图片不能超过 2 MB" }
+    require(Files.isRegularFile(source)) { tr("dialogs.brandIcon.invalidFormat") }
+    require(Files.size(source) in 1..BRAND_ICON_MAX_BYTES) { tr("dialogs.brandIcon.tooLarge") }
     val format = validateBrandIcon(source)
     return storeBrandIcon(dataDirectory, source, format)
 }
 
 private fun validateBrandIcon(source: Path): String =
     ImageIO.createImageInputStream(source.toFile()).use { input ->
-        require(input != null) { "无法读取这张图片" }
+        require(input != null) { tr("dialogs.brandIcon.unreadable") }
         val readers = ImageIO.getImageReaders(input)
-        require(readers.hasNext()) { "请选择 PNG 或 JPEG 图片" }
+        require(readers.hasNext()) { tr("dialogs.brandIcon.invalidFormat") }
         val reader = readers.next()
         try {
             reader.input = input
             val name = reader.formatName.lowercase()
-            require(name in brandIconFormats) { "请选择 PNG 或 JPEG 图片" }
+            require(name in brandIconFormats) { tr("dialogs.brandIcon.invalidFormat") }
             val width = reader.getWidth(0)
             val height = reader.getHeight(0)
             require(
                 width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
                     height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
             ) {
-                "图片边长需在 16–1024 像素之间"
+                tr("dialogs.brandIcon.sizeRange")
             }
-            require(reader.read(0) != null) { "图片已损坏，无法读取" }
+            require(reader.read(0) != null) { tr("dialogs.brandIcon.corrupted") }
             name
         } finally {
             reader.dispose()
@@ -148,14 +148,14 @@ internal fun brandIconProblem(path: String): String? {
     if (path.isBlank()) return null
     return runCatching {
         val file = Path.of(path)
-        require(Files.isRegularFile(file)) { "文件不存在" }
-        require(Files.size(file) in 1..BRAND_ICON_MAX_BYTES) { "文件大小异常" }
-        val image = ImageIO.read(file.toFile()) ?: error("图片无法解码")
+        require(Files.isRegularFile(file)) { tr("dialogs.brandIcon.fileMissing") }
+        require(Files.size(file) in 1..BRAND_ICON_MAX_BYTES) { tr("dialogs.brandIcon.sizeAbnormal") }
+        val image = ImageIO.read(file.toFile()) ?: error(tr("dialogs.brandIcon.decodeFailed"))
         require(
             image.width in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE &&
                 image.height in BRAND_ICON_MIN_EDGE..BRAND_ICON_MAX_EDGE,
         ) {
-            "图片尺寸异常"
+            tr("dialogs.brandIcon.dimensionAbnormal")
         }
         null
     }.getOrElse { error ->

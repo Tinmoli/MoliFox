@@ -19,23 +19,29 @@ internal fun ModUpdateConfirmation(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("可能不是同一项目") },
+        title = { Text(strings.t("pages.mods.confirm.title")) },
         text = {
             Text(
-                "「" + item.title + "」是按名称匹配的，来源项目为「" +
+                strings.t(
+                    "pages.mods.confirm.message",
+                    item.title,
                     item.candidate?.projectTitle.orEmpty().ifBlank {
                         item.candidate?.projectId.orEmpty()
-                    } + "」。确认是同一项目后再更新。",
+                    },
+                ),
             )
         },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("仍然更新", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("pages.mods.confirm.update"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onDismiss) { Text(strings.t("pages.mods.confirm.cancel")) }
+        },
     )
 }
 
@@ -45,18 +51,25 @@ internal fun DeleteModConfirmation(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("删除模组？") },
+        title = { Text(strings.t("pages.mods.delete.title")) },
         text = {
             Text(
-                "「" + mod.metadata.title.ifBlank { mod.filename.removeSuffix(".disabled") } +
-                    "」将移至回收站，需要时可以再找回。",
+                strings.t(
+                    "pages.mods.delete.message",
+                    mod.metadata.title.ifBlank { mod.filename.removeSuffix(".disabled") },
+                ),
             )
         },
         confirmButton = {
-            TextButton(onConfirm) { Text("移入回收站", color = MaterialTheme.colorScheme.error) }
+            TextButton(onConfirm) {
+                Text(strings.t("pages.mods.delete.confirm"), color = MaterialTheme.colorScheme.error)
+            }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onDismiss) { Text(strings.t("pages.mods.delete.cancel")) }
+        },
     )
 }

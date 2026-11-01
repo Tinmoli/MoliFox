@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.URI
@@ -86,15 +87,18 @@ internal class JavaRuntimePackages(
             findFromVendor(target, vendor, types, failures)?.let { return it }
         }
         throw IllegalStateException(
-            "没有找到适用于 $os/$zuluArch 的 Java $major 构建（已尝试 " +
-                vendors.joinToString("/") { it.replaceFirstChar { c -> c.uppercaseChar() } } +
-                " 的 " +
-                types.joinToString("/") { it.uppercase() } +
-                "，来源：" +
-                javaDownloadSourceLabel(source) +
-                "）：" +
-                failures.joinToString("；") +
-                "。请手动选择已有的 Java",
+            I18n.t(
+                "networkB2.javaRuntimePackages.notFound",
+                os,
+                zuluArch,
+                major,
+                vendors.joinToString("/") { it.replaceFirstChar { c -> c.uppercaseChar() } },
+                types.joinToString("/") { it.uppercase() },
+                javaDownloadSourceLabel(source),
+                failures.joinToString(
+                    I18n.t("networkB2.javaRuntimePackages.failureSeparator"),
+                ),
+            ),
         )
     }
 
@@ -138,7 +142,13 @@ internal class JavaRuntimePackages(
         failures: MutableList<String>,
     ) {
         val title = if (vendor == "zulu") "Zulu" else "Temurin"
-        failures += "$title ${type.uppercase()}：${error.message ?: "查询失败"}"
+        failures +=
+            I18n.t(
+                "networkB2.javaRuntimePackages.failureLine",
+                title,
+                type.uppercase(),
+                error.message ?: I18n.t("networkB2.javaRuntimePackages.queryFailed"),
+            )
     }
 
     private fun selectZuluCandidate(
@@ -201,7 +211,9 @@ internal class JavaRuntimePackages(
         val packages = network.json(query).asJsonArray.map { it.asJsonObject }
         val candidate = selectZuluCandidate(packages, zuluOs, arch, imageType) ?: return null
         val uuid = candidate.string("package_uuid")
-        require(uuid.matches(Regex("[a-fA-F0-9-]{36}"))) { "Zulu 返回的包标识无效" }
+        require(uuid.matches(Regex("[a-fA-F0-9-]{36}"))) {
+            I18n.t("networkB2.javaRuntimePackages.zuluInvalidUuid")
+        }
         val details =
             network.json("https://api.azul.com/metadata/v1/zulu/packages/$uuid").asJsonObject
         val url = details.string("download_url")
@@ -209,13 +221,7 @@ internal class JavaRuntimePackages(
         val size = details.longOrZero("size")
         val bits = details.int("hw_bitness")
         val version = details.array("java_version").joinToString(".") { it.asInt.toString() }
-        require(URI(url).scheme == "https" && URI(url).host == "cdn.azul.com") {
-            "Zulu 下载地址不是官方 CDN：${URI(url).host}"
-        }
-        require(URI(url).rawPath.startsWith("/zulu/bin/")) { "Zulu 下载地址路径异常" }
-        require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) { "Zulu 未提供有效的 SHA-256" }
-        require(size > 0) { "Zulu 未提供安装包大小" }
-        require(bits == if (arch == "x86") ZULU_X86_BITS else ZULU_X64_BITS) { "Zulu 安装包位数与平台不符" }
+        requireValidZuluDetails(url, checksum, size, bits, arch)
         return JavaRuntimePackage(
             urls = listOf(url),
             sha256 = checksum,
@@ -227,6 +233,29 @@ internal class JavaRuntimePackages(
             sourceUrl = url,
             sourceLabel = "Azul",
         )
+    }
+
+    /** Zulu 下载地址与校验和安全门：只接受官方 CDN 的 https 直链与完整元数据。 */
+    private fun requireValidZuluDetails(
+        url: String,
+        checksum: String,
+        size: Long,
+        bits: Int,
+        arch: String,
+    ) {
+        require(URI(url).scheme == "https" && URI(url).host == "cdn.azul.com") {
+            I18n.t("networkB2.javaRuntimePackages.zuluNotOfficialCdn", URI(url).host)
+        }
+        require(URI(url).rawPath.startsWith("/zulu/bin/")) {
+            I18n.t("networkB2.javaRuntimePackages.zuluUnexpectedPath")
+        }
+        require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) {
+            I18n.t("networkB2.javaRuntimePackages.zuluMissingSha256")
+        }
+        require(size > 0) { I18n.t("networkB2.javaRuntimePackages.zuluMissingSize") }
+        require(bits == if (arch == "x86") ZULU_X86_BITS else ZULU_X64_BITS) {
+            I18n.t("networkB2.javaRuntimePackages.zuluBitsMismatch")
+        }
     }
 
     /** 从 Adoptium 官方 API 查询 Temurin 构建。 */
@@ -254,10 +283,12 @@ internal class JavaRuntimePackages(
                 URI(url).host in
                 setOf("github.com", "objects.githubusercontent.com", "api.adoptium.net"),
         ) {
-            "Temurin 下载地址不在允许的域名：${URI(url).host}"
+            I18n.t("networkB2.javaRuntimePackages.temurinHostNotAllowed", URI(url).host)
         }
-        require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) { "Temurin 未提供有效的 SHA-256" }
-        require(size > 0) { "Temurin 未提供安装包大小" }
+        require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) {
+            I18n.t("networkB2.javaRuntimePackages.temurinMissingSha256")
+        }
+        require(size > 0) { I18n.t("networkB2.javaRuntimePackages.temurinMissingSize") }
         return JavaRuntimePackage(
             urls = listOf(url),
             sha256 = checksum,
@@ -288,7 +319,7 @@ fun javaDownloadSourceLabel(value: String): String =
     when (normalizedJavaDownloadSource(value)) {
         "azul" -> "Azul"
         "adoptium" -> "Adoptium"
-        else -> "自动"
+        else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceAuto")
     }
 
 /** 下载进度按当前真正尝试的地址显示来源；只剩 Azul / Temurin 两个官方主机。 */
@@ -301,7 +332,7 @@ internal fun javaDownloadUrlLabel(url: String): String =
         "objects.githubusercontent.com",
         "api.adoptium.net",
         -> "Adoptium"
-        else -> "官方源"
+        else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceOfficial")
     }
 
 private fun com.google.gson.JsonObject.longOrZero(key: String): Long =

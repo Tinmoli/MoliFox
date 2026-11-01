@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.JavaRuntimeSource
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -61,8 +62,8 @@ internal fun javaPickerHeaderLabel(
 ): String =
     when {
         effectiveRuntime != null -> javaRuntimeLabel(effectiveRuntime)
-        effectivePath.isBlank() -> AUTO_JAVA_LABEL
-        else -> "自定义"
+        effectivePath.isBlank() -> I18n.t("settings.java.auto")
+        else -> I18n.t("settings.java.picker.customShort")
     }
 
 /** 自动项的补充说明：实例作用域继承全局时写出实际生效的那一份。 */
@@ -72,9 +73,9 @@ internal fun javaPickerAutoDetail(
     windows: Boolean,
 ): String =
     if (inheritedPath.isBlank()) {
-        "按游戏版本自动匹配"
+        I18n.t("settings.java.autoDetail.none")
     } else {
-        "跟随全局设置：" + javaChoiceName(inheritedPath, runtimes, windows)
+        I18n.t("settings.java.autoDetail.inherit", javaChoiceName(inheritedPath, runtimes, windows))
     }
 
 /** 启动器安装的与用户添加的可以删（自定义只删记录）；系统 Java 只读。 */
@@ -109,7 +110,11 @@ internal fun browseJava(
             val chosen =
                 actions
                     .choose(
-                        if (add) "添加 Java 可执行文件" else "选择 Java 可执行文件",
+                        if (add) {
+                            I18n.t("settings.java.choose.add")
+                        } else {
+                            I18n.t("settings.java.choose.file")
+                        },
                         extensions = if (windows) listOf("exe") else emptyList(),
                     ).firstOrNull()
             if (chosen != null) {
@@ -120,7 +125,7 @@ internal fun browseJava(
                     }
                 withContext(Dispatchers.Swing) {
                     if (runtime == null) {
-                        onError("这个文件不是可运行的 Java：" + chosen)
+                        onError(I18n.t("settings.java.browse.invalid", chosen))
                     } else {
                         if (add) {
                             onAddCustom?.invoke(runtime.path)
@@ -163,16 +168,17 @@ internal fun JavaPickerHeader(
     onRemove: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("当前使用", fontSize = 12.sp, color = colors.onSurfaceVariant)
+        Text(strings.t("settings.java.picker.current"), fontSize = 12.sp, color = colors.onSurfaceVariant)
         Text(headerLabel, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
         if (headerMeta.isNotBlank()) {
             Text(
-                "（" + headerMeta + "）",
+                strings.t("settings.java.picker.metaWrap", headerMeta),
                 fontSize = 12.sp,
                 color = colors.onSurfaceVariant,
                 maxLines = 1,
@@ -185,7 +191,7 @@ internal fun JavaPickerHeader(
                 onRemove,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             ) {
-                Text("移除", fontSize = 12.sp)
+                Text(strings.t("settings.java.picker.remove"), fontSize = 12.sp)
             }
         }
     }
@@ -201,6 +207,7 @@ internal fun JavaListedChoice(
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val strings = LocalStrings.current
     val invalid = !runtime.usable
     JavaChoiceRow(
         selected = selected,
@@ -221,7 +228,7 @@ internal fun JavaListedChoice(
                         onRemove,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     ) {
-                        Text("移除", fontSize = 11.sp)
+                        Text(strings.t("settings.java.picker.remove"), fontSize = 11.sp)
                     }
                 }
             } else {
@@ -238,10 +245,11 @@ internal fun JavaCustomChoice(
     onPickCustom: () -> Unit,
     onBrowse: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     JavaChoiceRow(
         selected = customPath.isNotBlank(),
-        label = "自定义",
-        detail = if (customPath.isBlank()) "尚未选择 Java 可执行文件" else null,
+        label = strings.t("settings.java.picker.customShort"),
+        detail = if (customPath.isBlank()) strings.t("settings.java.custom.empty") else null,
         path = customPath.ifBlank { null },
         onClick = onPickCustom,
         trailing = {
@@ -252,7 +260,10 @@ internal fun JavaCustomChoice(
             ) {
                 Icon(Icons.Outlined.FolderOpen, null, Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (picking) "选择中…" else "选择…", fontSize = 12.sp)
+                Text(
+                    if (picking) strings.t("settings.java.custom.picking") else strings.t("settings.java.custom.pick"),
+                    fontSize = 12.sp,
+                )
             }
         },
     )
@@ -267,8 +278,10 @@ internal fun JavaDetectRow(
     onRefresh: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
+    val strings = LocalStrings.current
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 40.dp),
+        // 与「自定义」行的 JavaChoiceRow 保持同一右侧内缩，按钮右边缘才会对齐。
+        Modifier.fillMaxWidth().padding(end = 8.dp).heightIn(min = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -287,14 +300,14 @@ internal fun JavaDetectRow(
                 Modifier.size(16.dp),
                 tint = colors.primary,
             )
-            Text("添加 Java", fontSize = 13.sp, color = colors.primary)
+            Text(strings.t("settings.java.detect.add"), fontSize = 13.sp, color = colors.primary)
         }
         Spacer(Modifier.weight(1f))
         Text(
             when {
-                detecting -> "正在检测…"
-                detectionError != null -> "检测失败，可重试"
-                else -> "重新扫描系统与启动器目录"
+                detecting -> strings.t("settings.java.detect.detecting")
+                detectionError != null -> strings.t("settings.java.detect.failed")
+                else -> strings.t("settings.java.detect.scan")
             },
             fontSize = 11.sp,
             color = if (detectionError != null) colors.error else colors.onSurfaceVariant,
@@ -307,7 +320,14 @@ internal fun JavaDetectRow(
                 enabled = !detecting,
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
             ) {
-                Text(if (detecting) "检测中…" else "检测 Java", fontSize = 12.sp)
+                Text(
+                    if (detecting) {
+                        strings.t("settings.java.detect.actionBusy")
+                    } else {
+                        strings.t("settings.java.detect.action")
+                    },
+                    fontSize = 12.sp,
+                )
             }
         }
     }

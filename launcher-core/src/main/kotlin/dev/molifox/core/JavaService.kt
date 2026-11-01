@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.sync.Mutex
@@ -167,15 +168,13 @@ class JavaService(
         }
 
     /** 只探测本机，不扫描目录；用于给定路径的快速校验。 */
-    suspend fun inspectVersion(executable: String): String? =
-        discovery.probeExecutable(executable, false)?.version
+    suspend fun inspectVersion(executable: String): String? = discovery.probeExecutable(executable, false)?.version
 
     suspend fun resolve(
         requiredMajor: Int,
         preferred: String,
         context: JobContext,
-    ): JavaRuntime =
-        resolve(JavaRequirement(requiredMajor, exactAutomatic = true), preferred, context)
+    ): JavaRuntime = resolve(JavaRequirement(requiredMajor, exactAutomatic = true), preferred, context)
 
     suspend fun resolve(
         profile: ResolvedProfile,
@@ -189,10 +188,13 @@ class JavaService(
         context: JobContext,
     ): JavaRuntime {
         if (preferred.isNotBlank()) {
-            val runtime = inspect(preferred) ?: error("指定的 Java 无法运行，请在设置中重新选择")
+            val runtime =
+                inspect(preferred) ?: error(I18n.t("networkB2.javaService.preferredJavaUnusable"))
             require(requirement.problem(runtime, store.platform.architecture) == null) {
-                requirement.problem(runtime, store.platform.architecture).orEmpty() +
-                    "。请改用自动选择或选择兼容的 Java"
+                I18n.t(
+                    "networkB2.javaService.incompatibleHint",
+                    requirement.problem(runtime, store.platform.architecture).orEmpty(),
+                )
             }
             return runtime
         }
@@ -219,7 +221,7 @@ class JavaService(
             }
         return install(requirement.minimum, context).also {
             check(requirement.problem(it, store.platform.architecture) == null) {
-                "下载的 Java 架构或版本不兼容"
+                I18n.t("networkB2.javaService.downloadedIncompatible")
             }
         }
     }
@@ -249,7 +251,7 @@ class JavaService(
     /** 移除启动器自己安装的运行时：只删除 runtimes/<目录> 与清单条目，绝不动系统 Java。 */
     suspend fun remove(runtime: JavaRuntime): JavaRuntime =
         withContext(Dispatchers.IO) {
-            require(runtime.managed) { "只能移除 MoliFox 自己安装的 Java" }
+            require(runtime.managed) { I18n.t("networkB2.javaService.onlyManagedRemoval") }
             val runtimes = runtimesDirectory.toAbsolutePath().normalize()
             val executable = Path.of(runtime.path).toAbsolutePath().normalize()
             val directory =
@@ -263,7 +265,7 @@ class JavaService(
                     directory != runtimes &&
                     !Files.isSymbolicLink(directory),
             ) {
-                "拒绝删除 runtimes 之外的目录：$directory"
+                I18n.t("networkB2.javaService.outsideRuntimes", directory)
             }
             val index = discovery.runtimeIndex()
             if (directory.exists()) {
@@ -273,7 +275,9 @@ class JavaService(
             }
             index.remove(directory.fileName.toString())
             invalidate()
-            store.log("已移除 ${runtime.displayName}：${runtime.path}")
+            store.log(
+                I18n.t("networkB2.javaService.runtimeRemoved", runtime.displayName, runtime.path),
+            )
             runtime
         }
 }

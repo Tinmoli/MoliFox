@@ -5,9 +5,12 @@
 
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 
 // These directories belong to checks only. Application data is never a cleanup target.
@@ -16,7 +19,7 @@ val workspaceRoot =
         .toPath()
         .toAbsolutePath()
         .normalize()
-val managedRoot = workspaceRoot.resolve(".work/tests")
+val managedRoot = workspaceRoot.resolve("tests/.tmp")
 val smokeNames =
     setOf(
         "onlineSmoke",
@@ -76,31 +79,82 @@ fun deleteOwnedTestDirectory(directory: Path) {
     check(target.startsWith(managedRoot) && target != managedRoot) {
         "Refusing to clean outside the test workspace: $target"
     }
-    for (parent in listOf(workspaceRoot.resolve(".work"), managedRoot, target)) {
+    for (parent in listOf(workspaceRoot.resolve("tests"), managedRoot, target)) {
         check(!Files.isSymbolicLink(parent)) {
             "Test workspace must not be a symbolic link: $parent"
         }
     }
     if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-        // walk does not follow links: a link inside a fixture is removed, its target is preserved.
+        // 符号链接与 Windows 目录联接（junction）都只删链接本身：`Files.walk` 会进入 junction 指向
+        // 的真实目录，既删不到链接本身（导致「still in use」），又可能碰到测试夹具之外的内容。
         val failures = mutableListOf<Exception>()
-        Files.walk(target).use { paths ->
-            for (path in paths.sorted(Comparator.reverseOrder()).toList()) {
-                var attempt = 0
-                while (true) {
-                    try {
-                        Files.deleteIfExists(path)
+        val rootAttributes =
+            runCatching {
+                Files.readAttributes(target, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            }.getOrNull()
+        val deleteWithRetry = { path: java.nio.file.Path ->
+            var attempt = 0
+            while (true) {
+                try {
+                    Files.deleteIfExists(path)
+                    break
+                } catch (failure: java.nio.file.FileSystemException) {
+                    if (++attempt < 4) {
+                        Thread.sleep(150L * attempt)
+                    } else {
+                        failures.add(failure)
                         break
-                    } catch (failure: java.nio.file.FileSystemException) {
-                        if (++attempt < 4) {
-                            Thread.sleep(150L * attempt)
-                        } else {
-                            failures.add(failure)
-                            break
-                        }
                     }
                 }
             }
+        }
+        if (rootAttributes == null || rootAttributes.isSymbolicLink || !rootAttributes.isDirectory) {
+            deleteWithRetry(target)
+        } else {
+            Files.walkFileTree(
+                target,
+                object : SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun preVisitDirectory(
+                        dir: java.nio.file.Path,
+                        attributes: BasicFileAttributes,
+                    ): FileVisitResult {
+                        // 普通目录的 isOther 恒为 false；junction / mount point 为 true。
+                        if (dir != target && (attributes.isSymbolicLink || attributes.isOther)) {
+                            deleteWithRetry(dir)
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFile(
+                        file: java.nio.file.Path,
+                        attributes: BasicFileAttributes,
+                    ): FileVisitResult {
+                        deleteWithRetry(file)
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(
+                        file: java.nio.file.Path,
+                        failure: java.io.IOException,
+                    ): FileVisitResult {
+                        if (failure is java.nio.file.NoSuchFileException) {
+                            return FileVisitResult.CONTINUE
+                        }
+                        failures.add(failure)
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun postVisitDirectory(
+                        dir: java.nio.file.Path,
+                        failure: java.io.IOException?,
+                    ): FileVisitResult {
+                        if (failure != null) failures.add(failure)
+                        deleteWithRetry(dir)
+                        return FileVisitResult.CONTINUE
+                    }
+                },
+            )
         }
         if (failures.isNotEmpty()) {
             throw java.io
@@ -169,6 +223,7 @@ allprojects {
                 if (checkedTask is Test) {
                     checkedTask.systemProperty("java.io.tmpdir", temporary.toString())
                     checkedTask.systemProperty("jna.tmpdir", temporary.toString())
+                    checkedTask.systemProperty("molifox.test.dir", testDirectory.toString())
                     checkedTask.environment("TEMP", temporary.toString())
                     checkedTask.environment("TMP", temporary.toString())
                 }

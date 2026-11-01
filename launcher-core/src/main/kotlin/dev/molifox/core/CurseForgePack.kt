@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -39,7 +40,13 @@ internal fun readCurseForgeManifest(
         files.filter { !it.boolean("required") }.map(::curseForgePackKey),
         files.count { it.boolean("required") },
         info.string("version"),
-        info.string("author").let { if (it.isBlank()) "CurseForge 整合包" else "作者：$it" },
+        info.string("author").let {
+            if (it.isBlank()) {
+                I18n.t("packsB1.curseForgePack.defaultAuthor")
+            } else {
+                I18n.t("packsB1.curseForgePack.author", it)
+            }
+        },
         info,
     )
 }
@@ -54,17 +61,17 @@ private fun readCurseForgeHeader(info: JsonObject): CurseForgeHeader {
     require(
         info.string("manifestType") == "minecraftModpack" && info.string("manifestVersion") == "1",
     ) {
-        "不支持的 CurseForge 整合包清单版本"
+        I18n.t("packsB1.curseForgePack.unsupportedManifestVersion")
     }
     require(
         info.string("name").isNotBlank() &&
             info.obj("minecraft").string("version").isNotBlank() &&
             info.get("files")?.isJsonArray == true,
     ) {
-        "CurseForge 整合包缺少名称、游戏版本或文件清单"
+        I18n.t("packsB1.curseForgePack.missingManifestFields")
     }
     val loaders = info.obj("minecraft").array("modLoaders").map { it.asJsonObject }
-    require(loaders.size <= 1) { "CurseForge 整合包包含多个加载器，暂不支持此组合" }
+    require(loaders.size <= 1) { I18n.t("packsB1.curseForgePack.multipleLoaders") }
     val loader = loaders.firstOrNull()?.string("id").orEmpty()
     val types =
         mapOf(
@@ -77,7 +84,7 @@ private fun readCurseForgeHeader(info: JsonObject): CurseForgeHeader {
         loader.isBlank() ||
             loader.substringBefore('-') in types && loader.substringAfter('-', "").isNotBlank(),
     ) {
-        "整合包使用了不支持的加载器：$loader"
+        I18n.t("packsB1.curseForgePack.unsupportedLoader", loader)
     }
     return CurseForgeHeader(
         types[loader.substringBefore('-')] ?: LoaderType.Vanilla,
@@ -99,7 +106,7 @@ private fun requireValidOverrideEntries(
             !overrides.contains('\\') &&
             overrides.split('/').none { it.isBlank() || it == "." || it == ".." },
     ) {
-        "CurseForge overrides 目录无效"
+        I18n.t("packsB1.curseForgePack.invalidOverrides")
     }
     safePath(root, overrides)
     val paths =
@@ -113,12 +120,12 @@ private fun requireValidOverrideEntries(
             packPath(root, relative)
             if (os == "windows") relative.lowercase() else relative
         }
-    require(paths.distinct().size == paths.size) { "整合包覆盖目录包含重复路径" }
+    require(paths.distinct().size == paths.size) { I18n.t("packsB1.curseForgePack.duplicateOverridePaths") }
     val pathSet = paths.toSet()
     for (path in paths) {
         var parent = path.substringBeforeLast('/', "")
         while (parent.isNotBlank()) {
-            require(parent !in pathSet) { "整合包覆盖目录存在文件和目录冲突" }
+            require(parent !in pathSet) { I18n.t("packsB1.curseForgePack.overridePathConflict") }
             parent = parent.substringBeforeLast('/', "")
         }
     }
@@ -126,24 +133,23 @@ private fun requireValidOverrideEntries(
 
 private fun validatePackFiles(info: JsonObject): List<JsonObject> {
     val files = info.array("files").map { it.asJsonObject }
-    require(files.size <= MAX_CURSEFORGE_FILE_COUNT) { "整合包文件过多" }
+    require(files.size <= MAX_CURSEFORGE_FILE_COUNT) { I18n.t("packsB1.curseForgePack.tooManyFiles") }
     for (file in files) {
         curseForgeVersionId(curseForgePackKey(file))
         require(
             file.get("required")?.isJsonPrimitive == true &&
                 file.getAsJsonPrimitive("required").isBoolean,
         ) {
-            "CurseForge 文件缺少 required 布尔标记"
+            I18n.t("packsB1.curseForgePack.missingRequiredFlag")
         }
     }
     require(files.map { it.string("projectID") }.distinct().size == files.size) {
-        "整合包包含重复项目或多个文件版本"
+        I18n.t("packsB1.curseForgePack.duplicateProjects")
     }
     return files
 }
 
-private fun curseForgePackKey(file: JsonObject) =
-    "curseforge:${file.string("projectID")}:${file.string("fileID")}"
+private fun curseForgePackKey(file: JsonObject) = "curseforge:${file.string("projectID")}:${file.string("fileID")}"
 
 internal data class CurseForgePackFile(
     val path: String,
@@ -168,7 +174,9 @@ private fun requireCompatiblePackEntry(
     info: JsonObject,
     kind: String,
 ) {
-    require(kind in setOf("mod", "resourcepack", "shader")) { "整合包包含不支持的项目类型：$kind" }
+    require(kind in setOf("mod", "resourcepack", "shader")) {
+        I18n.t("packsB1.curseForgePack.unsupportedKind", kind)
+    }
     require(
         info.array("game_versions").any { it.asString == manifest.request.gameVersion } &&
             (
@@ -179,7 +187,7 @@ private fun requireCompatiblePackEntry(
                     }
             ),
     ) {
-        "整合包中的文件与游戏版本或加载器不兼容：$versionId"
+        I18n.t("packsB1.curseForgePack.incompatibleEntry", versionId)
     }
 }
 
@@ -190,7 +198,7 @@ private fun resolvePackTarget(
     val file = info.array("files").first().asJsonObject
     val filename = safeFilename(file.string("filename"))
     require(filename.endsWith(if (kind == "mod") ".jar" else ".zip", true)) {
-        "整合包文件扩展名无效：$filename"
+        I18n.t("packsB1.curseForgePack.invalidExtension", filename)
     }
     val folder =
         when (kind) {
@@ -290,20 +298,26 @@ internal suspend fun prepareCurseForgePack(
             }
     val missing = mutableListOf<ManualContentFile>()
     val resolved = mutableListOf<CurseForgePackFile>()
-    context.progress(0f, "批量读取 CurseForge 文件清单…")
+    context.progress(0f, I18n.t("packsB1.curseForgePack.readingFileList"))
     val metadata = backend.packMetadata(files.map(::curseForgePackKey))
     for ((position, entry) in files.withIndex()) {
         context.checkCancelled()
-        context.progress(0f, "读取 CurseForge 清单 ${position + 1}/${files.size}")
+        context.progress(
+            0f,
+            I18n.t("packsB1.curseForgePack.readingManifest", position + 1, files.size),
+        )
         val file =
             resolvePackEntry(manifest, entry, metadata, manualDirectory, existingRoot, missing)
         if (file != null) resolved += file
     }
     require(resolved.map { it.path.lowercase() }.distinct().size == resolved.size) {
-        "整合包中多个项目使用同名文件"
+        I18n.t("packsB1.curseForgePack.duplicateFilenames")
     }
     if (missing.isNotEmpty()) {
-        throw ManualContentRequired(missing, "请将文件按原文件名放到 $manualDirectory 后重试导入。")
+        throw ManualContentRequired(
+            missing,
+            I18n.t("packsB1.curseForgePack.manualFilesRequired", manualDirectory),
+        )
     }
     return resolved
 }
@@ -312,18 +326,22 @@ internal suspend fun stageCurseForgePackFiles(
     files: List<CurseForgePackFile>,
     transaction: PackFileTransaction,
     context: JobContext,
+    progressStart: Float = 0f,
+    progressEnd: Float = 1f,
     download: suspend (DownloadArtifact) -> Unit,
 ) {
+    context.beginTransfers(files.size)
     for ((position, file) in files.withIndex()) {
         context.checkCancelled()
+        val span = progressEnd - progressStart
         context.progress(
-            position.toFloat() / maxOf(files.size, 1),
-            "整合包文件 ${position + 1}/${files.size} · ${file.path}",
+            progressStart + span * position.toFloat() / maxOf(files.size, 1),
+            I18n.t("packsB1.curseForgePack.stagingFile", position + 1, files.size, file.path),
         )
         val target = packPath(transaction.content, file.path)
         if (file.local != null) {
             require(file.local.isRegularFile() && !Files.isSymbolicLink(file.local)) {
-                "手动下载文件已改变：${file.local.name}"
+                I18n.t("packsB1.curseForgePack.manualFileChanged", file.local.name)
             }
             target.parent.createDirectories()
             Files.copy(file.local, target, StandardCopyOption.REPLACE_EXISTING)
@@ -331,7 +349,7 @@ internal suspend fun stageCurseForgePackFiles(
             download(requireNotNull(file.artifact).copy(target = target))
         }
         require(target.fileSize() == file.size && digest(target).equals(file.hash, true)) {
-            "整合包文件大小或 SHA-1 校验失败：${file.path}"
+            I18n.t("packsB1.curseForgePack.hashMismatch", file.path)
         }
     }
 }

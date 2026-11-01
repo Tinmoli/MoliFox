@@ -101,6 +101,7 @@ internal fun ColumnScope.LogsPage(
     state: LauncherState,
     actions: UiActions,
 ) {
+    val strings = LocalStrings.current
     val preferences = state.data.settings.pages.logs
     var query by remember { mutableStateOf("") }
     // 空集合 = 全部级别；点「全部」清空选择，点某一级则切换该级。
@@ -135,7 +136,7 @@ internal fun ColumnScope.LogsPage(
     }
     LogConsolePanel(state, actions, logs, listState, autoScroll) { autoScroll = it }
     Text(
-        logs.size.toString() + " / " + state.logs.size + " 条记录 · 已知登录令牌会自动隐藏",
+        strings.t("pages.logs.count", logs.size, state.logs.size),
         fontSize = 11.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -143,15 +144,19 @@ internal fun ColumnScope.LogsPage(
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text("清空界面日志？") },
-            text = { Text("只清空当前列表；磁盘上的 logs/launcher.log 与已导出的诊断包保留。") },
+            title = { Text(strings.t("pages.logs.clear.title")) },
+            text = { Text(strings.t("pages.logs.clear.message")) },
             confirmButton = {
                 TextButton({
                     confirmClear = false
                     actions.controller.clearLogs()
-                }) { Text("清空") }
+                }) { Text(strings.t("pages.logs.clear.confirm")) }
             },
-            dismissButton = { TextButton({ confirmClear = false }) { Text("取消") } },
+            dismissButton = {
+                TextButton({ confirmClear = false }) {
+                    Text(strings.t("pages.logs.clear.cancel"))
+                }
+            },
         )
     }
 }
@@ -166,15 +171,16 @@ private fun LogToolbar(
     onClear: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
+    val strings = LocalStrings.current
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LogAction(Icons.Outlined.FolderOpen, "打开日志文件夹") {
+        LogAction(Icons.Outlined.FolderOpen, strings.t("pages.logs.action.openFolder")) {
             actions.run { actions.controller.openLogsFolder() }
         }
-        LogAction(Icons.Outlined.ContentCopy, "复制") {
+        LogAction(Icons.Outlined.ContentCopy, strings.t("pages.logs.action.copy")) {
             clipboard.setText(
                 AnnotatedString(
                     logs.joinToString("\n") {
@@ -184,11 +190,15 @@ private fun LogToolbar(
                 ),
             )
         }
-        LogAction(Icons.Outlined.Save, "导出日志") { actions.exportLogs() }
-        LogAction(Icons.Outlined.Description, "导出诊断包") { actions.exportDiagnostics() }
-        LogAction(Icons.Outlined.DeleteOutline, "清空") { onClear() }
+        LogAction(Icons.Outlined.Save, strings.t("pages.logs.action.exportLogs")) {
+            actions.exportLogs()
+        }
+        LogAction(Icons.Outlined.Description, strings.t("pages.logs.action.exportDiagnostics")) {
+            actions.exportDiagnostics()
+        }
+        LogAction(Icons.Outlined.DeleteOutline, strings.t("pages.logs.action.clear")) { onClear() }
         if (state.runningInstanceId != null) {
-            LogAction(Icons.Outlined.Stop, "停止游戏") {
+            LogAction(Icons.Outlined.Stop, strings.t("pages.logs.action.stopGame")) {
                 actions.run { actions.controller.game.stop() }
             }
         }
@@ -203,6 +213,7 @@ private fun LaunchIssuePanel(
     actions: UiActions,
 ) {
     if (issue == null) return
+    val strings = LocalStrings.current
     Panel(Modifier.fillMaxWidth(), padding = 14) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -214,7 +225,10 @@ private fun LaunchIssuePanel(
             Spacer(Modifier.weight(1f))
             if (selectedInstanceId != null) {
                 SecondaryButton({ actions.previewLaunch(selectedInstanceId) }) {
-                    Text("查看启动参数", fontSize = 12.sp)
+                    Text(
+                        strings.t("pages.logs.action.viewLaunchArgs"),
+                        fontSize = 12.sp,
+                    )
                 }
             }
         }
@@ -240,6 +254,7 @@ private fun LogFilterSection(
     levels: Set<LogLevel>,
     onLevelsChange: (Set<LogLevel>) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -249,12 +264,12 @@ private fun LogFilterSection(
             query,
             onQueryChange,
             Modifier.weight(1f),
-            placeholder = "筛选日志内容",
+            placeholder = strings.t("pages.logs.filter.placeholder"),
         )
         FilterChip(
             onlyGame,
             { onOnlyGameChange(!onlyGame) },
-            { Text("仅游戏", fontSize = 11.sp) },
+            { Text(strings.t("pages.logs.filter.onlyGame"), fontSize = 11.sp) },
             modifier = Modifier.height(28.dp),
         )
     }
@@ -264,7 +279,7 @@ private fun LogFilterSection(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LevelChip("全部", levels.isEmpty()) { onLevelsChange(emptySet()) }
+        LevelChip(strings.t("pages.logs.filter.all"), levels.isEmpty()) { onLevelsChange(emptySet()) }
         LogLevel.entries.forEach { level ->
             LevelChip(level.title, level in levels) {
                 onLevelsChange(
@@ -290,6 +305,7 @@ private fun ColumnScope.LogConsolePanel(
     onAutoScrollChange: (Boolean) -> Unit,
 ) {
     val fontSize = state.data.settings.pages.logs.fontSize
+    val strings = LocalStrings.current
     Surface(
         Modifier.fillMaxWidth().weight(1f),
         color = logConsoleBackground,
@@ -321,9 +337,9 @@ private fun ColumnScope.LogConsolePanel(
                                     )
                                     Text(
                                         if (logsEmpty) {
-                                            "等待日志输出…"
+                                            strings.t("pages.logs.empty.waiting")
                                         } else {
-                                            "没有符合当前筛选条件的日志"
+                                            strings.t("pages.logs.empty.filtered")
                                         },
                                         color = logConsoleTimestamp,
                                         fontFamily = LocalLauncherFont.current,
@@ -331,9 +347,9 @@ private fun ColumnScope.LogConsolePanel(
                                     )
                                     Text(
                                         if (logsEmpty) {
-                                            "启动游戏后这里会显示运行输出"
+                                            strings.t("pages.logs.empty.hint.waiting")
                                         } else {
-                                            "调整级别、关键词或「仅游戏」后再试"
+                                            strings.t("pages.logs.empty.hint.filtered")
                                         },
                                         color = logConsoleTimestamp.copy(alpha = .8f),
                                         fontSize = 11.sp,
@@ -367,23 +383,28 @@ private fun LogConsoleHeader(
     onAutoScrollChange: (Boolean) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (state.runningInstanceId != null) {
-            Tag("游戏运行中")
+            Tag(strings.t("pages.logs.tag.running"))
         } else {
-            Tag("启动器日志", MaterialTheme.colorScheme.onSurfaceVariant)
+            Tag(strings.t("pages.logs.tag.launcher"), MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(
-            logs.size.toString() + " 条",
+            strings.t("pages.logs.header.count", logs.size),
             fontSize = 11.sp,
             color = logConsoleTimestamp,
         )
         Spacer(Modifier.weight(1f))
-        Text("自动滚动", fontSize = 11.sp, color = logConsoleTimestamp)
+        Text(
+            strings.t("pages.logs.header.autoScroll"),
+            fontSize = 11.sp,
+            color = logConsoleTimestamp,
+        )
         CompactSwitch(
             autoScroll,
             { enabled ->
@@ -404,7 +425,7 @@ private fun LogConsoleHeader(
         )
         SmallIconButton(
             Icons.Outlined.KeyboardArrowDown,
-            "跳到最新一行",
+            strings.t("pages.logs.header.jumpLatest"),
             {
                 scope.launch {
                     if (logs.isNotEmpty()) listState.animateScrollToItem(logs.lastIndex)

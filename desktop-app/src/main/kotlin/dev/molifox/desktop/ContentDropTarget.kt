@@ -27,6 +27,9 @@ import java.io.File
 import java.nio.file.Path
 import kotlin.io.path.toPath
 
+/** 一次拖放最多接受的文件数：避免误拖整个目录。 */
+private const val DROP_FILE_LIMIT = 20
+
 /**
  * 内容区的拖放接收器：把传入的文件/文件夹路径交给 [onFiles]，悬停时给内容区描边。
  *
@@ -36,15 +39,17 @@ import kotlin.io.path.toPath
 @Composable
 internal fun Modifier.contentDropTarget(
     enabled: Boolean = true,
-    hint: String = "请拖入文件或文件夹",
+    hint: String = "",
     onError: (String) -> Unit = {},
     onFiles: (List<Path>) -> Unit,
 ): Modifier {
     var hovered by remember { mutableStateOf(false) }
     val receiver by rememberUpdatedState(onFiles)
     val failure by rememberUpdatedState(onError)
+    // 默认提示文案随语言变化，调用方传入的 hint 优先。
+    val effectiveHint = hint.ifEmpty { tr("pages.drop.hint") }
     val target =
-        remember(enabled) {
+        remember(enabled, effectiveHint) {
             object : DragAndDropTarget {
                 override fun onEntered(event: DragAndDropEvent) {
                     if (enabled) hovered = true
@@ -66,12 +71,14 @@ internal fun Modifier.contentDropTarget(
                             event.awtTransferable.getTransferData(DataFlavor.javaFileListFlavor)
                                 as? List<*>
                         val files = raw.orEmpty().filterIsInstance<File>().map { it.toPath() }
-                        require(files.isNotEmpty()) { hint }
-                        require(files.size <= 20) { "一次最多拖入 20 个文件" }
+                        require(files.isNotEmpty()) { effectiveHint }
+                        require(files.size <= DROP_FILE_LIMIT) {
+                            tr("pages.drop.tooMany", DROP_FILE_LIMIT)
+                        }
                         receiver(files)
                         true
                     }.getOrElse { error ->
-                        failure(error.message ?: "无法读取拖入的文件")
+                        failure(error.message ?: tr("pages.drop.unreadable"))
                         false
                     }
                 }

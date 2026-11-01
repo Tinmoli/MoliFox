@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -40,11 +41,15 @@ internal class NewInstallationCleanup(
         folder: Path,
     ) {
         if (!folder.exists(NOFOLLOW_LINKS)) return
-        require(context.canRemoveDownload(folder)) { "新版本目录已被其他实例引用，未删除" }
-        require(folder.toRealPath() == folder) { "新版本目录已变为链接，未删除" }
+        require(context.canRemoveDownload(folder)) {
+            I18n.t("diagA2.newInstallationCleanup.versionReferenced")
+        }
+        require(folder.toRealPath() == folder) {
+            I18n.t("diagA2.newInstallationCleanup.versionLinked")
+        }
         val paths = Files.walk(folder).use { it.toList() }
         require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
-            "新版本目录包含链接，未删除"
+            I18n.t("diagA2.newInstallationCleanup.versionContainsLink")
         }
         paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
     }

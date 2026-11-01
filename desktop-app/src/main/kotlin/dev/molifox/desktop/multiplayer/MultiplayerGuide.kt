@@ -12,22 +12,33 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
+import dev.molifox.desktop.tr
 
 @Composable
 internal fun MultiplayerGuide(host: Boolean) {
-    val steps = if (host) HOST_STEPS else GUEST_STEPS
+    val strings = LocalStrings.current
+    val steps = if (host) hostSteps() else guestSteps()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        MultiplayerGroup(Modifier.fillMaxWidth(), title = if (host) "房主教程" else "房客教程") {
+        MultiplayerGroup(
+            Modifier.fillMaxWidth(),
+            title =
+                if (host) {
+                    strings.t("dialogs.mp.tab.hostGuide")
+                } else {
+                    strings.t("dialogs.mp.tab.guestGuide")
+                },
+        ) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 steps.forEachIndexed { index, step ->
                     Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
-        MultiplayerGroup(Modifier.fillMaxWidth(), title = "常见问题") {
+        MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.guide.faq")) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                FAQ_ITEMS.forEach { (question, answer) ->
+                faqItems().forEach { (question, answer) ->
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(question, style = MaterialTheme.typography.bodyMedium)
                         MutedText(answer)
@@ -35,49 +46,39 @@ internal fun MultiplayerGuide(host: Boolean) {
                 }
             }
         }
-        MultiplayerGroup(Modifier.fillMaxWidth(), title = "这些情况要知道") {
-            Text(BOUNDARY_NOTICE, style = MaterialTheme.typography.bodySmall)
+        MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.guide.notes")) {
+            Text(boundaryNotice(), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
-private val HOST_STEPS =
+private fun hostSteps(): List<String> =
     listOf(
-        "在游戏里进入要分享的存档，按 Esc → 对局域网开放，记下游戏显示的端口号。",
-        "回到启动器的联机页，点“刷新世界”，选中你刚开放的那个世界。",
-        "点“创建房间”，把生成的邀请码复制发给朋友。",
-        "保持游戏和启动器都开着，朋友才能进来。",
-        "退出存档或关闭启动器，房间就关了，朋友会断开。",
+        tr("dialogs.mp.guide.host.step1"),
+        tr("dialogs.mp.guide.host.step2"),
+        tr("dialogs.mp.guide.host.step3"),
+        tr("dialogs.mp.guide.host.step4"),
+        tr("dialogs.mp.guide.host.step5"),
     )
 
-private val GUEST_STEPS =
+private fun guestSteps(): List<String> =
     listOf(
-        "问房主要 21 位邀请码，形如 U/XXXX-XXXX-XXXX-XXXX。",
-        "在联机页粘贴邀请码并点“加入房间”；启动器会建一条私人通道，有时要等 1-2 分钟。",
-        "打开游戏 → 多人游戏 → 刷新，出现朋友的世界就进去；没出现就手动添加界面给出的本地地址。",
-        "保持启动器运行，联机期间别关。",
-        "退出房间或关闭启动器就断开。",
+        tr("dialogs.mp.guide.guest.step1"),
+        tr("dialogs.mp.guide.guest.step2"),
+        tr("dialogs.mp.guide.guest.step3"),
+        tr("dialogs.mp.guide.guest.step4"),
+        tr("dialogs.mp.guide.guest.step5"),
     )
 
 /** 常见问题：覆盖最容易卡住用户的几件事，答案只描述启动器确实会做的事。 */
-private val FAQ_ITEMS =
+private fun faqItems(): List<Pair<String, String>> =
     listOf(
-        "邀请码无效或房间不存在？" to
-            "确认邀请码完整（21 位）且房主的房间还开着；房主退出存档后房间会自动关闭。",
-        "一直连不上？" to
-            "先在设置里确认中继可用；不行就换网络（手机热点）或填自定义中继再试。",
-        "弹出防火墙提示怎么办？" to
-            "点“允许访问”即可。启动器不会替你修改防火墙设置。",
-        "要装一样的模组吗？" to
-            "要。启动器不同步模组，双方的游戏版本和模组需要一致。",
-        "启动器会自动打开游戏或邀请账号好友吗？" to
-            "不会。游戏要自己启动，邀请码也要自己发给朋友。",
-        "PCL CE / HMCL 能加入我的房间吗？" to
-            "不能。联机网络名已改为 MoliFox 前缀，目前仅支持 MoliFox 启动器之间联机，建议双方使用相同版本。",
+        tr("dialogs.mp.guide.faq1q") to tr("dialogs.mp.guide.faq1a"),
+        tr("dialogs.mp.guide.faq2q") to tr("dialogs.mp.guide.faq2a"),
+        tr("dialogs.mp.guide.faq3q") to tr("dialogs.mp.guide.faq3a"),
+        tr("dialogs.mp.guide.faq4q") to tr("dialogs.mp.guide.faq4a"),
+        tr("dialogs.mp.guide.faq5q") to tr("dialogs.mp.guide.faq5a"),
+        tr("dialogs.mp.guide.faq6q") to tr("dialogs.mp.guide.faq6a"),
     )
 
-private const val BOUNDARY_NOTICE =
-    "启动器内置中继节点：优先 P2P 直连，打洞失败会自动改走中继转发；中继不支持转发或不可用时会提示连接失败。" +
-        "自定义中继可在联机设置里填写。" +
-        "邀请码仅适用于 MoliFox 启动器，PCL CE / HMCL 等其它启动器无法加入，建议双方使用相同版本。" +
-        "联机不替换 Minecraft 登录验证，也不会同步模组；房主退出存档会关房，双方都要保持启动器运行。"
+private fun boundaryNotice(): String = tr("dialogs.mp.guide.boundary")

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -102,9 +103,19 @@ internal abstract class ContentPackStageActions(
         zip: ZipFile,
         pack: PackImport,
         context: JobContext,
+        progressStart: Float = 0f,
+        progressEnd: Float = 1f,
     ) {
-        stageCurseForgePackFiles(pack.curseForgeFiles, transaction, context) {
-            network.download(it)
+        stageCurseForgePackFiles(
+            pack.curseForgeFiles,
+            transaction,
+            context,
+            progressStart,
+            progressEnd,
+        ) {
+            network.download(it) { done, total ->
+                context.transfer(it.target.toString(), done, total)
+            }
         }
         stagePackFiles(
             pack.manifest,
@@ -114,8 +125,12 @@ internal abstract class ContentPackStageActions(
             pack.selection,
             pack.repairId != null,
             context,
+            progressStart,
+            progressEnd,
         ) {
-            network.download(it)
+            network.download(it) { done, total ->
+                context.transfer(it.target.toString(), done, total)
+            }
         }
     }
 
@@ -137,7 +152,10 @@ internal abstract class ContentPackStageActions(
                 ),
             )
         }.onFailure {
-            store.log("整合包文件归属账本写入失败，下次升级将按迁移模式处理：${it.message}", true)
+            store.log(
+                I18n.t("contentA2.contentPackStageActions.ownershipWriteFailed", it.message),
+                true,
+            )
         }
     }
 
@@ -180,8 +198,7 @@ internal abstract class ContentPackStageActions(
         return savedPack
     }
 
-    protected fun upgradeWorkDirectory(root: Path): Path =
-        root.resolve(".molifox-pack-upgrade-${UUID.randomUUID()}")
+    protected fun upgradeWorkDirectory(root: Path): Path = root.resolve(".molifox-pack-upgrade-${UUID.randomUUID()}")
 
     /**
      * 导出对话框的顶层内容扫描：列出实例目录的直接子项并按实际文件统计数量与体积。

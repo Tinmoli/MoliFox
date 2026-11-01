@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.flow.Flow
 import java.nio.file.Files
 import java.nio.file.Path
@@ -114,14 +115,14 @@ internal abstract class ContentExportActions(
             instance.installed &&
                 (!instance.externalProfile || instance.loader == LoaderType.Vanilla),
         ) {
-            "外部加载器实例请先用原启动器导出，未完成的实例无法导出"
+            I18n.t("contentA1.export.externalLoaderUnsupported")
         }
         val root = store.instancePath(id)
         destination.parent?.createDirectories()
         require(
             !destination.toAbsolutePath().normalize().startsWith(root.toAbsolutePath().normalize()),
         ) {
-            "请将整合包保存到实例目录外"
+            I18n.t("contentA1.export.destinationInsideInstance")
         }
         val temporary = destination.resolveSibling("${destination.fileName}.part")
         try {
@@ -133,7 +134,7 @@ internal abstract class ContentExportActions(
         } finally {
             temporary.deleteIfExists()
         }
-        store.log("实例已导出（包含存档、模组和配置）：$destination")
+        store.log(I18n.t("contentA1.export.instanceExported", destination))
     }
 
     /** 把实例目录里的普通文件（跳过符号链接）按导出规则逐个写进压缩包。 */

@@ -5,6 +5,8 @@
 
 package dev.molifox.core.net
 
+import dev.molifox.core.MAX_DOWNLOAD_THREADS
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.sync.Semaphore
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,13 +34,19 @@ fun downloadConcurrency(
     averageFileBytes: Long,
     budgetBytes: Long = DOWNLOAD_BUDGET_BYTES,
 ): DownloadConcurrency {
-    val files = requested.coerceIn(1, 32)
+    val files = requested.coerceIn(1, MAX_DOWNLOAD_THREADS)
     if (averageFileBytes <= 0L || budgetBytes <= 0L) return DownloadConcurrency(files, null)
     val fits = (budgetBytes / averageFileBytes).toInt().coerceAtLeast(1)
     if (fits >= files) return DownloadConcurrency(files, null)
     return DownloadConcurrency(
         fits,
-        "并发下载数 $files → $fits（文件 ${megabytes(averageFileBytes)}，内存预算 ${megabytes(budgetBytes)}）",
+        I18n.t(
+            "networkA.budget.clamped",
+            files,
+            fits,
+            megabytes(averageFileBytes),
+            megabytes(budgetBytes),
+        ),
     )
 }
 

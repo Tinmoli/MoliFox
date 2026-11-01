@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.cancel
@@ -18,8 +19,7 @@ import kotlin.io.path.bufferedReader
 import kotlin.io.path.exists
 import kotlin.io.path.useLines
 
-internal fun encoded(value: String): String =
-    URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+internal fun encoded(value: String): String = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 
 /** 版本列表源：official 使用 Mojang 官方清单，bmclapi 使用国内镜像；独立于文件下载源。 */
 internal fun versionManifestUrl(source: String): String =
@@ -48,6 +48,7 @@ class MinecraftInstaller(
     // 加载器元数据端点同样可注入：安装流程会先合成完整配置再落盘，离线测试用本地服务验证这条路径。
     private val fabricMetaBase: String = "https://meta.fabricmc.net",
     private val quiltMetaBase: String = "https://meta.quiltmc.org",
+    private val legacyFabricMetaBase: String = "https://meta.legacyfabric.net",
     // Forge 系加载器列表用的 Maven 根地址；默认就是官方地址，测试可指向本地服务。
     private val forgeMavenBase: String = "https://maven.minecraftforge.net",
     private val neoforgeMavenBase: String = "https://maven.neoforged.net",
@@ -59,6 +60,7 @@ class MinecraftInstaller(
             manifestUrl = manifestUrl,
             fabricMetaBase = fabricMetaBase,
             quiltMetaBase = quiltMetaBase,
+            legacyFabricMetaBase = legacyFabricMetaBase,
             forgeMavenBase = forgeMavenBase,
             neoforgeMavenBase = neoforgeMavenBase,
         )
@@ -70,6 +72,7 @@ class MinecraftInstaller(
             java = java,
             fabricMetaBase = fabricMetaBase,
             quiltMetaBase = quiltMetaBase,
+            legacyFabricMetaBase = legacyFabricMetaBase,
         )
     private val publisher = InstanceProfilePublisher(store, network, catalog)
     private val pipeline =
@@ -107,6 +110,9 @@ class MinecraftInstaller(
         gameVersion: String,
     ): List<LoaderVersion> = catalog.loaderVersions(loader, gameVersion)
 
+    /** 受限加载器支持的游戏版本；null 表示不限制。 */
+    suspend fun supportedGameVersions(loader: LoaderType): Set<String>? = catalog.supportedGameVersions(loader)
+
     fun validate(request: InstallRequest) {
         provisioner.validate(request)
     }
@@ -121,8 +127,18 @@ class MinecraftInstaller(
         instanceId: String,
         context: JobContext,
         freshInstall: Boolean = false,
+        progressEnd: Float = 1f,
+        discardOnFailure: Boolean = true,
+        refreshAfterInstall: Boolean = true,
     ) {
-        pipeline.install(instanceId, context, freshInstall)
+        pipeline.install(
+            instanceId,
+            context,
+            freshInstall,
+            progressEnd,
+            discardOnFailure,
+            refreshAfterInstall,
+        )
     }
 
     suspend fun upgradeLoader(
@@ -180,7 +196,7 @@ internal suspend fun runJavaProcess(
                     20 * 60 * 1000L,
                 ) { runInterruptible(Dispatchers.IO) { process.waitFor() } }
             output.join()
-            check(code == 0) { "Java 组件处理失败，退出码 $code。详细信息请查看日志" }
+            check(code == 0) { I18n.t("miscA2.installer.processorFailed", code) }
         } finally {
             if (process.isAlive) process.destroyForcibly()
             output.cancel()

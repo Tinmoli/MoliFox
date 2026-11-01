@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -37,8 +38,9 @@ internal class GameDirectoryScanner(
         directory: GameDirectory,
     ): GameInstance? =
         runCatching { scannedProfile(folder, root, resolver, directory) }
-            .onFailure { store.log("跳过无法识别的版本 ${folder.name}：${it.message}", true) }
-            .getOrNull()
+            .onFailure {
+                store.log(I18n.t("instA1.scanner.skipUnknownVersion", folder.name, it.message), true)
+            }.getOrNull()
 
     private fun scannedProfile(
         folder: Path,

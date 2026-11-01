@@ -28,8 +28,7 @@ internal class CurseForgeFingerprints(
 
     private val murmurCache =
         object : LinkedHashMap<String, MurmurEntry>(64, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MurmurEntry>?) =
-                size > 1024
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MurmurEntry>?) = size > 1024
         }
 
     private suspend fun fingerprintOf(path: Path): Pair<Long, Long>? {
@@ -215,9 +214,7 @@ internal class CurseForgeFingerprints(
         return result
     }
 
-    private suspend fun loadProjects(
-        matches: Map<Path, JsonObject>,
-    ): MutableMap<String, JsonObject> {
+    private suspend fun loadProjects(matches: Map<Path, JsonObject>): MutableMap<String, JsonObject> {
         val projects = mutableMapOf<String, JsonObject>()
         val projectIds =
             matches.values

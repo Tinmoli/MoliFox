@@ -98,6 +98,7 @@ internal fun ScreenshotGrid(
 
 @Composable
 private fun BoxScope.ScreenshotEmptyState(empty: Boolean) {
+    val strings = LocalStrings.current
     Column(
         Modifier.align(Alignment.Center),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -109,8 +110,8 @@ private fun BoxScope.ScreenshotEmptyState(empty: Boolean) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
-        Text(if (empty) "这里还没有游戏截图" else "没有匹配的截图")
-        MutedText(if (empty) "游戏内拍摄的截图会出现在这里。" else "试试其他文件名或日期。")
+        Text(if (empty) strings.t("dialogs.screenshot.empty") else strings.t("dialogs.screenshot.noMatch"))
+        MutedText(if (empty) strings.t("dialogs.screenshot.emptyHint") else strings.t("dialogs.screenshot.noMatchHint"))
     }
 }
 
@@ -123,6 +124,7 @@ private fun ScreenshotTile(
     onPreview: () -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val image by ScreenshotImageState(shot, actions)
     Column(
         Modifier
@@ -141,11 +143,11 @@ private fun ScreenshotTile(
             if (image != null) {
                 Image(
                     requireNotNull(image),
-                    "预览截图 ${shot.name}",
+                    strings.t("dialogs.screenshot.previewLabel", shot.name),
                     Modifier.fillMaxSize(),
                 )
             } else {
-                Icon(Icons.Outlined.BrokenImage, "截图无法预览")
+                Icon(Icons.Outlined.BrokenImage, strings.t("dialogs.screenshot.previewFailed"))
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -167,7 +169,7 @@ private fun ScreenshotTile(
                 if (shot.previewable) {
                     "${shot.width}×${shot.height}"
                 } else {
-                    "无法预览，可导出原文件"
+                    strings.t("dialogs.screenshot.previewFailedHint")
                 },
         )
     }
@@ -201,6 +203,7 @@ internal fun ScreenshotPreviewDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (shot == null) return
     val image by ScreenshotImageState(shot, actions, 1024)
     val scope = rememberCoroutineScope()
@@ -218,12 +221,17 @@ internal fun ScreenshotPreviewDialog(
             }
         }
     }
-    Modal("截图预览", shot.name, width = 860.dp, onDismiss = { if (!busy) onDismiss() }) {
+    Modal(
+        strings.t("dialogs.screenshot.previewTitle"),
+        shot.name,
+        width = 860.dp,
+        onDismiss = { if (!busy) onDismiss() },
+    ) {
         Box(Modifier.fillMaxWidth().height(360.dp), contentAlignment = Alignment.Center) {
             if (image != null) {
                 Image(requireNotNull(image), shot.name, Modifier.fillMaxSize())
             } else {
-                Text("此文件无法预览，可以关闭后导出或移入回收站。")
+                Text(strings.t("dialogs.screenshot.previewBody"))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -233,18 +241,18 @@ internal fun ScreenshotPreviewDialog(
                         val file = actions.controller.screenshots.resolve(shot)
                         val full =
                             withContext(Dispatchers.IO) {
-                                ImageIO.read(file.toFile()) ?: error("截图无法解码")
+                                ImageIO.read(file.toFile()) ?: error(strings.t("dialogs.screenshot.decodeFailed"))
                             }
                         Toolkit
                             .getDefaultToolkit()
                             .systemClipboard
                             .setContents(ScreenshotTransferable(full), null)
-                        message = "图片已复制"
+                        message = strings.t("dialogs.screenshot.copied")
                     }
                 },
                 enabled = !busy && image != null,
             ) {
-                Text("复制图片")
+                Text(strings.t("dialogs.screenshot.copy"))
             }
             SecondaryButton(
                 {
@@ -263,16 +271,16 @@ internal fun ScreenshotPreviewDialog(
                                 backgroundRevision = System.currentTimeMillis(),
                             ),
                         )
-                        message = "已设为启动器背景"
+                        message = strings.t("dialogs.screenshot.setBackgroundDone")
                     }
                 },
                 enabled = !busy && image != null,
             ) {
-                Text("设为背景")
+                Text(strings.t("dialogs.screenshot.setBackground"))
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         message?.let { MutedText(it) }
-        DialogActions("关闭预览", onDismiss, enabled = !busy)
+        DialogActions(strings.t("dialogs.screenshot.closePreview"), onDismiss, enabled = !busy)
     }
 }

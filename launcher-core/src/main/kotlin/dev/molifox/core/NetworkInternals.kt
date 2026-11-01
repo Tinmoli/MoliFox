@@ -35,15 +35,13 @@ internal suspend fun NetworkClient.orderedCandidates(
 ): List<String> = actions.orderedCandidates(url, selection)
 
 /** 给 Java 元数据源测速并排序，不可达的源排最后；只在当前任务中共用初始化顺序。 */
-internal suspend fun NetworkClient.fastestFirst(urls: List<String>): List<String> =
-    actions.fastestFirst(urls)
+internal suspend fun NetworkClient.fastestFirst(urls: List<String>): List<String> = actions.fastestFirst(urls)
 
 /** GitHub 发布页只走 api.github.com，避免把 token 或重定向带到别的主机。 */
 internal suspend fun NetworkClient.githubJson(url: String): JsonElement = actions.githubJson(url)
 
 /** 百科页面：只允许 mcmod.cn，限制响应体积并转成 UTF-8 文本。 */
-internal suspend fun NetworkClient.encyclopediaText(url: String): String =
-    actions.encyclopediaText(url)
+internal suspend fun NetworkClient.encyclopediaText(url: String): String = actions.encyclopediaText(url)
 
 /** CurseForge 公共镜像：不带 API Key，按设置里的根地址请求。 */
 internal suspend fun NetworkClient.curseForgeJson(

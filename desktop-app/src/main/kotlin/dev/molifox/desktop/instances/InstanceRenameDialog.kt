@@ -20,6 +20,7 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.instanceFolderName
 import dev.molifox.desktop.CompactTextField
 import dev.molifox.desktop.DialogActions
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Modal
 import dev.molifox.desktop.UiActions
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,7 @@ internal fun RenameInstanceDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var name by remember(instance.id) { mutableStateOf(instance.name) }
     var error by remember(instance.id) { mutableStateOf("") }
     var running by remember(instance.id) { mutableStateOf(false) }
@@ -40,8 +42,8 @@ internal fun RenameInstanceDialog(
     val trimmed = name.trim()
     val valid = trimmed.isNotEmpty() && trimmed.length <= 80 && trimmed != instance.name
     Modal(
-        "重命名实例",
-        "会重命名 versions/" + instance.instanceFolderName() + "，并同步同名 JSON/JAR 与其他版本的引用。",
+        strings.t("dialogs.rename.title"),
+        strings.t("dialogs.rename.instancesMessage", instance.instanceFolderName()),
         onDismiss = onDismiss,
     ) {
         CompactTextField(
@@ -51,14 +53,14 @@ internal fun RenameInstanceDialog(
                 error = ""
             },
             Modifier.fillMaxWidth(),
-            label = "实例名称",
+            label = strings.t("dialogs.rename.nameLabel"),
             placeholder = instance.name,
         )
         if (error.isNotBlank()) {
             Text(error, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
         }
         DialogActions(
-            confirmText = "保存",
+            confirmText = strings.t("dialogs.common.save"),
             onConfirm = {
                 running = true
                 scope.launch {
@@ -72,14 +74,14 @@ internal fun RenameInstanceDialog(
                     if (failure == null) {
                         onDismiss()
                     } else {
-                        error = failure.message ?: "重命名失败，请稍后重试"
+                        error = failure.message ?: strings.t("dialogs.rename.simpleFailed")
                     }
                 }
             },
             onCancel = onDismiss,
             enabled = valid,
             busy = running,
-            hint = if (valid) "" else "名称需要 1–80 个字符，且不能与当前名称相同",
+            hint = if (valid) "" else strings.t("dialogs.rename.invalidHint"),
         )
     }
 }

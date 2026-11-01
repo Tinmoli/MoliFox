@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.net.URI
 
 private const val MAX_GAME_VERSION_FILTER_CHARS = 100
@@ -25,7 +26,7 @@ data class ContentFilter(
             gameVersion.length <= MAX_GAME_VERSION_FILTER_CHARS &&
                 gameVersion.none { it.isISOControl() },
         ) {
-            "游戏版本筛选无效"
+            I18n.t("contentA1.filter.gameVersionInvalid")
         }
         require(
             categories.size <= MAX_CONTENT_CATEGORIES &&
@@ -35,7 +36,7 @@ data class ContentFilter(
                         slug.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
                 },
         ) {
-            "分类筛选无效"
+            I18n.t("contentA1.filter.categoriesInvalid")
         }
     }
 }
@@ -104,15 +105,15 @@ internal fun contentLinks(
             ),
         )
         (encyclopediaUrl ?: directEncyclopediaUrl(project.string("wiki_url")))?.let {
-            add(ContentLink("MC 百科", it))
+            add(ContentLink(I18n.t("contentA1.link.encyclopedia"), it))
         }
         for (
         (key, title) in
         listOf(
-            "wiki_url" to "项目 Wiki",
-            "source_url" to "源代码",
-            "issues_url" to "问题反馈",
-            "discord_url" to "社区",
+            "wiki_url" to I18n.t("contentA1.link.wiki"),
+            "source_url" to I18n.t("contentA1.link.source"),
+            "issues_url" to I18n.t("contentA1.link.issues"),
+            "discord_url" to I18n.t("contentA1.link.community"),
         )
         ) {
             val url = project.string(key)

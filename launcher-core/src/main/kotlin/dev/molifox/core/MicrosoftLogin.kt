@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,7 @@ internal class MicrosoftLogin(
             store.data.settings.microsoftClientId
                 .trim()
         require(runCatching { UUID.fromString(clientId) }.isSuccess) {
-            "请先在设置中填写 Microsoft 应用客户端 ID，并启用公共客户端设备登录"
+            I18n.t("core.microsoftLogin.1")
         }
         cancel()
         val data =
@@ -49,7 +50,7 @@ internal class MicrosoftLogin(
                 mapOf("client_id" to clientId, "scope" to "XboxLive.signin offline_access"),
             )
         check(!data.has("error")) {
-            "无法开始微软登录：${data.string("error_description", data.string("error"))}"
+            I18n.t("core.microsoftLogin.2", data.string("error_description", data.string("error")))
         }
         val deviceCode = data.string("device_code")
         val expiresAt =
@@ -72,7 +73,7 @@ internal class MicrosoftLogin(
 
     /** 用保存的刷新令牌换取启动凭据，并同步档案名字与皮肤。 */
     suspend fun credentials(account: Account): GameCredentials {
-        val refresh = vault.read(account.id) ?: error("此账户的登录凭据不可用，请重新登录微软账户")
+        val refresh = vault.read(account.id) ?: error(I18n.t("core.microsoftLogin.3"))
         val tokens =
             network.form(
                 "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
@@ -83,10 +84,10 @@ internal class MicrosoftLogin(
                     "scope" to "XboxLive.signin offline_access",
                 ),
             )
-        check(!tokens.has("error")) { "微软登录已失效，请重新登录" }
+        check(!tokens.has("error")) { I18n.t("core.microsoftLogin.4") }
         vault.save(account.id, tokens.string("refresh_token", refresh))
         val credentials = exchange(tokens.string("access_token"))
-        require(credentials.uuid == account.uuid) { "登录账户与保存的游戏档案不匹配" }
+        require(credentials.uuid == account.uuid) { I18n.t("core.microsoftLogin.5") }
         syncProfile(account, credentials)
         return credentials
     }
@@ -102,19 +103,19 @@ internal class MicrosoftLogin(
             try {
                 awaitToken(clientId, deviceCode, expiresAt, initialInterval)
             } catch (_: CancellationException) {
-                store.log("微软登录已取消")
+                store.log(I18n.t("miscA2.microsoftLogin.cancelled"))
             } catch (failure: IOException) {
-                store.log(failure.message ?: "微软登录失败", true)
-                store.notify(failure.message ?: "微软登录失败")
+                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
+                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
             } catch (failure: IllegalArgumentException) {
-                store.log(failure.message ?: "微软登录失败", true)
-                store.notify(failure.message ?: "微软登录失败")
+                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
+                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
             } catch (failure: IllegalStateException) {
-                store.log(failure.message ?: "微软登录失败", true)
-                store.notify(failure.message ?: "微软登录失败")
+                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
+                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
             } catch (failure: JsonParseException) {
-                store.log(failure.message ?: "微软登录失败", true)
-                store.notify(failure.message ?: "微软登录失败")
+                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
+                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
             }
         }
 
@@ -145,10 +146,10 @@ internal class MicrosoftLogin(
                     return
                 }
                 errorCode != "authorization_pending" ->
-                    error("登录已过期、被拒绝或取消，请重新登录")
+                    error(I18n.t("core.microsoftLogin.7"))
             }
         }
-        error("登录验证码已过期")
+        error(I18n.t("core.microsoftLogin.8"))
     }
 
     /** 保存新登录的账户与刷新令牌；已有同一档案的账户时复用其 id。 */
@@ -176,8 +177,8 @@ internal class MicrosoftLogin(
                 activeAccountId = account.id,
             )
         }
-        store.notify("已登录：${account.name}")
-        store.log("微软账户登录成功：${account.name}")
+        store.notify(I18n.t("core.microsoftLogin.9", account.name), LauncherNoticeKind.LoginSignedIn)
+        store.log(I18n.t("core.microsoftLogin.10", account.name))
     }
 
     /** Xbox Live → XSTS → Minecraft 服务，换到可直接启动游戏的档案凭据。 */
@@ -254,13 +255,13 @@ internal class MicrosoftLogin(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: IOException) {
-            error("Xbox 验证失败：请确认已创建 Xbox 档案，并检查家庭账户权限")
+            error(I18n.t("core.microsoftLogin.11"))
         } catch (_: IllegalArgumentException) {
-            error("Xbox 验证失败：请确认已创建 Xbox 档案，并检查家庭账户权限")
+            error(I18n.t("core.microsoftLogin.11"))
         } catch (_: IllegalStateException) {
-            error("Xbox 验证失败：请确认已创建 Xbox 档案，并检查家庭账户权限")
+            error(I18n.t("core.microsoftLogin.11"))
         } catch (_: JsonParseException) {
-            error("Xbox 验证失败：请确认已创建 Xbox 档案，并检查家庭账户权限")
+            error(I18n.t("core.microsoftLogin.11"))
         }
     }
 
@@ -278,8 +279,7 @@ internal class MicrosoftLogin(
         } catch (failure: ServiceHttpException) {
             if (failure.statusCode == HTTP_FORBIDDEN_STATUS) {
                 error(
-                    "Minecraft 拒绝了此应用的登录请求 (403)。" +
-                        "请检查 MoliFox 应用的 Minecraft 接口访问审核及权限；这不一定是账户密码错误。",
+                    I18n.t("miscA2.microsoftLogin.appRejected403") + I18n.t("core.microsoftLogin.12"),
                 )
             }
             throw failure

@@ -21,8 +21,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.CompactSwitch
 import dev.molifox.desktop.CompactTextField
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.PrimaryButton
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
@@ -63,16 +65,19 @@ private fun IdentityGroup(
     runtime: CoreStatus?,
     change: (MultiplayerSettings) -> Unit,
 ) {
-    MultiplayerGroup(Modifier.fillMaxWidth(), title = "基本设置") {
+    val strings = LocalStrings.current
+    MultiplayerGroup(Modifier.fillMaxWidth(), title = strings.t("dialogs.mp.settings.basic")) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SwitchRow("启用联机", checked = draft.enabled) { change(draft.copy(enabled = it)) }
+            SwitchRow(strings.t("dialogs.mp.settings.enable"), checked = draft.enabled) {
+                change(draft.copy(enabled = it))
+            }
             CompactTextField(
                 draft.nickname,
                 { change(draft.copy(nickname = it)) },
                 Modifier.fillMaxWidth(),
-                label = "联机昵称",
-                placeholder = "留空时使用当前账户名",
-                hint = "只影响房间内的显示名称，不修改账户信息。",
+                label = strings.t("dialogs.mp.settings.nickname"),
+                placeholder = strings.t("dialogs.mp.settings.nicknamePlaceholder"),
+                hint = strings.t("dialogs.mp.settings.nicknameHint"),
             )
             MutedText(runtimeSummary(runtime))
         }
@@ -85,20 +90,19 @@ private fun RelayGroup(
     draft: MultiplayerSettings,
     change: (MultiplayerSettings) -> Unit,
 ) {
+    val strings = LocalStrings.current
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
-        title = "中继节点",
-        detail =
-            "默认使用内置中继（xg-easytier.chior.top）：优先 P2P 直连，打洞失败自动走中继；" +
-                "中继需允许转发 MoliFox*。自定义中继优先，多个用分号分隔。",
+        title = strings.t("dialogs.mp.settings.relayTitle"),
+        detail = strings.t("dialogs.mp.settings.relayBody"),
     ) {
         CompactTextField(
             draft.relayServer,
             { change(draft.copy(relayServer = it)) },
             Modifier.fillMaxWidth(),
-            label = "自定义中继",
+            label = strings.t("dialogs.mp.settings.relayCustom"),
             placeholder = "tcp://public.easytier.top:11010",
-            hint = "留空即可；使用你自己搭建的中继时填写，必须带协议前缀，例如 tcp://host:11010。",
+            hint = strings.t("dialogs.mp.settings.relayCustomHint"),
         )
     }
 }
@@ -109,25 +113,26 @@ private fun AdvancedGroup(
     draft: MultiplayerSettings,
     change: (MultiplayerSettings) -> Unit,
 ) {
+    val strings = LocalStrings.current
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
-        title = "高级联机开关",
-        detail = "不确定就保持默认；改动随保存写入，下次创建或加入房间时生效。",
+        title = strings.t("dialogs.mp.settings.advanced"),
+        detail = strings.t("dialogs.mp.settings.advancedDetail"),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SwitchRow(
-                "低延迟优先",
-                "优先选择延迟更低的线路，网络波动大时可开；默认关。",
+                strings.t("dialogs.mp.settings.lowLatency"),
+                strings.t("dialogs.mp.settings.lowLatencyHint"),
                 draft.latencyFirst,
             ) { change(draft.copy(latencyFirst = it)) }
             SwitchRow(
-                "关闭 IPv6",
-                "只走 IPv4；本机 IPv6 不稳定或连不上时再开，默认关。",
+                strings.t("dialogs.mp.settings.disableIpv6"),
+                strings.t("dialogs.mp.settings.disableIpv6Hint"),
                 draft.disableIpv6,
             ) { change(draft.copy(disableIpv6 = it)) }
             SwitchRow(
-                "关闭对称 NAT 打洞",
-                "部分网络打洞失败时可尝试；默认关，关闭后更依赖 P2P 直连。",
+                strings.t("dialogs.mp.settings.disableSymmetric"),
+                strings.t("dialogs.mp.settings.disableSymmetricHint"),
                 draft.disableSymHolePunching,
             ) { change(draft.copy(disableSymHolePunching = it)) }
         }
@@ -140,11 +145,12 @@ private fun SaveGroup(
     saved: Boolean,
     save: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        PrimaryButton("保存联机设置", enabled = canSave, onClick = save)
+        PrimaryButton(strings.t("dialogs.mp.settings.save"), enabled = canSave, onClick = save)
         if (saved) {
             Text(
-                "已保存。昵称与自定义中继在下次创建或加入房间时生效。",
+                strings.t("dialogs.mp.settings.saved"),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -154,9 +160,14 @@ private fun SaveGroup(
 private fun runtimeSummary(runtime: CoreStatus?): String {
     val version = runtime?.version?.takeIf { it.isNotBlank() } ?: MultiplayerPolicy.CORE_VERSION
     val platform = runtime?.platform?.takeIf { it.isNotBlank() }
-    val installed = if (runtime?.installed == true) "已安装" else "尚未下载"
+    val installed =
+        if (runtime?.installed == true) {
+            tr("dialogs.mp.settings.installed")
+        } else {
+            tr("dialogs.mp.settings.notDownloaded")
+        }
     val suffix = platform?.let { " · $it" }.orEmpty()
-    return "联机运行时：官方 EasyTier $version$suffix · $installed；当前仅支持 Windows / Linux x86_64。"
+    return tr("dialogs.mp.settings.runtimeLine", version, suffix, installed)
 }
 
 /**
@@ -170,6 +181,7 @@ private fun SwitchRow(
     checked: Boolean,
     change: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label)
@@ -178,7 +190,7 @@ private fun SwitchRow(
         CompactSwitch(
             checked,
             change,
-            Modifier.semantics { contentDescription = "$label 开关" },
+            Modifier.semantics { contentDescription = strings.t("dialogs.mp.settings.switchLabel", label) },
         )
     }
 }

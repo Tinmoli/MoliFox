@@ -350,7 +350,7 @@ private fun ImagePlaceholderRow(
 ) {
     val href = safeUrl(url)
     val host = remember(url) { urlHost(url) }
-    val label = alt.ifBlank { "图片" }
+    val label = alt.ifBlank { tr("pages.markdown.image") }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = palette.placeholder,
@@ -364,7 +364,7 @@ private fun ImagePlaceholderRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("图片", fontSize = 11.sp, color = palette.primary, maxLines = 1)
+            Text(tr("pages.markdown.image"), fontSize = 11.sp, color = palette.primary, maxLines = 1)
             Text(
                 label,
                 Modifier.weight(1f),

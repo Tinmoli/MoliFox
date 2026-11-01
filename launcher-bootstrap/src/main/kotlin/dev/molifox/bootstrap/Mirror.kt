@@ -4,6 +4,7 @@
 // 镜像清单与探测、文件摘要：准备窗口只负责展示，源是否可用在这里判定。
 package dev.molifox.bootstrap
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -29,17 +30,23 @@ private const val PROBE_TIMEOUT_MILLIS = 1500L
 /** 探测时读取的响应体字节数：够确认能取到内容，又不浪费流量。 */
 private const val PROBE_SAMPLE_BYTES = 64
 
-private val mirrors =
+private fun mirrors(): List<Mirror> =
     listOf(
         Mirror(
-            "阿里云",
+            I18n.t("bootstrapB.mirror.aliyun"),
             listOf(
                 "https://maven.aliyun.com/repository/central/",
                 "https://maven.aliyun.com/repository/google/",
             ),
         ),
-        Mirror("腾讯云", listOf("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")),
-        Mirror("华为云", listOf("https://repo.huaweicloud.com/repository/maven/")),
+        Mirror(
+            I18n.t("bootstrapB.mirror.tencentCloud"),
+            listOf("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/"),
+        ),
+        Mirror(
+            I18n.t("bootstrapB.mirror.huaweiCloud"),
+            listOf("https://repo.huaweicloud.com/repository/maven/"),
+        ),
         Mirror(
             "Maven Central",
             listOf(
@@ -54,7 +61,7 @@ internal fun probePath(manifest: RuntimeManifest): String {
     val stdlib =
         manifest.dependencies.firstOrNull {
             it.group == "org.jetbrains.kotlin" && it.artifact == "kotlin-stdlib"
-        } ?: error("运行时清单缺少 kotlin-stdlib，无法探测镜像")
+        } ?: error(I18n.t("bootstrap.mirror.1"))
     return "org/jetbrains/kotlin/kotlin-stdlib/${stdlib.version}/" +
         "kotlin-stdlib-${stdlib.version}.pom"
 }
@@ -62,7 +69,7 @@ internal fun probePath(manifest: RuntimeManifest): String {
 /** 同时探测全部镜像，按耗时升序返回可用源；失败的源不进入列表。 */
 internal suspend fun selectMirrors(mirrorPath: String): List<Mirror> =
     coroutineScope {
-        mirrors
+        mirrors()
             .map { mirror -> async(Dispatchers.IO) { probeMirror(mirror, mirrorPath) } }
             .awaitAll()
             .filterNotNull()
@@ -89,18 +96,18 @@ private suspend fun probeMirror(
                         // 读一点响应体就断开：既确认能取到内容，也不浪费流量。
                         connection.inputStream.use { it.read(ByteArray(PROBE_SAMPLE_BYTES)) }
                         val elapsed = (System.nanoTime() - started) / 1_000_000
-                        log("镜像探测成功：${mirror.name} $root $elapsed ms")
+                        log(I18n.t("bootstrapB.mirror.probeSucceeded", mirror.name, root, elapsed))
                         return@withTimeoutOrNull mirror.copy(
                             roots = listOf(root) + mirror.roots.filter { it != root },
                             latencyMillis = elapsed,
                         )
                     }
-                    log("镜像探测失败：${mirror.name} $root HTTP $status")
+                    log(I18n.t("bootstrap.mirror.2", mirror.name, root, status))
                 } finally {
                     connection.disconnect()
                 }
             } catch (error: IOException) {
-                log("镜像探测失败：${mirror.name} $root ${error.message}")
+                log(I18n.t("bootstrapB.mirror.probeError", mirror.name, root, error.message))
             }
         }
         null

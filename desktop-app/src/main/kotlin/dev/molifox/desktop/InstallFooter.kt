@@ -7,7 +7,9 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.InstallRequest
 import dev.molifox.core.LauncherState
@@ -38,6 +41,7 @@ internal fun InstallFooter(
     name: String,
     onInstalled: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val blocked =
         installBlockedReason(
             actions,
@@ -51,13 +55,13 @@ internal fun InstallFooter(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
-                selected.ifBlank { "尚未选择版本" } + "  /  " + loader.title,
+                selected.ifBlank { strings.t("deskA.installFooter.noVersion") } + "  /  " + loader.title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
             )
             Text(
                 // 按钮灰掉时把缺项直接写在旁边，避免“点了没反应”的猜谜。
-                blocked ?: "安装完成后即可从「开始」启动",
+                blocked ?: strings.t("deskA.installFooter.readyHint"),
                 fontSize = 11.sp,
                 color =
                     if (blocked != null) {
@@ -66,20 +70,21 @@ internal fun InstallFooter(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
             )
-        }
-        Text(
-            "安装到：" +
-                (
+            Text(
+                strings.t(
+                    "deskA.installFooter.installTo",
                     state.data.gameDirectories
                         .find { it.id == state.data.activeGameDirectoryId }
                         ?.path
-                        ?: state.data.settings.gameRoot
+                        ?: state.data.settings.gameRoot,
                 ),
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
         InstallLaunchButton(
             actions = actions,
             loading = loading,
@@ -107,8 +112,9 @@ private fun InstallLaunchButton(
     name: String,
     onInstalled: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     PrimaryButton(
-        "开始安装",
+        strings.t("dialogs.content.install.start"),
         Icons.Outlined.Download,
         installAllowed(actions, loading, error, selected, loaderLoading, loader, loaderVersion),
     ) {
@@ -161,11 +167,11 @@ private fun installBlockedReason(
     loaderVersion: String,
 ): String? =
     when {
-        actions.controller.busy -> "有任务正在运行，稍后再试"
-        loading -> "正在加载版本列表"
-        error != null -> "版本列表不可用，请先重新加载"
-        selected.isBlank() -> "请先在左侧选择一个版本"
-        loaderLoading -> "正在加载加载器版本"
-        loader != LoaderType.Vanilla && loaderVersion.isBlank() -> "请选择加载器版本"
+        actions.controller.busy -> tr("deskA.installFooter.blocked.busy")
+        loading -> tr("deskA.installFooter.blocked.loadingVersions")
+        error != null -> tr("deskA.installFooter.blocked.versionListUnavailable")
+        selected.isBlank() -> tr("deskA.installFooter.blocked.noVersion")
+        loaderLoading -> tr("deskA.installFooter.blocked.loadingLoaders")
+        loader != LoaderType.Vanilla && loaderVersion.isBlank() -> tr("deskA.installFooter.blocked.noLoaderVersion")
         else -> null
     }

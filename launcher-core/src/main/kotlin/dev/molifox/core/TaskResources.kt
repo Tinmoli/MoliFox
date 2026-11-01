@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import java.nio.file.Path
@@ -45,8 +46,7 @@ internal fun taskResourcesForInstances(
 internal fun taskResourcesConflict(
     left: Set<String>,
     right: Set<String>,
-): Boolean =
-    GLOBAL_TASK_RESOURCE in left || GLOBAL_TASK_RESOURCE in right || left.any { it in right }
+): Boolean = GLOBAL_TASK_RESOURCE in left || GLOBAL_TASK_RESOURCE in right || left.any { it in right }
 
 internal class TaskResourceGate {
     private val waiting = linkedMapOf<String, Set<String>>()
@@ -72,7 +72,7 @@ internal class TaskResourceGate {
 
     @Synchronized
     private fun tryStart(id: String): Boolean {
-        val resources = waiting[id] ?: error("任务已不在队列中")
+        val resources = waiting[id] ?: error(I18n.t("diagA2.taskResources.taskNotQueued"))
         // 只检查排在当前任务之前登记的条目，再检查正在运行的任务；任一处冲突即视为不可启动。
         val blocked =
             waiting.entries
@@ -102,7 +102,7 @@ internal class TaskResourceGate {
     ) {
         check(id in active)
         check(active.none { it != id && taskResourcesConflict(resources, waiting.getValue(it)) }) {
-            "整合包目标正在被其他任务使用"
+            "diagA2.taskResources.packTargetBusy"
         }
         waiting[id] = resources.toSet()
         changes.value++

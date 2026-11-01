@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** 存档列表、备份、恢复与跨实例复制。 */
@@ -74,7 +75,11 @@ internal abstract class LauncherSaveActions(
         saveName: String,
     ): String {
         requireIdle(instanceId)
-        return jobs.enqueue("备份存档 $saveName", taskResourcesForInstances(store, instanceId)) {
+        return jobs.enqueue(
+            I18n.t("miscA1.task.backupSave", saveName),
+            taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.SaveOperation,
+        ) {
             saves.backupSave(instanceId, saveName, this)
         }
     }
@@ -89,7 +94,11 @@ internal abstract class LauncherSaveActions(
     ): String {
         requireIdle(instanceId)
         val replace = store.instance(instanceId).replaceSaveOnRestore
-        return jobs.enqueue("恢复存档 $backupId", taskResourcesForInstances(store, instanceId)) {
+        return jobs.enqueue(
+            I18n.t("miscA1.task.restoreSave", backupId),
+            taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.SaveOperation,
+        ) {
             if (replace) {
                 saves.replaceWorldWithBackup(instanceId, backupId, this)
             } else {
@@ -107,8 +116,9 @@ internal abstract class LauncherSaveActions(
     ): String {
         requireIdle(sourceInstanceId, targetInstanceId)
         return jobs.enqueue(
-            "复制存档 $saveName",
+            I18n.t("miscA1.task.copySave", saveName),
             taskResourcesForInstances(store, sourceInstanceId, targetInstanceId),
+            kind = LauncherTaskKind.SaveOperation,
         ) {
             saves.copySaveToInstance(sourceInstanceId, saveName, targetInstanceId, rename, this)
         }
@@ -139,8 +149,9 @@ internal abstract class LauncherSaveActions(
     ): String {
         requireIdle(instanceId)
         return jobs.enqueue(
-            "导入存档 ${source.fileName}",
+            I18n.t("miscA1.task.importSave", source.fileName),
             taskResourcesForInstances(store, instanceId),
+            kind = LauncherTaskKind.SaveOperation,
         ) {
             saves.importSave(instanceId, source, this)
         }

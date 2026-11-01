@@ -10,26 +10,36 @@ import com.google.gson.annotations.JsonAdapter
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import com.google.gson.stream.JsonWriter
+import dev.molifox.core.i18n.I18n
 import java.net.URI
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 import kotlin.jvm.Transient
 
-private const val DEFAULT_MIRROR_CONCURRENCY = 4
-private const val HIGH_MIRROR_CONCURRENCY = 8
-
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
 const val LAUNCHER_VERSION = "0.4.0-beta"
 
-enum class LoaderType(
-    val title: String,
-) {
-    Vanilla("原版"),
-    Fabric("Fabric"),
-    Quilt("Quilt"),
-    Forge("Forge"),
-    NeoForge("NeoForge"),
+enum class LoaderType {
+    Vanilla,
+    Fabric,
+    Quilt,
+    Forge,
+    NeoForge,
+    OptiFine,
+    LiteLoader,
+    LegacyFabric,
+    Cleanroom,
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值；品牌名保持原样。 */
+    val title: String
+        get() =
+            when (this) {
+                Vanilla -> I18n.t("core.loaderType.vanilla")
+                LegacyFabric -> "Legacy Fabric"
+                else -> name
+            }
 }
 
 enum class AccountType {
@@ -40,33 +50,49 @@ enum class AccountType {
     Authlib,
 }
 
-enum class VersionIsolation(
-    val title: String,
-) {
-    Inherit("继承全局设置"),
-    Enabled("版本隔离"),
-    Disabled("共用游戏目录"),
+enum class VersionIsolation {
+    Inherit,
+    Enabled,
+    Disabled,
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() =
+            when (this) {
+                Inherit -> I18n.t("core.versionIsolation.inherit")
+                Enabled -> I18n.t("core.versionIsolation.enabled")
+                Disabled -> I18n.t("core.versionIsolation.disabled")
+            }
 }
 
 /**
  * 有效隔离值的来源：用户显式选择（版本隔离 / 共用游戏目录）、目录证据推断、或全局默认。
  * 推断值不能冒充用户选择：界面与日志都要说明来源，且显式选择永远优先于推断。
  */
-enum class IsolationSource(
-    val title: String,
-) {
-    Explicit("显式设置"),
-    Inferred("推断"),
-    GlobalDefault("全局默认"),
+enum class IsolationSource {
+    Explicit,
+    Inferred,
+    GlobalDefault,
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() =
+            when (this) {
+                Explicit -> I18n.t("core.isolationSource.explicit")
+                Inferred -> I18n.t("core.isolationSource.inferred")
+                GlobalDefault -> I18n.t("core.isolationSource.globalDefault")
+            }
 }
 
 /** 启动日志里的来源名称：显式设置读作「实例设置」，与推断、全局默认并列。 */
 val IsolationSource.logTitle: String
     get() =
         when (this) {
-            IsolationSource.Explicit -> "实例设置"
-            IsolationSource.Inferred -> "推断"
-            IsolationSource.GlobalDefault -> "全局默认"
+            IsolationSource.Explicit -> I18n.t("core.isolationSource.logExplicit")
+            IsolationSource.Inferred -> I18n.t("core.isolationSource.inferred")
+            IsolationSource.GlobalDefault -> I18n.t("core.isolationSource.globalDefault")
         }
 
 /**
@@ -74,13 +100,22 @@ val IsolationSource.logTitle: String
  * 不使用 RealTime，避免游戏抢占系统输入与音频线程。
  */
 @JsonAdapter(ProcessPriorityAdapter::class)
-enum class ProcessPriority(
-    val title: String,
-) {
-    Low("低"),
-    Normal("中"),
-    High("高"),
-    VeryHigh("超高"),
+enum class ProcessPriority {
+    Low,
+    Normal,
+    High,
+    VeryHigh,
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() =
+            when (this) {
+                Low -> I18n.t("core.processPriority.low")
+                Normal -> I18n.t("core.processPriority.normal")
+                High -> I18n.t("core.processPriority.high")
+                VeryHigh -> I18n.t("core.processPriority.veryHigh")
+            }
 }
 
 /** 配置里出现未知优先级（手改配置、旧版本写入）时按 Normal 读入，绝不让整份配置读取失败。 */
@@ -117,6 +152,30 @@ enum class JobStatus {
     Cancelled,
 }
 
+/**
+ * 后台任务的稳定类型：界面按类型决定图标与操作，不解析可变而且会随语言变化的任务标题。
+ * 新增任务时按语义选择；无法归类的用 [Generic]。
+ */
+enum class LauncherTaskKind {
+    Generic,
+    InstallInstance,
+    RepairInstance,
+    InstallContent,
+    ImportContent,
+    PrepareContent,
+    ExportContent,
+    UpdateContent,
+    UpdateLauncher,
+    InstallJava,
+    LaunchGame,
+    SaveOperation,
+    CopyInstance,
+    ImportPacks,
+    MoveInstance,
+    DiscoverDirectory,
+    UpgradeLoader,
+}
+
 data class LauncherSettings(
     val gameRoot: String = "",
     val javaPath: String = "",
@@ -131,11 +190,7 @@ data class LauncherSettings(
     val extraJvmArgs: String = "",
     val advancedLaunch: AdvancedLaunchSettings = AdvancedLaunchSettings(),
     val downloadSource: String = "auto",
-    /** 镜像类主机的并发上限（设置项「镜像并发」）：2 / 4 / 8。 */
-    val mirrorConcurrency: Int = 4,
-    val maxConcurrent: Int = 8,
     val downloadSegments: Int = 4,
-    val downloadAttempts: Int = 3,
     val networkTimeoutSeconds: Int = 45,
     val microsoftClientId: String = MoliFoxIdentity.MICROSOFT_CLIENT_ID,
     val isolateVersions: Boolean = true,
@@ -176,8 +231,8 @@ data class LauncherSettings(
     val titlebarTransparent: Boolean = false,
     /** 整窗透明（重启后生效）。 */
     val windowTransparent: Boolean = false,
-    /** 界面语言，当前仅提供 zh-CN。 */
-    val language: String = "zh-CN",
+    /** 界面语言：auto 跟随系统，或 zh-CN / zh-TW / zh-HK / en-US；旧配置保留原值。 */
+    val language: String = "auto",
     val gameLanguageFollowsLauncher: Boolean = true,
     /** 启动时检查 GitHub 上已发布的正式版本。 */
     val autoCheckUpdates: Boolean = false,
@@ -211,8 +266,7 @@ val LauncherSettings.effectiveJavaDownloadSource: String
     get() = normalizedJavaDownloadSource(javaDownloadSource)
 
 /** 版本列表源与文件下载源共用的三种取值；旧值（mirror、未知字符串）一律按自动处理。 */
-fun normalizedDownloadSource(value: String): String =
-    if (value == "official" || value == "bmclapi") value else "auto"
+fun normalizedDownloadSource(value: String): String = if (value == "official" || value == "bmclapi") value else "auto"
 
 /** 版本清单（manifest）用的源，独立于文件下载源。 */
 val LauncherSettings.effectiveVersionListSource: String
@@ -253,14 +307,6 @@ fun normalizedCurseForgeBaseUrl(value: String): String =
 /** 设置里实际生效的 CurseForge 服务地址；UI 与请求层都读这个。 */
 val LauncherSettings.effectiveCurseForgeBaseUrl: String
     get() = normalizedCurseForgeBaseUrl(curseForgeBaseUrl.orEmpty())
-
-/** 镜像并发只接受 2 / 4 / 8，其余值回落到默认 4。 */
-fun normalizedMirrorConcurrency(value: Int): Int =
-    if (value in setOf(2, DEFAULT_MIRROR_CONCURRENCY, HIGH_MIRROR_CONCURRENCY)) {
-        value
-    } else {
-        DEFAULT_MIRROR_CONCURRENCY
-    }
 
 data class Account(
     val id: String = UUID.randomUUID().toString(),
@@ -314,6 +360,8 @@ data class GameInstance(
     val playTimeSeconds: Long = 0,
     val installed: Boolean = false,
     val memoryMb: Int = 0,
+    /** 扫描时统计的 mods 文件数；只用于自动内存估算，不写入实例设置。 */
+    val modCount: Int = 0,
     val autoMemory: Boolean? = null,
     val javaPath: String = "",
     /** 用户点过「不再提示」后不再主动弹缺 Java 的窗口；手动指定 Java 路径不受影响。 */
@@ -435,8 +483,7 @@ data class InstanceSettings(
 }
 
 /** 实例在 `versions/` 下的目录名；新模型里这就是实例身份。 */
-fun GameInstance.instanceFolderName(): String =
-    gameDirectoryName.ifBlank { versionId.ifBlank { name } }
+fun GameInstance.instanceFolderName(): String = gameDirectoryName.ifBlank { versionId.ifBlank { name } }
 
 /** 设置表的键：实例目录名（实例身份就是文件夹名）。 */
 fun GameInstance.instanceSettingsKey(): String = instanceFolderName()
@@ -467,12 +514,16 @@ data class LauncherData(
     val instanceSettings: Map<String, InstanceSettings> = emptyMap(),
 )
 
+/** 新建任务的初始进度文案：在实例创建时按当前语言取一次，默认值里不直接调 [I18n]。 */
+private fun queuedTaskDetail(): String = I18n.t("miscA2.models.downloadJobQueued")
+
 data class DownloadJob(
     val id: String,
     val title: String,
+    val kind: LauncherTaskKind = LauncherTaskKind.Generic,
     val status: JobStatus = JobStatus.Queued,
     val progress: Float = 0f,
-    val detail: String = "等待开始",
+    val detail: String = queuedTaskDetail(),
     val error: String? = null,
     val downloadedBytes: Long = 0,
     val totalBytes: Long = 0,
@@ -488,16 +539,26 @@ data class DownloadJob(
  * TRACE = 命令输出逐行；DEBUG = 后台任务开始/完成；WARN = 尽力而为的步骤失败；
  * ERROR = 操作失败但启动器可继续；FATAL = 启动中止。
  */
-enum class LogLevel(
-    val title: String,
-) {
-    Trace("详细"),
-    Debug("调试"),
-    Info("信息"),
-    Warn("警告"),
-    Error("错误"),
-    Fatal("严重"),
+enum class LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
     ;
+
+    /** 显示名在读取时翻译；写文件的档位名见 [label]。 */
+    val title: String
+        get() =
+            when (this) {
+                Trace -> I18n.t("core.logLevel.trace")
+                Debug -> I18n.t("core.logLevel.debug")
+                Info -> I18n.t("core.logLevel.info")
+                Warn -> I18n.t("core.logLevel.warn")
+                Error -> I18n.t("core.logLevel.error")
+                Fatal -> I18n.t("core.logLevel.fatal")
+            }
 
     /** 写进日志文件与导出文件的档位名。 */
     val label: String
@@ -554,12 +615,20 @@ data class InstallRequest(
 )
 
 /** Java 来源：启动器自己安装（bundled）/ 系统（system）/ 用户显式指定（custom）。 */
-enum class JavaRuntimeSource(
-    val title: String,
-) {
-    Custom("自定义"),
-    Bundled("启动器安装"),
-    System("系统"),
+enum class JavaRuntimeSource {
+    Custom,
+    Bundled,
+    System,
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() =
+            when (this) {
+                Custom -> I18n.t("core.javaRuntimeSource.custom")
+                Bundled -> I18n.t("core.javaRuntimeSource.bundled")
+                System -> I18n.t("core.javaRuntimeSource.system")
+            }
 }
 
 data class JavaRuntime(

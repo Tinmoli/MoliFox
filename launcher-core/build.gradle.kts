@@ -46,6 +46,11 @@ val writeMicrosoftIdentity =
         }
     }
 sourceSets.main { resources.srcDir(writeMicrosoftIdentity.map { microsoftIdentityDir }) }
+// 测试源码统一放在仓库根的 tests/，模块内不再保留 src/test。
+sourceSets.test {
+    kotlin.srcDirs(rootProject.file("tests/launcher-core/test/kotlin"))
+    resources.srcDir(rootProject.file("tests/launcher-core/test/resources"))
+}
 
 dependencies {
     // 资源目录模型把 JsonObject 暴露在公开签名里，界面层需要能引用 Gson 的解析异常类型。
@@ -86,7 +91,7 @@ tasks.register("writeGameSmokeClasspath") {
     description = "Export the real-game harness classpath for the project-local Linux check"
     dependsOn(tasks.testClasses)
     doLast {
-        rootProject.file(".work/build-tmp/game-smoke-classpath.txt").apply {
+        rootProject.file(".dev/work/build-tmp/game-smoke-classpath.txt").apply {
             parentFile.mkdirs()
             writeText(
                 sourceSets.test
@@ -153,7 +158,7 @@ tasks.register<JavaExec>("onlineSmoke") {
     systemProperty("stderr.encoding", "UTF-8")
     args(
         rootProject.layout.projectDirectory
-            .dir(".work/tests/launcher-core-onlineSmoke/profile")
+            .dir("tests/.tmp/launcher-core-onlineSmoke/profile")
             .asFile
             .absolutePath,
     )

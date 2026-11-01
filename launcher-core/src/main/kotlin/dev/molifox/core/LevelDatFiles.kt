@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -34,9 +35,15 @@ internal fun backupLevelDat(
             StandardOpenOption.WRITE,
         )
     } catch (failure: IOException) {
-        store.log("备份 level.dat 失败：${failure.message ?: world.fileName}", true)
+        store.log(
+            I18n.t("saveA1.levelDatFiles.backupLogFailed", failure.message ?: world.fileName),
+            true,
+        )
         throw IOException(
-            "备份 level.dat 失败，已取消写入：${failure.message ?: "无法写入备份目录"}",
+            I18n.t(
+                "saveA1.levelDatFiles.backupFailed",
+                failure.message ?: I18n.t("saveA1.levelDatFiles.backupDirectoryUnwritable"),
+            ),
             failure,
         )
     }
@@ -70,7 +77,7 @@ internal fun replaceLevelDat(
     try {
         Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW)
         require(Files.readAllBytes(level).contentEquals(before)) {
-            "level.dat 已被其他程序修改，请刷新后再试；未写入"
+            I18n.t("saveA1.levelDatFiles.changed")
         }
         replaceFile(temporary, level)
     } finally {

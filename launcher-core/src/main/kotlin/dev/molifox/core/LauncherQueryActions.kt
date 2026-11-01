@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.ensureActive
@@ -29,7 +30,7 @@ internal abstract class LauncherQueryActions(
         withContext(Dispatchers.IO) {
             readModIcon(jar)
                 .onFailure {
-                    store.log("无法读取模组图标 $jar：${it.message}", true)
+                    store.log(I18n.t("miscA1.queryActions.modIconReadFailed", jar, it.message), true)
                 }.getOrNull()
         }
 
@@ -46,7 +47,7 @@ internal abstract class LauncherQueryActions(
                     store.versionGamePath(store.instance(id)),
                 ) {
                     taskContext.ensureActive()
-                }.onFailure { store.log("无法统计实例目录大小：${it.message}", true) }
+                }.onFailure { store.log(I18n.t("miscA1.queryActions.directorySizeFailed", it.message), true) }
                 .getOrNull()
         }
 }

@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.net.URI
 import java.nio.file.Path
 import java.util.zip.ZipEntry
@@ -29,28 +30,28 @@ private fun mcbbsRequest(info: JsonObject): InstallRequest {
         info.string("manifestType", "minecraftModpack") == "minecraftModpack" &&
             info.string("manifestVersion", "1") in setOf("1", "2"),
     ) {
-        "不支持的 MCBBS 清单版本"
+        I18n.t("core.mcbbsPack.1")
     }
-    require(info.get("addons")?.isJsonArray == true) { "MCBBS 清单缺少 addons" }
+    require(info.get("addons")?.isJsonArray == true) { I18n.t("core.mcbbsPack.2") }
     val addons = info.array("addons").map { it.asJsonObject }
     require(
         addons.size in 1..MAX_MCBBS_ADDONS &&
             addons.map { it.string("id") }.distinct().size == addons.size,
     ) {
-        "MCBBS 组件为空、重复或过多"
+        I18n.t("core.mcbbsPack.3")
     }
     val unknown = addons.filter { it.string("id") !in mcbbsLoaders && it.string("id") != "game" }
     require(unknown.isEmpty()) {
-        "不支持的 MCBBS 组件：${unknown.joinToString { it.string("id") }}，请更换整合包格式或组件"
+        I18n.t("core.mcbbsPack.4", unknown.joinToString { it.string("id") })
     }
     val game = addons.singleOrNull { it.string("id") == "game" }?.string("version").orEmpty()
-    require(game.isNotBlank()) { "MCBBS 清单缺少明确的游戏版本" }
+    require(game.isNotBlank()) { I18n.t("core.mcbbsPack.5") }
     safeFilename(game)
     val loaders = addons.filter { it.string("id") in mcbbsLoaders }
-    require(loaders.size <= 1) { "暂不支持多个加载器组合的 MCBBS 包" }
+    require(loaders.size <= 1) { I18n.t("core.mcbbsPack.6") }
     val loader = loaders.singleOrNull()
     val version = loader?.string("version")?.removePrefix("$game-").orEmpty()
-    require(loader == null || version.isNotBlank()) { "MCBBS 加载器缺少版本" }
+    require(loader == null || version.isNotBlank()) { I18n.t("core.mcbbsPack.7") }
     if (version.isNotBlank()) safeFilename(version)
     return InstallRequest(
         info.string("name"),
@@ -86,10 +87,10 @@ private class McbbsManifestReader(
     private val options: PackLaunchOptions
 
     init {
-        require(info.array("libraries").isEmpty) { "暂不支持 MCBBS 自定义 libraries，请导出不含自定义启动依赖的包" }
+        require(info.array("libraries").isEmpty) { I18n.t("core.mcbbsPack.8") }
         val launch = info.obj("launchInfo")
         minimumMemory = launch.int("minMemory")
-        require(minimumMemory >= 0) { "MCBBS 建议内存无效" }
+        require(minimumMemory >= 0) { I18n.t("core.mcbbsPack.9") }
         options =
             PackLaunchOptions(
                 mcbbsArguments(launch, "javaArgument"),
@@ -100,10 +101,10 @@ private class McbbsManifestReader(
         val installMods = settings.boolean("install_mods", true)
         val installResourcepack = settings.boolean("install_resourcepack", true)
         require(installMods && installResourcepack) {
-            "暂不支持关闭模组/资源包安装的 MCBBS 设置"
+            I18n.t("core.mcbbsPack.10")
         }
         require(info.obj("serverInfo").string("authlibInjectorServer").isBlank()) {
-            "此包要求第三方认证，茉狐暂不支持该认证方式"
+            I18n.t("core.mcbbsPack.11")
         }
     }
 
@@ -118,7 +119,7 @@ private class McbbsManifestReader(
         }
         val curseProjects = scan.curseFiles.map { it.string("projectID") }
         require(curseProjects.distinct().size == curseProjects.size) {
-            "MCBBS 包引用同一项目的多个文件"
+            I18n.t("core.mcbbsPack.12")
         }
         requireNoPathConflicts(scan.allPaths())
         return PackManifest(
@@ -156,7 +157,7 @@ private class McbbsScan(
         when (file.string("type")) {
             "addon" -> collectAddon(file)
             "curse" -> collectCurse(file)
-            else -> error("未知的 MCBBS 文件类型：${file.string("type")}")
+            else -> error(I18n.t("core.mcbbsPack.13", file.string("type")))
         }
     }
 
@@ -185,27 +186,29 @@ private class McbbsScan(
             '\\' !in path &&
                 path.split('/').none { it.isBlank() || it == "." || it == ".." },
         ) {
-            "MCBBS 文件路径无效"
+            I18n.t("core.mcbbsPack.14")
         }
         packPath(root, path)
-        require(declared.add(key(path))) { "MCBBS 文件清单包含重复路径：$path" }
+        require(declared.add(key(path))) { I18n.t("core.mcbbsPack.15", path) }
         val hash = file.string("hash")
-        require(hash.matches(Regex("[a-fA-F0-9]{40}"))) { "MCBBS 文件缺少有效 SHA-1：$path" }
+        require(hash.matches(Regex("[a-fA-F0-9]{40}"))) {
+            I18n.t("packsB2.mcbbsPack.invalidSha1", path)
+        }
         if (path.substringBefore('/').lowercase() in importedPackExclusions) return
         val entry = entries[key(path)]
         if (entry != null) {
             require(zipEntryHash(zip, entry.first).equals(hash, true)) {
-                "MCBBS 内置文件校验失败：$path"
+                I18n.t("core.mcbbsPack.16", path)
             }
             checked += PackCheckedFile(entry.second, hash)
         } else {
             val api = info.string("fileApi").trimEnd('/')
-            require(api.isNotBlank()) { "整合包缺少文件 $path，且未提供 fileApi；请取得完整 ZIP 后重试" }
+            require(api.isNotBlank()) { I18n.t("core.mcbbsPack.17", path) }
             val uri = URI(api)
             require(
                 uri.rawQuery == null && uri.rawFragment == null && uri.userInfo == null,
             ) {
-                "MCBBS fileApi 不能含查询参数、片段或凭据"
+                I18n.t("core.mcbbsPack.18")
             }
             val url =
                 validatePackUrl(
@@ -250,7 +253,7 @@ private fun mcbbsArguments(
         value.isJsonArray &&
             value.asJsonArray.all { it.isJsonPrimitive && it.asJsonPrimitive.isString },
     ) {
-        "MCBBS $field 必须是文本参数数组"
+        I18n.t("core.mcbbsPack.19", field)
     }
     return value.asJsonArray.map { it.asString }
 }
@@ -266,20 +269,20 @@ private fun requireMcbbsCompanion(
                 other.loader == request.loader &&
                 other.loaderVersion == request.loaderVersion,
         ) {
-            "两份 MCBBS 清单的游戏或加载器不一致"
+            I18n.t("core.mcbbsPack.20")
         }
     } else {
         require(
             companion.string("manifestType") == "minecraftModpack" &&
                 companion.obj("minecraft").string("version") == request.gameVersion,
         ) {
-            "MCBBS 与附带清单的游戏版本不一致"
+            I18n.t("core.mcbbsPack.21")
         }
         val otherLoaders =
             companion.obj("minecraft").array("modLoaders").map { it.asJsonObject.string("id") }
         val expected = "${request.loader.name.lowercase()}-${request.loaderVersion}"
         require(otherLoaders.isEmpty() || otherLoaders == listOf(expected)) {
-            "MCBBS 与附带清单的加载器不一致"
+            I18n.t("core.mcbbsPack.22")
         }
     }
 }
@@ -289,7 +292,7 @@ private fun mcbbsDeclaredFiles(info: JsonObject): JsonArray {
     require(
         declared != null && declared.isJsonArray && declared.asJsonArray.size() <= MAX_MCBBS_FILES,
     ) {
-        "MCBBS 文件清单缺失或过多"
+        I18n.t("core.mcbbsPack.23")
     }
     return info.array("files")
 }
@@ -298,7 +301,7 @@ private fun requireNoPathConflicts(paths: Set<String>) {
     for (path in paths) {
         var parent = path.substringBeforeLast('/', "")
         while (parent.isNotBlank()) {
-            require(parent !in paths) { "MCBBS 文件和目录冲突" }
+            require(parent !in paths) { I18n.t("core.mcbbsPack.24") }
             parent = parent.substringBeforeLast('/', "")
         }
     }
@@ -310,16 +313,16 @@ private fun mcbbsManifestText(
     options: PackLaunchOptions,
 ): String =
     listOf(
-        "MCBBS / HMCL 导出包",
+        I18n.t("core.mcbbsPack.25"),
         info.string("description").take(MAX_MCBBS_DESCRIPTION_CHARS),
-        "按当前归档导入，不执行服务器自动更新，不迁移原启动器设置或命令。",
-        if (minimumMemory > 0) "作者建议至少 $minimumMemory MB 内存，请在实例设置中确认。" else "",
+        I18n.t("core.mcbbsPack.26"),
+        if (minimumMemory > 0) I18n.t("core.mcbbsPack.27", minimumMemory) else "",
         if (options.jvm.isNotEmpty()) {
-            "整合包 JVM 参数：${packArgumentsText(options.jvm)}"
+            I18n.t("core.mcbbsPack.28", packArgumentsText(options.jvm))
         } else {
             ""
         },
-        if (options.game.isNotEmpty()) "整合包游戏参数：${packArgumentsText(options.game)}" else "",
+        if (options.game.isNotEmpty()) I18n.t("core.mcbbsPack.29", packArgumentsText(options.game)) else "",
     ).filter { it.isNotBlank() }
         .joinToString("\n")
 
@@ -347,7 +350,7 @@ private object LegacyPackChecks {
                     value.isJsonArray && value.asJsonArray.isEmpty ||
                     value.isJsonObject && value.asJsonObject.size() == 0,
             ) {
-                "旧 HMCL 包包含自定义启动配置，请由 HMCL 重新导出为 MCBBS 或 mrpack"
+                I18n.t("core.mcbbsPack.30")
             }
         }
     }
@@ -360,7 +363,7 @@ private object LegacyPackChecks {
                     '/' !in path && path.endsWith(".jar", true)
             },
         ) {
-            "旧 HMCL 包带有版本启动配置或自定义客户端，请重新导出为 MCBBS 或 mrpack"
+            I18n.t("core.mcbbsPack.31")
         }
     }
 
@@ -378,7 +381,7 @@ private object LegacyPackChecks {
                     listOf("mainClass", "libraries", "inheritsFrom", "patches")
                         .none { profile.has(it) },
                 ) {
-                    "旧 HMCL 包带有版本启动配置，请重新导出为 MCBBS 或 mrpack"
+                    I18n.t("core.mcbbsPack.32")
                 }
             }
         }
@@ -396,7 +399,7 @@ internal fun readLegacyPackManifest(
     os: String,
 ): PackManifest {
     val version = info.string("gameVersion")
-    require(version.isNotBlank()) { "旧 HMCL 包缺少 gameVersion" }
+    require(version.isNotBlank()) { I18n.t("core.mcbbsPack.33") }
     safeFilename(version)
     LegacyPackChecks.requirePlainManifest(info)
     val payloadPrefix = "${prefix}minecraft/"
@@ -404,7 +407,7 @@ internal fun readLegacyPackManifest(
     LegacyPackChecks.requirePlainPayload(payload)
     LegacyPackChecks.requireNoProfileJson(zip, payload)
     require(zip.entries().asSequence().any { it.name.startsWith(payloadPrefix) }) {
-        "旧 HMCL 包缺少 minecraft 内容目录"
+        I18n.t("core.mcbbsPack.34")
     }
     return PackManifest(
         null,
@@ -412,7 +415,7 @@ internal fun readLegacyPackManifest(
         emptyList(),
         payload.count { it.second.substringBefore('/').lowercase() !in importedPackExclusions },
         info.string("version"),
-        "旧 HMCL 原版归档；导入游戏内容并重建官方依赖，不迁移启动器命令或账户。",
+        I18n.t("core.mcbbsPack.35"),
         payloadPrefix = payloadPrefix,
         excludedRoots = importedPackExclusions,
     )

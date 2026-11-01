@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.util.UUID
@@ -58,7 +59,7 @@ internal class ComponentBackup(
         var version = startVersion
         var total = 0L
         while (version.isNotBlank() && visited.add(version)) {
-            require(visited.size <= MAX_VERSION_CHAIN_DEPTH) { "版本配置继承层级过深" }
+            require(visited.size <= MAX_VERSION_CHAIN_DEPTH) { I18n.t("diagA1.componentBackup.depthExceeded") }
             val file = safePath(root, "versions/${safeFilename(version)}/$version.json")
             if (!file.exists(NOFOLLOW_LINKS)) break
             require(
@@ -66,10 +67,10 @@ internal class ComponentBackup(
                     !file.isSymbolicLink() &&
                     file.fileSize() <= MAX_VERSION_FILE_BYTES,
             ) {
-                "版本配置路径不安全：$file"
+                I18n.t("diagA1.componentBackup.unsafeVersionPath", file)
             }
             total += file.fileSize()
-            require(total <= MAX_VERSION_CHAIN_BYTES) { "版本配置过大" }
+            require(total <= MAX_VERSION_CHAIN_BYTES) { I18n.t("diagA1.componentBackup.versionChainTooLarge") }
             val target = folder.resolve("${records.size}.json")
             Files.copy(file, target)
             records.add(
@@ -129,7 +130,7 @@ internal class ComponentBackup(
                         !source.isSymbolicLink() &&
                         digest(source, "SHA-256") == record.string("sha256"),
                 ) {
-                    "版本配置备份已改变，未恢复"
+                    I18n.t("diagA1.componentBackup.backupChanged")
                 }
                 source to safePath(root, relative)
             }
@@ -160,13 +161,13 @@ internal class ComponentBackup(
             result.obj("instance").string("id") == current.id &&
                 result.string("root") == taskPathKey(store.minecraftRoot(current)),
         ) {
-            "组件备份不属于当前实例或游戏目录"
+            I18n.t("diagA1.componentBackup.foreignBackup")
         }
         return result
     }
 
     private fun directory(id: String): java.nio.file.Path {
-        require(runCatching { UUID.fromString(id) }.isSuccess) { "组件备份编号无效" }
+        require(runCatching { UUID.fromString(id) }.isSuccess) { I18n.t("diagA1.componentBackup.invalidId") }
         return safePath(store.directories.instanceBackups.resolve("components"), id)
     }
 }

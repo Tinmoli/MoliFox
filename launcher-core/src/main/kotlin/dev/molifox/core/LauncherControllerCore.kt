@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import dev.molifox.core.data.instance.FileInstanceWorkspaceRepository
 import dev.molifox.core.domain.instance.InstanceWorkspaceQueries
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.platform.files.NioFileSystemAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,9 @@ import java.nio.channels.FileLock
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+
+/** 镜像主机的并发上限：再高容易被 BMCLAPI 等镜像限流。 */
+private const val MIRROR_CONCURRENCY_LIMIT = 8
 
 /**
  * 桌面入口的全部运行时状态：文件锁、协程作用域与各服务都在这里创建一次。
@@ -44,7 +48,7 @@ internal class LauncherControllerCore(
 
     private val lock: FileLock =
         try {
-            lockChannel.tryLock() ?: error("MoliFox 已在运行，请切换到已有窗口")
+            lockChannel.tryLock() ?: error(I18n.t("miscA1.controllerCore.alreadyRunning"))
         } catch (failure: IOException) {
             lockChannel.close()
             throw failure
@@ -102,12 +106,12 @@ internal class LauncherControllerCore(
                 }
             },
             { store.data.settings.effectiveProxyMode() == "system" },
-            // 下载参数按 HMCL 的行为固定：不分段、自动并发、单源重试 5 次。
-            downloadSegments = { 1 },
+            // 分段数走设置项（1–16）；镜像并发不再单独设置，压到 8 路避免镜像限流。
+            downloadSegments = { store.data.settings.downloadSegments },
             downloadAttempts = { 5 },
             requestTimeoutSeconds = { store.data.settings.networkTimeoutSeconds },
             maxConcurrent = downloadConcurrency,
-            mirrorConcurrency = downloadConcurrency,
+            mirrorConcurrency = { minOf(downloadConcurrency(), MIRROR_CONCURRENCY_LIMIT) },
             // 源被禁用、限流与并发预算调整都要在启动器日志里留一行。
             logger = { message, error -> store.log(message, error) },
         )
@@ -145,7 +149,10 @@ internal class LauncherControllerCore(
                 NioFileSystemAccess(),
             ) { path, failure ->
                 if (failure !is NoSuchFileException) {
-                    store.log("无法读取目录项 $path：${failure.message}", error = true)
+                    store.log(
+                        I18n.t("miscA1.controllerCore.readDirectoryFailed", path, failure.message),
+                        error = true,
+                    )
                 }
             },
         )
@@ -174,19 +181,29 @@ internal class LauncherControllerCore(
         directories.refreshVersionMetadata()
         // 启动时以 versions/ 扫描为准重建实例列表。
         store.refreshInstances()
-        store.log("欢迎使用 MoliFox · ${platform.osName} / ${platform.architecture}")
+        store.log(I18n.t("miscA1.controllerCore.welcome", platform.osName, platform.architecture))
         if (store.data.settings.autoCheckUpdates) scope.launch { updater.check(false) }
         actions.refreshJavaPrompt()
     }
 
     /** 释放顺序与原先的 close() 一致：先停服务，再取消作用域，最后放锁。 */
+    @Synchronized
     fun shutdown() {
+        if (shutdownStarted) return
+        shutdownStarted = true
         accounts.cancelLogin()
         jobs.cancelAll()
         network.close()
+        // 最后一批游戏日志可能还在 100ms 批量缓冲里：先补进界面，再停刷新线程。
+        store.actions.flushPendingLogs()
         store.core.logFlusher.shutdownNow()
         scope.cancel()
         lock.release()
         lockChannel.close()
     }
+
+    /** 桌面层注册的优雅退出回调；自动更新替换前调用，先停联机与后台任务再关闭窗口。 */
+    internal var exitHandler: (() -> Unit)? = null
+
+    @Volatile private var shutdownStarted = false
 }

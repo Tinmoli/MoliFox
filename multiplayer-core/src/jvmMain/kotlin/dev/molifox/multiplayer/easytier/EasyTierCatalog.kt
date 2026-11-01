@@ -1,6 +1,8 @@
 // EasyTier sidecar 的版本、平台与官方发布包信息：只描述下载与校验，不联网、不做安装。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
+
 /** 一个平台的 EasyTier 官方发布包；[rootPrefix] 是压缩包内文件的公共目录前缀。 */
 data class EasyTierPackage(
     val version: String,
@@ -92,9 +94,11 @@ object EasyTierCatalog {
 
     /** 不支持当前平台时的统一提示，安装器与界面共用同一措辞。 */
     fun unsupportedPlatformMessage(): String =
-        "当前平台（${System.getProperty("os.name").orEmpty()} " +
-            "${System.getProperty("os.arch").orEmpty()}）暂不支持 EasyTier 联机；" +
-            "仅支持 Windows 与 Linux 的 x86_64。"
+        I18n.t(
+            "multiplayer.easyTierCatalog.unsupportedPlatform",
+            System.getProperty("os.name").orEmpty(),
+            System.getProperty("os.arch").orEmpty(),
+        )
 
     /** 把系统与架构归一化为平台分类；只支持 x86_64 的 Windows / Linux。 */
     fun classify(

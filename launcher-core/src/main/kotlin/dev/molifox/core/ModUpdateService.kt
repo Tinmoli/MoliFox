@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -76,8 +77,14 @@ class ModUpdateService
                 val items = inspectAll(files, fingerprints, batch, instance, includePrerelease)
                 val versionMs = elapsedMillis(versionStarted)
                 store.log(
-                    "更新检查：扫描 ${files.size} 个文件 $scanMs ms，指纹查询 $fingerprintMs ms，" +
-                        "版本查询 $versionMs ms，总计 ${elapsedMillis(startedAt)} ms",
+                    I18n.t(
+                        "packsC.updateCheck.scanned",
+                        files.size,
+                        scanMs,
+                        fingerprintMs,
+                        versionMs,
+                        elapsedMillis(startedAt),
+                    ),
                 )
                 ModUpdateReport(instanceId, instance.gameVersion, instance.loader, items)
             }
@@ -124,7 +131,7 @@ class ModUpdateService
                 }
             }
             if (attempted > 0 && failures.size == attempted && files.isNotEmpty()) {
-                throw IllegalStateException("检查更新失败：${failures.joinToString("；")}")
+                throw IllegalStateException(I18n.t("packsB2.packUpdates.checkFailed", failures.joinToString("；")))
             }
             return fingerprints
         }
@@ -305,7 +312,7 @@ class ModUpdateService
                 return base.copy(
                     matchSource = matchSource,
                     possibleMatch = possible,
-                    warning = "无法确认当前版本，未提供更新",
+                    warning = I18n.t("packsC.updateCheck.unknownVersion"),
                 )
             }
             val pool =
@@ -381,15 +388,16 @@ private fun unmatchedReason(
     searchError: String,
 ): String =
     when {
-        projectError.isNotBlank() -> "读取声明的项目页失败：$projectError"
-        searchError.isNotBlank() -> "名称搜索失败：$searchError"
-        else -> "未找到匹配项目"
+        projectError.isNotBlank() -> I18n.t("packsC.updateCheck.projectPageFailed", projectError)
+        searchError.isNotBlank() -> I18n.t("packsC.updateCheck.searchFailed", searchError)
+        else -> I18n.t("packsC.updateCheck.noMatch")
     }
 
 private fun multipleMatchWarning(distinct: List<Pair<ModUpdateSource, RemoteModProject>>): String =
-    "可能匹配到多个项目（" +
-        distinct.take(MAX_CANDIDATE_TITLES).joinToString("、") { it.second.title } +
-        "），未自动选择"
+    I18n.t(
+        "packsC.updateCheck.multipleMatch",
+        distinct.take(MAX_CANDIDATE_TITLES).joinToString("、") { it.second.title },
+    )
 
 private fun compatible(
     version: RemoteModVersion,
@@ -418,11 +426,11 @@ private suspend fun versionPool(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: IOException) {
-            return VersionPool(emptyList(), "读取项目版本失败：${shortErrorMessage(error)}")
+            return VersionPool(emptyList(), I18n.t("packsB2.packUpdates.readVersionsFailed", shortErrorMessage(error)))
         } catch (error: IllegalStateException) {
-            return VersionPool(emptyList(), "读取项目版本失败：${shortErrorMessage(error)}")
+            return VersionPool(emptyList(), I18n.t("packsB2.packUpdates.readVersionsFailed", shortErrorMessage(error)))
         } catch (error: JsonParseException) {
-            return VersionPool(emptyList(), "读取项目版本失败：${shortErrorMessage(error)}")
+            return VersionPool(emptyList(), I18n.t("packsB2.packUpdates.readVersionsFailed", shortErrorMessage(error)))
         }
     val supported = versions.filter { compatible(it, instance) }
     val allowPrerelease = includePrerelease || isPrereleaseVersion(currentVersion)
@@ -449,7 +457,7 @@ private fun latestItem(
             status = ModUpdateStatus.Latest,
             matchSource = matchSource,
             possibleMatch = possible,
-            warning = "没有适用于当前游戏版本与加载器的其他版本",
+            warning = I18n.t("packsC.updateCheck.noCompatibleVersion"),
         )
     }
     val newer = compareModVersions(latest.number, currentVersion) > 0
@@ -463,8 +471,8 @@ private fun latestItem(
         applicable = candidate != null && latest.downloadUrl.isNotBlank(),
         warning =
             when {
-                newer && latest.downloadUrl.isBlank() -> "最新版本需要到项目页手动下载"
-                possible -> "按名称匹配，可能不是同一项目"
+                newer && latest.downloadUrl.isBlank() -> I18n.t("packsC.updateCheck.manualDownload")
+                possible -> I18n.t("packsC.updateCheck.nameMatch")
                 else -> ""
             },
     )
@@ -498,11 +506,10 @@ private data class VersionPool(
     val failure: String? = null,
 )
 
-internal fun shortErrorMessage(error: Exception): String =
-    error.message.orEmpty().take(ERROR_MESSAGE_MAX_LENGTH)
+internal fun shortErrorMessage(error: Exception): String = error.message.orEmpty().take(ERROR_MESSAGE_MAX_LENGTH)
 
 private fun failureMessage(error: Exception): String =
     error.message
         .orEmpty()
         .take(FAILURE_MESSAGE_MAX_LENGTH)
-        .ifBlank { "请求失败" }
+        .ifBlank { I18n.t("packsB2.packUpdates.requestFailed") }

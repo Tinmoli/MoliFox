@@ -27,24 +27,27 @@ internal fun ContentWorldConfirmDialog(
     actions: UiActions,
     onInstallStarted: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Modal(
-        "安装世界",
-        "${target.name} · 安装到 saves/",
+        strings.t("dialogs.world.install.title"),
+        strings.t("dialogs.world.install.subtitle", target.name),
         onDismiss = { ui.confirmWorld = false },
     ) {
         Text(
-            "将下载 ${hit.title} ${chosen.number.ifBlank { chosen.name }}，" +
-                "并解压到该实例的 saves 文件夹。",
+            strings.t(
+                "dialogs.world.install.download",
+                hit.title,
+                chosen.number.ifBlank { chosen.name },
+            ),
         )
         Text(
-            "压缩包必须包含 level.dat；包内若有一层世界目录会保留为世界名。" +
-                "存档里已有同名世界时不会覆盖。",
+            strings.t("dialogs.world.install.requirement"),
             style = MaterialTheme.typography.bodySmall,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({ ui.confirmWorld = false }) { Text("取消") }
+            TextButton({ ui.confirmWorld = false }) { Text(strings.t("dialogs.common.cancel")) }
             PrimaryButton(
-                "安装世界",
+                strings.t("dialogs.world.install.title"),
                 enabled = !actions.controller.busy,
                 onClick = {
                     actions.run {

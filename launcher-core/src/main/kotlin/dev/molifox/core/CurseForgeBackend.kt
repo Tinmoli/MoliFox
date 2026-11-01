@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** CurseForge 项目与文件编号上限（32 位无符号整数）。 */
@@ -21,17 +22,21 @@ private const val PROJECT_BODY_MAX_LENGTH = 60000
 private const val CHANGELOG_MAX_LENGTH = 40000
 
 internal fun curseForgeProjectId(id: String): String {
-    require(id.matches(Regex("curseforge:[1-9][0-9]{0,9}"))) { "无效的 CurseForge 项目标识" }
+    require(id.matches(Regex("curseforge:[1-9][0-9]{0,9}"))) {
+        I18n.t("packsB1.curseForgeBackend.invalidProjectId")
+    }
     return id.substringAfter(':').also { require(it.toLong() <= MAX_CURSE_FORGE_ID) }
 }
 
 internal fun curseForgeVersionId(id: String): Pair<String, String> {
     val parts = id.split(':')
-    require(parts.size == CURSE_FORGE_VERSION_ID_PARTS) { "无效的 CurseForge 文件标识" }
+    require(parts.size == CURSE_FORGE_VERSION_ID_PARTS) {
+        I18n.t("packsB1.curseForgeBackend.invalidVersionId")
+    }
     val project = curseForgeProjectId(parts.take(2).joinToString(":"))
     val file = parts[2]
     require(file.matches(Regex("[1-9][0-9]{0,9}")) && file.toLong() <= MAX_CURSE_FORGE_ID) {
-        "无效的 CurseForge 文件标识"
+        I18n.t("packsB1.curseForgeBackend.invalidVersionId")
     }
     return project to file
 }
@@ -68,7 +73,11 @@ internal class CurseForgeBackend(
         val index = transport.classIndex()
         val kind =
             transport.kindOfClassId(index, raw.intOrNull("classId"))
-                ?: transport.fail("项目分类映射", "项目 classId 不在镜像分类表内", raw)
+                ?: transport.fail(
+                    I18n.t("packsB1.curseForgeBackend.stageProjectClassMapping"),
+                    I18n.t("packsB1.curseForgeBackend.projectClassIdUnknown"),
+                    raw,
+                )
         val hit = browsing.hit(raw, kind)
         val description = transport.optionalText("mods/${curseForgeProjectId(id)}/description")
         return JsonObject().apply {
@@ -92,7 +101,7 @@ internal class CurseForgeBackend(
         val (project, file) = curseForgeVersionId(id)
         val raw = transport.request("mods/$project/files/$file").obj("data")
         val normalized = fileRecords.normalize(raw, transport.rawProject("curseforge:$project"))
-        require(normalized.string("id") == id) { "CurseForge 文件标识不匹配" }
+        require(normalized.string("id") == id) { I18n.t("packsB1.curseForgeBackend.versionIdMismatch") }
         normalized.addProperty(
             "changelog",
             plainDescription(transport.optionalText("mods/$project/files/$file/changelog"))
@@ -123,8 +132,7 @@ internal class CurseForgeBackend(
         loader: Int? = null,
     ): List<JsonObject> = fileRecords.available(id, gameVersion, loader)
 
-    suspend fun fingerprints(files: List<Path>): Map<Path, JsonObject> =
-        fingerprintIndex.fingerprints(files)
+    suspend fun fingerprints(files: List<Path>): Map<Path, JsonObject> = fingerprintIndex.fingerprints(files)
 
     suspend fun fingerprintFiles(
         files: List<Path>,

@@ -5,10 +5,12 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 private const val MAX_EXTRA_JVM_ARGUMENT_CHARS = 4096
-private const val MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS = 3600
-private const val MAX_WINDOW_TITLE_CHARS = 128
-private const val MAX_CUSTOM_INFO_CHARS = 64
+internal const val MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS = 3600
+internal const val MAX_WINDOW_TITLE_CHARS = 128
+internal const val MAX_CUSTOM_INFO_CHARS = 64
 private const val REDACTION_LENGTH_THRESHOLD = 5
 
 /**
@@ -59,8 +61,9 @@ fun effectiveLaunchSettings(
     instance: GameInstance,
 ): AdvancedLaunchSettings = instance.advancedLaunch ?: settings.advancedLaunch
 
+/** 需要单行校验的文本字段：标签 key 用于提示文案，值用于校验；判断只看 key。 */
 internal fun validateExtraJvmArguments(value: String) {
-    require(value.length <= MAX_EXTRA_JVM_ARGUMENT_CHARS) { "JVM 参数过长" }
+    require(value.length <= MAX_EXTRA_JVM_ARGUMENT_CHARS) { I18n.t("core.advancedLaunchSettings.1") }
     extraJvmArguments(value)
 }
 
@@ -75,7 +78,7 @@ internal fun extraJvmArguments(value: String): List<String> {
                 it.startsWith("-Xms")
         },
     ) {
-        "内存请通过内存设置调整；附加参数不能覆盖游戏入口或 classpath"
+        I18n.t("core.advancedLaunchSettings.2")
     }
     return arguments
 }
@@ -104,59 +107,17 @@ internal fun extraGameArguments(settings: AdvancedLaunchSettings): List<String> 
         try {
             splitArguments(settings.extraGameArgs)
         } catch (_: IllegalArgumentException) {
-            throw IllegalArgumentException("附加游戏参数引号未闭合")
+            throw IllegalArgumentException(I18n.t("core.advancedLaunchSettings.3"))
         }
     require(
         arguments.none {
             it.startsWith('@') || it.substringBefore('=').lowercase() in managedGameFlags
         },
     ) {
-        "附加游戏参数不能覆盖账户、游戏目录、资源或窗口设置，请使用对应设置"
+        I18n.t("core.advancedLaunchSettings.4")
     }
-    require(arguments.none { '\u0000' in it }) { "游戏参数不能包含空字符" }
+    require(arguments.none { '\u0000' in it }) { I18n.t("core.advancedLaunchSettings.5") }
     return arguments
-}
-
-fun validateAdvancedLaunchSettings(
-    settings: AdvancedLaunchSettings,
-    os: String,
-) {
-    extraGameArguments(settings)
-    require(settings.commandTimeoutSeconds in 1..MAX_LAUNCH_COMMAND_TIMEOUT_SECONDS) {
-        "命令超时需为 1–3600 秒"
-    }
-    require(settings.launcherVisibility in setOf("", "keep", "minimize", "hide")) { "启动器显示方式无效" }
-    require(settings.windowTitle.length <= MAX_WINDOW_TITLE_CHARS) {
-        "游戏窗口标题最多 $MAX_WINDOW_TITLE_CHARS 字"
-    }
-    require(settings.customInfo.length <= MAX_CUSTOM_INFO_CHARS) {
-        "自定义信息最多 $MAX_CUSTOM_INFO_CHARS 字"
-    }
-    for (label in listOf("游戏窗口标题", "自定义信息")) {
-        val value = if (label == "游戏窗口标题") settings.windowTitle else settings.customInfo
-        require('\u0000' !in value && '\r' !in value && '\n' !in value) {
-            "$label 必须是单行文本"
-        }
-    }
-    for (
-    (label, command) in
-    listOf("启动前" to settings.preLaunchCommand, "退出后" to settings.postExitCommand)
-    ) {
-        require('\u0000' !in command && '\r' !in command && '\n' !in command) {
-            "${label}命令需为单行；复杂操作请调用脚本文件"
-        }
-        try {
-            splitArguments(command)
-        } catch (_: IllegalArgumentException) {
-            throw IllegalArgumentException("${label}命令引号未闭合")
-        }
-    }
-    val names = hashSetOf<String>()
-    for ((name, value) in settings.environmentVariables) {
-        require(Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) { "环境变量名称无效：$name" }
-        require('\u0000' !in value && '\r' !in value && '\n' !in value) { "环境变量值必须是单行文本：$name" }
-        require(names.add(if (os == "windows") name.lowercase() else name)) { "环境变量名称重复：$name" }
-    }
 }
 
 fun parseEnvironmentVariables(
@@ -168,9 +129,9 @@ fun parseEnvironmentVariables(
         .lineSequence()
         .filter { it.isNotBlank() }
         .forEach { line ->
-            require('=' in line) { "环境变量每行使用 名称=值" }
+            require('=' in line) { I18n.t("core.advancedLaunchSettings.17") }
             val name = line.substringBefore('=').trim()
-            require(name !in values) { "环境变量名称重复：$name" }
+            require(name !in values) { I18n.t("core.advancedLaunchSettings.16", name) }
             values[name] = line.substringAfter('=')
         }
     validateAdvancedLaunchSettings(AdvancedLaunchSettings(environmentVariables = values), os)
@@ -183,7 +144,7 @@ internal fun environmentForDiagnostics(values: Map<String, String>): Map<String,
             Regex("(?i)token|secret|password|credential|api.?key|authorization")
                 .containsMatchIn(name)
         ) {
-            "[已隐藏]"
+            I18n.t("core.advancedLaunchSettings.18")
         } else {
             redactSecrets(value)
         }

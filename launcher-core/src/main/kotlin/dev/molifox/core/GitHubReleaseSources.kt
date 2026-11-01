@@ -3,6 +3,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.net.URI
 
@@ -27,5 +28,5 @@ internal suspend fun NetworkClient.gitHubReleaseList(url: String): JsonArray {
             lastFailure = failure
         }
     }
-    throw IOException("无法读取 GitHub 更新列表：${lastFailure?.message}", lastFailure)
+    throw IOException(I18n.t("networkB1.gitHubReleaseSources.listUnreadable", lastFailure?.message), lastFailure)
 }

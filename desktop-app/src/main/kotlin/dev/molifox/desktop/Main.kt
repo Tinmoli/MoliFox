@@ -44,6 +44,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -81,6 +83,7 @@ import dev.molifox.core.PackPreview
 import dev.molifox.core.StartupStorageResolver
 import dev.molifox.core.TidyReport
 import dev.molifox.core.domain.server.ServerStatusQuery
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.launcherWindowAction
 import dev.molifox.desktop.content.DownloadsPage
 import dev.molifox.desktop.instances.InstancesPage
@@ -105,20 +108,24 @@ import java.nio.file.Path
  * 日志（Downloads）与账户列表（Accounts）是子页；实例页不在顶部导航里，可从开始页进入。
  */
 enum class Page(
+    /** 旧版本配置里保存的中文标题，只用于兼容旧值解析；显示文案见 [titleKey]。 */
     val title: String,
-    val subtitle: String,
     val icon: ImageVector,
 ) {
-    Home("开始", "账户与游戏启动", Icons.Outlined.Home),
-    Instances("实例", "管理版本与游戏内容", Icons.Outlined.Widgets),
-    Discover("下载", "安装游戏与发现资源", Icons.Outlined.Explore),
+    Home("开始", Icons.Outlined.Home),
+    Instances("实例", Icons.Outlined.Widgets),
+    Discover("下载", Icons.Outlined.Explore),
 
-    Multiplayer("联机", "创建房间与房间码加入", Icons.Outlined.Groups),
-    Settings("设置", "游戏、外观、下载与日志", Icons.Outlined.Tune),
-    Downloads("日志", "运行输出与启动诊断", Icons.Outlined.Description),
+    Multiplayer("联机", Icons.Outlined.Groups),
+    Settings("设置", Icons.Outlined.Tune),
+    Downloads("日志", Icons.Outlined.Description),
 
     /** 账户列表是开始页的子页，不在顶部导航里显示，打开时顶部仍高亮「开始」。 */
-    Accounts("账户列表", "添加、切换与删除游戏账户", Icons.Outlined.ManageAccounts),
+    Accounts("账户列表", Icons.Outlined.ManageAccounts),
+    ;
+
+    /** 导航与页面标题的翻译 key，例如 `nav.home`。 */
+    val titleKey: String get() = "nav." + name.lowercase()
 }
 
 class UiActions
@@ -182,7 +189,7 @@ class UiActions
         fun importPack() =
             run {
                 choose(
-                    "选择 Modrinth / CurseForge / MultiMC·Prism / HMCL·MCBBS / MoliFox 整合包",
+                    tr("deskH.dialog.pickPack"),
                     extensions = listOf("mrpack", "zip"),
                 ).firstOrNull()
                     ?.let { source -> withContext(Dispatchers.Swing) { previewPackFile(source) } }
@@ -190,11 +197,11 @@ class UiActions
 
         fun previewPackFile(source: Path) {
             if (packPreviewLoading || pendingPack != null) {
-                controller.store.notify("请先完成当前整合包预览")
+                controller.store.notify(tr("deskH.notice.packPreviewBusy"))
                 return
             }
             packPreviewLoading = true
-            controller.store.notify("正在检查整合包…")
+            controller.store.notify(tr("deskH.notice.packChecking"))
             run {
                 try {
                     val preview = controller.content.previewPack(source)
@@ -207,7 +214,7 @@ class UiActions
 
         fun importExisting() =
             run {
-                choose("选择游戏目录（包含 versions 的文件夹）", directory = true).firstOrNull()?.let {
+                choose(tr("deskH.dialog.pickGameDirectory"), directory = true).firstOrNull()?.let {
                     controller.importExisting(it)
                 }
             }
@@ -215,7 +222,7 @@ class UiActions
         fun exportLogs() =
             run {
                 choose(
-                    "保存启动器日志",
+                    tr("deskH.dialog.saveLauncherLog"),
                     save = true,
                     extensions = listOf("log"),
                     defaultName = "MoliFox.log",
@@ -226,7 +233,7 @@ class UiActions
         fun exportDiagnostics() =
             run {
                 choose(
-                    "保存游戏诊断包",
+                    tr("deskH.dialog.saveDiagnostics"),
                     save = true,
                     extensions = listOf("zip"),
                     defaultName = "MoliFox-diagnostics.zip",
@@ -270,12 +277,14 @@ private fun startLauncherController(startupMillis: () -> Long): LauncherControll
         // 启动即按启动器自身位置发现旁边/内部的现有 .minecraft 或游戏根并发起登记；
         // 扫描失败只写日志，不阻止启动。
         val created = LauncherController(platform, storage)
-        created.store.log("启动：store ready，用时 ${startupMillis()} ms")
+        // 尽早按已保存设置切换语言，后续启动日志与诊断都使用用户选择的语言。
+        I18n.setLanguage(created.store.data.settings.language)
+        created.store.log(I18n.t("desktop.startup.storeReady", startupMillis()))
         created
     }.getOrElse { error ->
         // 启动链路串联平台探测、存储解析与控制器构造，任何一步的异常都必须转成诊断日志 + 弹窗，
         // 因此这里保留兜底捕获；错误信息照常输出，不吞掉失败原因。
-        System.err.println("启动失败：${error.message}")
+        System.err.println(I18n.t("desktop.startup.failed", error.message ?: ""))
         System.getenv("MOLIFOX_DIAGNOSTIC_LOG")?.let { diagnosticPath ->
             runCatching {
                 java.nio.file.Files.writeString(
@@ -297,13 +306,28 @@ private fun ApplicationScope.LauncherApplication(
     multiplayer: DesktopMultiplayerOwner,
 ) {
     val launcherState by controller.state.collectAsState()
+    // 界面语言：设置变化时立刻换一套文案；旧配置里的 zh-CN 保持不变，新安装是 auto（跟随系统）。
+    val language = launcherState.data.settings.language
+    val strings = remember(language) { I18n.setLanguage(language) }
+    // 自动更新替换前走正常退出流程：先停联机与后台任务，再交给 Compose 关闭窗口。
+    var restartForUpdate by remember { mutableStateOf(false) }
+    DisposableEffect(controller) {
+        controller.exitHandler = { restartForUpdate = true }
+        onDispose { controller.exitHandler = null }
+    }
+    LaunchedEffect(restartForUpdate) {
+        if (!restartForUpdate) return@LaunchedEffect
+        withContext(Dispatchers.IO) { runCatching { multiplayer.close() } }
+        controller.close()
+        exitApplication()
+    }
     // 首帧后再扫描旁边的游戏目录：启动路径只依赖已加载的配置，目录多或磁盘慢也不会拖慢窗口出现。
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             runCatching { controller.discoverStartupGameDirectories() }
-                .onFailure { controller.store.log("自动识别游戏目录失败：${it.message}", true) }
+                .onFailure { controller.store.log(I18n.t("desktop.startup.discoveryFailed", it.message ?: ""), true) }
         }
-        controller.store.log("启动：discovery done，用时 ${startupMillis()} ms")
+        controller.store.log(I18n.t("desktop.startup.discoveryDone", startupMillis()))
     }
     // 自定义左上角图标缺失或损坏时只记一行日志并回退内置图标（BrandMark 内部同样回退），启动不受影响。
     LaunchedEffect(
@@ -314,7 +338,7 @@ private fun ApplicationScope.LauncherApplication(
         if (stored.isBlank()) return@LaunchedEffect
         val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
         if (problem != null) {
-            controller.store.log("自定义品牌图标不可用（$problem），已回退内置图标")
+            controller.store.log(I18n.t("desktop.startup.brandIconUnavailable", problem))
         }
     }
     // 默认 1180×720（最小 1000×640），对应 1280×720 游戏画面留出窗口边框。
@@ -397,20 +421,25 @@ private fun ApplicationScope.LauncherApplication(
         // 首帧真正提交后再记一次启动耗时，作为「窗口可见」的可测量时间点。
         LaunchedEffect(Unit) {
             withFrameNanos { }
-            controller.store.log("启动：first frame，用时 ${startupMillis()} ms")
+            controller.store.log(I18n.t("desktop.startup.firstFrame", startupMillis()))
         }
         val actions = remember(window) { UiActions(controller, window, multiplayer = multiplayer) }
-        LauncherRoot(
-            controller,
-            launcherState,
-            actions,
-            windowState,
-            toggleMaximize,
-            confirmExit,
-            onConfirmExit = { confirmExit = true },
-            onDismissConfirmExit = { confirmExit = false },
-            onExit = { exitApplication() },
-        )
+        CompositionLocalProvider(LocalStrings provides strings) {
+            // 语言切换只替换 CompositionLocal：读取 strings 的界面自动重组，界面状态（滚动位置、
+            // 设置分区、页签）保持不变。不要在这里加 key(strings) 整体重建，否则会重置所有
+            // remember 状态，切换语言后设置页会跳回顶部。
+            LauncherRoot(
+                controller,
+                launcherState,
+                actions,
+                windowState,
+                toggleMaximize,
+                confirmExit,
+                onConfirmExit = { confirmExit = true },
+                onDismissConfirmExit = { confirmExit = false },
+                onExit = { exitApplication() },
+            )
+        }
     }
 }
 
@@ -425,15 +454,16 @@ private fun ApplicationScope.LauncherTray(
     onQuit: () -> Unit,
 ) {
     if (!visible || !supported) return
+    val strings = LocalStrings.current
     Tray(
         painterResource("icons/app/icon.png"),
-        tooltip = "MoliFox · 游戏运行中",
+        tooltip = strings.t("tray.tooltip"),
         onAction = onRestore,
     ) {
-        Item("显示启动器", onClick = onShowWindow)
-        Item("停止当前运行", onClick = { controller.game.stop() })
+        Item(strings.t("tray.show"), onClick = onShowWindow)
+        Item(strings.t("tray.stopGame"), onClick = { controller.game.stop() })
         Separator()
-        Item("退出启动器", onClick = onQuit)
+        Item(strings.t("tray.quit"), onClick = onQuit)
     }
 }
 
@@ -471,6 +501,7 @@ private fun FrameWindowScope.LauncherRoot(
     onDismissConfirmExit: () -> Unit,
     onExit: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     MoliTheme(launcherState.data.settings) {
         Box(
             Modifier
@@ -494,26 +525,26 @@ private fun FrameWindowScope.LauncherRoot(
                         if (launcherState.jobs.isNotEmpty()) {
                             SmallIconButton(
                                 Icons.Outlined.CloudDownload,
-                                "任务中心",
+                                strings.t("window.taskCenter"),
                                 { actions.showTasks() },
                                 tint,
                             )
                         }
                         SmallIconButton(
                             Icons.Outlined.Remove,
-                            "最小化",
+                            strings.t("window.minimize"),
                             { windowState.isMinimized = true },
                             tint,
                         )
                         SmallIconButton(
                             Icons.Outlined.CropSquare,
-                            "最大化",
+                            strings.t("window.maximize"),
                             toggleMaximize,
                             tint,
                         )
                         SmallIconButton(
                             Icons.Outlined.Close,
-                            "关闭",
+                            strings.t("window.close"),
                             {
                                 if (controller.jobs.busy || actions.multiplayer.active) {
                                     onConfirmExit()
@@ -533,21 +564,21 @@ private fun FrameWindowScope.LauncherRoot(
         if (confirmExit) {
             AlertDialog(
                 onDismissRequest = onDismissConfirmExit,
-                title = { Text("退出 MoliFox？") },
+                title = { Text(strings.t("exit.title")) },
                 text = {
                     Text(
                         if (actions.multiplayer.active) {
-                            "联机将断开，下载任务将取消；正在运行的 Minecraft 会继续运行。"
+                            strings.t("exit.messageMultiplayer")
                         } else {
-                            "下载任务将取消，正在运行的 Minecraft 会继续运行。"
+                            strings.t("exit.messageSingle")
                         },
                     )
                 },
                 confirmButton = {
-                    TextButton(onClick = { onExit() }) { Text("退出启动器") }
+                    TextButton(onClick = { onExit() }) { Text(strings.t("exit.confirm")) }
                 },
                 dismissButton = {
-                    TextButton(onClick = onDismissConfirmExit) { Text("继续使用") }
+                    TextButton(onClick = onDismissConfirmExit) { Text(strings.t("exit.cancel")) }
                 },
             )
         }
@@ -559,6 +590,7 @@ fun MoliApp(
     state: LauncherState,
     actions: UiActions,
 ) {
+    val strings = LocalStrings.current
     val navigation = actions.navigation
     var deleting by remember { mutableStateOf<GameInstance?>(null) }
     // 实例详情页的工具弹窗：整理报告 / 目录移动。
@@ -660,7 +692,7 @@ fun MoliApp(
                     Spacer(Modifier.width(10.dp))
                     SmallIconButton(
                         Icons.Outlined.Close,
-                        "关闭提示",
+                        strings.t("window.dismissToast"),
                         { actions.controller.store.dismissNotification() },
                         tint = MaterialTheme.colorScheme.inverseOnSurface,
                     )
@@ -706,6 +738,7 @@ private fun ColumnScope.LauncherContent(
     onTidyReport: (Pair<String, TidyReport>) -> Unit,
     onMoveTarget: (Pair<GameInstance, Path>) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val navigation = actions.navigation
     val exportInstance =
         if (targetKey.startsWith("export:")) {
@@ -747,7 +780,7 @@ private fun ColumnScope.LauncherContent(
             { navigation.navigate(it, resources = true) },
             onTidyInstance = { target ->
                 // 整理会删除空目录，放到后台线程执行；结果只报告，不提供删除入口。
-                actions.controller.store.notify("正在整理「${target.name}」的目录…")
+                actions.controller.store.notify(strings.t("pages.tidy.running", target.name))
                 actions.run {
                     val report =
                         withContext(Dispatchers.IO) {
@@ -764,7 +797,7 @@ private fun ColumnScope.LauncherContent(
                     val destination =
                         actions
                             .choose(
-                                "选择目标游戏目录（实例会放到其中的 versions 文件夹）",
+                                strings.t("pages.move.chooseTitle"),
                                 directory = true,
                             ).firstOrNull()
                     if (destination != null) {
@@ -856,6 +889,14 @@ private fun LauncherDialogs(
     }
     actions.launchPreview?.let { plan ->
         LaunchPreviewDialog(plan) { actions.launchPreview = null }
+    }
+    // 游戏异常退出/启动失败：弹出可读原因与关键证据，不让用户只在日志里翻。
+    state.launchIssue?.let { issue ->
+        LaunchFailureDialog(
+            issue,
+            onViewLogs = { actions.navigation.navigate(Page.Downloads) },
+            onDismiss = { actions.controller.dismissLaunchIssue() },
+        )
     }
     // 启动检查：实例缺少兼容 Java 时给出安装/选择入口；显式路径或已存在兼容 Java 时不出现。
     state.javaPrompt?.let { prompt -> JavaRuntimePromptDialog(prompt, actions) }

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import dev.molifox.core.LauncherSettings
+import dev.molifox.core.i18n.AppLanguage
 
 /** 通用：更新检查与语言。 */
 @Composable
@@ -20,17 +21,21 @@ internal fun generalSettingCards(
     actions: UiActions,
     writer: SettingsWriter,
     settings: LauncherSettings,
-): List<SettingCard> =
-    listOf(
+): List<SettingCard> {
+    val strings = LocalStrings.current
+    return listOf(
         SettingCard(
-            "启动器更新",
-            "从 MoliFox 官方 GitHub Releases 检查正式版本。",
+            strings.t("settings.general.update.title"),
+            strings.t("settings.general.update.detail"),
             listOf(
                 settingControl("GitHub Releases") {
                     val state by actions.controller.state.collectAsState()
                     LauncherUpdatePanel(state.update, actions)
                 },
-                settingRow("启动时自动检查更新", "检查过程中可以正常使用启动器") {
+                settingRow(
+                    strings.t("settings.general.update.autoCheck"),
+                    strings.t("settings.general.update.autoCheckDetail"),
+                ) {
                     CompactSwitch(
                         settings.autoCheckUpdates,
                         { enabled -> writer.commit { it.copy(autoCheckUpdates = enabled) } },
@@ -39,29 +44,46 @@ internal fun generalSettingCards(
             ),
         ),
         SettingCard(
-            "语言",
-            "当前仅提供简体中文；多语言在后续版本提供。",
+            strings.t("settings.general.language.title"),
+            strings.t("settings.general.language.detail"),
             listOf(
-                settingRow("界面语言", "切换语言需要重启启动器") { Tag("简体中文") },
-                settingRow("游戏语言跟随启动器", "下次启动时将所选实例的游戏语言设为简体中文；关闭后保留游戏内选择。") {
+                settingField(
+                    strings.t("settings.language.interface.title"),
+                    strings.t("settings.language.interface.detail"),
+                ) {
+                    SimpleDropdown(
+                        settings.language,
+                        AppLanguage.options.map { language -> language.settingValue to strings.t(language.labelKey) },
+                        { value -> writer.commit { it.copy(language = value) } },
+                    )
+                },
+                settingRow(
+                    strings.t("settings.language.gameFollow.title"),
+                    strings.t("settings.language.gameFollow.detail"),
+                ) {
                     CompactSwitch(
                         settings.gameLanguageFollowsLauncher,
                         { enabled ->
                             writer.commit { it.copy(gameLanguageFollowsLauncher = enabled) }
                         },
-                        Modifier.semantics { contentDescription = "游戏语言跟随启动器开关" },
+                        Modifier.semantics {
+                            contentDescription = strings.t("settings.language.gameFollow.switch")
+                        },
                     )
                 },
             ),
         ),
     )
+}
 
 /** 关于页提供项目入口、运行信息与随程序分发的许可文本。 */
 @Composable
-internal fun aboutSettingCards(actions: UiActions): List<SettingCard> =
-    listOf(
+internal fun aboutSettingCards(actions: UiActions): List<SettingCard> {
+    val strings = LocalStrings.current
+    return listOf(
         SettingCard(
-            "关于 MoliFox",
+            strings.t("settings.about.title"),
             blocks = listOf(settingControl("MoliFox") { LauncherAboutPanel(actions) }),
         ),
     )
+}

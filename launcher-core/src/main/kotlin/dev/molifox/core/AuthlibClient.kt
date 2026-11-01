@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -175,7 +176,7 @@ class AuthlibClient(
                 onFailure(
                     AuthlibException(
                         AuthlibError.ServerError,
-                        "认证服务器返回错误 (${result.code})",
+                        I18n.t("core.authlibClient.1", result.code),
                     ),
                 )
                 null
@@ -219,7 +220,7 @@ class AuthlibClient(
                 "$root/authserver/authenticate",
                 body,
                 AuthlibError.InvalidCredentials,
-                "用户名或密码错误",
+                I18n.t("core.authlibClient.2"),
             )
         return session(root, json, username, clientToken)
     }
@@ -242,7 +243,7 @@ class AuthlibClient(
                 "$root/authserver/refresh",
                 body,
                 AuthlibError.SessionExpired,
-                "外置账户登录已过期，请重新登录",
+                I18n.t("core.authlibAccounts.8"),
             )
         return session(root, json, "", clientToken)
     }
@@ -275,7 +276,7 @@ class AuthlibClient(
         if (result.code !in HTTP_MIN_SUCCESS..HTTP_MAX_SUCCESS) {
             throw AuthlibException(
                 AuthlibError.ServerError,
-                "认证服务器请求失败 (${result.code})",
+                I18n.t("core.authlibClient.3", result.code),
             )
         }
         return parseAuthJson(result.body.orEmpty())
@@ -283,7 +284,7 @@ class AuthlibClient(
 
     private fun parseAuthJson(text: String): JsonObject =
         runCatching { JsonParser.parseString(text).asJsonObject }
-            .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+            .getOrNull() ?: throw AuthlibException(AuthlibError.InvalidResponse, I18n.t("core.authlibAccounts.9"))
 
     private fun session(
         server: String,
@@ -293,7 +294,7 @@ class AuthlibClient(
     ): AuthlibSession {
         val accessToken = json.string("accessToken").trim()
         if (accessToken.isBlank()) {
-            throw AuthlibException(AuthlibError.InvalidResponse, "认证服务器返回的数据无效")
+            throw AuthlibException(AuthlibError.InvalidResponse, I18n.t("core.authlibAccounts.9"))
         }
         val clientToken = json.string("clientToken").trim().ifBlank { fallbackClientToken }
         val user = json.get("user")?.takeIf { it.isJsonObject }?.asJsonObject
@@ -380,7 +381,7 @@ class AuthlibClient(
                                     if (bytes.size > MAX_RESPONSE_BYTES) {
                                         throw AuthlibException(
                                             AuthlibError.InvalidResponse,
-                                            "认证服务器返回的数据无效",
+                                            I18n.t("core.authlibAccounts.9"),
                                         )
                                     }
                                     HttpResult(it.code, bytes.toString(Charsets.UTF_8))
@@ -407,11 +408,11 @@ class AuthlibClient(
         val jsonMediaType = "application/json".toMediaType()
         const val MAX_RESPONSE_BYTES = 1024 * 1024
 
-        fun invalidServer() = AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+        fun invalidServer() = AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
 
-        fun notYggdrasil() = AuthlibException(AuthlibError.NotYggdrasil, "该地址返回的不是 Yggdrasil 元数据")
+        fun notYggdrasil() = AuthlibException(AuthlibError.NotYggdrasil, I18n.t("core.authlibClient.5"))
 
-        fun connectionError() = AuthlibException(AuthlibError.Network, "无法连接认证服务器（超时或网络错误）")
+        fun connectionError() = AuthlibException(AuthlibError.Network, I18n.t("core.authlibClient.6"))
     }
 }
 

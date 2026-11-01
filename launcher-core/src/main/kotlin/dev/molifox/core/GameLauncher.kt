@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -134,7 +135,7 @@ private class LaunchParameterResolver(
         val options =
             resolveInstanceLaunchOptions(
                 settings,
-                instance,
+                instance.copy(modCount = countInstanceMods(store.gamePath(instance))),
                 store.launcherWindowSize,
                 store.platform.totalMemoryMb,
                 store.platform.availableMemoryMb,
@@ -198,7 +199,7 @@ private class LaunchParameterResolver(
         if (target?.kind != EntryKind.World) return
         val world = safePath(game.resolve("saves"), target.key)
         require(world.resolve("level.dat").isRegularFile()) {
-            "此存档不存在或仍为压缩包，请先解压到 saves"
+            I18n.t("core.gameLauncher.1")
         }
     }
 
@@ -339,7 +340,7 @@ private class LaunchCommandAssembler(
             authlibInjector
                 ?: throw AuthlibException(
                     AuthlibError.DownloadFailed,
-                    "外置认证组件不可用，请重启启动器后重试",
+                    I18n.t("core.gameLauncher.2"),
                 )
         return injector.jvmArguments(
             store.dataDirectory.resolve("cache"),
@@ -395,7 +396,7 @@ private class LaunchCommandAssembler(
                 length > WINDOWS_ARGUMENT_LENGTH_LIMIT
         if (!tooLong) return command
         require(runtime.majorVersion >= MIN_ARGUMENT_FILE_JAVA_VERSION) {
-            "启动参数超过 Java 8 的 Windows 长度限制，请将游戏目录改为更短的路径"
+            I18n.t("core.gameLauncher.3")
         }
         val argumentFile = directory.resolve(".molifox-jvm.args")
         // The native Java launcher parses @files before file.encoding takes effect.
@@ -404,7 +405,7 @@ private class LaunchCommandAssembler(
                 .forName(System.getProperty("native.encoding", "UTF-8"))
         val text = command.joinToString("\n") { quoteJavaArgument(it) }
         require(charset.newEncoder().canEncode(text)) {
-            "当前 Java 无法编码此游戏目录，请缩短目录或使用对应版本的 UTF-8 Java 环境"
+            I18n.t("core.gameLauncher.4")
         }
         Files.writeString(argumentFile, text, charset)
         return mutableListOf("@${argumentFile.toAbsolutePath()}")
@@ -481,7 +482,7 @@ private class LaunchCommandAssembler(
         if (!prepareFiles || platform.osName != "windows") return
         val length = invocation.sumOf { it.length + ARGUMENT_QUOTE_OVERHEAD } + runtimePath.length
         require(length < WINDOWS_COMMAND_LENGTH_LIMIT) {
-            "启动命令过长，请缩短附加游戏参数或游戏目录"
+            I18n.t("core.gameLauncher.5")
         }
     }
 
@@ -503,7 +504,7 @@ private class LaunchCommandAssembler(
             Path
                 .of(runtime.path)
                 .resolveSibling("java.exe")
-                .also { require(it.isRegularFile()) { "此 Java 安装中没有 java.exe" } }
+                .also { require(it.isRegularFile()) { I18n.t("core.gameLauncher.6") } }
                 .toString()
         } else {
             runtime.path
@@ -577,7 +578,7 @@ class LaunchPlanner(
             }
         extractNatives(libraries, resolver, natives, prepareFiles)
         val jar = root.resolve("versions/${profile.jarId}/${profile.jarId}.jar")
-        if (prepareFiles) require(jar.isRegularFile()) { "缺少游戏主文件，请先修复游戏" }
+        if (prepareFiles) require(jar.isRegularFile()) { I18n.t("core.gameLauncher.7") }
         val libraryPaths = classpathLibraries(libraries, resolver, prepareFiles)
         val classpath = libraryPaths.distinct() + listOf(jar)
         // Loaders inspect java.class.path themselves. A manifest-only wrapper
@@ -624,7 +625,7 @@ class LaunchPlanner(
         val excluded = library.obj("extract").array("exclude").map { it.asString } + "META-INF/"
         for ((artifact, native) in resolver.libraryArtifacts(library)) {
             if (!native) continue
-            require(artifact.target.isRegularFile()) { "缺少本地依赖，请先修复游戏文件" }
+            require(artifact.target.isRegularFile()) { I18n.t("core.gameLauncher.8") }
             ZipFile(artifact.target.toFile()).use { zip -> copyNatives(zip, excluded, natives) }
         }
     }
@@ -656,7 +657,7 @@ class LaunchPlanner(
                 .filter { resolver.hasClasspathArtifact(it) }
                 .map { resolver.libraryPath(it) }
         if (prepareFiles) {
-            require(paths.all { it.isRegularFile() }) { "游戏依赖不完整，请先修复游戏文件" }
+            require(paths.all { it.isRegularFile() }) { I18n.t("core.gameLauncher.9") }
         }
         return paths
     }
@@ -726,13 +727,13 @@ internal fun applyGameProcessPriority(
     execute: (List<String>) -> Unit = ::runPriorityCommand,
 ): ProcessPriorityOutcome {
     if (!osName.startsWith("Windows", ignoreCase = true)) return ProcessPriorityOutcome(null)
-    if (processId <= 0) return ProcessPriorityOutcome("设置优先级失败：无效的进程号 $processId", true)
+    if (processId <= 0) return ProcessPriorityOutcome(I18n.t("core.gameLauncher.10", processId), true)
     val name = windowsProcessPriorityName(priority)
-    var reason = "未知原因"
+    var reason = I18n.t("core.gameLauncher.11")
     for (command in priorityCommands(processId, name)) {
         try {
             execute(command)
-            return ProcessPriorityOutcome("游戏进程优先级：${priority.title}（pid $processId）")
+            return ProcessPriorityOutcome(I18n.t("core.gameLauncher.12", priority.title, processId))
         } catch (failure: IOException) {
             reason = failureReason(failure)
         } catch (failure: IllegalStateException) {
@@ -741,7 +742,7 @@ internal fun applyGameProcessPriority(
             reason = failureReason(failure)
         }
     }
-    return ProcessPriorityOutcome("设置优先级失败：$reason", true)
+    return ProcessPriorityOutcome(I18n.t("core.gameLauncher.13", reason), true)
 }
 
 /** 失败原因只取一行可读文本：异常消息优先，没有时退回类型名。 */
@@ -783,12 +784,12 @@ private fun runPriorityCommand(command: List<String>) {
         }
     if (!process.waitFor(PRIORITY_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
-        error("命令超时")
+        error(I18n.t("core.gameLauncher.14"))
     }
     reader.join(PRIORITY_READER_JOIN_MILLIS)
     check(process.exitValue() == 0) {
         output.lineSequence().firstOrNull { it.isNotBlank() }?.take(PRIORITY_OUTPUT_PREVIEW_CHARS)
-            ?: "退出码 ${process.exitValue()}"
+            ?: I18n.t("core.gameLauncher.15", process.exitValue())
     }
 }
 
@@ -849,7 +850,7 @@ private fun watchGameWindowTitle(
         val applied = applyWindowTitle(process, plan.windowTitle, store.platform.osName)
         if (!applied && process.isAlive) {
             store.log(
-                "自定义窗口标题未生效：仅支持 Windows，且游戏窗口需在 15 秒内出现",
+                I18n.t("miscA1.gameLauncher.windowTitleUnsupported"),
                 level = LogLevel.Warn,
             )
         }
@@ -911,7 +912,7 @@ private class GameRunSupervisor(
         runCatching { runtimes.attach(run.runtimeDirectory, process) }
             .onFailure {
                 store.log(
-                    "游戏已启动，但运行缓存记录未写入：${it.javaClass.simpleName}",
+                    I18n.t("miscA1.gameLauncher.runtimeRecordFailed", it.javaClass.simpleName),
                     level = LogLevel.Warn,
                 )
             }
@@ -962,7 +963,7 @@ private class GameRunSupervisor(
         try {
             val exit = forwardGameOutput(process, run.session, activity, decoder)
             exitCode = exit
-            store.log("游戏已退出，退出码 $exit", exit != 0)
+            store.log(I18n.t("miscA1.gameLauncher.exitedWithCode", exit), exit != 0)
             postFailed = runPostExitCommand(run, prepared.plan, exit)
             run.session.finish(exit)
         } catch (error: IOException) {
@@ -1033,7 +1034,11 @@ private class GameRunSupervisor(
 
     /** 退出后命令失败：只提示这一次，游戏本身的退出结果不变。 */
     private fun reportPostExitFailure(error: Exception): Boolean {
-        val message = "游戏已退出，但${error.message ?: "退出后命令执行失败"}"
+        val message =
+            I18n.t(
+                "core.gameLauncher.16",
+                error.message ?: I18n.t("miscA1.gameLauncher.postExitCommandFailed"),
+            )
         store.log(message, true)
         store.notify(message)
         return true
@@ -1083,7 +1088,7 @@ private class GameRunSupervisor(
 
     /** 取消也要收拢本次的运行缓存；取消本身原样抛出，不按启动失败记录。 */
     fun cancelLaunch(run: LaunchRun) {
-        run.session.append("启动已取消")
+        run.session.append(I18n.t("core.gameLauncher.17"))
         releaseRuntime(run)
     }
 
@@ -1096,7 +1101,7 @@ private class GameRunSupervisor(
         releaseRuntime(run)
         // 启动中止：本次启动不会再有后续输出，档位记为 FATAL，与可继续的操作失败区分。
         store.log(
-            "启动中止：${error.message ?: error.javaClass.simpleName}",
+            I18n.t("miscA1.gameLauncher.launchAborted", error.message ?: error.javaClass.simpleName),
             level = LogLevel.Fatal,
         )
         throw error
@@ -1131,7 +1136,7 @@ class GameLauncher(
 
     /** 未安装完成的实例不能启动；提示语保持原样。 */
     private fun requireInstalled(instance: GameInstance) {
-        check(instance.installed) { "实例尚未安装完成，请先修复" }
+        check(instance.installed) { I18n.t("core.gameLauncher.18") }
     }
 
     /** 写回运行态与开始时间：进程已起来，界面据此显示「游戏中」。 */
@@ -1157,7 +1162,7 @@ class GameLauncher(
             )
         }
         store.updateInstance(run.instanceId) { it.copy(lastPlayed = Instant.now().toString()) }
-        store.log("游戏已启动：${run.instance.name} · Java ${prepared.runtime.majorVersion}")
+        store.log(I18n.t("miscA1.gameLauncher.started", run.instance.name, prepared.runtime.majorVersion))
         return RunMark(started, event)
     }
 
@@ -1204,10 +1209,10 @@ class GameLauncher(
         run: LaunchRun,
         context: JobContext,
     ): LaunchInputs {
-        run.session.stage("解析游戏版本")
+        run.session.stage(I18n.t("core.gameLauncher.19"))
         val profile = installer.resolveForLaunch(run.instance, context)
-        run.session.stage("检查和补全游戏文件")
-        context.progress(FILE_CHECK_START_PROGRESS, "检查并补全游戏文件…")
+        run.session.stage(I18n.t("core.gameLauncher.20"))
+        context.progress(FILE_CHECK_START_PROGRESS, I18n.t("core.gameLauncher.21"))
         installer.installDependencies(
             profile,
             context,
@@ -1216,16 +1221,16 @@ class GameLauncher(
             FILE_CHECK_END_PROGRESS,
             verifyHashes = run.settings.verifyFileHashes,
         )
-        context.progress(JAVA_SELECT_PROGRESS, "选择 Java ${profile.requiredJava}…")
-        run.session.stage("选择 Java")
+        context.progress(JAVA_SELECT_PROGRESS, I18n.t("core.gameLauncher.22", profile.requiredJava))
+        run.session.stage(I18n.t("core.gameLauncher.23"))
         val runtime =
             java.resolve(
                 profile,
                 run.instance.javaPath.ifBlank { store.data.settings.javaPath },
                 context,
             )
-        context.progress(ACCOUNT_PROGRESS, "验证账户…")
-        run.session.stage("验证和刷新账户")
+        context.progress(ACCOUNT_PROGRESS, I18n.t("core.gameLauncher.24"))
+        run.session.stage(I18n.t("core.gameLauncher.25"))
         return LaunchInputs(profile, runtime, accounts.credentials())
     }
 
@@ -1237,8 +1242,8 @@ class GameLauncher(
     ): PreparedLaunch {
         val inputs = resolveLaunchInputs(run, context)
         context.checkCancelled()
-        context.progress(ARGUMENT_PROGRESS, "准备本地依赖和启动参数…")
-        run.session.stage("组装启动参数")
+        context.progress(ARGUMENT_PROGRESS, I18n.t("core.gameLauncher.26"))
+        run.session.stage(I18n.t("core.gameLauncher.27"))
         runtimes.create(run.runId)
         val plan =
             LaunchPlanner(store, accounts.authlibInjector)
@@ -1255,8 +1260,8 @@ class GameLauncher(
         plan.warnings.forEach { store.log(it, level = LogLevel.Warn) }
         if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
         // 工作目录就是解析后的有效隔离结果；来源写进日志，推断值不冒充用户选择。
-        store.log("工作目录：${plan.gameDirectory}（来源：${store.isolationSource(run.instance).logTitle}）")
-        context.progress(PRELAUNCH_PROGRESS, "执行启动前命令…")
+        store.log(I18n.t("core.gameLauncher.28", plan.gameDirectory, store.isolationSource(run.instance).logTitle))
+        context.progress(PRELAUNCH_PROGRESS, I18n.t("core.gameLauncher.29"))
         run.commands.run(
             run.settings.preLaunchCommand,
             run.settings.commandTimeoutSeconds,

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -22,11 +23,11 @@ internal class InstanceProvisioner(
 ) {
     fun validate(request: InstallRequest) {
         require(request.name.isNotBlank() && request.name.length <= MAX_INSTANCE_NAME_LENGTH) {
-            "实例名称需要 1–80 个字符"
+            I18n.t("instA2.instance.nameLength")
         }
         safeFilename(request.gameVersion)
         if (request.loader != LoaderType.Vanilla) {
-            require(request.loaderVersion.isNotBlank()) { "请选择加载器版本" }
+            require(request.loaderVersion.isNotBlank()) { I18n.t("instA2.provisioner.loaderVersionRequired") }
             safeFilename(request.loaderVersion)
         }
         // 显示名就是目录名：系统保留名等无法落盘的名字在动磁盘前就报错。
@@ -79,7 +80,7 @@ internal class InstanceProvisioner(
         folder: Path,
     ) {
         require(!folder.exists(NOFOLLOW_LINKS)) {
-            "versions/$directoryName 已存在，请换一个实例名称或先处理该目录"
+            I18n.t("instA2.provisioner.directoryExists", directoryName)
         }
         val windows = store.platform.osName == "windows"
         store.data.instances
@@ -87,7 +88,7 @@ internal class InstanceProvisioner(
                 taskPathKey(store.minecraftRoot(it)) == taskPathKey(root) &&
                     it.instanceFolderName().equals(directoryName, windows)
             }?.let { clash ->
-                throw IllegalArgumentException("已有实例「${clash.name}」使用这个名称")
+                throw IllegalArgumentException(I18n.t("core.instanceRename.nameClash", clash.name))
             }
     }
 
@@ -147,11 +148,13 @@ internal class InstanceProvisioner(
         root: Path,
         target: Path,
     ) {
-        require(target.startsWith(root.resolve("versions"))) { "实例目录不在所选游戏根下" }
+        require(target.startsWith(root.resolve("versions"))) {
+            I18n.t("instA2.provisioner.directoryOutsideRoot")
+        }
         if (!target.exists(NOFOLLOW_LINKS)) return
         // 目录由 createInstance 建好时是空的；里面已经有内容说明名字被别的来源占用了。
         require(target.isDirectory(NOFOLLOW_LINKS) && target.listDirectoryEntries().isEmpty()) {
-            "versions/${target.fileName} 已被占用，请换一个实例名称"
+            I18n.t("instA2.provisioner.directoryOccupied", target.fileName)
         }
     }
 
@@ -211,19 +214,24 @@ internal class InstanceProvisioner(
                 ) {
                     return@runCatching
                 }
-                require(path.toRealPath() == path) { "目录已变为链接，未删除" }
+                require(path.toRealPath() == path) { I18n.t("instA2.provisioner.directoryBecameLink") }
                 if (!context.canRemoveDownload(path)) {
-                    store.log("中间版本目录仍被其他实例引用，已保留：versions/${path.fileName}")
+                    store.log(
+                        I18n.t("instA2.provisioner.intermediateRetained", path.fileName),
+                    )
                     return@runCatching
                 }
                 val paths = Files.walk(path).use { it.toList() }
                 require(paths.all { !Files.isSymbolicLink(it) && it.toRealPath() == it }) {
-                    "目录包含链接，未删除"
+                    I18n.t("instA2.provisioner.directoryContainsLink")
                 }
                 paths.sortedByDescending { it.nameCount }.forEach(Files::deleteIfExists)
-                store.log("已回收安装中间版本目录：versions/${path.fileName}")
+                store.log(I18n.t("instA2.provisioner.intermediateReclaimed", path.fileName))
             }.onFailure {
-                store.log("回收安装中间目录失败：versions/${path.fileName}（${it.message}）", true)
+                store.log(
+                    I18n.t("instA2.provisioner.reclaimFailed", path.fileName, it.message),
+                    true,
+                )
             }
         }
     }

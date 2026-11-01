@@ -68,15 +68,30 @@ internal fun ColumnScope.SavesTabSections(
     ui: SavesUiState,
     callbacks: SavesCallbacks,
 ) {
+    val strings = LocalStrings.current
     ContentToolbar(
-        flexible = { ToolbarSearchField(ui.query, callbacks.onChangeQuery, "搜索存档名称") },
+        flexible = {
+            ToolbarSearchField(
+                ui.query,
+                callbacks.onChangeQuery,
+                strings.t("pages.saves.search.placeholder"),
+            )
+        },
         refresh =
-            ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !ui.busy) {
+            ToolbarAction(
+                strings.t("pages.saves.toolbar.refresh"),
+                icon = Icons.Outlined.Refresh,
+                enabled = !ui.busy,
+            ) {
                 callbacks.onClearError()
                 callbacks.onRefresh()
             },
         openFolder =
-            ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !ui.busy) {
+            ToolbarAction(
+                strings.t("pages.saves.toolbar.openFolder"),
+                icon = Icons.Outlined.FolderOpen,
+                enabled = !ui.busy,
+            ) {
                 callbacks.onOpenFolder()
             },
     )
@@ -88,7 +103,12 @@ internal fun ColumnScope.SavesTabSections(
 @Composable
 private fun SavesStatusLines(ui: SavesUiState) {
     Text(
-        "${ui.saves.size} 个存档 · ${ui.backups.size} 个备份 · ${ui.savesDirectory}",
+        LocalStrings.current.t(
+            "pages.saves.summary",
+            ui.saves.size,
+            ui.backups.size,
+            ui.savesDirectory,
+        ),
         fontSize = 11.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
@@ -114,12 +134,19 @@ private fun ColumnScope.SavesListArea(
     ui: SavesUiState,
     callbacks: SavesCallbacks,
 ) {
+    val strings = LocalStrings.current
     when {
         ui.loading && ui.saves.isEmpty() && ui.backups.isEmpty() -> ListSkeleton()
         ui.loadError != null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("无法读取存档", ui.loadError.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton({ callbacks.onRefresh() }) { Text("重试") }
+                EmptyState(
+                    strings.t("pages.saves.load.title"),
+                    ui.loadError.orEmpty(),
+                    Icons.Outlined.CloudOff,
+                ) {
+                    TextButton({ callbacks.onRefresh() }) {
+                        Text(strings.t("pages.saves.load.retry"))
+                    }
                 }
             }
         else ->
@@ -135,21 +162,27 @@ private fun SavesContentSection(
     ui: SavesUiState,
     callbacks: SavesCallbacks,
 ) {
+    val strings = LocalStrings.current
     val filtered = ui.saves.filter { ui.query.isBlank() || it.name.contains(ui.query, true) }
     when {
         ui.saves.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
-                    "这个实例还没有存档",
-                    "在游戏里创建一个世界，用「复制到…」从别的实例复制，" +
-                        "或把存档 .zip / 世界文件夹拖进这个页面。",
+                    strings.t("pages.saves.empty.title"),
+                    strings.t("pages.saves.empty.body"),
                     Icons.Outlined.Save,
                 )
             }
         filtered.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("没有匹配的存档", "换个关键词试试", Icons.Outlined.SearchOff) {
-                    TextButton({ callbacks.onChangeQuery("") }) { Text("清除搜索") }
+                EmptyState(
+                    strings.t("pages.saves.emptyFiltered.title"),
+                    strings.t("pages.saves.emptyFiltered.body"),
+                    Icons.Outlined.SearchOff,
+                ) {
+                    TextButton({ callbacks.onChangeQuery("") }) {
+                        Text(strings.t("pages.saves.clearSearch"))
+                    }
                 }
             }
         else ->
@@ -179,11 +212,11 @@ private fun RestoreReplaceSetting(
     ui: SavesUiState,
     callbacks: SavesCallbacks,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.fillMaxWidth()) {
         SettingRow(
-            "恢复时替换原世界",
-            "关闭时恢复只解压成同级的新世界，不改动原存档；开启后先备份当前世界，再用备份替换它，" +
-                "当前世界改名为「（替换前 时间）」保留。",
+            strings.t("pages.saves.replaceSetting.title"),
+            strings.t("pages.saves.replaceSetting.detail"),
         ) {
             CompactSwitch(
                 ui.replaceOnRestore,
@@ -200,16 +233,15 @@ private fun SaveBackupsPanel(
     ui: SavesUiState,
     callbacks: SavesCallbacks,
 ) {
+    val strings = LocalStrings.current
     Panel(
         Modifier.fillMaxWidth(),
-        title = "备份",
-        detail =
-            "与原版游戏共用 backups/ 目录（原版自己写的备份也会列在这里）；" +
-                "恢复默认解压成新世界，不直接覆盖。",
+        title = strings.t("pages.saves.backups.title"),
+        detail = strings.t("pages.saves.backups.detail"),
     ) {
         if (ui.backups.isEmpty()) {
             Text(
-                "还没有备份。存档行末尾的「备份」会把整个世界打包到这里。",
+                strings.t("pages.saves.backups.empty"),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

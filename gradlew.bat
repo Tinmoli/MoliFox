@@ -36,11 +36,11 @@ set APP_HOME=%DIRNAME%
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
 @rem Keep this project's downloaded dependencies and JVM temporary files off C:.
-if not defined GRADLE_USER_HOME set "GRADLE_USER_HOME=%APP_HOME%\.gradle-home"
-if not exist "%APP_HOME%\.work\build-tmp" mkdir "%APP_HOME%\.work\build-tmp"
-set "TEMP=%APP_HOME%\.work\build-tmp"
+if not defined GRADLE_USER_HOME set "GRADLE_USER_HOME=%APP_HOME%\.dev\gradle-home"
+if not exist "%APP_HOME%\.dev\work\build-tmp" mkdir "%APP_HOME%\.dev\work\build-tmp"
+set "TEMP=%APP_HOME%\.dev\work\build-tmp"
 set "TMP=%TEMP%"
-set "JAVA_TOOL_OPTIONS=%JAVA_TOOL_OPTIONS% -Djava.io.tmpdir="%APP_HOME%\.work\build-tmp""
+set "JAVA_TOOL_OPTIONS=%JAVA_TOOL_OPTIONS% -Djava.io.tmpdir="%APP_HOME%\.dev\work\build-tmp""
 
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"

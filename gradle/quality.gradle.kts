@@ -26,17 +26,17 @@ val qualitySourcePatterns =
         "desktop-app/src/**/*.kt",
         "launcher-bootstrap/src/**/*.kt",
         "multiplayer-core/src/**/*.kt",
+        "tests/**/*.kt",
         "*.gradle.kts",
         "*/build.gradle.kts",
         "gradle/**/*.gradle.kts",
     )
 val qualityExcludedPatterns =
     listOf(
-        ".tooling/**",
-        ".work/**",
-        ".gradle-home/**",
+        ".dev/**",
         ".gradle/**",
         ".minecraft/**",
+        "tests/.tmp/**",
         "MoliFox/**",
         "**/build/**",
     )
@@ -57,7 +57,7 @@ val styleToolClasspath =
 val styleToolClasses = layout.buildDirectory.dir("quality/classes")
 val compileStyleTool =
     tasks.register<JavaCompile>("compileStyleTool") {
-        source(fileTree("tools/style") { include("*.java") })
+        source(fileTree("tests/tools/style") { include("*.java") })
         classpath = styleToolClasspath
         destinationDirectory.set(styleToolClasses)
         options.encoding = "UTF-8"
@@ -123,7 +123,7 @@ val styleToolTest =
         classpath = files(styleToolClasses, styleToolClasspath)
         mainClass.set("KotlinStyleTest")
         systemProperty("logback.configurationFile", file("config/quality-logback.xml").absolutePath)
-        args(file(".work/tests/quality-tool").absolutePath)
+        args(file("tests/.tmp/quality-tool").absolutePath)
     }
 
 tasks.register<JavaExec>("detekt") {

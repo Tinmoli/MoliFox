@@ -23,8 +23,7 @@ internal class JarInJarCache(
 
     private val entries =
         object : LinkedHashMap<String, Entry>(capacity, LOAD_FACTOR, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?) =
-                size > capacity
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?) = size > capacity
         }
 
     @Synchronized

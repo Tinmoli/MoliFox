@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import java.io.InputStream
 import java.io.OutputStream
@@ -52,24 +53,24 @@ internal fun worldPackName(
             levelName,
             projectTitle,
             archiveName.removeSuffixIgnoreCase(".zip"),
-            "世界",
+            I18n.t("packsB2.worldPack.defaultName"),
         )
     return candidates
         .filter { it.isNotBlank() }
         .map(::safeSaveLabel)
         .firstOrNull(::isPlainSaveName)
-        ?: error("世界包没有可用的世界名称，无法安装")
+        ?: error(I18n.t("packsB2.worldPack.noName"))
 }
 
 /** 解压后复核世界目录：必须有非空、可读且不是链接的 `level.dat`。 */
 internal fun requireWorldLevelDat(world: Path) {
     val level = world.resolve("level.dat")
     require(level.isRegularFile(LinkOption.NOFOLLOW_LINKS) && !isLinkPath(level)) {
-        "世界包里没有 level.dat，无法安装"
+        I18n.t("packsB2.worldPack.noLevelDat")
     }
-    require(level.fileSize() > 0) { "世界包的 level.dat 是空文件，无法安装" }
+    require(level.fileSize() > 0) { I18n.t("packsB2.worldPack.emptyLevelDat") }
     runCatching { Files.newInputStream(level).use { it.read() } }
-        .getOrElse { error("世界包的 level.dat 无法读取，无法安装") }
+        .getOrElse { error(I18n.t("packsB2.worldPack.unreadableLevelDat")) }
 }
 
 /**
@@ -86,8 +87,8 @@ internal suspend fun extractWorldPack(
     ArchiveZipFile.builder().setPath(archive).get().use { zip ->
         val entries =
             Collections.list(zip.entries).filter { !it.isDirectory && !it.name.endsWith("/") }
-        require(entries.isNotEmpty()) { "世界包是空的，无法安装" }
-        require(entries.size <= MAX_WORLD_ENTRIES) { "世界包文件过多，无法安装" }
+        require(entries.isNotEmpty()) { I18n.t("packsB2.worldPack.empty") }
+        require(entries.size <= MAX_WORLD_ENTRIES) { I18n.t("packsB2.worldPack.tooManyFiles") }
         val extraction = WorldPackExtraction(zip, destination, prefix)
         for (entry in entries) {
             context?.checkCancelled()
@@ -96,7 +97,7 @@ internal suspend fun extractWorldPack(
             context?.progress(
                 WORLD_DOWNLOAD_PROGRESS_END +
                     (1f - WORLD_DOWNLOAD_PROGRESS_END) * written / entries.size,
-                "安装世界 · 文件 $written/${entries.size}",
+                I18n.t("packsB2.worldPack.progressEntries", written, entries.size),
             )
         }
     }
@@ -128,23 +129,23 @@ private class WorldPackExtraction(
     private fun relativeName(entry: ZipArchiveEntry): String {
         val name = entry.name.replace('\\', '/')
         require(name.split('/').none { it == ".." }) {
-            "世界包包含向上跳转的路径：${entry.name}"
+            I18n.t("packsB2.worldPack.unsafeParentPath", entry.name)
         }
         require(!name.startsWith('/') && !Regex("^[A-Za-z]:").containsMatchIn(name)) {
-            "世界包包含绝对路径：${entry.name}"
+            I18n.t("packsB2.worldPack.absolutePath", entry.name)
         }
-        require(!entry.isUnixSymlink) { "世界包包含符号链接条目：${entry.name}" }
+        require(!entry.isUnixSymlink) { I18n.t("packsB2.worldPack.symlinkEntry", entry.name) }
         val relative =
             if (prefix.isBlank()) {
                 name
             } else {
                 require(name.startsWith(prefix, ignoreCase = true)) {
-                    "世界包条目不在世界目录内：${entry.name}"
+                    I18n.t("packsB2.worldPack.entryOutsideWorld", entry.name)
                 }
                 name.substring(prefix.length)
             }
         if (relative.isNotBlank() && entry.size > 0) declaredBytes += entry.size
-        require(declaredBytes <= MAX_WORLD_ARCHIVE_BYTES) { "世界包解压后体积超出限制" }
+        require(declaredBytes <= MAX_WORLD_ARCHIVE_BYTES) { I18n.t("packsB2.worldPack.sizeLimit") }
         return relative
     }
 
@@ -175,10 +176,10 @@ private class WorldPackExtraction(
             actual += read
             actualBytes += read
             require(actualBytes <= MAX_WORLD_ARCHIVE_BYTES) {
-                "世界包解压后体积超出限制"
+                I18n.t("packsB2.worldPack.sizeLimit")
             }
             require(actual <= MAX_WORLD_ENTRY_BYTES) {
-                "世界包条目超出大小限制：${entry.name}"
+                I18n.t("packsB2.worldPack.entryTooLarge", entry.name)
             }
             output.write(buffer, 0, read)
         }

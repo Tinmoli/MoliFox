@@ -15,6 +15,7 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherSettings
 import dev.molifox.desktop.AdvancedLaunchEditor
 import dev.molifox.desktop.CompactSwitch
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.SettingRow
 import dev.molifox.desktop.SettingsSection
 import dev.molifox.desktop.UiActions
@@ -29,10 +30,11 @@ internal fun InstanceAdvancedLaunchSection(
     onDraftChange: (GameInstance) -> Unit,
     onAdvancedValidChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (settings.pages.showAdvancedLaunchOptions) {
         SettingsSection(
-            "高级启动参数",
-            "留空继承全局 JVM 参数；填写后覆盖全局附加参数。",
+            strings.t("pages.instance.advanced.title"),
+            strings.t("pages.instance.advanced.hint"),
         ) {
             OutlinedTextField(
                 draft.extraJvmArgs,
@@ -52,11 +54,11 @@ internal fun InstanceAdvancedLaunchSection(
                         )
                     }
                 },
-                label = { Text("此版本的附加 JVM 参数") },
+                label = { Text(strings.t("pages.instance.advanced.jvmLabel")) },
                 minLines = 1,
                 maxLines = 4,
             )
-            SettingRow("使用独立高级启动设置") {
+            SettingRow(strings.t("pages.instance.advanced.ownSettings")) {
                 CompactSwitch(
                     draft.advancedLaunch != null,
                     { enabled ->

@@ -64,6 +64,7 @@ internal fun SaveDetailsDialog(
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var tab by remember(entry.name) { mutableIntStateOf(DETAILS_TAB_INFO) }
     var saving by remember(entry.name) { mutableStateOf(false) }
     var saveError by remember(entry.name) { mutableStateOf<String?>(null) }
@@ -86,16 +87,16 @@ internal fun SaveDetailsDialog(
                     reload++
                     onSaved()
                 } else {
-                    saveError = "没有写入：目标字段不存在或值没有变化"
+                    saveError = strings.t("dialogs.saveDetails.notWritten")
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: IOException) {
-                saveError = failure.message ?: "写入存档文件失败"
+                saveError = failure.message ?: strings.t("dialogs.saveDetails.writeFailed")
             } catch (failure: IllegalArgumentException) {
-                saveError = failure.message ?: "保存存档设置失败"
+                saveError = failure.message ?: strings.t("dialogs.saveDetails.saveSettingsFailed")
             } catch (failure: IllegalStateException) {
-                saveError = failure.message ?: "保存存档设置失败"
+                saveError = failure.message ?: strings.t("dialogs.saveDetails.saveSettingsFailed")
             } finally {
                 saving = false
             }
@@ -125,14 +126,22 @@ internal fun SaveDetailsDialog(
                             onClick = { tab = DETAILS_TAB_INFO },
                             enabled = !saving,
                         ) {
-                            Text("信息", fontSize = 12.sp, modifier = Modifier.padding(10.dp))
+                            Text(
+                                strings.t("dialogs.saveDetails.tabInfo"),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(10.dp),
+                            )
                         }
                         Tab(
                             selected = tab == DETAILS_TAB_DATAPACKS,
                             onClick = { tab = DETAILS_TAB_DATAPACKS },
                             enabled = !saving,
                         ) {
-                            Text("数据包", fontSize = 12.sp, modifier = Modifier.padding(10.dp))
+                            Text(
+                                strings.t("dialogs.saveDetails.tabDatapacks"),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(10.dp),
+                            )
                         }
                     }
                 }
@@ -165,6 +174,7 @@ private fun SaveDetailsHeader(
     enabled: Boolean,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -178,14 +188,14 @@ private fun SaveDetailsHeader(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "存档详情",
+                strings.t("dialogs.saveDetails.title"),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         SmallIconButton(
             icon = Icons.Outlined.Close,
-            label = "关闭存档详情",
+            label = strings.t("dialogs.saveDetails.close"),
             onClick = onDismiss,
             enabled = enabled,
             size = 30.dp,

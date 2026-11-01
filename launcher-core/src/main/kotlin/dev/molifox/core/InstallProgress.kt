@@ -5,12 +5,14 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 /** 安装与维护的阶段标签：单个阶段可能要处理数千个文件，必须让用户看出还在做什么。 */
 internal object InstallPhase {
-    const val VERIFY = "校验文件"
-    const val LIBRARIES = "下载库"
-    const val ASSETS = "下载资源"
-    const val LOADER = "安装加载器"
+    val VERIFY: String get() = I18n.t("diagA1.installPhase.verify")
+    val LIBRARIES: String get() = I18n.t("diagA1.installPhase.libraries")
+    val ASSETS: String get() = I18n.t("diagA1.installPhase.assets")
+    val LOADER: String get() = I18n.t("diagA1.installPhase.loader")
 }
 
 /**
@@ -106,9 +108,19 @@ internal class InstallProgress(
             state.anchorUnits = state.doneUnits
             state.plannedUnits +=
                 files.coerceAtLeast(0) + bytes.coerceAtLeast(0).toDouble() / bytesPerUnit
-            if (label != InstallPhase.VERIFY) context.expectFiles(files.coerceAtLeast(0))
             state.emit(force = false)
         }
+    }
+
+    /**
+     * 下载调度开始前按实际要下载的文件数重置任务中心的文件统计；
+     * 预登记的「全部文件」只用于进度条分母，不能当成实际下载数量。
+     */
+    override fun planned(
+        files: Int,
+        bytes: Long,
+    ) {
+        context.beginTransfers(files)
     }
 
     /**

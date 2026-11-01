@@ -47,12 +47,13 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun SettingsResetFooter(onReset: () -> Unit) {
     var confirming by remember { mutableStateOf(false) }
+    val strings = LocalStrings.current
     Column(Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(6.dp))
         HorizontalDivider(color = hairline())
         Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
             Text(
-                "还原默认配置",
+                strings.t("settings.reset.action"),
                 Modifier
                     .pressScale()
                     .clip(RoundedCornerShape(Metrics.innerRadius))
@@ -66,19 +67,19 @@ internal fun SettingsResetFooter(onReset: () -> Unit) {
     }
     if (confirming) {
         Modal(
-            "还原默认配置？",
-            "下面这些选项会回到出厂值，并立即生效。",
+            strings.t("settings.reset.confirm.title"),
+            strings.t("settings.reset.confirm.detail"),
             460.dp,
             { confirming = false },
         ) {
-            MutedText("内存、游戏窗口、Java 路径、更新、下载与代理、外观、字体与页面布局都会恢复默认；" + "游戏目录、账户、已导入的字体与背景图片文件保持不动。")
+            MutedText(strings.t("settings.reset.confirm.note"))
             DialogActions(
-                confirmText = "还原默认配置",
+                confirmText = strings.t("settings.reset.action"),
                 onConfirm = {
                     onReset()
                     confirming = false
                 },
-                cancelText = "取消",
+                cancelText = strings.t("settings.common.cancel"),
                 onCancel = { confirming = false },
             )
         }

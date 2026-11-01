@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -77,7 +78,7 @@ internal class SavePacker(
         var attempt = 0
         while (archive.exists(LinkOption.NOFOLLOW_LINKS)) {
             attempt++
-            require(attempt < MAX_BACKUP_NAME_ATTEMPTS) { "备份文件名冲突，请稍后重试" }
+            require(attempt < MAX_BACKUP_NAME_ATTEMPTS) { I18n.t("saveA2.packer.nameConflict") }
             instant = instant.plusSeconds(1)
             archive = directory.resolve("${saveBackupStamp.format(instant)}_$label.zip")
         }
@@ -96,7 +97,7 @@ internal class SavePacker(
             val files = collectSaveFiles(source)
             ZipOutputStream(part.outputStream().buffered()).use { zip ->
                 if (files.isEmpty()) {
-                    context?.progress(PROGRESS_EMPTY_DIRECTORY, "$label · 空目录")
+                    context?.progress(PROGRESS_EMPTY_DIRECTORY, I18n.t("saveA2.packer.emptyDirectory", label))
                 }
                 files.forEachIndexed { index, (relative, file) ->
                     context?.checkCancelled()
@@ -107,7 +108,7 @@ internal class SavePacker(
                     zip.closeEntry()
                     context?.progress(
                         (index + 1).toFloat() / files.size,
-                        "$label · 文件 ${index + 1}/${files.size}",
+                        I18n.t("core.isolationMigration.32", label, index + 1, files.size),
                     )
                 }
             }
@@ -146,11 +147,10 @@ internal class SavePacker(
             Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING)
             context?.progress(
                 (index + 1).toFloat() / files.size,
-                "复制存档 · 文件 ${index + 1}/${files.size}",
+                I18n.t("saveA2.packer.copyProgress", index + 1, files.size),
             )
         }
     }
 
-    private fun siblingPart(archive: Path): Path =
-        archive.resolveSibling("${archive.fileName}.part")
+    private fun siblingPart(archive: Path): Path = archive.resolveSibling("${archive.fileName}.part")
 }

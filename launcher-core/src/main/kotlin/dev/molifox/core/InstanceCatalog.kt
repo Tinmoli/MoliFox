@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -130,7 +131,7 @@ internal object InstanceCatalog {
                     brokenInstance(
                         root,
                         name,
-                        error.message ?: "无法识别版本配置",
+                        error.message ?: I18n.t("instA1.catalog.unrecognized"),
                         folder.resolve("$name.json"),
                     )
                 }
@@ -147,8 +148,7 @@ internal object InstanceCatalog {
             .toString()
 
     /** 读取版本 JSON 的 `inheritsFrom`，用于重命名后同步兄弟配置；读不到时返回空。 */
-    fun inheritsFrom(file: Path): String =
-        runCatching { readObject(file).string("inheritsFrom") }.getOrDefault("")
+    fun inheritsFrom(file: Path): String = runCatching { readObject(file).string("inheritsFrom") }.getOrDefault("")
 }
 
 /** 记忆化读取单个版本目录；`inheritsFrom` 链只在目标真实存在且可解析时才算有效。 */
@@ -164,6 +164,8 @@ private fun readInstance(
             .resolve(name)
             .resolve("$name.jar")
     val installed = jar.isRegularFile() || profile.parentJar
+    val versionFolder = root.path.resolve("versions").resolve(name)
+    val gamePath = if (versionFolder.resolve("mods").isDirectory()) versionFolder else root.path
     return GameInstance(
         id = InstanceCatalog.instanceId(root.directoryId, name),
         name = name,
@@ -175,6 +177,7 @@ private fun readInstance(
         gameDirectoryId = root.directoryId,
         createdAt = profile.time.ifBlank { directoryTime(root, name) },
         installed = installed,
+        modCount = countInstanceMods(gamePath),
         // 我们安装器写出的合并配置带 "molifoxManaged": true；没有标记的才是外部/其它启动器的版本，
         // 修复与升级时不能按自有格式改写它。
         externalProfile = !profile.managed,
@@ -208,13 +211,15 @@ private fun readProfile(
     chain: MutableSet<String>,
 ): Profile {
     cache[name]?.let { return it }
-    require(chain.add(name)) { "版本配置存在循环继承：$name" }
+    require(chain.add(name)) { I18n.t("instA1.catalog.cyclicInheritance", name) }
     try {
         val folder = root.resolve("versions").resolve(name)
-        require(folder.isDirectory()) { "版本目录不存在：versions/$name" }
+        require(folder.isDirectory()) { I18n.t("instA1.catalog.versionFolderMissing", name) }
         val file = versionJsonFile(folder, name)
-        require(file != null) { "缺少版本配置：versions/$name" }
-        require(file.fileSize() <= MAX_JSON_BYTES) { "版本配置过大：versions/$name/${file.fileName}" }
+        require(file != null) { I18n.t("instA1.catalog.versionFileMissing", name) }
+        require(file.fileSize() <= MAX_JSON_BYTES) {
+            I18n.t("instA1.catalog.versionFileTooLarge", name, file.fileName)
+        }
         val json = readProfileJson(file, name)
         val id = json.string("id").ifBlank { name }
         val parent = json.string("inheritsFrom").ifBlank { json.string("jar") }
@@ -292,16 +297,16 @@ private fun readProfileJson(
             Files.newBufferedReader(file).use { reader -> JsonParser.parseReader(reader) }
         } catch (failure: IOException) {
             throw IllegalArgumentException(
-                "版本配置无法解析：versions/$name/$name.json",
+                I18n.t("instA1.catalog.versionFileUnparsable", name),
                 failure,
             )
         } catch (failure: JsonParseException) {
             throw IllegalArgumentException(
-                "版本配置无法解析：versions/$name/$name.json",
+                I18n.t("instA1.catalog.versionFileUnparsable", name),
                 failure,
             )
         }
-    require(parsed.isJsonObject) { "版本配置不是 JSON 对象：versions/$name/$name.json" }
+    require(parsed.isJsonObject) { I18n.t("instA1.catalog.versionFileNotJsonObject", name) }
     return parsed.asJsonObject
 }
 

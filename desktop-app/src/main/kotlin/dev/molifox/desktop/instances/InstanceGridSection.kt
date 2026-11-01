@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.desktop.InstanceArtwork
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.hairline
@@ -217,9 +218,10 @@ private fun cardBorder(
 /** 卡片副标题：无法识别时给出原因并标红。 */
 @Composable
 private fun InstanceCardSubtitle(instance: GameInstance) {
+    val strings = LocalStrings.current
     Text(
         if (instance.broken) {
-            "无法识别 · " + instance.brokenReason
+            strings.t("pages.instance.card.broken", instance.brokenReason)
         } else {
             instance.gameVersion + " · " + instance.loader.title
         },
@@ -245,18 +247,23 @@ private fun InstanceCardActions(
     onManage: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         InstanceTextAction(
-            "开始游戏",
+            strings.t("pages.instances.row.launch"),
             onLaunch,
             enabled = !busy && !instance.broken,
             tint = MaterialTheme.colorScheme.primary,
         )
         InstanceTextAction(
-            if (instance.favorite) "已收藏" else "收藏",
+            if (instance.favorite) {
+                strings.t("pages.instances.row.favorited")
+            } else {
+                strings.t("pages.instances.row.favorite")
+            },
             onFavorite,
             tint =
                 if (instance.favorite) {
@@ -265,7 +272,11 @@ private fun InstanceCardActions(
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
         )
-        InstanceTextAction("设置", onManage)
-        InstanceTextAction("删除", onDelete, tint = MaterialTheme.colorScheme.error)
+        InstanceTextAction(strings.t("pages.instances.row.settings"), onManage)
+        InstanceTextAction(
+            strings.t("pages.instances.row.delete"),
+            onDelete,
+            tint = MaterialTheme.colorScheme.error,
+        )
     }
 }

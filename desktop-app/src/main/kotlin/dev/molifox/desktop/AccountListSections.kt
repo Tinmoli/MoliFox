@@ -61,21 +61,22 @@ internal fun AccountSidebar(
     onServer: (AuthlibServer) -> Unit,
     onAddServer: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(
         Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        AddAccountRow(Icons.Outlined.AccountCircle, "微软账户", enabled = !signingIn) {
+        AddAccountRow(Icons.Outlined.AccountCircle, strings.t("dialogs.account.microsoft"), enabled = !signingIn) {
             onMicrosoft()
         }
-        AddAccountRow(Icons.Outlined.PersonOutline, "离线账户") { onOffline() }
+        AddAccountRow(Icons.Outlined.PersonOutline, strings.t("dialogs.account.offline")) { onOffline() }
         // 已保存的认证服务器每台各占一行，行名就是服务器名：点开直接是这台服务器的用户名与密码，
         // 不经过服务器列表、不需要「下一步」、也不显示地址框。核心默认带 LittleSkin，开箱即有一行。
         val savedServers = state.data.authlibServers
         if (savedServers.isEmpty()) {
-            AddAccountRow(Icons.Outlined.Dns, "认证服务器", enabled = false) {}
+            AddAccountRow(Icons.Outlined.Dns, strings.t("dialogs.account.authServer"), enabled = false) {}
             Text(
-                "还没有已保存的认证服务器",
+                strings.t("dialogs.account.noSavedServers"),
                 Modifier.padding(start = 10.dp, top = 2.dp),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -87,7 +88,7 @@ internal fun AccountSidebar(
                 }
             }
         }
-        AddAccountRow(Icons.Outlined.AddCircleOutline, "添加认证服务器") { onAddServer() }
+        AddAccountRow(Icons.Outlined.AddCircleOutline, strings.t("dialogs.account.addServer")) { onAddServer() }
     }
 }
 
@@ -98,6 +99,7 @@ internal fun RowScope.AccountCards(
     actions: UiActions,
     onRemove: (Account) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(Modifier.weight(1f).fillMaxHeight()) {
         if (state.data.accounts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -108,13 +110,18 @@ internal fun RowScope.AccountCards(
                     // 没有账户时 StaticSkinHead 会退回内置史蒂夫纹理。
                     StaticSkinHead(
                         null,
-                        { actions.controller.store.log("账户头像读取失败：${it.message}", true) },
+                        {
+                            actions.controller.store.log(
+                                strings.t("dialogs.account.avatarReadFailed", it.message),
+                                true,
+                            )
+                        },
                         0,
                         Modifier.size(72.dp).clip(RoundedCornerShape(Metrics.cardRadius)),
                     )
-                    Text("没有游戏账户", style = MaterialTheme.typography.titleMedium)
+                    Text(strings.t("dialogs.account.empty"), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "从左侧添加账户",
+                        strings.t("dialogs.account.emptyHint"),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -154,19 +161,20 @@ internal fun RemoveAccountDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("删除「" + account.name + "」？") },
-        text = { Text("此账户的本地登录凭据将删除，游戏存档会保留。") },
+        title = { Text(strings.t("dialogs.account.deleteTitle", account.name)) },
+        text = { Text(strings.t("dialogs.account.deleteMessage")) },
         confirmButton = {
             TextButton({
                 actions.run { actions.controller.accounts.remove(account.id) }
                 onDismiss()
             }) {
-                Text("删除账户", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("dialogs.account.deleteConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -177,6 +185,7 @@ internal fun MicrosoftDeviceCodeDialog(
     actions: UiActions,
     onClose: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     // 验证码复制结果：null = 还在复制（首帧），true = 已复制到剪贴板，false = 复制失败需手动复制。
     var copied by remember { mutableStateOf<Boolean?>(null) }
     // 验证码剩余有效期（毫秒）：对话框每秒刷新，用于显示剩余时间并在到期时自动收起。
@@ -198,8 +207,8 @@ internal fun MicrosoftDeviceCodeDialog(
         onClose()
     }
     Modal(
-        "在浏览器中完成登录",
-        "使用微软账户，输入下方验证码。",
+        strings.t("dialogs.account.msLogin.title"),
+        strings.t("dialogs.account.msLogin.message"),
         470.dp,
         {
             actions.controller.accounts.cancelLogin()
@@ -236,9 +245,9 @@ internal fun MicrosoftDeviceCodeDialog(
                 }
                 Text(
                     when (copied) {
-                        true -> "验证码已复制到剪贴板"
-                        false -> "验证码复制失败，请手动复制"
-                        null -> "正在复制验证码…"
+                        true -> strings.t("dialogs.account.codeCopied")
+                        false -> strings.t("dialogs.account.codeCopyFailed")
+                        null -> strings.t("dialogs.account.codeCopying")
                     },
                     fontSize = 12.sp,
                     color =
@@ -250,7 +259,7 @@ internal fun MicrosoftDeviceCodeDialog(
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "剩余有效期 " + remainingLabel(remainingMillis),
+                    strings.t("dialogs.account.codeExpiry", remainingLabel(remainingMillis)),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -265,14 +274,20 @@ internal fun MicrosoftDeviceCodeDialog(
                 // 重新复制同样要给结果：成功提示已复制，失败继续显示手动复制的引导。
                 val ok = copyToClipboard(code.userCode)
                 copied = ok
-                actions.controller.store.notify(if (ok) "验证码已复制" else "验证码复制失败，请手动复制")
+                actions.controller.store.notify(
+                    if (ok) {
+                        strings.t("dialogs.account.codeCopiedShort")
+                    } else {
+                        strings.t("dialogs.account.codeCopyFailed")
+                    },
+                )
             }) {
-                Text("重新复制", fontSize = 13.sp)
+                Text(strings.t("dialogs.account.copyAgain"), fontSize = 13.sp)
             }
-            PrimaryButton("打开验证页面", Icons.Outlined.OpenInNew) {
+            PrimaryButton(strings.t("dialogs.account.openCodePage"), Icons.Outlined.OpenInNew) {
                 actions.run { actions.controller.platform.openUrl(code.verificationUri) }
             }
         }
-        MutedText("授权完成后会自动添加角色并切换为当前账户。服务错误可在设置 → 日志中查看。")
+        MutedText(strings.t("dialogs.account.msLogin.hint"))
     }
 }

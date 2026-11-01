@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import okhttp3.Response
 import okhttp3.ResponseBody
 import java.io.IOException
@@ -51,7 +52,7 @@ internal fun checkedResponseBody(response: Response): ResponseBody {
     if (!response.isSuccessful) {
         throw DownloadHttpException(response.code, response.request.url.host)
     }
-    return response.body ?: throw IOException("下载内容为空")
+    return response.body ?: throw IOException(I18n.t("networkA.resume.emptyBody"))
 }
 
 /** 已有可续传的字节数；超过声明长度说明断点与目标不符，直接丢弃。 */
@@ -122,14 +123,21 @@ internal fun commitVerified(
     if (artifact.size > 0 && size != artifact.size) {
         partial.deleteIfExists()
         throw DownloadVerificationException(
-            "文件大小校验失败：${artifact.target.fileName}（期望 ${artifact.size} 字节，实际 $size 字节）",
+            I18n.t(
+                "networkA.resume.sizeMismatch",
+                artifact.target.fileName,
+                artifact.size,
+                size,
+            ),
         )
     }
     if (artifact.sha1.isNotBlank()) {
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         if (!actual.equals(artifact.sha1, true)) {
             partial.deleteIfExists()
-            throw DownloadVerificationException("文件校验失败：${artifact.target.fileName}")
+            throw DownloadVerificationException(
+                I18n.t("networkA.resume.hashMismatch", artifact.target.fileName),
+            )
         }
     }
     Files.move(partial, artifact.target, StandardCopyOption.REPLACE_EXISTING)
@@ -142,6 +150,13 @@ internal fun skipOptionalDownload(
     artifact: DownloadArtifact,
     error: Exception,
 ): Boolean {
-    logger("可选文件下载失败，已跳过：${artifact.target.fileName}（${error.message}）", false)
+    logger(
+        I18n.t(
+            "networkA.resume.optionalSkipped",
+            artifact.target.fileName,
+            error.message,
+        ),
+        false,
+    )
     return false
 }

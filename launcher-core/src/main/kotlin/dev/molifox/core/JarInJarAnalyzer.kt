@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -181,7 +182,7 @@ class JarInJarAnalyzer
             budget: JarInJarScanBudget,
         ): String {
             val reasons = mutableListOf<String>()
-            if (cancelled) reasons += "扫描已取消"
+            if (cancelled) reasons += I18n.t("diagA1.jarInJar.scanCancelled")
             budget.failureText.takeIf(String::isNotBlank)?.let(reasons::add)
             return reasons.distinct().joinToString("；")
         }

@@ -1,6 +1,7 @@
 // easytier-cli 门面：查询 peer、添加端口转发；进程调用可注入以便离线测试。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import java.io.BufferedReader
 import java.io.IOException
 import java.nio.file.Path
@@ -35,14 +36,14 @@ class EasyTierCli(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
 ) {
     init {
-        require(rpcPort in MIN_PORT..MAX_PORT) { "EasyTier RPC 端口非法：$rpcPort" }
+        require(rpcPort in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.easyTierCli.1", rpcPort) }
     }
 
     /** 读取虚拟网络里的节点列表；核心尚未就绪时返回失败而不是空列表。 */
     fun peers(): Result<List<EasyTierPeer>> =
         run(listOf("--rpc-portal", EasyTierArguments.rpcPortal(rpcPort), "-o", "json", "peer"))
             .mapCatching { result ->
-                check(result.exitCode == 0) { "easytier-cli peer 退出码 ${result.exitCode}" }
+                check(result.exitCode == 0) { I18n.t("multiplayer.easyTierCli.2", result.exitCode) }
                 EasyTierPeers.parse(result.output).getOrElse { failure -> throw failure }
             }
 
@@ -65,8 +66,8 @@ class EasyTierCli(
                 "$targetHost:$targetPort",
             )
         return run(command).mapCatching { result ->
-            check(result.exitCode == 0) { "添加 $protocolName 端口转发失败（退出码 ${result.exitCode}）" }
-            logger("已添加 $protocolName 端口转发：本机 $localPort → $targetHost:$targetPort", false)
+            check(result.exitCode == 0) { I18n.t("multiplayer.easyTierCli.3", protocolName, result.exitCode) }
+            logger(I18n.t("multiplayer.easyTierCli.4", protocolName, localPort, targetHost, targetPort), false)
         }
     }
 
@@ -74,7 +75,9 @@ class EasyTierCli(
     fun run(arguments: List<String>): Result<EasyTierCommandOutput> {
         val command = listOf(executable.toString()) + arguments
         val result = runner.run(command, timeoutMillis)
-        result.onFailure { failure -> logger("easytier-cli 调用失败：${failure.message}", true) }
+        result.onFailure { failure ->
+            logger(I18n.t("multiplayerB.easyTierCli.runFailed", failure.message), true)
+        }
         return result
     }
 
@@ -102,7 +105,7 @@ class ProcessEasyTierCommandRunner(
                 workingDirectory?.let { directory -> builder.directory(directory.toFile()) }
                 builder.start()
             } catch (failure: IOException) {
-                return Result.failure(IOException("无法运行 easytier-cli：${failure.message}", failure))
+                return Result.failure(IOException(I18n.t("multiplayer.easyTierCli.5", failure.message), failure))
             }
         val output = StringBuilder()
         val reader =
@@ -114,7 +117,7 @@ class ProcessEasyTierCommandRunner(
         if (!finished) {
             process.destroyForcibly()
             runCatching { process.waitFor() }
-            return Result.failure(IOException("easytier-cli 在 ${timeoutMillis}ms 内没有返回。"))
+            return Result.failure(IOException(I18n.t("multiplayer.easyTierCli.6", timeoutMillis)))
         }
         reader.join(READER_JOIN_MILLIS)
         return Result.success(EasyTierCommandOutput(process.exitValue(), output.toString()))
@@ -141,7 +144,7 @@ class ProcessEasyTierCommandRunner(
             }
         } catch (failure: IOException) {
             // 进程被强制结束时流会关闭，这里只记录不影响结果。
-            output.append("读取 easytier-cli 输出失败：").append(failure.message).append('\n')
+            output.append(I18n.t("multiplayer.easyTierCli.7")).append(failure.message).append('\n')
         }
     }
 

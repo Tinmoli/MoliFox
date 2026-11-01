@@ -76,6 +76,7 @@ fun Modal(
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val strings = LocalStrings.current
     val reduced = LocalReducedMotion.current
     val duration = if (reduced) 0 else DIALOG_MOTION_MILLIS
     var visible by remember { mutableStateOf(false) }
@@ -129,7 +130,7 @@ fun Modal(
                                 )
                             }
                         }
-                        SmallIconButton(Icons.Outlined.Close, "关闭对话框", dismiss)
+                        SmallIconButton(Icons.Outlined.Close, strings.t("dialogs.common.closeDialog"), dismiss)
                     }
                     HorizontalDivider(color = hairline())
                     // 正文统一 13sp（bodyLarge / bodyMedium 已在 Typography 收敛到 13）。
@@ -150,7 +151,7 @@ fun Modal(
 fun DialogActions(
     confirmText: String,
     onConfirm: () -> Unit,
-    cancelText: String = "取消",
+    cancelText: String = tr("dialogs.common.cancel"),
     onCancel: (() -> Unit)? = null,
     enabled: Boolean = true,
     danger: Boolean = false,

@@ -69,15 +69,16 @@ private data class DownloadKind(
     val icon: ImageVector,
 )
 
-private val downloadKinds =
+// 分类名随语言变化，用函数而非常量，避免类初始化时把语言定死。
+private fun downloadKinds(): List<DownloadKind> =
     listOf(
-        DownloadKind("minecraft", "原版", Icons.Outlined.SportsEsports),
-        DownloadKind("modpack", "整合包", Icons.Outlined.Work),
-        DownloadKind("mod", "模组", Icons.Outlined.Extension),
-        DownloadKind("resourcepack", "资源包", Icons.Outlined.Palette),
-        DownloadKind("shader", "光影", Icons.Outlined.AutoAwesome),
-        DownloadKind("datapack", "数据包", Icons.Outlined.Storage),
-        DownloadKind("world", "世界", Icons.Outlined.Public),
+        DownloadKind("minecraft", tr("pages.download.kind.vanilla"), Icons.Outlined.SportsEsports),
+        DownloadKind("modpack", tr("pages.download.kind.modpack"), Icons.Outlined.Work),
+        DownloadKind("mod", tr("pages.download.kind.mod"), Icons.Outlined.Extension),
+        DownloadKind("resourcepack", tr("pages.download.kind.resourcepack"), Icons.Outlined.Palette),
+        DownloadKind("shader", tr("pages.download.kind.shader"), Icons.Outlined.AutoAwesome),
+        DownloadKind("datapack", tr("pages.download.kind.datapack"), Icons.Outlined.Storage),
+        DownloadKind("world", tr("pages.download.kind.world"), Icons.Outlined.Public),
     )
 
 @Composable
@@ -96,7 +97,7 @@ fun ColumnScope.DownloadCenterPage(
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                downloadKinds.forEach { item ->
+                downloadKinds().forEach { item ->
                     DownloadKindItem(item.title, item.icon, kind == item.id) {
                         onKindChange(item.id)
                     }
@@ -206,8 +207,9 @@ internal fun CompactSearchField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "搜索",
+    placeholder: String = "",
 ) {
+    val strings = LocalStrings.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(4.dp)
     val interaction = remember { MutableInteractionSource() }
@@ -252,7 +254,7 @@ internal fun CompactSearchField(
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (value.isEmpty()) {
                         Text(
-                            placeholder,
+                            placeholder.ifEmpty { strings.t("pages.common.search") },
                             fontSize = 12.sp,
                             color = colors.onSurfaceVariant,
                             maxLines = 1,
@@ -265,7 +267,12 @@ internal fun CompactSearchField(
         )
         if (value.isNotEmpty()) {
             IconButton({ onValueChange("") }, Modifier.size(20.dp)) {
-                Icon(Icons.Outlined.Close, "清除搜索", Modifier.size(13.dp), colors.onSurfaceVariant)
+                Icon(
+                    Icons.Outlined.Close,
+                    strings.t("pages.common.clearSearch"),
+                    Modifier.size(13.dp),
+                    colors.onSurfaceVariant,
+                )
             }
         }
     }

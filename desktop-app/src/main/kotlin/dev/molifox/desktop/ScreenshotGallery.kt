@@ -93,6 +93,7 @@ fun ScreenshotGallery(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val manager = actions.controller.screenshots
     val scope = rememberCoroutineScope()
     var screenshots by remember(instance.id) { mutableStateOf<List<GameScreenshot>>(emptyList()) }
@@ -119,7 +120,7 @@ fun ScreenshotGallery(
             error = null
             try {
                 runScreenshotAction(action) { failure ->
-                    error = failure.message ?: "截图操作失败"
+                    error = failure.message ?: tr("dialogs.screenshot.actionFailed")
                 }
             } finally {
                 busy = false
@@ -142,8 +143,8 @@ fun ScreenshotGallery(
         }
     }
     Modal(
-        "游戏截图",
-        "${instance.name} · ${screenshots.size} 张截图，已选择 ${selected.size} 张",
+        strings.t("dialogs.screenshot.title"),
+        strings.t("dialogs.screenshot.subtitle", instance.name, screenshots.size, selected.size),
         width = 800.dp,
         onDismiss = { if (!busy) onDismiss() },
     ) {
@@ -167,9 +168,13 @@ fun ScreenshotGallery(
             onExport = {
                 act {
                     val target =
-                        actions.choose("导出选中截图", directory = true).firstOrNull() ?: return@act
+                        actions
+                            .choose(
+                                strings.t("dialogs.screenshot.exportSelected"),
+                                directory = true,
+                            ).firstOrNull() ?: return@act
                     val files = manager.export(selection, target)
-                    message = "已导出 ${files.size} 张；重名文件自动编号。"
+                    message = strings.t("dialogs.screenshot.exported", files.size)
                 }
             },
             onDelete = { deleting = true },
@@ -185,7 +190,7 @@ fun ScreenshotGallery(
             onSelectedChange = { selected = it },
         )
         ScreenshotStatus(error = error, message = message, busy = busy)
-        DialogActions("完成", onDismiss, enabled = !busy)
+        DialogActions(strings.t("dialogs.common.done"), onDismiss, enabled = !busy)
     }
     ScreenshotDeleteDialog(
         visible = deleting,
@@ -196,7 +201,7 @@ fun ScreenshotGallery(
                 manager.remove(selection)
                 selected = emptySet()
                 revision++
-                message = "截图已移入回收站"
+                message = strings.t("dialogs.screenshot.trashed")
             }
         },
         onCancel = { deleting = false },
@@ -215,18 +220,24 @@ private fun ScreenshotFilterBar(
     onDateChange: (String) -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CompactTextField(query, onQueryChange, Modifier.weight(1f), placeholder = "搜索截图文件名")
+        CompactTextField(
+            query,
+            onQueryChange,
+            Modifier.weight(1f),
+            placeholder = strings.t("dialogs.screenshot.searchPlaceholder"),
+        )
         SimpleDropdown(
             date,
-            listOf("" to "全部日期") + dates.map { it to it },
+            listOf("" to strings.t("dialogs.screenshot.allDates")) + dates.map { it to it },
             onDateChange,
             Modifier.width(150.dp),
         )
-        SmallIconButton(Icons.Outlined.Refresh, "刷新截图", onRefresh)
+        SmallIconButton(Icons.Outlined.Refresh, strings.t("dialogs.screenshot.refresh"), onRefresh)
         SmallIconButton(
             Icons.Outlined.FolderOpen,
-            "打开截图目录",
+            strings.t("dialogs.screenshot.openFolder"),
             { actions.run { actions.controller.openFolder(instance.id, "screenshots") } },
         )
     }
@@ -243,18 +254,19 @@ private fun ScreenshotSelectionBar(
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SecondaryButton(onSelectAll, enabled = !busy && selectable) {
-            Text("选择当前结果")
+            Text(strings.t("dialogs.screenshot.selectAll"))
         }
         SecondaryButton(onClear, enabled = !busy && hasSelected) {
-            Text("取消选择")
+            Text(strings.t("dialogs.screenshot.clearSelection"))
         }
         SecondaryButton(onExport, enabled = !busy && hasSelection) {
-            Text("导出所选")
+            Text(strings.t("dialogs.screenshot.exportChosen"))
         }
         SecondaryButton(onDelete, enabled = !busy && hasSelection) {
-            Text("移入回收站")
+            Text(strings.t("dialogs.screenshot.moveToTrash"))
         }
     }
 }
@@ -266,11 +278,16 @@ private fun ScreenshotDeleteDialog(
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (!visible) return
-    Modal("移除所选截图", "将 $count 张图片移入回收站。", onDismiss = onCancel) {
-        Text("原截图会从当前实例的截图目录移除，可以在系统回收站或启动器恢复目录查找。")
+    Modal(
+        strings.t("dialogs.screenshot.removeTitle"),
+        strings.t("dialogs.screenshot.removeMessage", count),
+        onDismiss = onCancel,
+    ) {
+        Text(strings.t("dialogs.screenshot.removeHint"))
         DialogActions(
-            "确认移除截图",
+            strings.t("dialogs.screenshot.removeConfirm"),
             onConfirm,
             onCancel = onCancel,
             danger = true,

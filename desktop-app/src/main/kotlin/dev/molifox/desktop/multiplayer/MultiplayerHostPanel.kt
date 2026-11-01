@@ -23,8 +23,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.PrimaryButton
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.MultiplayerState
@@ -35,27 +37,28 @@ internal fun HostRoomPanel(
     settings: MultiplayerSettings,
     actions: MultiplayerLobbyActions,
 ) {
+    val strings = LocalStrings.current
     // 世界列表可能整体刷新，按列表本身重建选择：默认选第一个，避免记住已消失的端口。
     var selectedPort by remember(state.worlds) { mutableStateOf(state.worlds.firstOrNull()?.port) }
     val ready = settings.enabled && state.runtime?.installed == true && !state.busy
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
-        title = "我想当房主",
-        detail = "先在 Minecraft 里进入存档，按 Esc → 对局域网开放，再回到这里刷新。",
+        title = strings.t("dialogs.mp.host.title"),
+        detail = strings.t("dialogs.mp.host.detail"),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             WorldsHeader(state, actions)
             if (state.worlds.isEmpty()) {
-                MutedText("还没有发现局域网世界；开放后点“刷新世界”。")
+                MutedText(strings.t("dialogs.mp.host.noWorlds"))
             } else {
                 state.worlds.forEach { world ->
                     WorldRow(world, world.port == selectedPort) { selectedPort = world.port }
                 }
             }
-            PrimaryButton("创建房间", enabled = ready && selectedPort != null) {
+            PrimaryButton(strings.t("dialogs.mp.host.create"), enabled = ready && selectedPort != null) {
                 actions.host(selectedPort)
             }
-            MutedText("房间需要房主保持游戏与启动器运行；双方优先 P2P 直连，打洞失败会自动走内置中继。")
+            MutedText(strings.t("dialogs.mp.host.createHint"))
         }
     }
 }
@@ -65,17 +68,20 @@ private fun WorldsHeader(
     state: MultiplayerState,
     actions: MultiplayerLobbyActions,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
             if (state.worlds.isEmpty()) {
-                "未发现局域网世界"
+                strings.t("dialogs.mp.host.noneFound")
             } else {
-                "发现 ${state.worlds.size} 个局域网世界"
+                strings.t("dialogs.mp.host.worldCount", state.worlds.size)
             },
             Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
         )
-        TextButton(onClick = actions.refreshWorlds, enabled = !state.busy) { Text("刷新世界") }
+        TextButton(onClick = actions.refreshWorlds, enabled = !state.busy) {
+            Text(strings.t("dialogs.mp.host.refresh"))
+        }
     }
 }
 
@@ -104,9 +110,9 @@ private fun WorldRow(
 
 private fun worldDescription(world: LanWorld): String =
     if (world.version.isBlank()) {
-        "端口 ${world.port}"
+        tr("dialogs.mp.host.port", world.port)
     } else {
-        "${world.version} · 端口 ${world.port}"
+        tr("dialogs.mp.host.versionPort", world.version, world.port)
     }
 
 /** 房间开启后只展示邀请码与复制入口；玩家列表由大厅统一渲染。 */
@@ -115,14 +121,15 @@ internal fun RoomCodeCard(
     state: MultiplayerState,
     copy: (String) -> Unit,
 ) {
+    val strings = LocalStrings.current
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
-        title = "分享给朋友",
-        detail = "让房客在联机大厅输入邀请码；邀请码包含网络密钥，等同于房间口令。",
+        title = strings.t("dialogs.mp.host.shareTitle"),
+        detail = strings.t("dialogs.mp.host.shareDetail"),
     ) {
         state.roomCode?.let { code ->
-            CopyableValue("邀请码", code, "复制邀请码", copy)
+            CopyableValue(strings.t("dialogs.mp.host.code"), code, strings.t("dialogs.mp.host.copyCode"), copy)
         }
-        MutedText("邀请码仅适用于 MoliFox 启动器：网络名已改为 MoliFox 前缀，PCL CE / HMCL 等其它启动器无法加入；建议双方使用相同版本。")
+        MutedText(strings.t("dialogs.mp.host.codeNote"))
     }
 }

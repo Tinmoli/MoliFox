@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
@@ -87,7 +88,9 @@ internal class GameActivityTracker(
                 }
                 lastContents = text
             }
-        }.onFailure { store.log("读取游戏进入记录失败：${it.javaClass.simpleName}") }
+        }.onFailure {
+            store.log(I18n.t("miscA1.activityTracker.readFailed", it.javaClass.simpleName))
+        }
     }
 
     @Synchronized fun finish() = store.recentUsage.endSession(sessionId, true)
@@ -183,8 +186,7 @@ private fun quickPlayEnteredAt(
 fun sameServerAddress(
     left: ServerAddress?,
     right: ServerAddress?,
-): Boolean =
-    left != null && right != null && left.port == right.port && left.host.equals(right.host, true)
+): Boolean = left != null && right != null && left.port == right.port && left.host.equals(right.host, true)
 
 internal fun formatServerAddress(address: ServerAddress): String {
     val host = if (':' in address.host) "[${address.host}]" else address.host

@@ -48,6 +48,7 @@ fun InstanceArtwork(
     actions: UiActions,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     val image by
         produceState<ImageBitmap?>(
             null,
@@ -74,7 +75,7 @@ fun InstanceArtwork(
     if (image != null) {
         Image(
             requireNotNull(image),
-            "${instance.name} 图标",
+            strings.t("deskF.artwork.imageDescription", instance.name),
             modifier,
             filterQuality = FilterQuality.None,
         )
@@ -90,6 +91,7 @@ fun InstanceIconDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val scope = rememberCoroutineScope()
     val existing by
         produceState<java.nio.file.Path?>(null, instance.id) {
@@ -111,8 +113,8 @@ fun InstanceIconDialog(
         }
     }
     Modal(
-        "实例图标",
-        "${instance.name} · 图片保存在启动器数据目录，保留原游戏文件。",
+        strings.t("deskF.icon.title"),
+        strings.t("deskF.icon.subtitle", instance.name),
         onDismiss = { if (!busy) onDismiss() },
     ) {
         Row(
@@ -121,23 +123,26 @@ fun InstanceIconDialog(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             InstanceArtwork(instance, actions, Modifier.size(48.dp))
-            PrimaryButton("选择图标图片", Icons.Outlined.Image, !busy) {
+            PrimaryButton(strings.t("deskF.icon.chooseImage"), Icons.Outlined.Image, !busy) {
                 apply {
-                    val source =
+                    val chosen =
                         actions
-                            .choose("选择实例图标", extensions = listOf("png", "jpg", "jpeg"))
-                            .firstOrNull() ?: return@apply
+                            .choose(
+                                strings.t("deskF.icon.chooseDialogTitle"),
+                                extensions = listOf("png", "jpg", "jpeg"),
+                            )
+                    val source = chosen.firstOrNull() ?: return@apply
                     actions.controller.icons.setCustom(instance.id, source)
                 }
             }
         }
-        MutedText("正方形 PNG/JPEG，16–1024 像素，最大 2 MiB。自动显示整合包图标；没有时，原版显示草方块，其他显示加载器官方图标。")
+        MutedText(strings.t("deskF.icon.hint"))
         existing?.let { source ->
             SecondaryButton(
                 { apply { actions.controller.icons.setCustom(instance.id, source) } },
                 enabled = !busy,
             ) {
-                Text("使用游戏目录已有图标")
+                Text(strings.t("deskF.icon.useExisting"))
             }
         }
         FlowRow(
@@ -158,7 +163,7 @@ fun InstanceIconDialog(
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         DialogActions(
-            "恢复自动图标",
+            strings.t("deskF.icon.restoreAuto"),
             { apply { actions.controller.icons.setPreset(instance.id, InstanceIconStyle.Auto) } },
             onCancel = onDismiss,
             enabled = !busy,

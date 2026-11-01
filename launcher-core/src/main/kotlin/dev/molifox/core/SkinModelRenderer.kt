@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -554,14 +555,20 @@ object SkinModelRenderer {
         size: Int = DEFAULT_HEAD_FRONT_SIZE,
     ): ByteArray? =
         runCatching {
-            require(skin.isNotEmpty()) { "皮肤数据为空" }
-            require(size in HEAD_TILE..MAX_HEAD_FRONT_SIZE) { "头像尺寸无效" }
-            val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
+            require(skin.isNotEmpty()) { I18n.t("miscA2.skinRenderer.emptyData") }
+            require(size in HEAD_TILE..MAX_HEAD_FRONT_SIZE) {
+                I18n.t("miscA2.skinRenderer.invalidHeadSize")
+            }
+            val image =
+                ImageIO.read(ByteArrayInputStream(skin))
+                    ?: error(I18n.t("miscA2.skinRenderer.unreadableImage"))
             val width = image.width
             val height = image.height
             // 只接受 64 的整数倍宽度：64×64（含高清）或旧版 64×32；其它布局不猜位置。
-            require(hasSupportedSkinWidth(width)) { "皮肤宽度无效" }
-            require(height == width || height * 2 == width) { "皮肤高度无效" }
+            require(hasSupportedSkinWidth(width)) { I18n.t("miscA2.skinRenderer.invalidWidth") }
+            require(height == width || height * 2 == width) {
+                I18n.t("miscA2.skinRenderer.invalidHeight")
+            }
             val scale = width / 64
 
             fun faceAt(
@@ -598,29 +605,40 @@ object SkinModelRenderer {
                     (y * HEAD_TILE / size).coerceIn(0, HEAD_TILE - 1),
                 )
             val pixels =
-                IntArray(size * size) { index ->
-                    val x = index % size
-                    val y = index / size
-                    val inFace =
-                        x in faceOffset until faceOffset + faceSide &&
-                            y in faceOffset until faceOffset + faceSide
-                    val base = if (inFace) faceSample(x, y) else 0
-                    // 帽子层在自己的下缘投下的半透明阴影
-                    val shadowSource =
-                        if (y - shadeShift in 0 until size) hatSample(x, y - shadeShift) else 0
-                    val shadowAlpha = (shadowSource ushr 24) * 28 / 100
-                    val shaded =
-                        if (shadowAlpha > 0 && inFace) {
-                            overlay((shadowAlpha shl 24) or 0x1A1014, base)
-                        } else {
-                            base
-                        }
-                    overlay(hatSample(x, y), shaded)
-                }
+                headFrontPixels(size, faceSide, faceOffset, shadeShift, ::faceSample, ::hatSample)
             val output = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
             output.setRGB(0, 0, size, size, pixels, 0, size)
             ByteArrayOutputStream().also { ImageIO.write(output, "png", it) }.toByteArray()
         }.getOrNull()
+
+    /** 正面头像像素合成：脸缩到 8/9 居中，帽子满幅叠加并在下缘压半透明投影。 */
+    private fun headFrontPixels(
+        size: Int,
+        faceSide: Int,
+        faceOffset: Int,
+        shadeShift: Int,
+        faceSample: (Int, Int) -> Int,
+        hatSample: (Int, Int) -> Int,
+    ): IntArray =
+        IntArray(size * size) { index ->
+            val x = index % size
+            val y = index / size
+            val inFace =
+                x in faceOffset until faceOffset + faceSide &&
+                    y in faceOffset until faceOffset + faceSide
+            val base = if (inFace) faceSample(x, y) else 0
+            // 帽子层在自己的下缘投下的半透明阴影
+            val shadowSource =
+                if (y - shadeShift in 0 until size) hatSample(x, y - shadeShift) else 0
+            val shadowAlpha = (shadowSource ushr 24) * 28 / 100
+            val shaded =
+                if (shadowAlpha > 0 && inFace) {
+                    overlay((shadowAlpha shl 24) or 0x1A1014, base)
+                } else {
+                    base
+                }
+            overlay(hatSample(x, y), shaded)
+        }
 
     /** 立体头像：复用 [render] 只渲染头部，正对镜头（水平不偏转，仅略微俯视露出顶面）， 输出 PNG 字节；皮肤不可解析时返回 null。 */
     fun renderHeadModel(
@@ -630,11 +648,15 @@ object SkinModelRenderer {
         pitch: Float = DEFAULT_HEAD_MODEL_PITCH,
     ): ByteArray? =
         runCatching {
-            val image = ImageIO.read(ByteArrayInputStream(skin)) ?: error("皮肤不是可解析的图片")
+            val image =
+                ImageIO.read(ByteArrayInputStream(skin))
+                    ?: error(I18n.t("miscA2.skinRenderer.unreadableImage"))
             val width = image.width
             val height = image.height
-            require(hasSupportedSkinWidth(width)) { "皮肤宽度无效" }
-            require(height == width || height * 2 == width) { "皮肤高度无效" }
+            require(hasSupportedSkinWidth(width)) { I18n.t("miscA2.skinRenderer.invalidWidth") }
+            require(height == width || height * 2 == width) {
+                I18n.t("miscA2.skinRenderer.invalidHeight")
+            }
             val pixels =
                 IntArray(width * height).also { image.getRGB(0, 0, width, height, it, 0, width) }
             val rendered =

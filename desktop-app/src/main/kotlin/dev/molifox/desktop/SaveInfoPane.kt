@@ -58,6 +58,7 @@ internal fun SaveInfoPane(
     reload: Int,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     var retry by remember(saveName) { mutableIntStateOf(0) }
     var details by remember(saveName) { mutableStateOf<SaveDetails?>(null) }
     var loading by remember(saveName) { mutableStateOf(true) }
@@ -74,13 +75,13 @@ internal fun SaveInfoPane(
             throw cancelled
         } catch (failure: IllegalArgumentException) {
             details = null
-            error = failure.message ?: "无法读取存档详情"
+            error = failure.message ?: strings.t("dialogs.saveInfo.loadFailed")
         } catch (failure: IllegalStateException) {
             details = null
-            error = failure.message ?: "无法读取存档详情"
+            error = failure.message ?: strings.t("dialogs.saveInfo.loadFailed")
         } catch (failure: IOException) {
             details = null
-            error = failure.message ?: "读取存档文件失败"
+            error = failure.message ?: strings.t("dialogs.saveInfo.readFailed")
         } finally {
             loading = false
         }
@@ -90,15 +91,15 @@ internal fun SaveInfoPane(
             loading ->
                 Panel(Modifier.fillMaxWidth()) {
                     Text(
-                        "正在读取存档信息…",
+                        strings.t("dialogs.saveInfo.loading"),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             error != null ->
                 Panel(Modifier.fillMaxWidth()) {
-                    EmptyState("无法读取存档详情", error.orEmpty(), Icons.Outlined.CloudOff) {
-                        TextButton({ retry++ }) { Text("重试") }
+                    EmptyState(strings.t("dialogs.saveInfo.loadFailed"), error.orEmpty(), Icons.Outlined.CloudOff) {
+                        TextButton({ retry++ }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
             details != null ->
@@ -120,30 +121,41 @@ internal fun SaveInfoPane(
 
 @Composable
 private fun SaveInfoCard(details: SaveDetails) {
+    val strings = LocalStrings.current
     val clipboard = LocalClipboardManager.current
-    Panel(Modifier.fillMaxWidth(), title = "世界信息") {
-        DetailLine("世界名", details.levelName)
-        DetailLine("游戏版本", versionText(details))
+    Panel(Modifier.fillMaxWidth(), title = strings.t("dialogs.saveInfo.worldSection")) {
+        DetailLine(strings.t("dialogs.saveInfo.levelName"), details.levelName)
+        DetailLine(strings.t("dialogs.saveInfo.gameVersion"), versionText(details))
         details.seed?.let { seed ->
             DetailLine(
-                "种子",
+                strings.t("dialogs.saveInfo.seed"),
                 seed.toString(),
                 action = {
                     TextButton({ clipboard.setText(AnnotatedString(seed.toString())) }) {
-                        Text("复制", fontSize = 11.sp)
+                        Text(strings.t("dialogs.common.copy"), fontSize = 11.sp)
                     }
                 },
             )
         }
         details.spawn?.let { spawn ->
-            DetailLine("出生点", "${spawn.x.toInt()} / ${spawn.y.toInt()} / ${spawn.z.toInt()}")
+            DetailLine(
+                strings.t("dialogs.saveInfo.spawn"),
+                "${spawn.x.toInt()} / ${spawn.y.toInt()} / ${spawn.z.toInt()}",
+            )
         }
-        DetailLine("最后游玩", formatSaveTime(details.lastPlayed))
-        DetailLine("游戏模式", gameModeText(details))
-        details.difficulty?.let { DetailLine("难度", difficultyText(it)) }
-        details.allowCommands?.let { DetailLine("允许作弊", if (it) "是" else "否") }
-        details.playTicks?.let { DetailLine("游玩时长", formatPlayTicks(it)) }
-        if (details.hardcore) DetailLine("硬核", "是（死亡后无法复活）")
+        DetailLine(strings.t("dialogs.saveInfo.lastPlayed"), formatSaveTime(details.lastPlayed))
+        DetailLine(strings.t("dialogs.saveInfo.gameMode"), gameModeText(details))
+        details.difficulty?.let { DetailLine(strings.t("dialogs.saveInfo.difficulty"), difficultyText(it)) }
+        details.allowCommands?.let {
+            DetailLine(
+                strings.t("dialogs.saveInfo.allowCommands"),
+                if (it) strings.t("dialogs.common.yes") else strings.t("dialogs.common.no"),
+            )
+        }
+        details.playTicks?.let { DetailLine(strings.t("dialogs.saveInfo.playTime"), formatPlayTicks(it)) }
+        if (details.hardcore) {
+            DetailLine(strings.t("dialogs.saveInfo.hardcore"), strings.t("dialogs.saveInfo.hardcoreYes"))
+        }
     }
 }
 
@@ -178,37 +190,36 @@ private fun DetailLine(
 private fun versionText(details: SaveDetails): String =
     when {
         details.versionName != null && details.versionId != null ->
-            "${details.versionName}（${details.versionId}）"
+            tr("dialogs.saveInfo.versionWithData", details.versionName, details.versionId)
         details.versionName != null -> details.versionName.orEmpty()
-        details.versionId != null -> "数据版本 ${details.versionId}"
-        else -> "未知（旧存档或缺少 Version 标签）"
+        details.versionId != null -> tr("dialogs.saveInfo.dataVersion", details.versionId)
+        else -> tr("dialogs.saveInfo.versionUnknown")
     }
 
 private fun gameModeText(details: SaveDetails): String {
     val mode =
         when (details.gameMode) {
-            0 -> "生存"
-            1 -> "创造"
-            2 -> "冒险"
-            3 -> "旁观"
-            else -> "未知"
+            0 -> tr("dialogs.saveInfo.mode.survival")
+            1 -> tr("dialogs.saveInfo.mode.creative")
+            2 -> tr("dialogs.saveInfo.mode.adventure")
+            3 -> tr("dialogs.saveInfo.mode.spectator")
+            else -> tr("dialogs.common.unknown")
         }
-    return mode + if (details.hardcore) "（硬核）" else ""
+    return mode + if (details.hardcore) tr("dialogs.saveInfo.hardcoreSuffix") else ""
 }
 
-private fun difficultyText(value: Int): String =
-    DIFFICULTY_LABELS.firstOrNull { it.first == value }?.second ?: "未知"
+private fun difficultyText(value: Int): String = difficultyLabel(value)
 
 /** `Data.Time` 每 20 刻约一秒；只用于展示量级，不宣称与实际游玩时长完全一致。 */
 private fun formatPlayTicks(ticks: Long): String {
     val totalMinutes = ticks / TICKS_PER_SECOND / SECONDS_PER_MINUTE
-    if (totalMinutes < 1) return "不到 1 分钟"
+    if (totalMinutes < 1) return tr("dialogs.saveInfo.playtime.lessThanMinute")
     val days = totalMinutes / (HOURS_PER_DAY * MINUTES_PER_HOUR)
     val hours = totalMinutes % (HOURS_PER_DAY * MINUTES_PER_HOUR) / MINUTES_PER_HOUR
     val minutes = totalMinutes % MINUTES_PER_HOUR
     return buildString {
-        if (days > 0) append("$days 天 ")
-        if (hours > 0) append("$hours 小时 ")
-        if (minutes > 0) append("$minutes 分钟")
+        if (days > 0) append(tr("dialogs.saveInfo.playtime.days", days))
+        if (hours > 0) append(tr("dialogs.saveInfo.playtime.hours", hours))
+        if (minutes > 0) append(tr("dialogs.saveInfo.playtime.minutes", minutes))
     }.trim()
 }

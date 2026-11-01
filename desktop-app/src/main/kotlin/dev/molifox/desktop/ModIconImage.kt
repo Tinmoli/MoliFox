@@ -26,8 +26,7 @@ import org.jetbrains.skia.Image as SkiaImage
 private object ModIconBitmaps {
     private val values =
         object : LinkedHashMap<String, ImageBitmap>(64, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) =
-                size > 256
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) = size > 256
         }
 
     @Synchronized operator fun get(key: String): ImageBitmap? = values[key]

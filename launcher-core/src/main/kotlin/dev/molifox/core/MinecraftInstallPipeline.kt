@@ -6,7 +6,10 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
+import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -33,6 +36,71 @@ private class BaseProfile(
     val selfContained: Boolean,
 )
 
+/**
+ * 全新实例直接以实例目录为版本目录：基础 JSON 就写成实例 JSON，客户端 JAR 也落到实例目录。
+ * 这样不再先造一个 `versions/<游戏版本>` 中间目录；加载器配置随后合并覆盖。
+ */
+private suspend fun prepareDirectBaseProfile(
+    network: NetworkClient,
+    metadata: ReleaseVersion,
+    target: Path,
+): BaseProfile {
+    val id = target.fileName.toString()
+    safeFilename(id)
+    Files.createDirectories(target)
+    val jsonPath = target.resolve("$id.json")
+    network.download(DownloadArtifact(metadata.url, jsonPath, metadata.sha1.orEmpty()))
+    val json = JsonParser.parseString(Files.readString(jsonPath)).asJsonObject
+    require(json.string("inheritsFrom").isBlank()) {
+        I18n.t("miscA2.install.parentVersionRequired")
+    }
+    json.addProperty("id", id)
+    if (json.has("jar")) json.addProperty("jar", id)
+    val profile = ResolvedProfile(id, id, json)
+    require(profile.mainClass.isNotBlank()) { I18n.t("miscA2.install.unsupportedVersion") }
+    return BaseProfile(profile, true)
+}
+
+/** 取消安装时回收本任务新建的中间版本目录并结束「安装中」标记。 */
+private fun registerInstallCleanup(
+    context: JobContext,
+    instanceId: String,
+    createdVersions: Set<Path>,
+    provisioner: InstanceProvisioner,
+    store: LauncherStore,
+    folderName: String,
+) {
+    context.onFinished(
+        "install-versions:$instanceId",
+        cancel = {
+            runCatching {
+                provisioner.reclaimCreatedVersionDirectories(createdVersions, instanceId, context)
+            }
+            runCatching { store.endPendingInstall(folderName) }
+        },
+        complete = {},
+    )
+}
+
+/** 安装失败时回收中间目录、结束安装中标记，并按需放弃新实例。 */
+private suspend fun rollbackFailedInstall(
+    provisioner: InstanceProvisioner,
+    store: LauncherStore,
+    instance: GameInstance,
+    instanceId: String,
+    folderName: String,
+    freshTarget: Boolean,
+    discardOnFailure: Boolean,
+    createdVersions: Set<Path>,
+    context: JobContext,
+) {
+    provisioner.reclaimCreatedVersionDirectories(createdVersions, instanceId, context)
+    store.endPendingInstall(folderName)
+    if (freshTarget && discardOnFailure) {
+        provisioner.discardFailedFreshInstall(instance, folderName)
+    }
+}
+
 /** 安装流水线：把一次安装拆成可回收的步骤，任何一步失败都按原有顺序清理。 */
 internal class MinecraftInstallPipeline(
     private val store: LauncherStore,
@@ -47,45 +115,51 @@ internal class MinecraftInstallPipeline(
         instanceId: String,
         context: JobContext,
         freshInstall: Boolean = false,
+        progressEnd: Float = 1f,
+        discardOnFailure: Boolean = true,
+        refreshAfterInstall: Boolean = true,
     ) {
+        require(progressEnd in 0f..1f) { I18n.t("miscA2.install.invalidProgressEnd") }
         val instance = store.instance(instanceId)
         val folderName = instance.instanceFolderName()
         val freshTarget = freshInstall && folderName.isNotBlank()
         beginInstallation(instance, instanceId, context)
         // 本任务新建的中间版本目录（基础版本目录等）：成功、失败和取消都只回收这些。
         val createdVersions = linkedSetOf<Path>()
-        context.onFinished(
-            "install-versions:$instanceId",
-            cancel = {
-                runCatching {
-                    provisioner.reclaimCreatedVersionDirectories(
-                        createdVersions,
-                        instanceId,
-                        context,
-                    )
-                }
-                runCatching { store.endPendingInstall(folderName) }
-            },
-            complete = {},
+        registerInstallCleanup(
+            context,
+            instanceId,
+            createdVersions,
+            provisioner,
+            store,
+            folderName,
         )
-        context.progress(0f, "获取 Minecraft 元数据…")
+        context.progress(0f, I18n.t("miscA2.install.fetchingMetadata"))
         try {
-            installVersionContent(instance, createdVersions, freshInstall, context)
+            installVersionContent(instance, createdVersions, freshInstall, context, progressEnd)
             store.updateInstance(instanceId) { it.copy(installed = true) }
             store.endPendingInstall(folderName)
         } catch (expected: Throwable) {
             // 失败不保留中间目录，否则重试时会把它们当成「已有基础版本」永久留下。
             if (expected !is CancellationException) {
-                provisioner.reclaimCreatedVersionDirectories(createdVersions, instanceId, context)
-                store.endPendingInstall(folderName)
-                if (freshTarget) provisioner.discardFailedFreshInstall(instance, folderName)
+                rollbackFailedInstall(
+                    provisioner,
+                    store,
+                    instance,
+                    instanceId,
+                    folderName,
+                    freshTarget,
+                    discardOnFailure,
+                    createdVersions,
+                    context,
+                )
             }
             throw expected
         }
         provisioner.reclaimCreatedVersionDirectories(createdVersions, instanceId, context)
         // 目录里已有有效配置、中间目录也回收完毕：重新扫描让实例按确定性 id、真实版本和加载器收敛。
-        store.refreshInstances()
-        context.progress(1f, "安装完成")
+        if (refreshAfterInstall) store.refreshInstances()
+        context.progress(progressEnd, I18n.t("settings.java.install.done"))
     }
 
     private fun beginInstallation(
@@ -109,13 +183,21 @@ internal class MinecraftInstallPipeline(
         createdVersions: MutableSet<Path>,
         freshInstall: Boolean,
         context: JobContext,
+        progressEnd: Float,
     ) {
         val root = store.minecraftRoot(instance)
         if (instance.externalProfile) {
             val resolved = VersionResolver(root, store.platform).resolve(instance.versionId)
-            installDependencies(resolved, context, root)
+            installDependencies(resolved, context, root, 0f, progressEnd)
         } else {
-            installManagedVersion(instance, root, createdVersions, freshInstall, context)
+            installManagedVersion(
+                instance,
+                root,
+                createdVersions,
+                freshInstall,
+                context,
+                progressEnd,
+            )
         }
         context.checkCancelled()
         // 扫描到的外部版本仍只写一个指向原目录的配置，不复制、不改写原版本。
@@ -128,15 +210,23 @@ internal class MinecraftInstallPipeline(
         createdVersions: MutableSet<Path>,
         freshInstall: Boolean,
         context: JobContext,
+        progressEnd: Float,
     ) {
         val metadata =
-            catalog.versions().find { it.id == instance.gameVersion } ?: error("此游戏版本不存在")
-        require(metadata.type !in setOf("old_alpha", "old_beta")) {
-            "当前支持 Minecraft 1.6 及以后的版本，早期版本仍需适配"
+            catalog.versions().find { it.id == instance.gameVersion }
+                ?: error(I18n.t("miscA2.install.versionNotInCatalog"))
+        val ancient = metadata.type in setOf("old_alpha", "old_beta")
+        require(!ancient || instance.loader == LoaderType.Vanilla) {
+            I18n.t("miscA2.install.ancientVersionVanillaOnly")
         }
         val target = store.versionGamePath(instance)
         if (freshInstall) provisioner.requireNewInstanceDirectory(root, target)
-        val base = prepareBaseProfile(metadata, instance, target, root, createdVersions, context)
+        val base =
+            if (freshInstall) {
+                prepareDirectBaseProfile(network, metadata, target)
+            } else {
+                prepareBaseProfile(metadata, instance, target, root, createdVersions, context)
+            }
         val hasLoader = instance.loader != LoaderType.Vanilla
         // 加载器安装阶段要留出预算：否则基础依赖做完进度条已经到 98%，
         // 之后的加载器安装会让进度停在原地（或回退）。
@@ -144,8 +234,8 @@ internal class MinecraftInstallPipeline(
             base.profile,
             context,
             root,
-            BASE_DEPENDENCIES_PROGRESS_START,
-            if (hasLoader) LOADER_PROGRESS_START else SKIPPED_LOADER_PROGRESS,
+            BASE_DEPENDENCIES_PROGRESS_START * progressEnd,
+            (if (hasLoader) LOADER_PROGRESS_START else SKIPPED_LOADER_PROGRESS) * progressEnd,
         )
         installLoaderAndPublish(
             instance = instance,
@@ -155,6 +245,7 @@ internal class MinecraftInstallPipeline(
             selfContained = base.selfContained,
             hasLoader = hasLoader,
             context = context,
+            progressEnd = progressEnd,
         )
     }
 
@@ -182,12 +273,12 @@ internal class MinecraftInstallPipeline(
         val sharesBaseDirectory = taskPathKey(target) == taskPathKey(baseFolder)
         val hasLoader = instance.loader != LoaderType.Vanilla
         require(!(sharesBaseDirectory && baseExisted && hasLoader)) {
-            "这个实例直接使用原版版本目录 versions/$baseId，加装加载器会改坏共用配置；请先重命名实例或换一个名称"
+            I18n.t("miscA2.install.sharedBaseDirectory", baseId)
         }
         val jsonPath = baseFolder.resolve("$baseId.json")
         network.download(DownloadArtifact(metadata.url, jsonPath, metadata.sha1.orEmpty()))
         val base = VersionResolver(root, store.platform).resolve(baseId)
-        require(base.mainClass.isNotBlank()) { "此游戏版本尚未支持" }
+        require(base.mainClass.isNotBlank()) { I18n.t("miscA2.install.unsupportedVersion") }
         return BaseProfile(base, !baseExisted || sharesBaseDirectory)
     }
 
@@ -200,6 +291,7 @@ internal class MinecraftInstallPipeline(
         selfContained: Boolean,
         hasLoader: Boolean,
         context: JobContext,
+        progressEnd: Float,
     ) {
         context.checkCancelled()
         val loader = fetchLoaderProfile(instance, base, context)
@@ -221,8 +313,8 @@ internal class MinecraftInstallPipeline(
             VersionResolver(root, store.platform).resolve(versionId),
             context,
             root,
-            if (hasLoader) LOADER_PROGRESS_END else SKIPPED_LOADER_PROGRESS,
-            FINAL_DEPENDENCIES_PROGRESS_END,
+            (if (hasLoader) LOADER_PROGRESS_END else SKIPPED_LOADER_PROGRESS) * progressEnd,
+            FINAL_DEPENDENCIES_PROGRESS_END * progressEnd,
         )
     }
 
@@ -235,8 +327,18 @@ internal class MinecraftInstallPipeline(
             LoaderType.Vanilla -> null
             LoaderType.Fabric,
             LoaderType.Quilt,
-            ->
-                loaders.fetchFabricProfile(
+            LoaderType.LegacyFabric,
+            -> loaders.fetchFabricProfile(instance, context, LOADER_PROGRESS_START, LOADER_PROGRESS_END)
+            LoaderType.OptiFine ->
+                loaders.optiFine.fetchProfile(
+                    instance,
+                    base,
+                    context,
+                    LOADER_PROGRESS_START,
+                    LOADER_PROGRESS_END,
+                )
+            LoaderType.LiteLoader ->
+                loaders.liteLoader.fetchProfile(
                     instance,
                     context,
                     LOADER_PROGRESS_START,
@@ -244,14 +346,8 @@ internal class MinecraftInstallPipeline(
                 )
             LoaderType.Forge,
             LoaderType.NeoForge,
-            ->
-                loaders.fetchForgeProfile(
-                    instance,
-                    base,
-                    context,
-                    LOADER_PROGRESS_START,
-                    LOADER_PROGRESS_END,
-                )
+            LoaderType.Cleanroom,
+            -> loaders.fetchForgeProfile(instance, base, context, LOADER_PROGRESS_START, LOADER_PROGRESS_END)
         }
 
     /** 外部版本目录里缺配置时补一份指向原目录的存根，不复制、不改写原版本。 */
@@ -291,7 +387,7 @@ internal class MinecraftInstallPipeline(
     ) {
         val progress = InstallProgress(context, from, to)
         val verifier =
-            GameFileVerifier(network, store.data.settings.maxConcurrent, verifyHashes, progress)
+            GameFileVerifier(network, store.data.settings.downloadThreads, verifyHashes, progress)
         progress.begin(InstallPhase.VERIFY)
         val resolver = VersionResolver(root, store.platform)
         val artifacts =
@@ -382,7 +478,7 @@ private fun assetArtifacts(
     return objects.entrySet().map { (_, value) ->
         val item = value.asJsonObject
         val hash = item.string("hash")
-        require(hash.matches(Regex("[0-9a-fA-F]{40}"))) { "资源哈希无效" }
+        require(hash.matches(Regex("[0-9a-fA-F]{40}"))) { I18n.t("miscA2.install.invalidAssetHash") }
         DownloadArtifact(
             "$assetBaseUrl/${hash.take(2)}/$hash",
             root.resolve("assets/objects/${hash.take(2)}/$hash"),

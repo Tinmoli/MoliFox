@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -41,6 +42,7 @@ internal class LoaderProfileFetcher(
     private val java: JavaService,
     private val fabricMetaBase: String,
     private val quiltMetaBase: String,
+    private val legacyFabricMetaBase: String,
 ) {
     internal suspend fun fetchFabricProfile(
         instance: GameInstance,
@@ -48,9 +50,21 @@ internal class LoaderProfileFetcher(
         from: Float = 0f,
         to: Float = 1f,
     ): JsonObject {
-        context.progress(from, "${InstallPhase.LOADER}：${instance.loader.title} 配置…")
-        val host = if (instance.loader == LoaderType.Fabric) fabricMetaBase else quiltMetaBase
-        val apiVersion = if (instance.loader == LoaderType.Fabric) "v2" else "v3"
+        context.progress(
+            from,
+            I18n.t(
+                "networkB2.loaderProfileFetcher.loadingProfile",
+                InstallPhase.LOADER,
+                instance.loader.title,
+            ),
+        )
+        val host =
+            when (instance.loader) {
+                LoaderType.Fabric -> fabricMetaBase
+                LoaderType.LegacyFabric -> legacyFabricMetaBase
+                else -> quiltMetaBase
+            }
+        val apiVersion = if (instance.loader == LoaderType.Quilt) "v3" else "v2"
         val profile =
             network
                 .json(
@@ -59,9 +73,20 @@ internal class LoaderProfileFetcher(
                     )}/${encoded(instance.loaderVersion)}/profile/json",
                 ).asJsonObject
         context.checkCancelled()
-        context.progress(to, "${InstallPhase.LOADER}：${instance.loader.title} 配置已就绪")
+        context.progress(
+            to,
+            I18n.t(
+                "networkB2.loaderProfileFetcher.profileReady",
+                InstallPhase.LOADER,
+                instance.loader.title,
+            ),
+        )
         return profile
     }
+
+    /** OptiFine 与 LiteLoader 的配置生成各自独立，避免本类继续变大。 */
+    internal val optiFine = OptiFineInstaller(store, network, java)
+    internal val liteLoader = LiteLoaderInstaller(network)
 
     internal suspend fun fetchForgeProfile(
         instance: GameInstance,
@@ -109,37 +134,33 @@ internal class LoaderProfileFetcher(
         context: JobContext,
         at: (Float) -> Float,
     ): Path {
-        val isForge = instance.loader == LoaderType.Forge
-        val project = if (isForge || instance.gameVersion == "1.20.1") "forge" else "neoforge"
-        val version =
-            if (isForge) {
-                "${instance.gameVersion}-${instance.loaderVersion}"
-            } else {
-                instance.loaderVersion
-            }
-        val host =
-            if (isForge) {
-                "https://maven.minecraftforge.net"
-            } else {
-                "https://maven.neoforged.net/releases"
-            }
-        val group = if (isForge) "net/minecraftforge" else "net/neoforged"
-        val url = "$host/$group/$project/$version/$project-$version-installer.jar"
+        val (url, project, version) = forgeInstallerUrl(instance)
         val archive =
             store.downloadDirectory.resolve(
                 "loaders/${safeFilename(project)}-${safeFilename(version)}-installer.jar",
             )
+        if (archive.exists()) return archive
         context.progress(
             at(FORGE_INSTALLER_PROGRESS),
-            "${InstallPhase.LOADER}：下载 ${instance.loader.title} 安装程序…",
+            I18n.t(
+                "networkB2.loaderProfileFetcher.downloadingInstaller",
+                InstallPhase.LOADER,
+                instance.loader.title,
+            ),
         )
         val installerHash =
-            network
-                .text("$url.sha1")
-                .trim()
-                .substringBefore(' ')
-                .trim()
-        require(installerHash.matches(Regex("[a-fA-F0-9]{40}"))) { "加载器安装程序缺少有效校验信息" }
+            if (instance.loader == LoaderType.Cleanroom) {
+                ""
+            } else {
+                network
+                    .text("$url.sha1")
+                    .trim()
+                    .substringBefore(' ')
+                    .trim()
+            }
+        require(installerHash.isBlank() || installerHash.matches(Regex("[a-fA-F0-9]{40}"))) {
+            I18n.t("networkB2.loaderProfileFetcher.installerHashMissing")
+        }
         network.downloadTracked(context, DownloadArtifact(url, archive, installerHash))
         return archive
     }
@@ -175,7 +196,14 @@ internal class LoaderProfileFetcher(
                         it.array("sides").any { side -> side.asString == "client" }
                 }
         runForgeProcessors(processors, variables, root, runtime, context, at)
-        context.progress(to, "${InstallPhase.LOADER}：${instance.loader.title} 配置已就绪")
+        context.progress(
+            to,
+            I18n.t(
+                "networkB2.loaderProfileFetcher.profileReady",
+                InstallPhase.LOADER,
+                instance.loader.title,
+            ),
+        )
         return versionJson
     }
 
@@ -188,14 +216,14 @@ internal class LoaderProfileFetcher(
                         .parseReader(reader)
                         .asJsonObject
                 }
-            } ?: error("加载器安装包缺少 install_profile.json")
+            } ?: error(I18n.t("networkB2.loaderProfileFetcher.installerMissingProfile"))
         val versionJson =
             if (profile.has("versionInfo")) {
                 profile.obj("versionInfo")
             } else {
                 val jsonEntry =
                     zip.getEntry(profile.string("json", "/version.json").removePrefix("/"))
-                        ?: error("安装包缺少 version.json")
+                        ?: error(I18n.t("networkB2.loaderProfileFetcher.installerMissingVersionJson"))
                 zip.getInputStream(jsonEntry).reader().use {
                     com.google.gson.JsonParser
                         .parseReader(it)
@@ -265,9 +293,9 @@ internal class LoaderProfileFetcher(
                 .flatMap { resolver.libraryArtifacts(it).map { pair -> pair.first } }
         network.downloadAll(
             libraries,
-            store.data.settings.maxConcurrent,
+            store.data.settings.downloadThreads,
             context,
-            "${InstallPhase.LOADER}：下载依赖",
+            I18n.t("networkB2.loaderProfileFetcher.downloadingLibraries", InstallPhase.LOADER),
             at(FORGE_LIBRARIES_PROGRESS_START),
             at(FORGE_LIBRARIES_PROGRESS_END),
         )
@@ -328,7 +356,12 @@ internal class LoaderProfileFetcher(
                 FORGE_PROCESSORS_PROGRESS_START + finishedFraction * FORGE_PROCESSORS_PROGRESS_SPAN
             context.progress(
                 at(fraction),
-                "${InstallPhase.LOADER}：处理组件 ${index + 1}/${processors.size}",
+                I18n.t(
+                    "networkB2.loaderProfileFetcher.processingComponent",
+                    InstallPhase.LOADER,
+                    index + 1,
+                    processors.size,
+                ),
             )
             runForgeProcessor(processor, variables, root, runtime, context)
         }
@@ -353,7 +386,7 @@ internal class LoaderProfileFetcher(
         val mainClass =
             JarFile(artifact.toFile()).use {
                 it.manifest?.mainAttributes?.getValue("Main-Class")
-            } ?: error("加载器处理器没有主程序")
+            } ?: error(I18n.t("networkB2.loaderProfileFetcher.processorMissingMain"))
         val classpath =
             processorClasspath(processor, artifact, root, store.platform.classpathSeparator)
         val trackedOutputs =
@@ -413,7 +446,9 @@ private fun expandForgeVariable(
     if (result.startsWith('\'') && result.endsWith('\'')) {
         result = result.substring(1, result.length - 1)
     }
-    require(!Regex("\\{[^}]+}").containsMatchIn(result)) { "安装器包含无法解析的变量：$result" }
+    require(!Regex("\\{[^}]+}").containsMatchIn(result)) {
+        I18n.t("networkB2.loaderProfileFetcher.unresolvedVariable", result)
+    }
     return result
 }
 
@@ -454,7 +489,43 @@ private fun verifyProcessorOutputs(outputs: List<Pair<String, String>>) {
                         digest(Path.of(file)).equals(hash, true)
                 ),
         ) {
-            "加载器处理结果校验失败"
+            I18n.t("networkB2.loaderProfileFetcher.processorOutputInvalid")
         }
     }
+}
+
+/** Forge/NeoForge 安装器在各自 Maven 上的直链。 */
+private fun forgeInstallerUrl(instance: GameInstance): Triple<String, String, String> =
+    when (instance.loader) {
+        LoaderType.Cleanroom ->
+            Triple(
+                "https://hmcl.glavo.site/metadata/cleanroom/files/" +
+                    "cleanroom-${encoded(instance.loaderVersion)}-installer.jar",
+                "cleanroom",
+                instance.loaderVersion,
+            )
+        LoaderType.Forge -> forgeInstallUrl(instance, forge = true)
+        else -> forgeInstallUrl(instance, forge = false)
+    }
+
+private fun forgeInstallUrl(
+    instance: GameInstance,
+    forge: Boolean,
+): Triple<String, String, String> {
+    val project = if (forge || instance.gameVersion == "1.20.1") "forge" else "neoforge"
+    val version =
+        if (forge) {
+            "${instance.gameVersion}-${instance.loaderVersion}"
+        } else {
+            instance.loaderVersion
+        }
+    val host =
+        if (forge) {
+            "https://maven.minecraftforge.net"
+        } else {
+            "https://maven.neoforged.net/releases"
+        }
+    val group = if (forge) "net/minecraftforge" else "net/neoforged"
+    val url = "$host/$group/$project/$version/$project-$version-installer.jar"
+    return Triple(url, project, version)
 }

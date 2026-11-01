@@ -86,7 +86,7 @@ private suspend fun chooseContentDirectory(
     withContext(Dispatchers.Swing) {
         if (picked == null) return@withContext
         if (instanceRoot == null) {
-            actions.controller.store.notify("请先在「安装到」里选择游戏实例：资源会下载到实例目录")
+            actions.controller.store.notify(tr("deskD.content.instanceRequired"))
             return@withContext
         }
         onPicked(picked)
@@ -95,20 +95,21 @@ private suspend fun chooseContentDirectory(
 
 private fun contentPickTitle(type: String): String =
     if (type == "datapack") {
-        "数据包会放进这个存档的 datapacks 文件夹"
+        tr("deskD.content.pickTitleDatapack")
     } else {
-        "下载的资源会放进这个文件夹"
+        tr("deskD.content.pickTitleDefault")
     }
 
 /** 项目介绍：Modrinth 的 body 是 Markdown（可能夹带内联 HTML），交给 MarkdownText 渲染。 */
 internal fun LazyListScope.contentDescriptionItem(details: ContentDetails?) {
     item {
+        val strings = LocalStrings.current
         // 这里不预先剥离标记，否则 ##、-、[文字](链接) 会退化成原文。
         val body = details?.body
         if (body == null) {
-            Text("正在读取…", style = MaterialTheme.typography.bodySmall)
+            Text(strings.t("deskD.content.loading"), style = MaterialTheme.typography.bodySmall)
         } else {
-            MarkdownText(body.ifBlank { "项目暂无介绍。" }, Modifier.fillMaxWidth())
+            MarkdownText(body.ifBlank { strings.t("deskD.content.noDescription") }, Modifier.fillMaxWidth())
         }
     }
 }
@@ -121,11 +122,16 @@ internal fun LazyListScope.contentChangelogItem(
     chosen: ContentVersion?,
 ) {
     item {
+        val strings = LocalStrings.current
         if (changelogLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
         Text(
             changelogError
-                ?: changelog?.changelog?.ifBlank { "作者没有提供此版本的更新日志。" }
-                ?: if (chosen == null) "请先选择一个资源版本。" else "正在读取更新日志…",
+                ?: changelog?.changelog?.ifBlank { strings.t("deskD.content.noChangelog") }
+                ?: if (chosen == null) {
+                    strings.t("deskD.content.chooseVersion")
+                } else {
+                    strings.t("deskD.content.loadingChangelog")
+                },
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -138,16 +144,17 @@ internal fun LazyListScope.contentRecommendationItem(
 ) {
     recommendation?.let { best ->
         item {
+            val strings = LocalStrings.current
             Panel(Modifier.fillMaxWidth(), padding = 10) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             if (best.channel != "release") {
-                                "暂无正式版 · 最新测试文件"
+                                strings.t("deskD.content.onlyBeta")
                             } else if (best.featured) {
-                                "推荐版本 · 作者推荐的兼容正式版"
+                                strings.t("deskD.content.featuredRelease")
                             } else {
-                                "推荐版本 · 最新兼容正式版"
+                                strings.t("deskD.content.latestRelease")
                             },
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 12.sp,
@@ -159,7 +166,7 @@ internal fun LazyListScope.contentRecommendationItem(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    TextButton({ onChoose(best) }) { Text("选择推荐") }
+                    TextButton({ onChoose(best) }) { Text(strings.t("deskD.content.chooseRecommended")) }
                 }
             }
         }
@@ -176,12 +183,13 @@ internal fun LazyListScope.contentVersionItems(
 ) {
     if (!loading && versions.isEmpty()) {
         item {
+            val strings = LocalStrings.current
             EmptyState(
-                "没有符合条件的版本",
-                "切换游戏版本、加载器或发布类型后重试。",
+                strings.t("deskD.content.noVersionsTitle"),
+                strings.t("deskD.content.noVersionsHint"),
                 Icons.Outlined.SearchOff,
             ) {
-                TextButton(onResetFilters) { Text("显示全部版本") }
+                TextButton(onResetFilters) { Text(strings.t("deskD.content.showAllVersions")) }
             }
         }
     }

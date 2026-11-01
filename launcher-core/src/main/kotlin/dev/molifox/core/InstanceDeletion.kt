@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -83,7 +84,7 @@ class InstanceDeletionService(
         if (versionId.isNotBlank()) {
             val name = runCatching { safeFilename(versionId) }.getOrNull()
             if (name == null) {
-                preserved += "versions/$versionId（版本标识不合法，未删除）"
+                preserved += I18n.t("core.instanceDeletion.1", versionId)
             } else {
                 val folder = deletionOwnedTarget(root, root.resolve("versions").resolve(name))
                 if (folder != null) {
@@ -108,7 +109,7 @@ class InstanceDeletionService(
     /** 游戏目录解析失败（目录已移除或路径非法）时统一转成删除被拒绝的提示。 */
     private fun blockedByGameDirectory(failure: Exception): InstanceDeletionBlockedException =
         InstanceDeletionBlockedException(
-            "无法删除：${failure.message ?: "游戏目录已被移除"}",
+            I18n.t("core.instanceDeletion.2", failure.message ?: I18n.t("instA1.deletion.gameDirectoryRemoved")),
             failure,
         )
 
@@ -118,10 +119,10 @@ class InstanceDeletionService(
             try {
                 declared.toRealPath()
             } catch (failure: IOException) {
-                throw InstanceDeletionBlockedException("无法删除：游戏目录不存在（$declared）", failure)
+                throw InstanceDeletionBlockedException(I18n.t("core.instanceDeletion.3", declared), failure)
             }
         if (!Files.isDirectory(root)) {
-            throw InstanceDeletionBlockedException("无法删除：游戏目录不是文件夹（$root）")
+            throw InstanceDeletionBlockedException(I18n.t("core.instanceDeletion.4", root))
         }
         return root
     }
@@ -139,7 +140,7 @@ class InstanceDeletionService(
         val sharers = sharers(instance, root, versionId)
         if (sharers.isEmpty()) return
         throw InstanceDeletionBlockedException(
-            "无法删除：版本目录仍被实例${sharers.joinToString("、") { "「$it」" }}使用；请先处理该实例",
+            I18n.t("core.instanceDeletion.5", sharers.joinToString("、") { "「$it」" }),
         )
     }
 
@@ -162,7 +163,7 @@ class InstanceDeletionService(
             if (!target.exists(LinkOption.NOFOLLOW_LINKS)) {
                 // 规划后被别处删掉：目标确实不再存在，不能因此留下记录。
                 removed += target.toString()
-                store.log("实例文件已不存在，视为已删除：$target")
+                store.log(I18n.t("instA1.deletion.alreadyMissing", target))
                 continue
             }
             val trashedThis =
@@ -175,7 +176,7 @@ class InstanceDeletionService(
         // 二次核对：任何自有目录还在，就不能让调用方把它当成「删干净了」。
         val remaining = plan.targets.filter { it.exists(LinkOption.NOFOLLOW_LINKS) }
         if (remaining.isNotEmpty()) {
-            throw IOException("无法删除：${remaining.joinToString("、")} 仍存在，已保留实例记录")
+            throw IOException(I18n.t("core.instanceDeletion.6", remaining.joinToString("、")))
         }
         return InstanceDeletionReport(
             removed,
@@ -206,16 +207,16 @@ class InstanceDeletionService(
                     store.platform.moveToTrash(target)
                     true
                 } catch (failure: IOException) {
-                    store.log("回收站不可用，改为永久删除：$target（${failure.message}）", true)
+                    store.log(I18n.t("instA1.deletion.trashUnavailable", target, failure.message), true)
                     onPermanentFallback()
                     deletionDeleteTree(target)
                     false
                 }
             }
         } catch (failure: IOException) {
-            store.log("删除实例文件失败：$target（${failure.message}）", true)
+            store.log(I18n.t("instA1.deletion.deleteFailed", target, failure.message), true)
             throw IOException(
-                "删除实例文件失败：$target（已处理 $processed 项）；${failure.message}",
+                I18n.t("core.instanceDeletion.7", target, processed, failure.message),
                 failure,
             )
         }
@@ -228,11 +229,11 @@ class InstanceDeletionService(
     ) {
         store.log(
             if (trashed) {
-                "实例文件已移入回收站：$target"
+                I18n.t("instA1.deletion.movedToTrash", target)
             } else if (permanent) {
-                "实例文件已永久删除：$target"
+                I18n.t("core.instanceDeletion.8", target)
             } else {
-                "实例文件已改为永久删除：$target"
+                I18n.t("core.instanceDeletion.9", target)
             },
         )
     }
@@ -240,8 +241,8 @@ class InstanceDeletionService(
     /** 删除动作结束后目标必须消失；仍在磁盘上就拒绝让调用方移除实例记录。 */
     private fun requireDeleted(target: Path) {
         if (!target.exists(LinkOption.NOFOLLOW_LINKS)) return
-        store.log("删除后文件仍存在：$target", true)
-        throw IOException("无法删除：$target 仍存在，已保留实例记录")
+        store.log(I18n.t("instA1.deletion.stillPresentAfterDelete", target), true)
+        throw IOException(I18n.t("core.instanceDeletion.6", target))
     }
 
     /**

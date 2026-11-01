@@ -51,6 +51,7 @@ fun InstanceMoveDialog(
     onDismiss: () -> Unit,
     onStarted: () -> Unit = {},
 ) {
+    val strings = LocalStrings.current
     // 目标目录可以在弹窗内重新选择：同目录、磁盘根目录等会被后端拒绝，不必关闭重来。
     var target by remember(instance.id, destination) { mutableStateOf(destination) }
     var plan by remember(instance.id, destination) { mutableStateOf<IsolationPlan?>(null) }
@@ -70,7 +71,7 @@ fun InstanceMoveDialog(
     )
     val prepared = plan
     val blockers = prepared?.blockers.orEmpty()
-    Modal("移动到其他游戏目录", instance.name, width = 640.dp, onDismiss = onDismiss) {
+    Modal(strings.t("dialogs.move.title"), instance.name, width = 640.dp, onDismiss = onDismiss) {
         MovePlanBody(
             prepared = prepared,
             loading = loading,
@@ -86,7 +87,7 @@ fun InstanceMoveDialog(
         }
         confirmError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         DialogActions(
-            confirmText = if (confirming) "正在开始…" else "开始移动",
+            confirmText = if (confirming) strings.t("dialogs.move.starting") else strings.t("dialogs.move.start"),
             danger = true,
             enabled =
                 canStartMove(
@@ -124,6 +125,7 @@ private fun MovePlanEffect(
     onLoading: (Boolean) -> Unit,
     onError: (String?) -> Unit,
 ) {
+    val strings = LocalStrings.current
     LaunchedEffect(instanceId, target, attempt) {
         onPlan(null)
         onLoading(true)
@@ -137,11 +139,11 @@ private fun MovePlanEffect(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: IllegalArgumentException) {
-            onError(failure.message ?: "无法预览这次移动")
+            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
         } catch (failure: IllegalStateException) {
-            onError(failure.message ?: "无法预览这次移动")
+            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
         } catch (failure: UncheckedIOException) {
-            onError(failure.message ?: "无法预览这次移动")
+            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
         } finally {
             onLoading(false)
         }
@@ -174,12 +176,13 @@ private fun MovePlanBody(
 
 @Composable
 private fun MovePlanLoading() {
+    val strings = LocalStrings.current
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LinearProgressIndicator(Modifier.fillMaxWidth())
-        MutedText("正在扫描实例目录并生成移动计划…")
+        MutedText(strings.t("dialogs.move.scanning"))
     }
 }
 
@@ -189,15 +192,16 @@ private fun MovePlanUnavailable(
     onRetry: () -> Unit,
     onPickTarget: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.fillMaxWidth()) {
         EmptyState(
-            "无法预览这次移动",
+            strings.t("dialogs.move.previewFailed"),
             error,
             Icons.Outlined.ErrorOutline,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onRetry) { Text("重新预览") }
-                TextButton(onPickTarget) { Text("选择其他目录…") }
+                TextButton(onRetry) { Text(strings.t("dialogs.move.previewAgain")) }
+                TextButton(onPickTarget) { Text(strings.t("dialogs.move.chooseOther")) }
             }
         }
     }
@@ -212,6 +216,7 @@ private fun MovePlanDetails(
     confirming: Boolean,
     onRetry: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Text(
         target.toString(),
         fontSize = 11.sp,
@@ -219,34 +224,33 @@ private fun MovePlanDetails(
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
     )
-    SettingsSection("移动预览", "只读扫描实例目录，不会改动任何文件。") {
-        SettingRow("条目数", "实例目录中扫描到的全部文件") {
-            Text("${prepared.entries.size} 个", fontSize = 13.sp)
+    SettingsSection(strings.t("dialogs.move.preview"), strings.t("dialogs.move.previewHint")) {
+        SettingRow(strings.t("dialogs.move.entryCount"), strings.t("dialogs.move.entryCountHint")) {
+            Text(strings.t("dialogs.move.items", prepared.entries.size), fontSize = 13.sp)
         }
-        SettingRow("需要复制", "其中可以复制的文件") {
-            Text("${prepared.transferCount} 个", fontSize = 13.sp)
+        SettingRow(strings.t("dialogs.move.toCopy"), strings.t("dialogs.move.toCopyHint")) {
+            Text(strings.t("dialogs.move.transferItems", prepared.transferCount), fontSize = 13.sp)
         }
-        SettingRow("总体积", "复制后按文件数与字节数校验") {
+        SettingRow(strings.t("dialogs.move.totalSize"), strings.t("dialogs.move.totalSizeHint")) {
             Text(reportBytes(prepared.copyBytes), fontSize = 13.sp)
         }
-        SettingRow("冲突", "目标已有同名文件或文件夹") {
+        SettingRow(strings.t("dialogs.move.conflicts"), strings.t("dialogs.move.conflictsHint")) {
             ConflictCountText(prepared.conflictCount)
         }
     }
     Text(
-        "移动会先复制到新目录并校验，再切换实例记录，最后把原目录移入回收站；" +
-            "任何一步失败都不会删除源目录。目标目录未登记时会自动加入游戏目录列表。",
+        strings.t("dialogs.move.note"),
         fontSize = 11.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (blockers.isNotEmpty()) {
         SettingsSection(
-            "需要先处理（${blockers.size} 项）",
-            "处理完成后重新预览；不会静默覆盖或删除文件。",
+            strings.t("dialogs.move.blockers", blockers.size),
+            strings.t("dialogs.move.blockersHint"),
             action = {
                 if (!confirming) {
                     TextButton(onRetry) {
-                        Text("重新预览", fontSize = 12.sp)
+                        Text(strings.t("dialogs.move.previewAgain"), fontSize = 12.sp)
                     }
                 }
             },
@@ -258,7 +262,7 @@ private fun MovePlanDetails(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            if (blockers.size > 8) MutedText("还有 ${blockers.size - 8} 条未显示。")
+            if (blockers.size > 8) MutedText(strings.t("dialogs.move.moreHidden", blockers.size - 8))
         }
     }
 }
@@ -266,8 +270,9 @@ private fun MovePlanDetails(
 /** 计划里的冲突计数：有冲突时用错误色，提醒必须先手动处理。 */
 @Composable
 private fun ConflictCountText(count: Int) {
+    val strings = LocalStrings.current
     Text(
-        "$count 个",
+        strings.t("dialogs.move.countItems", count),
         fontSize = 13.sp,
         color =
             if (count > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
@@ -298,9 +303,9 @@ private fun moveHint(
 ): String =
     when {
         prepared == null -> ""
-        blockers.isNotEmpty() -> "目标有冲突，需要手动处理后重新预览"
-        busy -> "请等待当前任务结束"
-        else -> "原目录会在校验通过后移入回收站。"
+        blockers.isNotEmpty() -> tr("dialogs.move.conflictHint")
+        busy -> tr("dialogs.move.busyHint")
+        else -> tr("dialogs.move.trashHint")
     }
 
 /** 提交移动任务；返回非空字符串表示失败原因，由调用方恢复确认状态。 */
@@ -317,11 +322,11 @@ private fun startInstanceMove(
         onDismiss()
         null
     } catch (failure: IllegalArgumentException) {
-        failure.message ?: "无法开始移动，请稍后重试"
+        failure.message ?: tr("dialogs.move.failed")
     } catch (failure: IllegalStateException) {
-        failure.message ?: "无法开始移动，请稍后重试"
+        failure.message ?: tr("dialogs.move.failed")
     } catch (failure: UncheckedIOException) {
-        failure.message ?: "无法开始移动，请稍后重试"
+        failure.message ?: tr("dialogs.move.failed")
     }
 
 /** 选择目标游戏目录：实例会放到所选目录的 versions 文件夹中。 */
@@ -332,7 +337,7 @@ private fun pickMoveTarget(
     actions.run {
         actions
             .choose(
-                "选择目标游戏目录（实例会放到其中的 versions 文件夹）",
+                tr("dialogs.move.chooseDir"),
                 directory = true,
             ).firstOrNull()
             ?.let { selected ->

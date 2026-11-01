@@ -63,14 +63,15 @@ internal fun RowScope.InstallOptionsPanel(
     loaderLoading: Boolean,
     loaderError: String?,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.weight(1f).fillMaxHeight(), padding = 14) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("安装选项", style = MaterialTheme.typography.titleMedium)
+            Text(strings.t("deskA.installOptions.title"), style = MaterialTheme.typography.titleMedium)
             Text(
-                "Minecraft ${selected.ifBlank { "· 请选择版本" }}",
+                "Minecraft " + selected.ifBlank { strings.t("deskA.installOptions.pickVersion") },
                 style = MaterialTheme.typography.titleSmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -84,16 +85,16 @@ internal fun RowScope.InstallOptionsPanel(
                     },
                     contentPadding = PaddingValues(0.dp),
                 ) {
-                    Text("官方更新", fontSize = 12.sp)
+                    Text(strings.t("deskA.installOptions.officialUpdates"), fontSize = 12.sp)
                 }
             }
             CompactTextField(
                 name,
                 onNameChange,
                 Modifier.fillMaxWidth(),
-                label = "实例名称",
+                label = strings.t("dialogs.rename.nameLabel"),
                 placeholder =
-                    selected.ifBlank { "选择左侧版本" } + loaderSuffix(loader),
+                    selected.ifBlank { strings.t("deskA.installOptions.namePlaceholder") } + loaderSuffix(loader),
             )
             LoaderChoiceGrid(loader, onLoaderChange)
             LoaderVersionStatus(
@@ -107,7 +108,7 @@ internal fun RowScope.InstallOptionsPanel(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             IsolationHint(state.data.settings.isolateVersions)
             Text(
-                "安装时校验游戏文件并准备缺少的依赖，进度会显示在任务列表。",
+                strings.t("deskA.installOptions.installNote"),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -121,15 +122,18 @@ private fun LoaderChoiceGrid(
     loader: LoaderType,
     onLoaderChange: (LoaderType) -> Unit,
 ) {
+    val strings = LocalStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
-            "模组加载器",
+            strings.t("pages.instance.install.current.loader"),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // LiteLoader 与 Cleanroom 不再出现在新建入口，只保留给已有实例识别与启动。
         listOf(
             listOf(LoaderType.Vanilla, LoaderType.Fabric, LoaderType.Quilt),
-            listOf(LoaderType.Forge, LoaderType.NeoForge),
+            listOf(LoaderType.Forge, LoaderType.NeoForge, LoaderType.LegacyFabric),
+            listOf(LoaderType.OptiFine),
         ).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 row.forEach { item ->
@@ -137,6 +141,7 @@ private fun LoaderChoiceGrid(
                         onLoaderChange(item)
                     }
                 }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -152,6 +157,7 @@ private fun LoaderVersionStatus(
     loaderVersion: String,
     onLoaderVersionChange: (String) -> Unit,
 ) {
+    val strings = LocalStrings.current
     when {
         loaderLoading -> LinearProgressIndicator(Modifier.fillMaxWidth())
         loaderError != null ->
@@ -162,7 +168,7 @@ private fun LoaderVersionStatus(
             )
         loader != LoaderType.Vanilla && loaders.isEmpty() ->
             Text(
-                "该版本暂无可用的 " + loader.title,
+                strings.t("deskA.installOptions.noLoaderVersions", loader.title),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -170,7 +176,17 @@ private fun LoaderVersionStatus(
             SimpleDropdown(
                 loaderVersion,
                 loaders.map {
-                    it.version to (it.version + if (it.stable) " · 稳定版" else " · 测试版")
+                    it.version to
+                        (
+                            it.version + " · " +
+                                strings.t(
+                                    if (it.stable) {
+                                        "deskA.installOptions.loaderVersion.stable"
+                                    } else {
+                                        "deskA.installOptions.loaderVersion.beta"
+                                    },
+                                )
+                        )
                 },
                 onLoaderVersionChange,
             )
@@ -180,6 +196,7 @@ private fun LoaderVersionStatus(
 /** 隔离方式提示：只说明当前游戏目录的隔离状态，不在这里切换。 */
 @Composable
 private fun IsolationHint(isolated: Boolean) {
+    val strings = LocalStrings.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             Icons.Outlined.Shield,
@@ -189,7 +206,11 @@ private fun IsolationHint(isolated: Boolean) {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            if (isolated) "版本隔离已启用" else "当前使用共用游戏目录",
+            if (isolated) {
+                strings.t("deskA.installOptions.isolationEnabled")
+            } else {
+                strings.t("deskA.installOptions.sharedGameDirectory")
+            },
             fontSize = 12.sp,
         )
     }
@@ -202,6 +223,7 @@ private fun LoaderChoice(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val background by
         animateColorAsState(
@@ -237,7 +259,11 @@ private fun LoaderChoice(
             maxLines = 1,
         )
         Text(
-            if (selected) "已选择" else "点选切换",
+            if (selected) {
+                strings.t("deskA.installOptions.selected")
+            } else {
+                strings.t("deskA.installOptions.selectHint")
+            },
             fontSize = 10.sp,
             color =
                 if (selected) {
@@ -251,5 +277,4 @@ private fun LoaderChoice(
 }
 
 /** 加载器后缀：与原版一致的「 · 加载器名」，原版为空。 */
-internal fun loaderSuffix(loader: LoaderType): String =
-    if (loader != LoaderType.Vanilla) " · " + loader.title else ""
+internal fun loaderSuffix(loader: LoaderType): String = if (loader != LoaderType.Vanilla) " · " + loader.title else ""

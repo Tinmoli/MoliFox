@@ -75,7 +75,7 @@ internal fun SaveRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    formatSaveSize(entry.size) + " · 修改于 " + formatSaveTime(entry.lastModified),
+                    tr("saveC.row.meta", formatSaveSize(entry.size), formatSaveTime(entry.lastModified)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -84,7 +84,7 @@ internal fun SaveRow(
             }
             if (!entry.hasLevelDat) {
                 Text(
-                    "可能不是有效世界",
+                    tr("saveC.row.maybeInvalid"),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.error.copy(alpha = .85f),
                     maxLines = 1,
@@ -95,15 +95,15 @@ internal fun SaveRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 RowTextAction(
-                    "详情",
+                    tr("saveC.row.details"),
                     enabled = entry.hasLevelDat && !entry.name.endsWith(".zip", true),
                     onClick = onDetails,
                 )
-                RowTextAction("备份", enabled = canManage, onClick = onBackup)
-                RowTextAction("复制到…", enabled = canCopy, onClick = onCopy)
+                RowTextAction(tr("saveC.row.backup"), enabled = canManage, onClick = onBackup)
+                RowTextAction(tr("saveC.row.copyTo"), enabled = canCopy, onClick = onCopy)
                 RowIconAction(
                     Icons.Outlined.DeleteOutline,
-                    "将「${entry.name}」移至回收站",
+                    tr("saveC.row.trash", entry.name),
                     enabled = canManage,
                     onClick = onDelete,
                 )
@@ -146,7 +146,7 @@ internal fun SaveBackupRow(
                 formatSaveTime(backup.createdAt) +
                     " · " +
                     formatSaveSize(backup.size) +
-                    if (backup.restorable) "" else " · 不含 level.dat",
+                    if (backup.restorable) "" else tr("saveC.backup.noLevelDat"),
                 fontSize = 12.sp,
                 color =
                     if (backup.restorable) {
@@ -162,10 +162,10 @@ internal fun SaveBackupRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            RowTextAction("恢复", enabled = !busy && backup.restorable, onClick = onRestore)
+            RowTextAction(tr("saveC.backup.restore"), enabled = !busy && backup.restorable, onClick = onRestore)
             RowIconAction(
                 Icons.Outlined.DeleteOutline,
-                "将备份移至回收站",
+                tr("saveC.backup.trash"),
                 enabled = !busy,
                 onClick = onDelete,
             )
@@ -184,7 +184,7 @@ private val saveTimeFormatter: java.time.format.DateTimeFormatter =
         .withZone(java.time.ZoneId.systemDefault())
 
 internal fun formatSaveTime(time: java.time.Instant?): String =
-    time?.let { runCatching { saveTimeFormatter.format(it) }.getOrNull() } ?: "未知时间"
+    time?.let { runCatching { saveTimeFormatter.format(it) }.getOrNull() } ?: tr("saveC.row.unknownTime")
 
 internal fun formatSaveSize(bytes: Long): String =
     when {

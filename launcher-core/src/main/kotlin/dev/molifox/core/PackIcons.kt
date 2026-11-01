@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -32,7 +33,7 @@ internal suspend fun applyPackIcon(
 ) {
     val candidates = collectPackIconCandidates(zip, manifest)
     val entry = findPackIconEntry(zip, candidates) ?: return
-    require(entry.size in 1L..MAX_PACK_ICON_BYTES) { "整合包图标超过 2 MiB 或为空" }
+    require(entry.size in 1L..MAX_PACK_ICON_BYTES) { I18n.t("packsA2.packIcon.sizeOrEmpty") }
     writePackIcon(store, instanceId, zip, entry)
 }
 
@@ -122,8 +123,8 @@ private fun findPackIconEntry(
             .filter { !it.isDirectory }
             .groupBy { it.name }
     return candidates.firstNotNullOfOrNull { candidate ->
-        require(isSafePackIconPath(candidate)) { "整合包图标路径无效" }
-        entries[candidate]?.also { require(it.size == 1) { "整合包图标重复" } }?.single()
+        require(isSafePackIconPath(candidate)) { I18n.t("packsA2.packIcon.pathInvalid") }
+        entries[candidate]?.also { require(it.size == 1) { I18n.t("packsA2.packIcon.duplicate") } }?.single()
     }
 }
 
@@ -144,7 +145,7 @@ private suspend fun writePackIcon(
     try {
         val bytes =
             zip.getInputStream(entry).use { it.readNBytes(MAX_PACK_ICON_BYTES.toInt() + 1) }
-        require(bytes.size.toLong() <= MAX_PACK_ICON_BYTES) { "整合包图标过大" }
+        require(bytes.size.toLong() <= MAX_PACK_ICON_BYTES) { I18n.t("packsA2.packIcon.tooLarge") }
         source.writeBytes(bytes)
         InstanceIcons(store).setPackIcon(instanceId, source)
     } finally {

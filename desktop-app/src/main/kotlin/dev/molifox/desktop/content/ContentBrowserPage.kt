@@ -63,6 +63,7 @@ import dev.molifox.core.LoaderType
 import dev.molifox.core.minecraftVersionTag
 import dev.molifox.desktop.CompactSearchField
 import dev.molifox.desktop.ContentProjectDialog
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Panel
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SecondaryButton
@@ -70,6 +71,7 @@ import dev.molifox.desktop.SimpleDropdown
 import dev.molifox.desktop.SmallIconButton
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.selectedRowBackground
+import dev.molifox.desktop.tr
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -79,7 +81,12 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /** 结果排序：只在当前页内重排（后端分页接口只按相关度返回，不改业务参数）。 */
-private val contentSortOptions = listOf("downloads" to "下载量", "relevance" to "相关度", "name" to "名称")
+private fun contentSortOptions(): List<Pair<String, String>> =
+    listOf(
+        "downloads" to tr("pages.content.sort.downloads"),
+        "relevance" to tr("pages.content.sort.relevance"),
+        "name" to tr("pages.content.sort.name"),
+    )
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -88,6 +95,7 @@ fun ColumnScope.ContentBrowser(
     actions: UiActions,
     kind: String,
 ) {
+    val strings = LocalStrings.current
     val preferences = state.data.settings.pages.downloads
     var query by remember { mutableStateOf("") }
     var result by remember { mutableStateOf(ContentSearch(emptyList(), 0)) }
@@ -226,16 +234,17 @@ fun ColumnScope.ContentBrowser(
                     query,
                     { query = it },
                     Modifier.weight(1f),
-                    placeholder = "搜索资源名称，例如 Sodium、Fabric API…",
+                    placeholder = strings.t("pages.content.search.placeholder"),
                 )
-                PrimaryButton("搜索", Icons.Outlined.Search, onClick = { refresh++ })
+                PrimaryButton(strings.t("pages.content.search.submit"), Icons.Outlined.Search, onClick = { refresh++ })
                 val sourceHome = contentSourceHome(state.data.settings.contentDownloadSource)
                 if (sourceHome != null) {
                     SmallIconButton(
                         Icons.Outlined.OpenInNew,
-                        "打开 " +
-                            contentSourceName(state.data.settings.contentDownloadSource) +
-                            " 主页",
+                        strings.t(
+                            "pages.content.openSource",
+                            contentSourceName(state.data.settings.contentDownloadSource),
+                        ),
                         { actions.run { actions.controller.platform.openUrl(sourceHome) } },
                     )
                 }
@@ -270,7 +279,7 @@ fun ColumnScope.ContentBrowser(
                         Modifier.width(125.dp),
                     )
                 }
-                SimpleDropdown(sort, contentSortOptions, { sort = it }, Modifier.width(105.dp))
+                SimpleDropdown(sort, contentSortOptions(), { sort = it }, Modifier.width(105.dp))
                 // 下载源：点一下就能换；世界只提供 CurseForge，显示固定说明。
                 ContentSourceControl(kind, state.data.settings.contentDownloadSource, actions)
             }
@@ -282,7 +291,7 @@ fun ColumnScope.ContentBrowser(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "整合包也可以直接导入本地文件。",
+                        strings.t("pages.content.pack.localHint"),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -290,7 +299,7 @@ fun ColumnScope.ContentBrowser(
                     SecondaryButton({ actions.importPack() }, enabled = !actions.controller.busy) {
                         Icon(Icons.Outlined.Unarchive, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("导入整合包", fontSize = 12.sp)
+                        Text(strings.t("pages.content.pack.import"), fontSize = 12.sp)
                     }
                 }
             }
@@ -352,15 +361,12 @@ private fun contentHint(
 ): String =
     when {
         kind == "modpack" -> ""
-        target == null -> "先安装并选择游戏实例，即可下载兼容的资源。"
-        kind == "mod" && target.loader == LoaderType.Vanilla -> "当前是原版实例，安装模组需要 Fabric、Forge 等加载器。"
-        kind == "world" -> "世界会安装到所选实例的 saves/；同名世界不会覆盖。"
-        kind == "shader" -> "光影会安装至 shaderpacks；请先在实例中准备兼容的 Iris 或 OptiFine。"
-        else ->
-            "已按 Minecraft " +
-                target.gameVersion +
-                (if (kind == "mod") " / " + target.loader.title else "") +
-                " 筛选，下载时会补全必需的前置资源。"
+        target == null -> tr("pages.content.empty.noInstance")
+        kind == "mod" && target.loader == LoaderType.Vanilla -> tr("pages.content.empty.vanilla")
+        kind == "world" -> tr("pages.content.empty.world")
+        kind == "shader" -> tr("pages.content.empty.shader")
+        kind == "mod" -> tr("pages.content.hint.filteredLoader", target.gameVersion, target.loader.title)
+        else -> tr("pages.content.hint.filtered", target.gameVersion)
     }
 
 /** 表单底部的筛选说明：优先解释版本列表不可用，其次区分跟随实例与显式筛选。 */
@@ -377,9 +383,9 @@ private fun contentFormHint(
             gameVersion == instanceVersion.orEmpty() &&
             (kind != "mod" || loader == selected.loader)
     return when {
-        versionListFailed -> "游戏版本列表暂不可用；项目详情仍可选择作者提供的版本。"
+        versionListFailed -> tr("pages.content.hint.versionListFailed")
         followsInstance -> contentHint(kind, selected)
-        else -> "按所选游戏版本 / 加载器筛选，不会更换安装实例。"
+        else -> tr("pages.content.hint.explicitFilter")
     }
 }
 
@@ -391,7 +397,7 @@ private fun gameVersionOptions(
 ): List<Pair<String, String>> =
     buildList<Pair<String, String>> {
         instanceVersion?.let { add(it to it) }
-        add("" to "全部游戏版本")
+        add("" to tr("pages.content.version.all"))
         gameVersions.filter { it != instanceVersion }.forEach { add(it to it) }
         if (
             gameVersion.isNotBlank() &&
@@ -409,7 +415,7 @@ private fun loaderOptions(instanceLoader: LoaderType?): List<Pair<String, String
         LoaderType.entries
             .filter { it != LoaderType.Vanilla && it != instanceLoader }
             .forEach { add(it.name to it.title) }
-        add("" to "全部加载器")
+        add("" to tr("pages.content.loader.all"))
     }
 
 /** 当前内容源可用的分类；非 CurseForge 来源改用内置分类表。 */
@@ -456,6 +462,7 @@ internal fun ViewToggle(
     listView: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val shape = RoundedCornerShape(4.dp)
     Row(
         Modifier
@@ -476,7 +483,7 @@ internal fun ViewToggle(
                 ) {
                     Icon(
                         icon,
-                        if (isList) "列表视图" else "卡片视图",
+                        if (isList) strings.t("pages.content.view.list") else strings.t("pages.content.view.grid"),
                         Modifier.size(14.dp),
                         if (active) {
                             MaterialTheme.colorScheme.onPrimaryContainer
@@ -491,6 +498,7 @@ internal fun ViewToggle(
 
 @Composable
 internal fun GoTopButton(onClick: () -> Unit) {
+    val strings = LocalStrings.current
     Surface(
         onClick,
         Modifier.size(36.dp),
@@ -501,7 +509,7 @@ internal fun GoTopButton(onClick: () -> Unit) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Outlined.KeyboardArrowUp,
-                "回到顶部",
+                strings.t("pages.content.goTop"),
                 Modifier.size(20.dp),
                 MaterialTheme.colorScheme.onPrimary,
             )

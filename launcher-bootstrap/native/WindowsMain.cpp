@@ -325,6 +325,20 @@ static void extractRuntime(const fs::path& archive, const fs::path& destination)
     mz_zip_reader_end(&zip);
 }
 
+/** 缺少系统 Java 时先征求同意；下载 Java 属于网络与磁盘操作，不能静默执行。 */
+static bool confirmJavaDownload() {
+    const auto text =
+        L"没有找到可用的 Java 17 或更高版本。\n\n"
+        L"是否从 Eclipse Temurin 官方源下载 Java 21 JRE？\n"
+        L"下载约 40–60 MB，保存在启动器旁边的 MoliFox\\runtimes\\ 文件夹中，不会修改系统环境变量。\n\n"
+        L"选择「否」将退出。你可以先自行安装 Java 17 或更高版本，然后重新启动 MoliFox。";
+    return MessageBoxW(
+               nullptr,
+               text,
+               L"MoliFox · 需要 Java",
+               MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
+}
+
 static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     showStatus(L"首次启动：正在获取 Java 21 运行环境。\n文件会保存在旁边的 MoliFox 文件夹中。");
     auto metadata = download(L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse");
@@ -412,6 +426,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         RunTemporaryDirectory temporary(data);
         SetCurrentDirectoryW(directory.c_str());
         SetEnvironmentVariableW(L"MOLIFOX_DATA_DIR", data.c_str());
+        // 传给 JVM：自动更新替换脚本要靠它定位当前便携版 exe（开发环境 java -jar 没有这个变量）。
+        SetEnvironmentVariableW(L"MOLIFOX_BUNDLE_PATH", executable);
         SetEnvironmentVariableW(L"TEMP", temporary.path.c_str());
         SetEnvironmentVariableW(L"TMP", temporary.path.c_str());
         auto resource = FindResourceW(instance, MAKEINTRESOURCEW(101), RT_RCDATA);
@@ -427,7 +443,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             check(MoveFileExW(pending.c_str(), jar.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), "Install launcher payload");
         }
         auto java = findJava(data);
-        if (java.empty()) java = prepareJava(data, temporary.path);
+        if (java.empty()) {
+            if (!confirmJavaDownload()) {
+                MessageBoxW(
+                    nullptr,
+                    L"已取消下载 Java，MoliFox 不会启动。\n请先安装 Java 17 或更高版本，然后重新启动。",
+                    L"MoliFox · 需要 Java",
+                    MB_OK | MB_ICONINFORMATION);
+                return 2;
+            }
+            java = prepareJava(data, temporary.path);
+        }
         { std::ofstream log(data / L"logs/bootstrap.log", std::ios::binary); log << "Java: " << utf8(java.wstring()) << "\nData: " << utf8(data.wstring()) << "\n"; }
         auto javaw = java.parent_path() / L"javaw.exe";
         if (fs::exists(javaw)) java = javaw;

@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -163,7 +164,7 @@ class RecentUsage(
                     .copy(lastUsed = entered),
             )
             save(capRecentUsage(entries))
-        }.onFailure { store.log("记录最近使用失败：${it.message ?: key}", true) }
+        }.onFailure { store.log(I18n.t("miscA2.recentUsage.recordFailed", it.message ?: key), true) }
     }
 
     /** 某条目最后一次使用时间；没有记录或文件损坏时返回 null。 */
@@ -214,7 +215,7 @@ class RecentUsage(
                     it.kind == kind && it.instanceId == instanceId && it.key == key
                 }
             if (remaining.size != entries.size) save(remaining)
-        }.onFailure { store.log("删除最近使用记录失败：${it.message ?: key}", true) }
+        }.onFailure { store.log(I18n.t("miscA2.recentUsage.deleteFailed", it.message ?: key), true) }
     }
 
     /**
@@ -240,11 +241,11 @@ class RecentUsage(
             val removed = entries.size - remaining.size
             if (removed > 0) {
                 save(remaining)
-                store.log("已清理最近使用记录：${kind.name} / $instanceId，共 $removed 条")
+                store.log(I18n.t("miscA2.recentUsage.pruned", kind.name, instanceId, removed))
             }
             removed
         }.getOrElse {
-            store.log("清理最近使用记录失败：${it.message ?: kind.name}", true)
+            store.log(I18n.t("miscA2.recentUsage.pruneFailed", it.message ?: kind.name), true)
             0
         }
     }

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.channels.FileChannel
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -25,7 +26,7 @@ internal fun requireSavesUnlocked(saves: Path) {
                 .firstOrNull { sessionLockHeld(it) }
         }.getOrNull()
     require(open == null) {
-        "世界「${open?.fileName}」正在游戏中打开，请先退出游戏再恢复存档"
+        I18n.t("saveA2.sessionLock.locked", open?.fileName)
     }
 }
 

@@ -75,9 +75,11 @@ class LauncherStore
         internal val actions: LauncherStoreActions
             get() = core.actions
 
+        /** 最近一次界面提示的流程类型；界面用它判断登录/保存等结果，不解析本地化文案。 */
+        fun noticeKind(): LauncherNoticeKind? = actions.lastNoticeKind()
+
         /** 仅供模块内更新界面状态；界面模块不该直接改状态。 */
-        internal fun updateState(block: (LauncherState) -> LauncherState) =
-            core.actions.updateState(block)
+        internal fun updateState(block: (LauncherState) -> LauncherState) = core.actions.updateState(block)
 
         /** 保存与状态写入共用的监视器：外部需要在整段操作里独占存储时用它。 */
         internal val lock: Any

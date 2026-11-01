@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.FrostedPanel
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SettingsNavItem
 import dev.molifox.multiplayer.common.LobbyPhase
@@ -41,12 +42,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private enum class MultiplayerSection(
-    val title: String,
+    val titleKey: String,
 ) {
-    Lobby("联机大厅"),
-    HostGuide("房主教程"),
-    GuestGuide("房客教程"),
-    Settings("联机设置"),
+    Lobby("dialogs.mp.tab.lobby"),
+    HostGuide("dialogs.mp.tab.hostGuide"),
+    GuestGuide("dialogs.mp.tab.guestGuide"),
+    Settings("dialogs.mp.tab.settings"),
 }
 
 private class MultiplayerPageState {
@@ -77,11 +78,12 @@ fun MultiplayerScreen(
     onCopy: (String) -> Unit,
     chooseArchive: suspend () -> String?,
 ) {
+    val strings = LocalStrings.current
     val settings by backend.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val page = remember { MultiplayerPageState() }
     val execute: ExecuteMultiplayer = { action ->
-        scope.launch { action().onFailure { page.message = it.message ?: "操作失败，请重试" } }
+        scope.launch { action().onFailure { page.message = it.message ?: strings.t("dialogs.mp.opFailed") } }
     }
     // 下载单独走一条路径：先把“已发起”标记置位，自动下载逻辑就不会再启动第二次。
     val downloadRuntime: () -> Unit = {
@@ -95,7 +97,7 @@ fun MultiplayerScreen(
                         onSuccess = { page.message = null },
                         onFailure = { failure ->
                             page.runtimeDownloadFailed = true
-                            page.message = failure.message ?: "下载 EasyTier 失败，请检查网络后重试"
+                            page.message = failure.message ?: strings.t("dialogs.mp.downloadRuntimeFailed")
                         },
                     )
                 }
@@ -116,7 +118,7 @@ fun MultiplayerScreen(
             scope.launch {
                 val archive =
                     runCatching { chooseArchive() }.getOrElse { failure ->
-                        page.message = failure.message ?: "选择 EasyTier 安装包失败，请重试"
+                        page.message = failure.message ?: strings.t("dialogs.mp.chooseRuntimeFailed")
                         null
                     }
                 if (archive != null) {
@@ -124,7 +126,7 @@ fun MultiplayerScreen(
                         onSuccess = { page.message = null },
                         onFailure = { failure ->
                             page.message =
-                                failure.message ?: "安装本地 EasyTier 安装包失败，请检查文件"
+                                failure.message ?: strings.t("dialogs.mp.installLocalRuntimeFailed")
                         },
                     )
                 }
@@ -150,7 +152,7 @@ fun MultiplayerScreen(
             backend.saveSettings(consented).fold(
                 onSuccess = { downloadRuntime() },
                 onFailure = { failure ->
-                    page.message = failure.message ?: "保存联机说明失败，请重试"
+                    page.message = failure.message ?: strings.t("dialogs.mp.saveConsentFailed")
                 },
             )
         }
@@ -188,14 +190,15 @@ private fun ColumnScope.MultiplayerContent(
 
 @Composable
 private fun ColumnScope.MultiplayerConsentGate(page: MultiplayerPageState) {
+    val strings = LocalStrings.current
     FrostedPanel(
         Modifier.weight(1f).fillMaxWidth(),
         contentPadding = PaddingValues(16.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("先阅读联机说明", style = MaterialTheme.typography.titleMedium)
-            Text("同意说明后才能使用联机大厅、教程和联机设置。")
-            PrimaryButton("阅读并同意联机说明", enabled = page.initialized) {
+            Text(strings.t("dialogs.mp.consentTitle"), style = MaterialTheme.typography.titleMedium)
+            Text(strings.t("dialogs.mp.consentHint"))
+            PrimaryButton(strings.t("dialogs.mp.readConsent"), enabled = page.initialized) {
                 page.declined = false
             }
         }
@@ -204,10 +207,11 @@ private fun ColumnScope.MultiplayerConsentGate(page: MultiplayerPageState) {
 
 @Composable
 private fun PageMessage(page: MultiplayerPageState) {
+    val strings = LocalStrings.current
     page.message?.let { message ->
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { page.message = null }) { Text("关闭") }
+            TextButton(onClick = { page.message = null }) { Text(strings.t("dialogs.common.close")) }
         }
     }
 }
@@ -217,10 +221,11 @@ private fun MultiplayerStartup(
     backend: MultiplayerBackend,
     page: MultiplayerPageState,
 ) {
+    val strings = LocalStrings.current
     LaunchedEffect(backend) {
         backend
             .initialize()
-            .onFailure { page.message = "联机配置读取失败，请检查日志" }
+            .onFailure { page.message = strings.t("dialogs.mp.configLoadFailed") }
         // 初始化失败也放开页面：否则同意入口会永久禁用；运行时报错仍会经提示与下载重试暴露。
         page.initialized = true
     }
@@ -282,6 +287,7 @@ private fun MultiplayerSidebar(
     selected: MultiplayerSection,
     select: (MultiplayerSection) -> Unit,
 ) {
+    val strings = LocalStrings.current
     FrostedPanel(Modifier.width(160.dp).fillMaxHeight(), contentPadding = PaddingValues(8.dp)) {
         Column {
             MultiplayerSection.entries.forEach { entry ->
@@ -291,7 +297,7 @@ private fun MultiplayerSidebar(
                         MultiplayerSection.Settings -> Icons.Outlined.Settings
                         else -> Icons.AutoMirrored.Outlined.HelpOutline
                     }
-                SettingsNavItem(entry.title, icon, selected == entry) { select(entry) }
+                SettingsNavItem(strings.t(entry.titleKey), icon, selected == entry) { select(entry) }
                 if (entry == MultiplayerSection.Lobby) Spacer(Modifier.height(12.dp))
             }
         }

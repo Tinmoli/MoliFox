@@ -87,6 +87,7 @@ fun AuthlibLoginDialog(
     entry: AuthlibEntry = AuthlibEntry.NewServer,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val state by actions.controller.state.collectAsState()
     // 服务器列表跟随 launcher.json 的 authlibServers：新增或删除后对话框不必重开。
     val servers =
@@ -197,7 +198,7 @@ fun AuthlibLoginDialog(
                     addressFocus = addressFocus,
                     isBuiltin = { url -> actions.controller.accounts.isBuiltinAuthlibServer(url) },
                     onChoose = choose,
-                    onLocked = { error = "内置服务器不可删除" },
+                    onLocked = { error = strings.t("dialogs.authlib.builtinLocked") },
                     onRemove = { server -> removing = server },
                     onAddressChange = {
                         address = it
@@ -282,11 +283,12 @@ private fun AuthlibServerStep(
     onRemove: (AuthlibServer) -> Unit,
     onAddressChange: (String) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (servers.isEmpty()) {
-        MutedText("还没有已保存的认证服务器；填写地址后保存，下次就能直接点选。")
+        MutedText(strings.t("dialogs.authlib.noSavedServers"))
     } else {
         Text(
-            "已保存的服务器",
+            strings.t("dialogs.authlib.savedServers"),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -314,8 +316,13 @@ private fun AuthlibServerStep(
         address,
         onAddressChange,
         Modifier.fillMaxWidth(),
-        label = if (servers.isEmpty()) "认证服务器" else "添加新的认证服务器",
-        placeholder = "认证服务器地址，例如 https://example.com",
+        label =
+            if (servers.isEmpty()) {
+                strings.t("dialogs.account.authServer")
+            } else {
+                strings.t("dialogs.authlib.addNewServer")
+            },
+        placeholder = strings.t("dialogs.authlib.addressPlaceholder"),
         enabled = !busy,
         focusRequester = addressFocus,
     )
@@ -335,6 +342,7 @@ private fun AuthlibServerRow(
     onLocked: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val label = server.name.ifBlank { server.url }
     DialogListRow(
         title = label,
@@ -345,7 +353,7 @@ private fun AuthlibServerRow(
             if (builtin) {
                 SmallIconButton(
                     Icons.Outlined.Lock,
-                    "内置服务器不可删除",
+                    strings.t("dialogs.authlib.builtinLocked"),
                     onClick = { if (!busy) onLocked() },
                     tint =
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(
@@ -356,7 +364,7 @@ private fun AuthlibServerRow(
             } else {
                 SmallIconButton(
                     Icons.Outlined.DeleteOutline,
-                    "移除服务器「" + label + "」",
+                    strings.t("dialogs.authlib.removeServerLabel", label),
                     onClick = { if (!busy) onRemove() },
                     tint = MaterialTheme.colorScheme.error,
                     enabled = !busy,
@@ -377,33 +385,35 @@ private fun AuthlibCredentialsStep(
     onPasswordChange: (String) -> Unit,
     onSubmit: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     server?.let { AuthlibServerSummary(it) }
     CompactTextField(
         username,
         onUsernameChange,
         Modifier.fillMaxWidth(),
-        label = "用户名",
-        placeholder = "认证服务器上的用户名或邮箱",
+        label = strings.t("dialogs.authlib.username"),
+        placeholder = strings.t("dialogs.authlib.usernamePlaceholder"),
         enabled = !busy,
     )
     CompactTextField(
         password,
         onPasswordChange,
         Modifier.fillMaxWidth(),
-        label = "密码",
-        placeholder = "输入密码",
+        label = strings.t("dialogs.authlib.password"),
+        placeholder = strings.t("dialogs.authlib.passwordPlaceholder"),
         enabled = !busy,
         visualTransformation = PasswordVisualTransformation(),
         // 软键盘「完成」与登录按钮走同一条提交路径；回车另由外层 onPreviewKeyEvent 兜住。
         imeAction = ImeAction.Done,
         onImeAction = onSubmit,
     )
-    MutedText("密码只用于本次登录，不会写入启动器配置；登录成功后账户会自动保存并切换。")
+    MutedText(strings.t("dialogs.authlib.passwordNote"))
 }
 
 /** 当前服务器摘要：名称、地址与「已保存」标签。 */
 @Composable
 private fun AuthlibServerSummary(server: AuthlibServer) {
+    val strings = LocalStrings.current
     Surface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Metrics.cardRadius),
@@ -444,7 +454,7 @@ private fun AuthlibServerSummary(server: AuthlibServer) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Tag("已保存")
+            Tag(strings.t("dialogs.saveSettings.saved"))
         }
     }
 }
@@ -463,6 +473,7 @@ private fun AuthlibDialogFooter(
     onSubmit: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -477,12 +488,12 @@ private fun AuthlibDialogFooter(
         }
         Spacer(Modifier.weight(1f))
         if (step == AuthlibLoginStep.Server) {
-            SecondaryButton(onCancel, enabled = !busy) { Text("取消", fontSize = 13.sp) }
+            SecondaryButton(onCancel, enabled = !busy) { Text(strings.t("dialogs.common.cancel"), fontSize = 13.sp) }
             PrimaryButton(
                 when {
-                    busy -> "正在校验…"
-                    savedCount == 0 -> "下一步"
-                    else -> "保存并登录"
+                    busy -> strings.t("dialogs.authlib.validating")
+                    savedCount == 0 -> strings.t("dialogs.authlib.next")
+                    else -> strings.t("dialogs.authlib.saveAndLogin")
                 },
                 enabled = canValidate,
                 onClick = onValidate,
@@ -494,11 +505,11 @@ private fun AuthlibDialogFooter(
                     onClick = onBack,
                     enabled = !busy,
                 ) {
-                    Text("上一步", fontSize = 13.sp)
+                    Text(strings.t("dialogs.authlib.back"), fontSize = 13.sp)
                 }
             }
             PrimaryButton(
-                if (busy) "正在登录…" else "登录",
+                if (busy) strings.t("dialogs.authlib.loggingIn") else strings.t("dialogs.authlib.login"),
                 enabled = canLogin,
                 onClick = onSubmit,
             )
@@ -513,19 +524,20 @@ private fun AuthlibRemoveDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val label = server.name.ifBlank { server.url }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("移除认证服务器「" + label + "」？") },
+        title = { Text(strings.t("dialogs.authlib.removeTitle", label)) },
         text = {
-            Text("只从添加入口的列表里移除；已添加的账户会保留服务器地址与登录令牌，仍可正常启动。")
+            Text(strings.t("dialogs.authlib.removeNote"))
         },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("移除服务器", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("dialogs.authlib.removeConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 

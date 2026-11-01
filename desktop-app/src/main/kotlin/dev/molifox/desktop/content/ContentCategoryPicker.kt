@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
 import dev.molifox.desktop.controlBackground
 import dev.molifox.desktop.controlBorder
@@ -59,6 +60,7 @@ internal fun ContentCategoryPicker(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val strings = LocalStrings.current
     val pickerShape = RoundedCornerShape(Metrics.innerRadius)
     Box(modifier) {
         Row(
@@ -74,7 +76,11 @@ internal fun ContentCategoryPicker(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (selected.isEmpty()) "分类" else "分类 · ${selected.size}",
+                if (selected.isEmpty()) {
+                    strings.t("pages.content.category.title")
+                } else {
+                    strings.t("pages.content.category.selected", selected.size)
+                },
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 color =
@@ -103,13 +109,13 @@ internal fun ContentCategoryPicker(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "分类",
+                    strings.t("pages.content.category.title"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { onChange(emptySet()) }, enabled = selected.isNotEmpty()) {
-                    Text("清除", fontSize = 12.sp)
+                    Text(strings.t("pages.content.category.clear"), fontSize = 12.sp)
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))

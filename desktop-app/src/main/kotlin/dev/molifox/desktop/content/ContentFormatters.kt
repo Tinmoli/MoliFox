@@ -5,128 +5,132 @@
 
 package dev.molifox.desktop.content
 
+import dev.molifox.desktop.tr
+
 private const val MILLION_COUNT = 1_000_000
 private const val MILLION_DIVISOR = 1_000_000f
 private const val THOUSAND_COUNT = 1_000
 private const val THOUSAND_DIVISOR = 1_000f
 
+/** 内容类型显示名；类型 slug 本身不翻译，只把已知 slug 映射到文案 key。 */
 internal fun contentKindLabel(type: String): String =
     when (type) {
-        "modpack" -> "整合包"
-        "resourcepack" -> "资源包"
-        "shader" -> "光影"
-        "datapack" -> "数据包"
-        "world" -> "世界"
-        else -> "模组"
+        "modpack" -> tr("pages.content.kind.modpack")
+        "resourcepack" -> tr("pages.content.kind.resourcepack")
+        "shader" -> tr("pages.content.kind.shader")
+        "datapack" -> tr("pages.content.kind.datapack")
+        "world" -> tr("pages.content.kind.world")
+        else -> tr("pages.content.kind.mod")
     }
 
 /**
- * Modrinth 分类（slug + 中文名），按项目类型分开维护：slug 全部取自 Modrinth 标签接口 `/v2/tag/category` 中该 `project_type`
+ * Modrinth 分类（slug + 文案 key），按项目类型分开维护：slug 全部取自 Modrinth 标签接口 `/v2/tag/category` 中该 `project_type`
  * 的条目，顺序沿用官方标签页的分组 （模组；资源包：分辨率 → 分类 → 特性；光影：分类 → 特性 → 性能；等等）。
  */
-private val modCategories =
+private fun modCategories(): List<Pair<String, String>> =
     listOf(
-        "technology" to "科技",
-        "magic" to "魔法",
-        "adventure" to "冒险",
-        "decoration" to "装饰",
-        "worldgen" to "世界生成",
-        "mobs" to "生物",
-        "equipment" to "装备",
-        "food" to "食物",
-        "optimization" to "优化",
-        "storage" to "存储",
-        "utility" to "实用",
-        "library" to "库",
-        "transportation" to "交通",
-        "game-mechanics" to "游戏机制",
-        "economy" to "经济",
-        "management" to "管理",
-        "social" to "社交",
-        "minigame" to "小游戏",
-        "cursed" to "诅咒",
+        "technology" to tr("pages.content.tag.technology"),
+        "magic" to tr("pages.content.tag.magic"),
+        "adventure" to tr("pages.content.tag.adventure"),
+        "decoration" to tr("pages.content.tag.decoration"),
+        "worldgen" to tr("pages.content.tag.worldgen"),
+        "mobs" to tr("pages.content.tag.mobs"),
+        "equipment" to tr("pages.content.tag.equipment"),
+        "food" to tr("pages.content.tag.food"),
+        "optimization" to tr("pages.content.tag.optimization"),
+        "storage" to tr("pages.content.tag.storage"),
+        "utility" to tr("pages.content.tag.utility"),
+        "library" to tr("pages.content.tag.library"),
+        "transportation" to tr("pages.content.tag.transportation"),
+        "game-mechanics" to tr("pages.content.tag.gameMechanics"),
+        "economy" to tr("pages.content.tag.economy"),
+        "management" to tr("pages.content.tag.management"),
+        "social" to tr("pages.content.tag.social"),
+        "minigame" to tr("pages.content.tag.minigame"),
+        "cursed" to tr("pages.content.tag.cursed"),
     )
 
 /** 数据包在 Modrinth 上复用模组分类（其项目类型以 datapack 加载器标记），因此单独列一份便于以后分化。 */
-private val datapackCategories = modCategories
+private fun datapackCategories(): List<Pair<String, String>> = modCategories()
 
-private val modpackCategories =
+private fun modpackCategories(): List<Pair<String, String>> =
     listOf(
-        "adventure" to "冒险",
-        "challenging" to "挑战",
-        "combat" to "战斗",
-        "kitchen-sink" to "大杂烩",
-        "lightweight" to "轻量",
-        "magic" to "魔法",
-        "multiplayer" to "多人",
-        "optimization" to "优化",
-        "quests" to "任务",
-        "technology" to "科技",
+        "adventure" to tr("pages.content.tag.adventure"),
+        "challenging" to tr("pages.content.tag.challenging"),
+        "combat" to tr("pages.content.tag.combat"),
+        "kitchen-sink" to tr("pages.content.tag.kitchenSink"),
+        "lightweight" to tr("pages.content.tag.lightweight"),
+        "magic" to tr("pages.content.tag.magic"),
+        "multiplayer" to tr("pages.content.tag.multiplayer"),
+        "optimization" to tr("pages.content.tag.optimization"),
+        "quests" to tr("pages.content.tag.quests"),
+        "technology" to tr("pages.content.tag.technology"),
     )
 
-private val resourcePackCategories =
+private fun resourcePackCategories(): List<Pair<String, String>> =
     listOf(
-        "8x-" to "8x 及以下",
+        "8x-" to tr("pages.content.tag.pixel8x"),
+        // 分辨率标签是纯数字 + x，各语言一致，不做翻译。
         "16x" to "16x",
         "32x" to "32x",
         "48x" to "48x",
         "64x" to "64x",
         "128x" to "128x",
         "256x" to "256x",
-        "combat" to "战斗",
-        "cursed" to "诅咒",
-        "decoration" to "装饰",
-        "modded" to "模组兼容",
-        "realistic" to "写实",
-        "simplistic" to "简洁",
-        "themed" to "主题",
-        "tweaks" to "微调",
-        "utility" to "实用",
-        "vanilla-like" to "原版风格",
-        "audio" to "音效",
-        "blocks" to "方块",
-        "entities" to "实体",
-        "environment" to "环境",
-        "equipment" to "装备",
-        "fonts" to "字体",
-        "gui" to "界面",
-        "items" to "物品",
-        "locale" to "语言",
-        "models" to "模型",
-        "core-shaders" to "核心光影",
+        "combat" to tr("pages.content.tag.combat"),
+        "cursed" to tr("pages.content.tag.cursed"),
+        "decoration" to tr("pages.content.tag.decoration"),
+        "modded" to tr("pages.content.tag.modded"),
+        "realistic" to tr("pages.content.tag.realistic"),
+        "simplistic" to tr("pages.content.tag.simplistic"),
+        "themed" to tr("pages.content.tag.themed"),
+        "tweaks" to tr("pages.content.tag.tweaks"),
+        "utility" to tr("pages.content.tag.utility"),
+        "vanilla-like" to tr("pages.content.tag.vanillaLike"),
+        "audio" to tr("pages.content.tag.audio"),
+        "blocks" to tr("pages.content.tag.blocks"),
+        "entities" to tr("pages.content.tag.entities"),
+        "environment" to tr("pages.content.tag.environment"),
+        "equipment" to tr("pages.content.tag.equipment"),
+        "fonts" to tr("pages.content.tag.fonts"),
+        "gui" to tr("pages.content.tag.gui"),
+        "items" to tr("pages.content.tag.items"),
+        "locale" to tr("pages.content.tag.locale"),
+        "models" to tr("pages.content.tag.models"),
+        "core-shaders" to tr("pages.content.tag.coreShaders"),
     )
 
-private val shaderCategories =
+private fun shaderCategories(): List<Pair<String, String>> =
     listOf(
-        "cartoon" to "卡通",
-        "cursed" to "诅咒",
-        "fantasy" to "奇幻",
-        "realistic" to "写实",
-        "semi-realistic" to "半写实",
-        "vanilla-like" to "原版风格",
-        "atmosphere" to "氛围",
-        "bloom" to "泛光",
-        "colored-lighting" to "彩色光照",
-        "foliage" to "植被",
-        "path-tracing" to "路径追踪",
-        "pbr" to "PBR 材质",
-        "reflections" to "反射",
-        "shadows" to "阴影",
-        "screenshot" to "适合截图",
-        "low" to "低配",
-        "medium" to "中配",
-        "high" to "高配",
-        "potato" to "极低配",
+        "cartoon" to tr("pages.content.tag.cartoon"),
+        "cursed" to tr("pages.content.tag.cursed"),
+        "fantasy" to tr("pages.content.tag.fantasy"),
+        "realistic" to tr("pages.content.tag.realistic"),
+        "semi-realistic" to tr("pages.content.tag.semiRealistic"),
+        "vanilla-like" to tr("pages.content.tag.vanillaLike"),
+        "atmosphere" to tr("pages.content.tag.atmosphere"),
+        "bloom" to tr("pages.content.tag.bloom"),
+        "colored-lighting" to tr("pages.content.tag.coloredLighting"),
+        "foliage" to tr("pages.content.tag.foliage"),
+        "path-tracing" to tr("pages.content.tag.pathTracing"),
+        "pbr" to tr("pages.content.tag.pbr"),
+        "reflections" to tr("pages.content.tag.reflections"),
+        "shadows" to tr("pages.content.tag.shadows"),
+        "screenshot" to tr("pages.content.tag.screenshot"),
+        "low" to tr("pages.content.tag.low"),
+        "medium" to tr("pages.content.tag.medium"),
+        "high" to tr("pages.content.tag.high"),
+        "potato" to tr("pages.content.tag.potato"),
     )
 
 /** 当前类型的分类列表；类型已由左侧导航决定，分类只在该类型真实存在的标签里选。 */
 internal fun categoriesFor(kind: String): List<Pair<String, String>> =
     when (kind) {
-        "resourcepack" -> resourcePackCategories
-        "shader" -> shaderCategories
-        "datapack" -> datapackCategories
-        "modpack" -> modpackCategories
-        else -> modCategories
+        "resourcepack" -> resourcePackCategories()
+        "shader" -> shaderCategories()
+        "datapack" -> datapackCategories()
+        "modpack" -> modpackCategories()
+        else -> modCategories()
     }
 
 internal fun formatDownloads(value: Long): String =
@@ -142,16 +146,18 @@ internal fun formatDownloads(value: Long): String =
  */
 internal fun contentSourceName(value: String?): String =
     when {
-        value.isNullOrBlank() -> "内容来源"
+        value.isNullOrBlank() -> tr("pages.content.source.unknown")
         value.equals("curseforge", true) || value.startsWith("curseforge:", true) -> "CurseForge"
         value.equals("modrinth", true) || value.startsWith("modrinth:", true) -> "Modrinth"
-        else -> "内容来源"
+        else -> tr("pages.content.source.unknown")
     }
 
 /** 内容源主页；只为真实存在的内容源提供入口，未知来源返回 null（不伪造地址）。 */
 internal fun contentSourceHome(value: String?): String? =
-    when (contentSourceName(value)) {
-        "Modrinth" -> "https://modrinth.com"
-        "CurseForge" -> "https://www.curseforge.com/minecraft"
+    when {
+        value.isNullOrBlank() -> null
+        value.equals("curseforge", true) ||
+            value.startsWith("curseforge:", true) -> "https://www.curseforge.com/minecraft"
+        value.equals("modrinth", true) || value.startsWith("modrinth:", true) -> "https://modrinth.com"
         else -> null
     }

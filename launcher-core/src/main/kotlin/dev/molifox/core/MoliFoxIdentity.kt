@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.util.Properties
 
 /**
@@ -20,7 +21,9 @@ object MoliFoxIdentity {
     const val REPOSITORY = "https://github.com/Tinmoli/MoliFox"
     const val RELEASES = "$REPOSITORY/releases"
     const val ISSUES = "$REPOSITORY/issues"
-    const val LICENSE = "GPL-3.0-only · 保留署名与修改版区分"
+
+    /** 许可证标语按当前语言读取；许可证标识本身（GPL-3.0-only）不翻译。 */
+    val LICENSE: String get() = I18n.t("miscA2.identity.license")
 
     private const val RESOURCE = "/microsoft-identity.properties"
     private const val CLIENT_ID_KEY = "microsoft.client.id"

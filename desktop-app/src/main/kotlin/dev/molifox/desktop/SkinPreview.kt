@@ -58,6 +58,7 @@ internal fun SkinModelImage(
     headOnly: Boolean,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     val texture =
         skin?.takeIf {
             it.width >= 64 &&
@@ -91,7 +92,7 @@ internal fun SkinModelImage(
         frame?.let {
             Image(
                 it,
-                if (headOnly) "玩家 3D 皮肤头像" else "可旋转的 3D 皮肤模型",
+                if (headOnly) strings.t("dialogs.skin.previewHead") else strings.t("dialogs.skin.previewModel"),
                 Modifier.fillMaxSize(),
                 filterQuality = FilterQuality.None,
             )
@@ -107,6 +108,7 @@ fun SkinPreview(
     overlays: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     var yaw by remember(skin) { mutableFloatStateOf(-25f) }
     var pitch by remember(skin) { mutableFloatStateOf(12f) }
     SkinModelImage(
@@ -117,7 +119,7 @@ fun SkinPreview(
         pitch,
         false,
         modifier
-            .semantics { contentDescription = "3D皮肤预览（拖动旋转）" }
+            .semantics { contentDescription = strings.t("dialogs.skin.previewLabel") }
             .pointerHoverIcon(PointerIcon.Hand)
             .pointerInput(skin) {
                 detectDragGestures { change, movement ->
@@ -140,6 +142,7 @@ fun StaticSkinHead(
     revision: Int = 0,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     val reader = remember { PlayerHeadReader() }
     val head by
         produceState<ImageBitmap?>(null, skinFile, revision) {
@@ -160,7 +163,7 @@ fun StaticSkinHead(
         if (bitmap != null) {
             Image(
                 bitmap,
-                "玩家头像",
+                strings.t("dialogs.skin.avatar"),
                 Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
                 filterQuality = FilterQuality.None,
@@ -168,7 +171,7 @@ fun StaticSkinHead(
         } else {
             Icon(
                 Icons.Outlined.PersonOutline,
-                "玩家头像占位",
+                strings.t("dialogs.skin.avatarPlaceholder"),
                 Modifier.fillMaxSize(.45f),
                 tint = MaterialTheme.colorScheme.primary,
             )

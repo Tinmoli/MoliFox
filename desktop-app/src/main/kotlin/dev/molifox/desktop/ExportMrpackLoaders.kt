@@ -38,13 +38,13 @@ internal suspend fun collectExportScan(
     } catch (cancelled: CancellationException) {
         rethrowCancellation(cancelled)
     } catch (failure: IOException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: JsonParseException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: IllegalStateException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: IllegalArgumentException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     }
 }
 
@@ -74,13 +74,13 @@ internal suspend fun loadExportPreview(
     } catch (cancelled: CancellationException) {
         rethrowCancellation(cancelled)
     } catch (failure: IOException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: JsonParseException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: IllegalStateException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     } catch (failure: IllegalArgumentException) {
-        onError(failure.message ?: "无法读取实例目录")
+        onError(failure.message ?: tr("dialogs.export.readDirFailed"))
     }
 }
 

@@ -21,12 +21,17 @@ import androidx.compose.ui.unit.sp
 
 /** 内容页签共用的筛选芯片；顺序固定，页签只挑自己需要的几项显示。 */
 internal enum class ContentChip(
-    val title: String,
+    private val key: String,
 ) {
-    All("全部"),
-    Disabled("已禁用"),
-    Updatable("可更新"),
-    NoUpdate("未找到更新"),
+    All("pages.contentChip.all"),
+    Disabled("pages.contentChip.disabled"),
+    Updatable("pages.contentChip.updatable"),
+    NoUpdate("pages.contentChip.noUpdate"),
+    ;
+
+    // 标题随语言变化，取用时才翻译，避免枚举初始化时把语言定死。
+    val title: String
+        get() = tr(key)
 }
 
 /** 同一组件、同一顺序、同一尺寸：只显示 [visible] 里给出的芯片。 */

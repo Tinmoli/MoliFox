@@ -4,7 +4,10 @@
 // 负责准备界面运行时依赖并加载桌面程序。
 package dev.molifox.bootstrap
 
+import com.google.gson.JsonParser
 import dev.molifox.core.LauncherLocation
+import dev.molifox.core.i18n.AppLanguage
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -109,12 +112,35 @@ private val logLock = Any()
 /** 启动入口：准备运行时组件并拉起桌面界面；失败时关闭准备窗口并给出可读的提示。 */
 fun main() {
     val data = resolveDataDirectory()
+    applySavedLanguage(data)
     var preparation: BootstrapWindow? = null
     val failure =
         runCatching {
             prepareRuntime(data) { window -> preparation = window }
         }.exceptionOrNull()
     if (failure != null) reportStartupFailure(data, preparation, failure)
+}
+
+/**
+ * 准备窗口与启动失败对话框在桌面界面之前显示，也必须跟随用户语言：
+ * 创建任何窗口前先读一次配置里的 `settings.language`（缺失或损坏按「跟随系统」处理）。
+ */
+private fun applySavedLanguage(data: Path) {
+    val config = data.resolve("config").resolve("launcher.json")
+    if (!Files.isRegularFile(config)) {
+        I18n.setLanguage(AppLanguage.resolveTag(null))
+        return
+    }
+    val saved =
+        runCatching {
+            JsonParser
+                .parseString(Files.readString(config))
+                .asJsonObject
+                .getAsJsonObject("settings")
+                ?.get("language")
+                ?.asString
+        }.getOrNull()
+    I18n.setLanguage(AppLanguage.resolveTag(saved))
 }
 
 /**
@@ -176,16 +202,20 @@ private fun prepareRuntime(
     val cache = data.resolve("runtime").resolve(manifest.version)
     val marker = cache.resolve("ready.marker")
     log(
-        "运行时清单 ${manifest.version}，依赖 ${manifest.dependencies.size} 个，" +
-            "共 ${manifest.dependencies.sumOf { it.size }} 字节",
+        I18n.t(
+            "bootstrapB.startup.manifestSummary",
+            manifest.version,
+            manifest.dependencies.size,
+            manifest.dependencies.sumOf { it.size },
+        ),
     )
-    log("缓存目录：$cache")
+    log(I18n.t("bootstrapB.startup.cacheDirectory", cache))
     if (
         Files.isRegularFile(marker) &&
         manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
     ) {
         // ready.marker 表示“已逐字节校验过”：这里只确认真实存在，不再重复计算哈希。
-        log("运行时组件已就绪，跳过下载")
+        log(I18n.t("bootstrapB.startup.alreadyReady"))
         launchUi(manifest, cache)
         return
     }
@@ -204,7 +234,7 @@ private fun prepareRuntime(
             "files=${manifest.dependencies.size}\n",
     )
     window.close()
-    log("运行时组件准备完成，启动界面")
+    log(I18n.t("bootstrapB.startup.preparationDone"))
     launchUi(manifest, cache)
 }
 
@@ -218,27 +248,27 @@ private fun awaitInstallation(
     runBlocking(preparationJob) {
         var candidates = selectMirrors(probePath(manifest))
         while (candidates.isEmpty()) {
-            log("全部镜像探测失败")
+            log(I18n.t("bootstrapB.mirror.probeAllFailed"))
             window.showError(
-                listOf("无法连接任何 Maven 镜像，请检查网络或代理后重试。"),
+                listOf(I18n.t("bootstrapB.mirror.noneReachable")),
                 canSwitchMirror = false,
             )
             window.awaitRecovery()
             window.clearError()
             candidates = selectMirrors(probePath(manifest))
         }
-        candidates.forEach { log("镜像可用：${it.name}（${it.latencyMillis} ms）") }
+        candidates.forEach { log(I18n.t("bootstrapB.mirror.available", it.name, it.latencyMillis)) }
         installer.useMirrors(candidates)
         while (true) {
             val failures = installer.install()
             if (failures.isEmpty()) break
-            log("下载失败（${failures.size} 个文件）：${failures.joinToString("；")}")
+            log(I18n.t("bootstrapB.download.failedFiles", failures.size, failures.joinToString("；")))
             window.showError(failures, installer.canSwitchMirror)
             when (window.awaitRecovery()) {
                 RecoveryAction.Retry -> Unit
                 RecoveryAction.SwitchMirror ->
                     installer.switchMirror().also {
-                        log("切换镜像：${installer.mirror?.name}")
+                        log(I18n.t("bootstrapB.mirror.switched", installer.mirror?.name))
                     }
             }
             window.clearError()
@@ -319,8 +349,7 @@ private class RuntimeInstaller(
         return failureMessages()
     }
 
-    private fun failureMessages(): List<String> =
-        synchronized(failures) { failures.values.toList() }
+    private fun failureMessages(): List<String> = synchronized(failures) { failures.values.toList() }
 
     private suspend fun installOne(dependency: RuntimeDependency): String? {
         val target = cacheDirectory.resolve(dependency.filename)
@@ -329,10 +358,10 @@ private class RuntimeInstaller(
             return when {
                 isCached(target, dependency) -> {
                     verified[dependency.filename] = dependency.size
-                    log("已存在且校验通过：${dependency.filename}")
+                    log(I18n.t("bootstrapB.download.reused", dependency.filename))
                     null
                 }
-                mirrorOrder.isEmpty() -> "没有可用的镜像"
+                mirrorOrder.isEmpty() -> I18n.t("bootstrap.bootstrapMain.1")
                 else -> downloadWithRetries(dependency, target)
             }
         } finally {
@@ -345,7 +374,7 @@ private class RuntimeInstaller(
         dependency: RuntimeDependency,
         target: Path,
     ): String? {
-        var lastMessage = "下载失败"
+        var lastMessage = I18n.t("bootstrap.bootstrapMain.2")
         for (attempt in 0..RETRY_LIMIT) {
             val current = mirrorOrder[attempt % mirrorOrder.size]
             val part = Files.createTempFile(cacheDirectory, ".molifox-", ".part")
@@ -356,23 +385,23 @@ private class RuntimeInstaller(
                         true
                     }
                 if (completed == null) {
-                    throw IOException("下载超时（${FILE_TIMEOUT_MILLIS / MILLIS_PER_SECOND} 秒）")
+                    throw IOException(I18n.t("bootstrap.bootstrapMain.3", FILE_TIMEOUT_MILLIS / MILLIS_PER_SECOND))
                 }
                 moveIntoPlace(part, target)
                 verified[dependency.filename] = dependency.size
-                log("下载完成：${dependency.filename} via ${current.name}")
+                log(I18n.t("bootstrapB.download.completed", dependency.filename, current.name))
                 return null
             } catch (error: CancellationException) {
                 throw error
             } catch (error: IOException) {
                 lastMessage = error.message ?: error.javaClass.simpleName
-                log("下载失败：${dependency.filename} via ${current.name}：$lastMessage")
+                log(I18n.t("bootstrapB.download.fileFailed", dependency.filename, current.name, lastMessage))
             } finally {
                 runCatching { Files.deleteIfExists(part) }
                 active[dependency.filename] = 0L
             }
         }
-        return "$lastMessage（已重试 $RETRY_LIMIT 次）"
+        return I18n.t("bootstrap.bootstrapMain.4", lastMessage, RETRY_LIMIT)
     }
 
     /** 逐个尝试该镜像的根路径；HTTP 失败或校验失败都交给上层换镜像重试。 */
@@ -396,10 +425,10 @@ private class RuntimeInstaller(
                 return
             } catch (error: IOException) {
                 lastFailure = error
-                log("下载源失败：${mirror.name} $root ${error.message}")
+                log(I18n.t("bootstrapB.download.sourceFailed", mirror.name, root, error.message))
             }
         }
-        throw lastFailure ?: IOException("没有可用的下载地址")
+        throw lastFailure ?: IOException(I18n.t("bootstrap.bootstrapMain.5"))
     }
 
     private suspend fun downloadFrom(
@@ -435,11 +464,11 @@ private class RuntimeInstaller(
                 }
             }
         if (written != dependency.size) {
-            throw IOException("下载不完整：$written/${dependency.size} 字节")
+            throw IOException(I18n.t("bootstrap.bootstrapMain.6", written, dependency.size))
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         if (!actual.equals(dependency.sha256, ignoreCase = true)) {
-            throw IOException("SHA-256 校验失败")
+            throw IOException(I18n.t("bootstrap.bootstrapMain.7"))
         }
     }
 
@@ -489,13 +518,13 @@ private class BootstrapWindow(
 ) {
     private enum class Phase { Preparing, Downloading, Verifying, Done }
 
-    private val frame = JFrame("MoliFox · 准备启动")
+    private val frame = JFrame(I18n.t("bootstrap.bootstrapMain.8"))
 
     @Volatile private var phase = Phase.Preparing
 
     private val progressBar = RoundedProgressBar()
     private val statusLabel =
-        JLabel("正在准备运行时组件").apply {
+        JLabel(I18n.t("bootstrap.bootstrapMain.9")).apply {
             font = uiFont(14, Font.BOLD)
             foreground = BootstrapPalette.onSurface
         }
@@ -506,7 +535,7 @@ private class BootstrapWindow(
             horizontalAlignment = SwingConstants.RIGHT
             preferredSize = Dimension(48, 18)
         }
-    private val mirrorValue = statValue("正在选择最快的镜像…")
+    private val mirrorValue = statValue(I18n.t("bootstrap.bootstrapMain.10"))
     private val filesValue = statValue("0 / ${installer.totalFiles}")
     private val bytesValue = statValue("0 B / ${formatBytes(installer.totalBytes)}")
     private val speedValue = statValue("0 B/s")
@@ -529,8 +558,8 @@ private class BootstrapWindow(
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
             verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
         }
-    private val retryButton = RoundedButton("重试", primary = true)
-    private val switchButton = RoundedButton("更换镜像", primary = false)
+    private val retryButton = RoundedButton(I18n.t("bootstrap.bootstrapMain.11"), primary = true)
+    private val switchButton = RoundedButton(I18n.t("bootstrap.bootstrapMain.12"), primary = false)
     private val actionsPanel =
         JPanel(FlowLayout(FlowLayout.RIGHT, 10, 0)).apply {
             isOpaque = false
@@ -542,7 +571,7 @@ private class BootstrapWindow(
             layout = BorderLayout(0, 10)
             border = BorderFactory.createEmptyBorder(14, 16, 14, 16)
             add(
-                JLabel("以下文件没有下载成功，其余文件已就绪").apply {
+                JLabel(I18n.t("bootstrap.bootstrapMain.13")).apply {
                     font = uiFont(12, Font.BOLD)
                     foreground = BootstrapPalette.error
                 },
@@ -591,10 +620,10 @@ private class BootstrapWindow(
             val stats =
                 JPanel(GridLayout(2, 2, 18, 10)).apply {
                     isOpaque = false
-                    add(statCell("镜像", mirrorValue))
-                    add(statCell("文件", filesValue))
-                    add(statCell("已下载", bytesValue))
-                    add(statCell("速度", speedValue))
+                    add(statCell(I18n.t("bootstrap.bootstrapMain.14"), mirrorValue))
+                    add(statCell(I18n.t("bootstrap.bootstrapMain.15"), filesValue))
+                    add(statCell(I18n.t("bootstrap.bootstrapMain.16"), bytesValue))
+                    add(statCell(I18n.t("bootstrap.bootstrapMain.17"), speedValue))
                 }
             val constraints =
                 java.awt.GridBagConstraints().apply {
@@ -651,7 +680,7 @@ private class BootstrapWindow(
                     )
                     add(Box.createVerticalStrut(3))
                     add(
-                        JLabel("正在为启动器准备运行环境").apply {
+                        JLabel(I18n.t("bootstrap.bootstrapMain.18")).apply {
                             font = uiFont(12)
                             foreground = BootstrapPalette.muted
                         },
@@ -661,7 +690,7 @@ private class BootstrapWindow(
             )
         }
     private val footer =
-        JLabel("首次启动需要联网下载运行时组件，网络较慢时可能需要几分钟；完成后不再重复校验。")
+        JLabel(I18n.t("bootstrap.bootstrapMain.19"))
             .apply {
                 font = uiFont(11)
                 foreground = BootstrapPalette.muted
@@ -789,10 +818,10 @@ private class BootstrapWindow(
     private fun renderPhase() {
         statusLabel.text =
             when (phase) {
-                Phase.Preparing -> "正在准备运行时组件"
-                Phase.Downloading -> "正在下载运行时组件"
-                Phase.Verifying -> "正在校验运行时组件"
-                Phase.Done -> "运行时组件已就绪"
+                Phase.Preparing -> I18n.t("bootstrap.bootstrapMain.9")
+                Phase.Downloading -> I18n.t("bootstrap.bootstrapMain.20")
+                Phase.Verifying -> I18n.t("bootstrap.bootstrapMain.21")
+                Phase.Done -> I18n.t("bootstrap.bootstrapMain.22")
             }
     }
 
@@ -880,7 +909,7 @@ private fun validateResponse(
     if (status != HttpURLConnection.HTTP_OK) throw IOException("HTTP $status")
     val declared = connection.contentLengthLong
     if (declared > 0 && declared != dependency.size) {
-        throw IOException("服务器声明大小 $declared 字节，与清单不符")
+        throw IOException(I18n.t("bootstrap.bootstrapMain.23", declared))
     }
 }
 

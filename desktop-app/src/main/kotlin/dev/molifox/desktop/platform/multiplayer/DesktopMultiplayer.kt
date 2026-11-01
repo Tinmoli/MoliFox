@@ -2,6 +2,7 @@
 package dev.molifox.desktop.platform.multiplayer
 
 import dev.molifox.core.LauncherController
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.data.FileMultiplayerSettings
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 import dev.molifox.multiplayer.easytier.EasyTierInstaller
@@ -40,7 +41,7 @@ private class DesktopMultiplayerLog(
     init {
         scope.launch(Dispatchers.IO) {
             for (entry in entries) {
-                controller.store.log("[联机] ${entry.message}", error = entry.error)
+                controller.store.log(tr("deskI.multiplayer.logPrefix", entry.message), error = entry.error)
             }
         }
     }
@@ -66,5 +67,5 @@ private fun currentNickname(controller: LauncherController): String {
         ?.name
         ?.trim()
         ?.takeIf(String::isNotEmpty)
-        ?: "匿名玩家"
+        ?: tr("pages.multiplayer.anonymous")
 }

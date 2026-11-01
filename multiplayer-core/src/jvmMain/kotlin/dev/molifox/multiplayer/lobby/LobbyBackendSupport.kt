@@ -1,6 +1,7 @@
 // 后端用到的纯函数：显示名回退、世界选择与列表合并，便于单测且不增加类方法数。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
@@ -30,15 +31,14 @@ internal fun MultiplayerSettings.toEasyTierTuning(): EasyTierTuning =
 internal fun resolveWorld(
     worlds: List<LanWorld>,
     worldPort: Int?,
-): LanWorld? =
-    worldPort?.let { port -> worlds.firstOrNull { it.port == port } } ?: worlds.singleOrNull()
+): LanWorld? = worldPort?.let { port -> worlds.firstOrNull { it.port == port } } ?: worlds.singleOrNull()
 
 /** 世界无法选中时的用户可读原因。 */
 internal fun worldSelectionMessage(worldPort: Int?): String =
     if (worldPort == null) {
-        "还没有发现局域网世界：请先在 Minecraft 里进入存档，按 Esc → 对局域网开放，再刷新。"
+        I18n.t("multiplayer.lobbyBackendSupport.1")
     } else {
-        "选中的世界已不可用，请刷新世界列表后重试。"
+        I18n.t("multiplayer.lobbyBackendSupport.2")
     }
 
 /** 以新发现的世界为准合并，同一端口只保留最新一次探测结果。 */
@@ -50,7 +50,8 @@ internal fun mergeWorlds(
     return (current.filterNot { it.port in ports } + incoming).sortedBy { it.port }
 }
 
-private const val ANONYMOUS_PLAYER = "匿名玩家"
+private val ANONYMOUS_PLAYER: String
+    get() = I18n.t("multiplayer.lobbyBackendSupport.3")
 
 /**
  * 下载/本地导入共用的运行时安装流程：阶段、进度、取消与错误都只在这里处理。

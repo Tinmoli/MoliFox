@@ -89,8 +89,8 @@ APP_BASE_NAME=${0##*/}
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
 # Keep reusable build dependencies and JVM temporary files in this project.
-GRADLE_USER_HOME=${GRADLE_USER_HOME:-"$APP_HOME/.gradle-home"}
-TMPDIR="$APP_HOME/.work/build-tmp"
+GRADLE_USER_HOME=${GRADLE_USER_HOME:-"$APP_HOME/.dev/gradle-home"}
+TMPDIR="$APP_HOME/.dev/work/build-tmp"
 mkdir -p "$TMPDIR" || exit
 JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=\"$TMPDIR\""
 export GRADLE_USER_HOME TMPDIR JAVA_TOOL_OPTIONS

@@ -6,6 +6,7 @@
 package dev.molifox.desktop.platform.dialogs
 
 import com.sun.jna.Native
+import dev.molifox.desktop.tr
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -67,7 +68,7 @@ internal object LinuxFilePicker {
                 val exit = process.waitFor()
                 drain.join()
                 if (exit == 1) return emptyList()
-                check(exit == 0) { "系统文件选择器无法打开，请检查桌面会话（$tool，退出码 $exit）" }
+                check(exit == 0) { tr("pages.picker.failed", tool, exit) }
                 return output
                     .trimEnd('\r', '\n')
                     .takeIf { it.isNotEmpty() }
@@ -78,7 +79,7 @@ internal object LinuxFilePicker {
                 if (process.isAlive) process.destroy()
             }
         }
-        error("未找到系统文件选择器；请安装桌面组件 zenity（GNOME/GTK）或 kdialog（KDE）。")
+        error(tr("pages.picker.notFound"))
     }
 
     internal fun arguments(
@@ -121,9 +122,9 @@ internal object LinuxFilePicker {
                 addAll(listOf("--multiple", "--separator=\u001f"))
             }
             if (patterns.isNotEmpty() && request.mode != PickMode.Directory) {
-                add("--file-filter=文件 | $patterns")
+                add("--file-filter=" + tr("pages.picker.fileLabel") + " | $patterns")
             }
-            add("--file-filter=所有文件 | *")
+            add("--file-filter=" + tr("pages.picker.allFilesLabel") + " | *")
         }
 
     private fun kdialogArguments(
@@ -142,7 +143,16 @@ internal object LinuxFilePicker {
             )
             add(start)
             if (request.mode != PickMode.Directory) {
-                add(if (patterns.isEmpty()) "*" else "$patterns|文件\n*|所有文件")
+                add(
+                    if (patterns.isEmpty()) {
+                        "*"
+                    } else {
+                        "$patterns|" +
+                            tr("pages.picker.fileLabel") +
+                            "\n*|" +
+                            tr("pages.picker.allFilesLabel")
+                    },
+                )
             }
             if (request.multiple && request.mode != PickMode.Save) {
                 addAll(listOf("--multiple", "--separate-output"))

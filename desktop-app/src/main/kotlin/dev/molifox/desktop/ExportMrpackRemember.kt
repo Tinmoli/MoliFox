@@ -34,8 +34,7 @@ internal fun rememberSelectableExportKeys(entries: List<PackExportEntry>): Set<S
 internal fun rememberExportLocalPaths(
     prepared: MrpackExportPlan?,
     format: PackExportFormat,
-): Set<String> =
-    remember(prepared, format) { prepared?.let { exportLocalResourcePaths(it, format) }.orEmpty() }
+): Set<String> = remember(prepared, format) { prepared?.let { exportLocalResourcePaths(it, format) }.orEmpty() }
 
 @Composable
 internal fun rememberExportSelection(

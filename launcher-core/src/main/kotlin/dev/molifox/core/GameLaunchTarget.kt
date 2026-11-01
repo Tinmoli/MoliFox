@@ -5,18 +5,23 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 data class GameLaunchTarget(
     val kind: EntryKind,
     val key: String,
 ) {
     init {
         require(key.isNotBlank() && key.none { it == '\n' || it == '\r' || it == '\u0000' }) {
-            "游戏目标无效"
+            I18n.t("diagA1.gameLaunchTarget.invalidTarget")
         }
         when (kind) {
-            EntryKind.Server -> require(parseServerAddress(key) != null) { "服务器地址无效" }
+            EntryKind.Server ->
+                require(parseServerAddress(key) != null) { I18n.t("diagA1.gameLaunchTarget.invalidServer") }
             EntryKind.World ->
-                require(key !in listOf(".", "..") && '/' !in key && '\\' !in key) { "存档目录无效" }
+                require(key !in listOf(".", "..") && '/' !in key && '\\' !in key) {
+                    I18n.t("diagA1.gameLaunchTarget.invalidSave")
+                }
         }
     }
 }

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -89,7 +90,7 @@ internal class JavaRuntimeInstaller(
     ): JavaRuntime =
         withContext(Dispatchers.IO) {
             require(major in SUPPORTED_JAVA_MAJORS) {
-                "暂不支持自动安装 Java $major，请手动选择已有的 Java"
+                I18n.t("core.javaRuntimeInstaller.1", major)
             }
             val plan = prepareRuntimePlan(major, context, imageType)
             // 解压遇到文件系统错误时保留 .part 目录与压缩包，方便排查/重试；其它失败照常清理。
@@ -99,7 +100,11 @@ internal class JavaRuntimeInstaller(
                     // 安装是回滚边界：任何异常都要记录、分类原因并清理本次临时产物，故此处必须兜底。
                     keepDiagnostics = keepsExtractionDiagnostics(failure)
                     store.log(
-                        "安装 Java $major 失败：${failure.message ?: failure.javaClass.simpleName}",
+                        I18n.t(
+                            "networkB1.javaRuntimeInstaller.installFailedLog",
+                            major,
+                            failure.message ?: failure.javaClass.simpleName,
+                        ),
                         true,
                     )
                     val diagnosticRoot = plan.unpacking.takeIf { keepDiagnostics }
@@ -111,7 +116,11 @@ internal class JavaRuntimeInstaller(
             } finally {
                 if (keepDiagnostics) {
                     store.log(
-                        "已保留解压诊断目录与安装包，便于排查：${plan.unpacking} / ${plan.archive}",
+                        I18n.t(
+                            "networkB1.javaRuntimeInstaller.diagnosticsKept",
+                            plan.unpacking,
+                            plan.archive,
+                        ),
                         true,
                     )
                 } else {
@@ -154,8 +163,11 @@ internal class JavaRuntimeInstaller(
             downloadDirectory.toFile().usableSpace >
                 packageInfo.size * DISK_SPACE_FACTOR + DISK_SPACE_HEADROOM_BYTES,
         ) {
-            "磁盘空间不足，无法安装 Java $major（需要约 " +
-                "${formatMegabytes(packageInfo.size * DISK_SPACE_FACTOR)}）"
+            I18n.t(
+                "networkB1.javaRuntimeInstaller.diskSpace",
+                major,
+                formatMegabytes(packageInfo.size * DISK_SPACE_FACTOR),
+            )
         }
         return RuntimeInstallPlan(major, os, arch, packageInfo, runtimes, archive, unpacking)
     }
@@ -170,17 +182,26 @@ internal class JavaRuntimeInstaller(
     ): JavaRuntimePackage {
         context.progress(
             PROGRESS_QUERYING_PACKAGE,
-            "查询 Java $major 安装包（${javaDownloadSourceLabel(
-                store.data.settings.effectiveJavaDownloadSource,
-            )}）…",
+            I18n.t(
+                "core.javaRuntimeInstaller.2",
+                major,
+                javaDownloadSourceLabel(
+                    store.data.settings.effectiveJavaDownloadSource,
+                ),
+            ),
         )
         val packageInfo =
             JavaRuntimePackages(network)
                 .find(major, os, arch, imageType, store.data.settings.effectiveJavaDownloadSource)
         store.log(
-            "准备安装 ${packageInfo.vendor} Java $major（${packageInfo.imageType.uppercase()}）" +
-                "，来源：${packageInfo.sourceLabel}" +
-                "：${packageInfo.primaryUrl}",
+            I18n.t(
+                "networkB1.javaRuntimeInstaller.preparingInstallLog",
+                packageInfo.vendor,
+                major,
+                packageInfo.imageType.uppercase(),
+                packageInfo.sourceLabel,
+                packageInfo.primaryUrl,
+            ),
         )
         return packageInfo
     }
@@ -192,15 +213,19 @@ internal class JavaRuntimeInstaller(
     ): JavaRuntime {
         context.progress(
             PROGRESS_PREPARING_DOWNLOAD,
-            "来源：${plan.packageInfo.sourceLabel} · 准备下载 " +
-                "${plan.packageInfo.vendor} Java ${plan.packageInfo.version}",
+            I18n.t(
+                "networkB1.javaRuntimeInstaller.preparingDownload",
+                plan.packageInfo.sourceLabel,
+                plan.packageInfo.vendor,
+                plan.packageInfo.version,
+            ),
         )
         download(plan.packageInfo, plan.archive, context)
         val actual = plan.archive.fileSize()
         // Zulu 元数据的 size 与 CDN 实际字节数可能相差几十字节（zip 注释），SHA-256 才是权威校验；
         // 这里只拒绝空文件，完整性与大小由下载器的 SHA-256 校验保证。
-        require(actual > 0) { "下载文件为空，请重试" }
-        context.progress(PROGRESS_EXTRACTING, "解压 Java 运行环境…")
+        require(actual > 0) { I18n.t("core.javaRuntimeInstaller.3") }
+        context.progress(PROGRESS_EXTRACTING, I18n.t("core.javaRuntimeInstaller.4"))
         if (plan.os == "windows") {
             extractZipRuntime(plan.archive, plan.unpacking) { store.log(it) }
         } else {
@@ -215,14 +240,14 @@ internal class JavaRuntimeInstaller(
         val installRoot = resolveInstallRoot(plan.unpacking, store.platform.javaExecutable)
         val executable =
             findExecutable(installRoot, store.platform.javaExecutable)
-                ?: error("安装包中没有找到 Java 可执行文件（${store.platform.javaExecutable}）")
+                ?: error(I18n.t("core.javaRuntimeInstaller.5", store.platform.javaExecutable))
         // 原子改名之前确认可执行文件真的落地且可执行，避免把坏目录登记成已安装。
         require(Files.isRegularFile(executable) && Files.isExecutable(executable)) {
-            "解压后的 Java 可执行文件不可运行：$executable（可能被杀毒软件拦截或解压不完整）"
+            I18n.t("core.javaRuntimeInstaller.6", executable)
         }
         val found =
             service.inspect(executable.toString(), verifyRunnable = true)
-                ?: error("下载的 Java 无法运行")
+                ?: error(I18n.t("core.javaRuntimeInstaller.7"))
         verifyStagedRuntime(plan, found, store.platform)
         val destination = prepareDestination(plan) { deleteTree(it) }
         val relativeJava = installRoot.relativize(Path.of(found.path))
@@ -267,9 +292,9 @@ internal class JavaRuntimeInstaller(
             ),
         )
         service.invalidate()
-        context.progress(1f, "Java ${plan.major} 安装完成")
+        context.progress(1f, I18n.t("core.javaRuntimeInstaller.8", plan.major))
         val sizeLabel = formatMegabytes(runtime.sizeBytes)
-        store.log("已安装 ${runtime.displayName}（$sizeLabel）：${runtime.path}")
+        store.log(I18n.t("core.javaRuntimeInstaller.9", runtime.displayName, sizeLabel, runtime.path))
         return runtime
     }
 
@@ -287,7 +312,7 @@ internal class JavaRuntimeInstaller(
             context.beginTransfers(1)
             lastError = downloadFromSource(url, packageInfo, archive, context) ?: return
         }
-        throw lastError ?: IllegalStateException("没有可用的 Java 下载源")
+        throw lastError ?: IllegalStateException(I18n.t("core.javaRuntimeInstaller.10"))
     }
 
     /** 从单个地址下载到 [archive]，成功返回 null，失败返回异常供 [download] 换源重试。 */
@@ -307,29 +332,60 @@ internal class JavaRuntimeInstaller(
                     size = 0,
                     hashAlgorithm = "SHA-256",
                 ),
-            ) { bytes, total ->
-                context.transfer(archive.toString(), bytes, total)
-                context.progress(
-                    if (total > 0) {
-                        PROGRESS_DOWNLOAD_BASE + bytes.toFloat() / total * PROGRESS_DOWNLOAD_SPAN
-                    } else {
-                        PROGRESS_DOWNLOAD_FALLBACK
-                    },
-                    "来源：${javaDownloadUrlLabel(url)} · 下载 ${packageInfo.vendor} " +
-                        "Java ${packageInfo.version} · ${bytes / BYTES_PER_MEBIBYTE} MB",
-                )
-            }
+                progress = downloadProgress(url, packageInfo, archive, context),
+            )
             val size = archive.fileSize()
             context.transfer(archive.toString(), size, size, completed = true)
             null
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (error: IOException) {
-            val host = runCatching { java.net.URI(url).host }.getOrDefault(url)
-            store.log("Java 下载源失败（$host）：${error.message ?: error.javaClass.simpleName}", true)
-            archive.deleteIfExists()
+            logDownloadFailure(url, archive, error)
             error
         }
+
+    /** 下载进度回调：传输计数与「镜像 版本 已下 x MB」的进度文案。 */
+    private fun downloadProgress(
+        url: String,
+        packageInfo: JavaRuntimePackage,
+        archive: Path,
+        context: JobContext,
+    ): (Long, Long) -> Unit =
+        { bytes, total ->
+            context.transfer(archive.toString(), bytes, total)
+            context.progress(
+                if (total > 0) {
+                    PROGRESS_DOWNLOAD_BASE + bytes.toFloat() / total * PROGRESS_DOWNLOAD_SPAN
+                } else {
+                    PROGRESS_DOWNLOAD_FALLBACK
+                },
+                I18n.t(
+                    "networkB1.javaRuntimeInstaller.downloading",
+                    javaDownloadUrlLabel(url),
+                    packageInfo.vendor,
+                    packageInfo.version,
+                    bytes / BYTES_PER_MEBIBYTE,
+                ),
+            )
+        }
+
+    /** 换源重试前记录失败原因并清掉半成品归档。 */
+    private suspend fun logDownloadFailure(
+        url: String,
+        archive: Path,
+        error: IOException,
+    ) {
+        val host = runCatching { java.net.URI(url).host }.getOrDefault(url)
+        store.log(
+            I18n.t(
+                "networkB1.javaRuntimeInstaller.downloadSourceFailed",
+                host,
+                error.message ?: error.javaClass.simpleName,
+            ),
+            true,
+        )
+        archive.deleteIfExists()
+    }
 
     companion object {
         /** 游戏侧需要的主版本；26.x 版本线使用 25。 */
@@ -363,11 +419,10 @@ internal class RuntimeFileWriteException(
     /** 写入失败的具体文件（绝对路径）。 */
     val file: Path,
     cause: Throwable,
-) : IOException("无法写入 $file（可能被杀毒软件占用或权限不足）", cause)
+) : IOException(I18n.t("core.javaRuntimeInstaller.11", file), cause)
 
 /** 解压写入失败时保留 .part 目录与压缩包用于排查；其它失败照常清理临时目录。 */
-internal fun keepsExtractionDiagnostics(failure: Throwable): Boolean =
-    failure is RuntimeFileWriteException
+internal fun keepsExtractionDiagnostics(failure: Throwable): Boolean = failure is RuntimeFileWriteException
 
 /**
  * 解压 zip 到 [root]。逐个条目：清只读属性 → 删除同名旧文件 → 建父目录 → 写入；
@@ -396,7 +451,15 @@ private fun writeZipEntry(
     for (attempt in 0..RUNTIME_WRITE_RETRY_DELAYS_MS.size) {
         if (attempt > 0) {
             val delay = RUNTIME_WRITE_RETRY_DELAYS_MS[attempt - 1]
-            log("写入 ${target.fileName} 失败，${delay}ms 后第 $attempt 次重试：${lastFailure?.message}")
+            log(
+                I18n.t(
+                    "networkB1.javaRuntimeInstaller.retryingWrite",
+                    target.fileName,
+                    delay,
+                    attempt,
+                    lastFailure?.message,
+                ),
+            )
             Thread.sleep(delay)
         }
         try {
@@ -411,7 +474,7 @@ private fun writeZipEntry(
     }
     throw RuntimeFileWriteException(
         target.toAbsolutePath().normalize(),
-        lastFailure ?: IOException("写入失败"),
+        lastFailure ?: IOException(I18n.t("core.javaRuntimeInstaller.12")),
     )
 }
 
@@ -472,9 +535,9 @@ private fun copyTarEntries(
     while (true) {
         val entry = tar.nextEntry ?: break
         count += 1
-        require(count <= MAX_TAR_ENTRIES && entry.size >= 0) { "Java 安装包结构无效" }
+        require(count <= MAX_TAR_ENTRIES && entry.size >= 0) { I18n.t("core.javaRuntimeInstaller.13") }
         totalBytes = Math.addExact(totalBytes, entry.size)
-        require(totalBytes <= MAX_RUNTIME_EXTRACT_BYTES) { "Java 安装包解压后过大" }
+        require(totalBytes <= MAX_RUNTIME_EXTRACT_BYTES) { I18n.t("core.javaRuntimeInstaller.14") }
         if (entry.isFile && !entry.isSymbolicLink && !entry.isLink) {
             writeTarEntry(tar, entry, root, log)
         }
@@ -507,7 +570,13 @@ private fun writeTarEntry(
             )
         }
     } catch (error: IOException) {
-        log("写入 ${target.fileName} 失败：${error.message}")
+        log(
+            I18n.t(
+                "networkB1.javaRuntimeInstaller.writeFailed",
+                target.fileName,
+                error.message,
+            ),
+        )
         throw RuntimeFileWriteException(
             target.toAbsolutePath().normalize(),
             error,
@@ -515,16 +584,31 @@ private fun writeTarEntry(
     }
 }
 
-/** 把安装失败翻译成用户可读的原因分类；文件系统错误绝不能报成网络错误。 */
-private fun classifyInstallFailure(failure: Throwable): String {
+/** 安装失败的原因分类；文案由资源提供，逻辑只比较枚举。 */
+private enum class JavaInstallFailureKind(
+    val messageKey: String,
+) {
+    FILE_WRITE("core.javaRuntimeInstaller.failure.fileWrite"),
+    VERIFICATION("core.javaRuntimeInstaller.failure.verification"),
+    DISK_FULL("core.javaRuntimeInstaller.failure.diskFull"),
+    NETWORK("core.javaRuntimeInstaller.failure.network"),
+    UNKNOWN("core.javaRuntimeInstaller.failure.unknown"),
+}
+
+/**
+ * 把安装失败翻译成用户可读的原因分类；文件系统错误绝不能报成网络错误。
+ * `message.contains` 里的中文只用于兼容旧日志与外部异常文本，是兜底路径；
+ * 正常路径由异常类型与 [JavaInstallFailureKind] 判定。
+ */
+private fun classifyInstallFailure(failure: Throwable): JavaInstallFailureKind {
     val message = failure.message.orEmpty()
     return when {
-        failure is RuntimeFileWriteException -> "文件写入失败"
-        failure is DownloadVerificationException || message.contains("校验") -> "校验失败"
-        message.contains("空间不足") || message.contains("No space", true) -> "磁盘空间不足"
-        failure is java.nio.file.FileSystemException -> "文件写入失败"
-        failure is IOException || message.contains("下载") || message.contains("连接") -> "网络错误"
-        else -> "安装失败"
+        failure is RuntimeFileWriteException -> JavaInstallFailureKind.FILE_WRITE
+        failure is DownloadVerificationException || message.contains("校验") -> JavaInstallFailureKind.VERIFICATION
+        message.contains("空间不足") || message.contains("No space", true) -> JavaInstallFailureKind.DISK_FULL
+        failure is java.nio.file.FileSystemException -> JavaInstallFailureKind.FILE_WRITE
+        failure is IOException || message.contains("下载") || message.contains("连接") -> JavaInstallFailureKind.NETWORK
+        else -> JavaInstallFailureKind.UNKNOWN
     }
 }
 
@@ -537,14 +621,18 @@ internal fun javaInstallFailureReason(
     major: Int,
     diagnosticRoot: Path? = null,
 ): String {
-    val reason = classifyInstallFailure(failure)
-    val base = "Java $major 安装失败（$reason）：" + (failure.message ?: failure.javaClass.simpleName)
-    if (reason != "文件写入失败") return base
-    return base +
-        "。请把 MoliFox\\runtimes 加入杀毒软件白名单后重试" +
-        (diagnosticRoot?.let { "；诊断目录已保留：$it" } ?: "")
+    val kind = classifyInstallFailure(failure)
+    val reason = I18n.t(kind.messageKey)
+    val detail = failure.message ?: failure.javaClass.simpleName
+    if (kind != JavaInstallFailureKind.FILE_WRITE) {
+        return I18n.t("core.javaRuntimeInstaller.failed", major, reason, detail)
+    }
+    return if (diagnosticRoot == null) {
+        I18n.t("core.javaRuntimeInstaller.failedFileWrite", major, reason, detail)
+    } else {
+        I18n.t("core.javaRuntimeInstaller.failedFileWriteWithDiagnostics", major, reason, detail, diagnosticRoot)
+    }
 }
 
 /** 把字节数格式化成一位小数的 MB 文本。 */
-private fun formatMegabytes(bytes: Long): String =
-    "%.1f MB".format(bytes / BYTES_PER_MEBIBYTE.toFloat())
+private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / BYTES_PER_MEBIBYTE.toFloat())

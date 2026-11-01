@@ -1,6 +1,7 @@
 // JVM Scaffolding 服务端：监听回环地址、解码请求帧并并发服务多条连接。
 package dev.molifox.multiplayer.scaffolding
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.protocol.RequestFrameDecoder
 import dev.molifox.multiplayer.protocol.ScaffoldingFrame
 import dev.molifox.multiplayer.protocol.ScaffoldingProtocolException
@@ -42,10 +43,10 @@ class ScaffoldingServer(
 ) : AutoCloseable {
     init {
         require(requestedPort in 0..MAX_PORT) {
-            "端口必须在 0..$MAX_PORT 之间，收到 $requestedPort"
+            I18n.t("multiplayer.scaffoldingServer.1", MAX_PORT, requestedPort)
         }
-        require(playerTimeoutMillis > 0) { "playerTimeoutMillis 必须为正数" }
-        require(cleanupIntervalMillis > 0) { "cleanupIntervalMillis 必须为正数" }
+        require(playerTimeoutMillis > 0) { I18n.t("multiplayer.scaffoldingServer.2") }
+        require(cleanupIntervalMillis > 0) { I18n.t("multiplayer.scaffoldingServer.3") }
     }
 
     private val mutableMinecraftPort = MutableStateFlow<Int?>(null)
@@ -72,14 +73,14 @@ class ScaffoldingServer(
     val port: Int
         get() =
             boundPort.takeIf { it > 0 }
-                ?: throw IllegalStateException("ScaffoldingServer 尚未启动")
+                ?: throw IllegalStateException(I18n.t("multiplayer.scaffoldingServer.4"))
 
     /** 开始监听并返回实际端口；重复调用或关闭后调用会返回失败。 */
     fun start(): Result<Int> =
         synchronized(stateLock) {
             when {
-                closed -> Result.failure(IllegalStateException("ScaffoldingServer 已关闭"))
-                boundPort > 0 -> Result.failure(IllegalStateException("ScaffoldingServer 已启动"))
+                closed -> Result.failure(IllegalStateException(I18n.t("multiplayer.scaffoldingServer.5")))
+                boundPort > 0 -> Result.failure(IllegalStateException(I18n.t("multiplayer.scaffoldingServer.6")))
                 else -> bindAndLaunch()
             }
         }
@@ -88,7 +89,7 @@ class ScaffoldingServer(
     fun setMinecraftPort(port: Int?) {
         if (port != null) {
             require(port in MIN_PORT..MAX_PORT) {
-                "MC 端口必须在 $MIN_PORT..$MAX_PORT 之间，收到 $port"
+                I18n.t("multiplayer.scaffoldingServer.7", MIN_PORT, MAX_PORT, port)
             }
         }
         mutableMinecraftPort.value = port

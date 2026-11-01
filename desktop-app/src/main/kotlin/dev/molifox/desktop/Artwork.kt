@@ -66,6 +66,11 @@ private fun LoaderType.blockIcon(): String =
         LoaderType.Quilt -> "icons/blocks/quilt.png"
         LoaderType.Forge -> "icons/blocks/anvil.png"
         LoaderType.NeoForge -> "icons/blocks/neoforge.png"
+        // 新加载器使用各自项目的官方标识；LiteLoader/Cleanroom 只用于已有实例的列表徽标。
+        LoaderType.LegacyFabric -> "icons/blocks/legacyfabric.png"
+        LoaderType.OptiFine -> "icons/blocks/optifine.png"
+        LoaderType.LiteLoader -> "icons/blocks/liteloader.png"
+        LoaderType.Cleanroom -> "icons/blocks/cleanroom.png"
     }
 
 /** 内置的原版/加载器方块图标；图片随包分发，调用方无需再绘制。 */

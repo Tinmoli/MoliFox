@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.URI
@@ -85,7 +86,7 @@ internal class AuthlibServers(
     override suspend fun authlibMetadata(serverUrl: String): String {
         val normalized =
             normalizeAuthlibServerUrl(serverUrl)
-                ?: throw AuthlibException(AuthlibError.InvalidServer, "不是有效的认证服务器地址")
+                ?: throw AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
         store.data.authlibServers
             .find { matchesAuthlibServer(it.url, normalized) }
             ?.let {
@@ -95,7 +96,7 @@ internal class AuthlibServers(
     }
 
     private fun invalidServerFailure(message: String?): AuthlibException =
-        AuthlibException(AuthlibError.InvalidServer, message ?: "不是有效的认证服务器地址")
+        AuthlibException(AuthlibError.InvalidServer, message ?: I18n.t("core.authlibClient.4"))
 }
 
 /**

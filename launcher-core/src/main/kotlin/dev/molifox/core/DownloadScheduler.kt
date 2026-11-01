@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +45,13 @@ internal data class FileFailure(
     fun describe(): String =
         buildList {
             add(target.toString())
-            add(if (host.isBlank()) "来源未知" else "来源 $host")
+            add(
+                if (host.isBlank()) {
+                    I18n.t("networkA.scheduler.sourceUnknown")
+                } else {
+                    I18n.t("networkA.scheduler.sourceHost", host)
+                },
+            )
             add(status?.let { "HTTP $it" } ?: reason)
         }.filter { it.isNotBlank() }
             .joinToString(" · ")
@@ -55,10 +62,10 @@ internal class DownloadBatchException(
     val failures: List<FileFailure>,
 ) : IOException(
         buildString {
-            append("以下 ${failures.size} 个文件下载失败：")
+            append(I18n.t("networkA.scheduler.batchFailed", failures.size))
             failures.take(MAX_REPORTED_FAILURES).forEach { append('\n').append(it.describe()) }
             if (failures.size > MAX_REPORTED_FAILURES) {
-                append("\n…另有 ${failures.size - MAX_REPORTED_FAILURES} 个文件失败")
+                append(I18n.t("networkA.scheduler.moreFailed", failures.size - MAX_REPORTED_FAILURES))
             }
         },
     )

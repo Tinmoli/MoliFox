@@ -5,17 +5,26 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 /** 内嵌声明与模组元数据所属的加载器。 */
-enum class JarInJarLoader(
-    val title: String,
-) {
-    Fabric("Fabric"),
-    Quilt("Quilt"),
-    NeoForge("NeoForge"),
-    Forge("Forge"),
-    Legacy("Forge（旧版）"),
-    Unknown("未知"),
+enum class JarInJarLoader {
+    Fabric,
+    Quilt,
+    NeoForge,
+    Forge,
+    Legacy,
+    Unknown,
     ;
+
+    /** 显示名在读取时翻译；品牌名保持原样。 */
+    val title: String
+        get() =
+            when (this) {
+                Legacy -> I18n.t("core.jarInJarLoader.legacy")
+                Unknown -> I18n.t("core.jarInJarLoader.unknown")
+                else -> name
+            }
 
     /** Forge 系的裸版本是 Maven 软下限，其余加载器按 SemVer 精确匹配。 */
     val forgeLike: Boolean
@@ -24,13 +33,18 @@ enum class JarInJarLoader(
 
 /** 一条依赖在实例里的 5 种状态。 */
 enum class JarInJarStatus(
-    val title: String,
+    private val titleKey: String,
 ) {
-    Installed("已安装"),
-    Disabled("提供者已禁用"),
-    Bundled("内嵌提供"),
-    VersionMismatch("版本不符"),
-    Missing("缺失"),
+    Installed("core.jarInJarStatus.installed"),
+    Disabled("core.jarInJarStatus.disabled"),
+    Bundled("core.jarInJarStatus.bundled"),
+    VersionMismatch("core.jarInJarStatus.versionMismatch"),
+    Missing("core.jarInJarStatus.missing"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 /** 依赖声明里的一条记录；[constraint] 保留声明原文，空串表示不限版本。 */
@@ -173,9 +187,15 @@ data class JarInJarReport(
 /** 实例加载器转成声明方言；原版实例没有方言，留空交给约束语法特征识别。 */
 internal fun LoaderType.jarInJarLoader(): JarInJarLoader =
     when (this) {
-        LoaderType.Fabric -> JarInJarLoader.Fabric
+        LoaderType.Fabric,
+        LoaderType.LegacyFabric,
+        -> JarInJarLoader.Fabric
         LoaderType.Quilt -> JarInJarLoader.Quilt
         LoaderType.Forge -> JarInJarLoader.Forge
         LoaderType.NeoForge -> JarInJarLoader.NeoForge
-        LoaderType.Vanilla -> JarInJarLoader.Unknown
+        LoaderType.Vanilla,
+        LoaderType.OptiFine,
+        LoaderType.LiteLoader,
+        LoaderType.Cleanroom,
+        -> JarInJarLoader.Unknown
     }

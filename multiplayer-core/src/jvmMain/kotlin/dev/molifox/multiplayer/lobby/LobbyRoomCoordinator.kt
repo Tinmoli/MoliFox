@@ -1,6 +1,7 @@
 // 房间阶段编排：生成/校验邀请码，创建房主或房客会话，并统一回收房间资源。
 package dev.molifox.multiplayer.lobby
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.LanWorld
 import dev.molifox.multiplayer.common.LobbyPhase
 import dev.molifox.multiplayer.common.LobbyRole
@@ -68,7 +69,7 @@ internal class LobbyRoomCoordinator(
                 it.copy(
                     phase = LobbyPhase.Idle,
                     role = null,
-                    error = "创建房间失败：${result.exceptionOrNull()?.message}",
+                    error = I18n.t("multiplayer.lobbyRoomCoordinator.1", result.exceptionOrNull()?.message),
                 )
             }
         }
@@ -95,7 +96,7 @@ internal class LobbyRoomCoordinator(
                 it.copy(
                     phase = LobbyPhase.Idle,
                     role = null,
-                    error = "加入房间失败：${result.exceptionOrNull()?.message}",
+                    error = I18n.t("multiplayer.lobbyRoomCoordinator.2", result.exceptionOrNull()?.message),
                 )
             }
         }
@@ -171,20 +172,21 @@ internal class LobbyRoomCoordinator(
             }
     }
 
-    private fun createRuntime(): EasyTierNode =
-        runtimeFactory(installer.executable(), installer.cliExecutable())
+    private fun createRuntime(): EasyTierNode = runtimeFactory(installer.executable(), installer.cliExecutable())
 
     /** 关闭顺序：玩家收集 → 会话（内部停 EasyTier） → 兜底停运行时。 */
     fun teardown() {
         playersJob?.cancel()
         playersJob = null
-        hostSession?.let { session -> closeSession("房主", session) }
+        hostSession?.let { session -> closeSession(I18n.t("multiplayer.lobbyGuestSession.8"), session) }
         hostSession = null
-        guestSession?.let { session -> closeSession("房客", session) }
+        guestSession?.let { session -> closeSession(I18n.t("multiplayer.lobbyRoomCoordinator.3"), session) }
         guestSession = null
         runtime?.let { node ->
             runCatching { node.stop() }
-                .onFailure { logger("停止 EasyTier 运行时失败：${it.message}", true) }
+                .onFailure { failure ->
+                    logger(I18n.t("multiplayerB.lobbyRoomCoordinator.stopRuntimeFailed", failure.message), true)
+                }
         }
         runtime = null
     }
@@ -194,7 +196,9 @@ internal class LobbyRoomCoordinator(
         session: AutoCloseable,
     ) {
         runCatching { session.close() }
-            .onFailure { logger("关闭$label 会话失败：${it.message}", true) }
+            .onFailure { failure ->
+                logger(I18n.t("multiplayerB.lobbyRoomCoordinator.closeSessionFailed", label, failure.message), true)
+            }
     }
 
     override fun close() {

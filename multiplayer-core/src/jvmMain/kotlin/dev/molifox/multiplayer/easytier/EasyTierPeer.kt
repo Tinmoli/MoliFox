@@ -4,6 +4,7 @@ package dev.molifox.multiplayer.easytier
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 
 /** `easytier-cli -o json peer` 中本项目需要的一个节点。 */
@@ -58,8 +59,8 @@ object EasyTierPeers {
     fun findHost(peers: List<EasyTierPeer>): Result<EasyTierHost> {
         val hosts = hosts(peers)
         return when {
-            hosts.isEmpty() -> Result.failure(IOException("虚拟网络里还没有房主节点，请确认邀请码并稍候重试。"))
-            hosts.size > 1 -> Result.failure(IOException("虚拟网络里出现多个房主节点，为避免连错已停止加入。"))
+            hosts.isEmpty() -> Result.failure(IOException(I18n.t("multiplayer.easyTierPeer.1")))
+            hosts.size > 1 -> Result.failure(IOException(I18n.t("multiplayer.easyTierPeer.2")))
             else -> Result.success(hosts.first())
         }
     }
@@ -68,16 +69,16 @@ object EasyTierPeers {
         val start = output.indexOf('[')
         val end = output.lastIndexOf(']')
         if (start < 0 || end <= start) {
-            return Result.failure(IOException("EasyTier 命令行没有返回节点列表。"))
+            return Result.failure(IOException(I18n.t("multiplayer.easyTierPeer.3")))
         }
         val json = output.substring(start, end + 1)
         val element =
             runCatching { JsonParser.parseString(json) }
                 .getOrElse { failure ->
-                    return Result.failure(IOException("EasyTier 节点列表不是合法 JSON。", failure))
+                    return Result.failure(IOException(I18n.t("multiplayer.easyTierPeer.4"), failure))
                 }
         if (!element.isJsonArray) {
-            return Result.failure(IOException("EasyTier 节点列表不是 JSON 数组。"))
+            return Result.failure(IOException(I18n.t("multiplayer.easyTierPeer.5")))
         }
         return Result.success(element.asJsonArray.toList())
     }

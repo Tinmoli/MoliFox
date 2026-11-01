@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.AppLanguage
+import dev.molifox.core.i18n.I18n
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -22,6 +24,17 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 private const val MAX_LANGUAGE_OPTIONS_BYTES = 2L * 1024 * 1024
+private const val FALLBACK_GAME_LANGUAGE = "zh_cn"
+
+/** 启动器界面语言 → Minecraft 的 lang 代码；`auto` 先按系统语言解析，zh-HK / zh-TW 都落到 zh_tw。 */
+internal fun gameLanguageCode(settingValue: String): String =
+    AppLanguage.fromSetting(AppLanguage.resolveTag(settingValue)).gameLanguage.ifBlank { FALLBACK_GAME_LANGUAGE }
+
+/** 1.10 及更早版本要求区域大写：`zh_cn` → `zh_CN`；语言码本身已是小写。 */
+internal fun legacyGameLanguageCode(settingValue: String): String {
+    val code = gameLanguageCode(settingValue)
+    return code.substringBefore('_') + "_" + code.substringAfter('_').uppercase(java.util.Locale.ROOT)
+}
 
 internal fun applyGameLanguage(
     store: LauncherStore,
@@ -40,7 +53,7 @@ internal fun applyGameLanguage(
                     )
             ),
     ) {
-        "游戏语言设置文件不可写或过大：$file"
+        I18n.t("miscA1.gameLanguage.optionsUnwritable", file)
     }
     val old = if (file.exists()) file.readText() else ""
     val newline = if ("\r\n" in old) "\r\n" else "\n"
@@ -52,9 +65,7 @@ internal fun applyGameLanguage(
             ?.toIntOrNull()
             ?.let { it < 11 } == true
     val code =
-        settings.language.replace('-', '_').let {
-            if (legacy) it else it.lowercase(java.util.Locale.ROOT)
-        }
+        if (legacy) legacyGameLanguageCode(settings.language) else gameLanguageCode(settings.language)
     val lines = old.lineSequence().filterNot { it.startsWith("lang:") }.toMutableList()
     while (lines.lastOrNull() == "") lines.removeAt(lines.lastIndex)
     val updated = (lines + "lang:$code").joinToString(newline, postfix = newline)

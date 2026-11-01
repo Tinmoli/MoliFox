@@ -9,6 +9,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -103,7 +104,7 @@ fun splitArguments(input: String): List<String> {
             else -> current.append(character)
         }
     }
-    require(quote == null) { "JVM 参数引号未闭合" }
+    require(quote == null) { I18n.t("coreC.args.unclosedQuote") }
     if (current.isNotEmpty()) result.add(current.toString())
     return result
 }
@@ -115,5 +116,8 @@ fun redactSecrets(text: String): String =
                 "(?i)((?:access[_-]?token|refresh[_-]?token|authorization|--accessToken)" +
                     "[\\\"'\\s:=]+)(?:Bearer\\s+)?[^\\s,\\\"'}]+",
             ),
-            "$1[已隐藏]",
-        ).replace(Regex("eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"), "[已隐藏]")
+            "$1[" + I18n.t("miscA1.files.redacted") + "]",
+        ).replace(
+            Regex("eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"),
+            "[" + I18n.t("miscA1.files.redacted") + "]",
+        )

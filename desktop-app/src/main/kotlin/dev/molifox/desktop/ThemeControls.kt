@@ -65,13 +65,11 @@ fun controlBorderColor(focused: Boolean = false): Color {
 
 /** 控件 1dp 边框：与 [controlBorderColor] 配套。 */
 @Composable
-fun controlBorder(focused: Boolean = false): BorderStroke =
-    BorderStroke(1.dp, controlBorderColor(focused))
+fun controlBorder(focused: Boolean = false): BorderStroke = BorderStroke(1.dp, controlBorderColor(focused))
 
 /** 列表行悬停底色：主题色 7%（浅）/ 12%（深）。 */
 @Composable
-fun rowHoverColor(): Color =
-    MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) .12f else .07f)
+fun rowHoverColor(): Color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) .12f else .07f)
 
 /**
  * 选中行（下拉项、选择器行、已选分类 chip）的实色底色：surfaceVariant 向主题色推进 34%（浅）/ 30%（深），

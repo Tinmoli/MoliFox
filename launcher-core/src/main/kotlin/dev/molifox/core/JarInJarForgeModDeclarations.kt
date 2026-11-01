@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import org.tomlj.Toml
 import org.tomlj.TomlTable
 import java.util.jar.Manifest
@@ -43,11 +44,11 @@ internal object JarInJarForgeModDeclarations {
             }
         return when {
             parsed.hasErrors() ->
-                JarModReadResult(complete = false, note = "TOML 模组声明解析失败")
+                JarModReadResult(complete = false, note = I18n.t("diagA1.jarInJar.tomlParseFailed"))
             tables == null ->
-                JarModReadResult(complete = false, note = "TOML 模组声明缺少 mods 列表")
+                JarModReadResult(complete = false, note = I18n.t("diagA1.jarInJar.tomlMissingList"))
             tables.isEmpty() ->
-                JarModReadResult(complete = false, note = "TOML 模组声明缺少 mods 条目")
+                JarModReadResult(complete = false, note = I18n.t("diagA1.jarInJar.tomlMissingEntries"))
             else -> {
                 val jarVersion = manifestVersion(zip)
                 val declaredIds =
@@ -214,5 +215,4 @@ internal object JarInJarForgeModDeclarations {
 }
 
 /** Gson 的数字/布尔基元按 `asString` 取值会得到文本；非基元返回空串。 */
-private fun requiredString(element: JsonElement): String =
-    if (element.isJsonPrimitive) element.asString else ""
+private fun requiredString(element: JsonElement): String = if (element.isJsonPrimitive) element.asString else ""

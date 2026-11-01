@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -48,7 +49,7 @@ internal fun normalizeSkinTextureUrl(url: String): String {
             uri.rawFragment == null &&
             uri.path.matches(Regex("/texture/[a-fA-F0-9]{32,128}")),
     ) {
-        "不支持的皮肤纹理地址"
+        I18n.t("core.accountSkinCache.1")
     }
     return "https://textures.minecraft.net${uri.rawPath}"
 }
@@ -136,7 +137,7 @@ internal class AccountSkinCache(
         cache: Path,
     ) {
         staging.writeBytes(bytes)
-        require(validSkinTexture(staging)) { "皮肤文件不是有效的 Minecraft PNG 纹理" }
+        require(validSkinTexture(staging)) { I18n.t("core.accountSkinCache.2") }
         Files.move(staging, cache, StandardCopyOption.REPLACE_EXISTING)
     }
 
@@ -145,7 +146,7 @@ internal class AccountSkinCache(
         failure: Throwable,
         cached: Path?,
     ): Path? {
-        store.log("皮肤纹理获取失败：${failure.message}")
+        store.log(I18n.t("miscA1.accountSkinCache.fetchFailed", failure.message))
         return cached?.takeIf(::validSkinTexture)
     }
 }

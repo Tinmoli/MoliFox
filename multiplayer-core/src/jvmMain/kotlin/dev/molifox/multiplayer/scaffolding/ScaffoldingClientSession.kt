@@ -1,6 +1,7 @@
 // Scaffolding 客户端的连接层：socket 生命周期、请求/响应队列、心跳与响应超时。
 package dev.molifox.multiplayer.scaffolding
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.protocol.ResponseFrameDecoder
 import dev.molifox.multiplayer.protocol.ScaffoldingFrame
 import dev.molifox.multiplayer.protocol.ScaffoldingProtocol
@@ -47,7 +48,7 @@ internal class ScaffoldingClientSession(
         withContext(Dispatchers.IO) {
             when {
                 closed || socket != null ->
-                    Result.failure(IllegalStateException("Scaffolding 客户端已连接或已关闭"))
+                    Result.failure(IllegalStateException(I18n.t("multiplayer.scaffoldingClientSession.1")))
                 else -> connectSocket()
             }
         }
@@ -61,14 +62,14 @@ internal class ScaffoldingClientSession(
                 val target = socket
                 when {
                     closed || target == null ->
-                        Result.failure(IllegalStateException("Scaffolding 客户端未连接或已关闭"))
+                        Result.failure(IllegalStateException(I18n.t("multiplayer.scaffoldingClientSession.2")))
                     else -> sendLocked(target, type, body)
                 }
             }
         }
 
     fun close() {
-        markDisconnected(IOException("Scaffolding 客户端已关闭"))
+        markDisconnected(IOException(I18n.t("multiplayer.scaffoldingClientSession.3")))
         scope.cancel()
     }
 
@@ -106,8 +107,8 @@ internal class ScaffoldingClientSession(
             }
             Result.success(withTimeout(requestTimeoutMillis) { waiter.await() })
         } catch (failure: TimeoutCancellationException) {
-            markDisconnected(IOException("Scaffolding 请求超时：$type", failure))
-            Result.failure(IOException("Scaffolding 请求超时：$type", failure))
+            markDisconnected(IOException(I18n.t("multiplayer.scaffoldingClientSession.4", type), failure))
+            Result.failure(IOException(I18n.t("multiplayer.scaffoldingClientSession.4", type), failure))
         } catch (failure: IOException) {
             markDisconnected(failure)
             Result.failure(failure)
@@ -147,7 +148,7 @@ internal class ScaffoldingClientSession(
             for (response in decoder.feed(buffer.copyOf(read))) {
                 if (!pending.completeNext(response)) {
                     onError(
-                        IllegalStateException("收到没有请求等待的响应：状态 ${response.status}"),
+                        IllegalStateException(I18n.t("multiplayer.scaffoldingClientSession.5", response.status)),
                     )
                 }
             }
@@ -161,7 +162,9 @@ internal class ScaffoldingClientSession(
                 val result = request(ScaffoldingProtocol.PLAYER_PING, encodePlayerPing(player))
                 val response = result.getOrNull()
                 if (response?.status != ScaffoldingProtocol.STATUS_OK) {
-                    handleDisconnect(result.exceptionOrNull() ?: IOException("player_ping 心跳失败"))
+                    handleDisconnect(
+                        result.exceptionOrNull() ?: IOException(I18n.t("multiplayer.scaffoldingClientSession.6")),
+                    )
                     return
                 }
             }
@@ -169,7 +172,7 @@ internal class ScaffoldingClientSession(
     }
 
     private fun handleDisconnect(cause: Throwable?) {
-        markDisconnected(cause ?: IOException("Scaffolding 连接已关闭"))
+        markDisconnected(cause ?: IOException(I18n.t("multiplayer.scaffoldingClientSession.7")))
         scope.cancel()
         if (disconnectNotified.compareAndSet(false, true)) {
             onDisconnected(cause)

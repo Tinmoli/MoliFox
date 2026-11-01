@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -37,13 +38,15 @@ internal class ServerListEditor(
                 taskPathKey(store.instancePath(it.instanceId)) == taskPathKey(directory)
             },
         ) {
-            "游戏正在使用此服务器列表，请先退出使用该目录的游戏"
+            I18n.t("miscA2.serverList.inUse")
         }
         requireSafeServerPath(directory)
         val file = directory.resolve("servers.dat")
         val deletion = if (file.exists()) deleteFromFile(file, address) else null
         forgetShared(directory, instanceId, address)
-        if (deletion != null) store.log("服务器已删除：$address；原列表备份：${deletion.backup}")
+        if (deletion != null) {
+            store.log(I18n.t("miscA2.serverList.deleted", address, deletion.backup))
+        }
         return deletion ?: ServerDeletion(0, null)
     }
 
@@ -55,11 +58,21 @@ internal class ServerListEditor(
         requireSafeServerPath(file)
         val before =
             Files.readAllBytes(
-                file.also { require(it.fileSize() <= 8L * 1024 * 1024) { "服务器列表过大" } },
+                file.also {
+                    require(it.fileSize() <= 8L * 1024 * 1024) {
+                        I18n.t("miscA2.serverList.tooLarge")
+                    }
+                },
             )
         val document = readNbtDocument(file)
-        val servers = requireNotNull(document.root.list("servers")) { "服务器列表格式无效，未修改文件" }
-        val target = requireNotNull(parseServerAddress(address)) { "服务器地址无效" }
+        val servers =
+            requireNotNull(document.root.list("servers")) {
+                I18n.t("miscA2.serverList.invalidFormat")
+            }
+        val target =
+            requireNotNull(parseServerAddress(address)) {
+                I18n.t("diagA1.gameLaunchTarget.invalidServer")
+            }
         val remaining =
             servers.elements.filterNot {
                 it is NbtCompound &&
@@ -99,7 +112,9 @@ internal class ServerListEditor(
         try {
             Files.write(temporary, bytes, java.nio.file.StandardOpenOption.CREATE_NEW)
             requireSafeServerPath(file)
-            require(Files.readAllBytes(file).contentEquals(before)) { "游戏服务器列表已变化，请刷新后再删除" }
+            require(Files.readAllBytes(file).contentEquals(before)) {
+                I18n.t("miscA2.serverList.changed")
+            }
             Files.move(
                 temporary,
                 file,
@@ -143,7 +158,9 @@ private fun requireSafeServerPath(path: Path) {
                     java.nio.file.attribute.BasicFileAttributes::class.java,
                     LinkOption.NOFOLLOW_LINKS,
                 )
-            require(!attributes.isSymbolicLink && !attributes.isOther) { "服务器列表路径不能经过链接或联接" }
+            require(!attributes.isSymbolicLink && !attributes.isOther) {
+                I18n.t("miscA2.serverList.unsafePath")
+            }
         }
         candidate = candidate.parent
     }

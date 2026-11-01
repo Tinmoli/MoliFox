@@ -15,6 +15,7 @@ import com.sun.jna.platform.win32.Ole32
 import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.PointerByReference
 import com.sun.jna.win32.StdCallLibrary
+import dev.molifox.desktop.tr
 
 internal object WindowsFilePicker {
     private interface ShellItems : StdCallLibrary {
@@ -186,9 +187,9 @@ internal object WindowsFilePicker {
             }
         val patterns = extensions.joinToString(";") { "*.$it" }
         val filters = Memory(FILTER_SPEC_POINTER_COUNT.toLong() * Native.POINTER_SIZE)
-        filters.setPointer(0, wide("文件 ($patterns)"))
+        filters.setPointer(0, wide(tr("pages.picker.files", patterns)))
         filters.setPointer(pointerOffset(1), wide(patterns))
-        filters.setPointer(pointerOffset(ALL_FILES_LABEL_INDEX), wide("所有文件 (*.*)"))
+        filters.setPointer(pointerOffset(ALL_FILES_LABEL_INDEX), wide(tr("pages.picker.allFiles")))
         filters.setPointer(pointerOffset(ALL_FILES_PATTERN_INDEX), wide("*.*"))
         buffers.add(filters)
         dialog.checked(DIALOG_SLOT_SET_FILE_TYPES, 2, filters)
@@ -221,7 +222,9 @@ internal object WindowsFilePicker {
         }
 
     private fun checkResult(value: Int) {
-        check(value >= 0) { "Windows 文件窗口调用失败（HRESULT 0x${Integer.toHexString(value)}）" }
+        check(value >= 0) {
+            tr("deskI.picker.windowsFailed", Integer.toHexString(value))
+        }
     }
 
     private class ComPointer(

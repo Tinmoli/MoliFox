@@ -41,6 +41,7 @@ internal fun DatapackRow(
     deleteEnabled: Boolean,
     onDelete: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -58,15 +59,21 @@ internal fun DatapackRow(
         )
         Column(Modifier.weight(1f)) {
             Text(entry.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val kind =
+                if (entry.directory) {
+                    strings.t("deskF.datapackRow.folder")
+                } else {
+                    strings.t("deskF.datapackRow.archive")
+                }
             Text(
-                (if (entry.directory) "文件夹" else "压缩包") +
+                kind +
                     " · " +
                     formatSaveSize(entry.size) +
                     " · " +
                     when (entry.enabled) {
-                        true -> "已启用"
-                        false -> "已禁用"
-                        null -> "状态未知"
+                        true -> strings.t("deskF.datapackRow.enabled")
+                        false -> strings.t("deskF.datapackRow.disabled")
+                        null -> strings.t("deskF.datapackRow.unknownStatus")
                     },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -81,7 +88,7 @@ internal fun DatapackRow(
         )
         RowIconAction(
             Icons.Outlined.DeleteOutline,
-            "将数据包移至回收站",
+            strings.t("deskF.datapackRow.trashMessage"),
             enabled = deleteEnabled,
             onClick = onDelete,
         )

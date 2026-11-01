@@ -20,8 +20,7 @@ import kotlin.io.path.isRegularFile
 private const val SAVE_STAGING_PREFIX = ".molifox-saves-"
 
 /** `saves/` 内的一次性临时目录；成功后改名就位，失败时由调用方删除。 */
-internal fun saveStagingPath(saves: Path): Path =
-    safePath(saves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
+internal fun saveStagingPath(saves: Path): Path = safePath(saves, "$SAVE_STAGING_PREFIX${UUID.randomUUID()}")
 
 /** 删除本次操作产生的目录/文件；链接与目录联接只删链接本身，不进入目标目录。 */
 internal fun deleteSaveTree(path: Path) {

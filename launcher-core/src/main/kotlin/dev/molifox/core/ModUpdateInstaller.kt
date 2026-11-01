@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -58,16 +59,16 @@ internal class ModUpdateInstaller(
         requireUnchanged(old, item)
         val disabled = item.filename.endsWith(".disabled", true)
         val newBase = safeFilename(contentBaseFilename(candidate.filename.trim()))
-        require(newBase.endsWith(".jar", true)) { "更新文件不是 JAR" }
+        require(newBase.endsWith(".jar", true)) { I18n.t("packsC.modUpdate.notJar") }
         val newName = newBase + if (disabled) ".disabled" else ""
         val target = requireVacantTarget(mods, newName, old)
         val temporary = safePath(mods, ".molifox-update-${UUID.randomUUID()}.jar")
-        context?.progress(0f, "下载 $newBase")
+        context?.progress(0f, I18n.t("packsB2.packUpdate.downloading", newBase))
         try {
             downloadAndVerify(candidate, temporary, context)
             replaceModFile(mods, old, target, temporary)
-            store.log("更新模组：${item.title} ${item.currentVersion} → ${candidate.versionNumber}")
-            context?.progress(1f, "更新完成")
+            store.log(I18n.t("packsC.modUpdate.applied", item.title, item.currentVersion, candidate.versionNumber))
+            context?.progress(1f, I18n.t("packsB2.packUpdate.done"))
         } finally {
             temporary.deleteIfExists()
         }
@@ -78,7 +79,7 @@ internal class ModUpdateInstaller(
             item.status == ModUpdateStatus.Updatable && item.candidate != null &&
                 item.applicable,
         ) {
-            "没有可应用的更新"
+            I18n.t("packsB2.packUpdate.noneApplicable")
         }
         return requireNotNull(item.candidate)
     }
@@ -88,13 +89,13 @@ internal class ModUpdateInstaller(
         candidate: ModUpdateCandidate,
     ) {
         require(candidate.gameVersions.any { it.equals(instance.gameVersion, true) }) {
-            "更新文件不支持当前游戏版本"
+            I18n.t("packsB2.packUpdate.unsupportedGameVersion")
         }
         require(
             instance.loader != LoaderType.Vanilla &&
                 candidate.loaders.any { it.equals(instance.loader.name, true) },
         ) {
-            "更新文件不支持当前加载器"
+            I18n.t("packsC.modUpdate.unsupportedLoader")
         }
     }
 
@@ -103,13 +104,13 @@ internal class ModUpdateInstaller(
         item: ModUpdateItem,
     ) {
         require(old.isRegularFile() && !Files.isSymbolicLink(old)) {
-            "模组文件已不存在，请重新检查更新"
+            I18n.t("packsC.modUpdate.fileMissing")
         }
         require(
             old.fileSize() == item.size &&
                 old.getLastModifiedTime().toMillis() == item.modified,
         ) {
-            "模组文件已改变，请重新检查更新"
+            I18n.t("packsC.modUpdate.fileChanged")
         }
     }
 
@@ -120,7 +121,7 @@ internal class ModUpdateInstaller(
     ): Path {
         val target = safePath(mods, newName)
         require(!target.exists() || target == old) {
-            "目标文件已存在，请先处理重复模组：$newName"
+            I18n.t("packsC.modUpdate.targetExists", newName)
         }
         return target
     }
@@ -132,13 +133,13 @@ internal class ModUpdateInstaller(
     ) {
         downloader(candidate.toRemoteVersion(), temporary, context)
         context?.checkCancelled()
-        require(temporary.isRegularFile() && temporary.fileSize() > 0) { "更新文件为空" }
+        require(temporary.isRegularFile() && temporary.fileSize() > 0) { I18n.t("packsB2.packUpdate.empty") }
         if (candidate.size > 0) {
-            require(temporary.fileSize() == candidate.size) { "更新文件大小不符" }
+            require(temporary.fileSize() == candidate.size) { I18n.t("packsB2.packUpdate.sizeMismatch") }
         }
         requireMatchingDigest(temporary, candidate)
         ZipFile(temporary.toFile()).use { zip ->
-            require(zip.entries().hasMoreElements()) { "更新文件不是有效的 JAR" }
+            require(zip.entries().hasMoreElements()) { I18n.t("packsC.modUpdate.invalidJar") }
         }
         context?.checkCancelled()
     }
@@ -149,11 +150,11 @@ internal class ModUpdateInstaller(
     ) {
         if (candidate.sha512.isNotBlank()) {
             require(digest(temporary, "SHA-512").equals(candidate.sha512, true)) {
-                "更新文件哈希不符"
+                I18n.t("packsB2.packUpdate.hashMismatch")
             }
         } else if (candidate.sha1.isNotBlank()) {
             require(digest(temporary, "SHA-1").equals(candidate.sha1, true)) {
-                "更新文件哈希不符"
+                I18n.t("packsB2.packUpdate.hashMismatch")
             }
         }
     }
@@ -176,7 +177,7 @@ internal class ModUpdateInstaller(
                 }
             if (restored.isFailure) {
                 store.log(
-                    "更新模组失败且原文件未能复位，备份保留在 ${backup.toAbsolutePath()}",
+                    I18n.t("packsC.modUpdate.restoreFailed", backup.toAbsolutePath()),
                     true,
                 )
                 restored.exceptionOrNull()?.let(failure::addSuppressed)
@@ -188,7 +189,7 @@ internal class ModUpdateInstaller(
         } catch (error: IOException) {
             // 旧文件已由新文件取代，回收站搬运是尽力而为：失败只记日志并保留备份。
             store.log(
-                "旧模组未能移入回收站，保留在 ${backup.toAbsolutePath()}：${error.message}",
+                I18n.t("packsC.modUpdate.trashFailed", backup.toAbsolutePath(), error.message),
                 true,
             )
         }

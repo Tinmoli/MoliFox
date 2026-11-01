@@ -8,6 +8,7 @@ package dev.molifox.core
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -40,11 +41,15 @@ private const val HASH_BATCH_SIZE = 100
 enum class PackFolder(
     val directory: String,
     val kind: String,
-    val title: String,
+    private val titleKey: String,
 ) {
-    ResourcePacks("resourcepacks", "resourcepack", "资源包"),
-    ShaderPacks("shaderpacks", "shader", "光影"),
+    ResourcePacks("resourcepacks", "resourcepack", "core.packFolder.resourcePacks"),
+    ShaderPacks("shaderpacks", "shader", "core.packFolder.shaderPacks"),
     ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 
     companion object {
         fun of(directory: String): PackFolder? = entries.find { it.directory == directory }
@@ -53,19 +58,29 @@ enum class PackFolder(
 
 /** 与模组一致的三态：有更新、已是最新、无法确认当前版本。 */
 enum class PackUpdateStatus(
-    val title: String,
+    private val titleKey: String,
 ) {
-    Updatable("有更新"),
-    Latest("已是最新"),
-    Unknown("无法确认"),
+    Updatable("core.packUpdateStatus.updatable"),
+    Latest("core.packUpdateStatus.latest"),
+    Unknown("core.packUpdateStatus.unknown"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 /** 识别依据：文件指纹最可靠，名称搜索只作兜底。 */
 enum class PackMatchSource(
-    val title: String,
+    private val titleKey: String,
 ) {
-    Fingerprint("文件指纹"),
-    Name("名称搜索"),
+    Fingerprint("core.packMatchSource.fingerprint"),
+    Name("core.packMatchSource.name"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 data class PackUpdateCandidate(
@@ -77,7 +92,17 @@ data class PackUpdateCandidate(
     val downloadUrl: String,
     val provider: String,
     val gameVersions: List<String>,
-)
+    val size: Long,
+    val sha512: String,
+    val sha1: String,
+) {
+    /** 下载前的最低要求：地址、大小与至少一种校验值齐全，否则无法安全校验下载结果。 */
+    val downloadable: Boolean
+        get() =
+            downloadUrl.isNotBlank() &&
+                size > 0 &&
+                (sha512.isNotBlank() || sha1.isNotBlank())
+}
 
 data class PackUpdateItem(
     val filename: String,
@@ -89,6 +114,11 @@ data class PackUpdateItem(
     val matchSource: PackMatchSource? = null,
     /** 名称搜索得到唯一候选但无法确认当前版本时标注，供界面提示。 */
     val possibleMatch: Boolean = false,
+    /** 是否可以由用户显式应用：缺少下载地址或校验信息时为 false。 */
+    val applicable: Boolean = false,
+    /** 检查时记录的大小与修改时间，替换前用来确认文件没有被其他程序改动。 */
+    val size: Long = 0,
+    val modified: Long = 0,
     val warning: String = "",
 )
 
@@ -99,14 +129,11 @@ data class PackUpdateReport(
 ) {
     fun items(folder: PackFolder): List<PackUpdateItem> = items.filter { it.folder == folder }
 
-    fun updatable(folder: PackFolder): Int =
-        items(folder).count { it.status == PackUpdateStatus.Updatable }
+    fun updatable(folder: PackFolder): Int = items(folder).count { it.status == PackUpdateStatus.Updatable }
 
-    fun latest(folder: PackFolder): Int =
-        items(folder).count { it.status == PackUpdateStatus.Latest }
+    fun latest(folder: PackFolder): Int = items(folder).count { it.status == PackUpdateStatus.Latest }
 
-    fun unknown(folder: PackFolder): Int =
-        items(folder).count { it.status == PackUpdateStatus.Unknown }
+    fun unknown(folder: PackFolder): Int = items(folder).count { it.status == PackUpdateStatus.Unknown }
 
     /** 该目录里「没找到更新」的数量：已是最新 + 无法确认。 */
     fun unchanged(folder: PackFolder): Int = latest(folder) + unknown(folder)
@@ -169,39 +196,10 @@ class PackUpdateService
     internal constructor(
         private val store: LauncherStore,
         private val sources: List<PackUpdateSource>,
+        /** 应用更新时的下载器；只做检查的测试可以不提供。 */
+        private val downloader: PackUpdateDownloader? = null,
     ) {
-        private data class Cached(
-            val size: Long,
-            val modified: Long,
-            val sha512: String,
-        )
-
-        private val cache =
-            object : LinkedHashMap<Path, Cached>(64, .75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) =
-                    size > 512
-            }
-
-        @Synchronized
-        private fun localFile(path: Path): LocalPackFile {
-            val normalized = path.toAbsolutePath().normalize()
-            val directory = runCatching { path.isDirectory() }.getOrDefault(false)
-            val size = runCatching { if (directory) 0L else path.fileSize() }.getOrDefault(0L)
-            val modified = runCatching { path.getLastModifiedTime().toMillis() }.getOrDefault(0L)
-            // 文件夹形式的包没有单文件指纹，只能按名称匹配。
-            val hash =
-                if (directory) {
-                    ""
-                } else {
-                    cache[normalized]
-                        ?.takeIf { it.size == size && it.modified == modified }
-                        ?.sha512
-                        ?: runCatching { digest(path, "SHA-512") }
-                            .getOrDefault("")
-                            .also { cache[normalized] = Cached(size, modified, it) }
-                }
-            return LocalPackFile(normalized, path.name, size, modified, hash)
-        }
+        private val local = PackUpdateLocalIndex()
 
         suspend fun check(
             instanceId: String,
@@ -228,14 +226,36 @@ class PackUpdateService
                 }
                 val versionMs = elapsedMillis(versionStarted) - scanMs - fingerprintMs
                 if (attempted > 0 && failures.size == attempted && scanned > 0) {
-                    throw IllegalStateException("检查更新失败：${failures.joinToString("；")}")
+                    throw IllegalStateException(
+                        I18n.t("packsB2.packUpdates.checkFailed", failures.joinToString("；")),
+                    )
                 }
                 store.log(
-                    "资源包与光影更新检查：扫描 $scanned 个文件 $scanMs ms，指纹查询 $fingerprintMs ms，" +
-                        "版本查询 $versionMs ms，总计 ${elapsedMillis(startedAt)} ms",
+                    I18n.t(
+                        "packsB2.packUpdates.scanSummary",
+                        scanned,
+                        scanMs,
+                        fingerprintMs,
+                        versionMs,
+                        elapsedMillis(startedAt),
+                    ),
                 )
                 PackUpdateReport(instanceId, instance.gameVersion, items)
             }
+
+        /**
+         * 应用一条资源包/光影更新。
+         *
+         * 与模组更新一致：先下载到同目录临时文件并校验大小、哈希与 ZIP 结构，全部通过后才替换旧文件； 替换失败会恢复旧文件，任务取消时也保留已完成的部分。
+         */
+        suspend fun apply(
+            instanceId: String,
+            item: PackUpdateItem,
+            context: JobContext? = null,
+        ) {
+            val active = checkNotNull(downloader) { I18n.t("packsB2.packUpdates.downloaderMissing") }
+            PackUpdateInstaller(store, active).apply(instanceId, item, context)
+        }
 
         /** 扫描一个内容目录：先取指纹，再批量结算最新版本，最后按文件并发确认。 */
         private suspend fun scanFolder(
@@ -387,6 +407,8 @@ class PackUpdateService
                     filename = file.filename,
                     folder = folder,
                     currentVersion = fingerprint?.second?.number.orEmpty(),
+                    size = file.size,
+                    modified = file.modified,
                 )
             if (fingerprint != null) {
                 val (source, version) = fingerprint
@@ -427,11 +449,12 @@ class PackUpdateService
                         status = PackUpdateStatus.Unknown,
                         possibleMatch = true,
                         warning =
-                            "可能匹配到多个项目（" +
+                            I18n.t(
+                                "packsB2.packUpdates.ambiguousProject",
                                 distinct
                                     .take(POSSIBLE_MATCH_TITLE_LIMIT)
-                                    .joinToString("、") { it.second.title } +
-                                "），请在项目页确认",
+                                    .joinToString("、") { it.second.title },
+                            ),
                     )
                 else -> {
                     val (source, project) = distinct.single()
@@ -472,7 +495,7 @@ class PackUpdateService
                 return base.copy(
                     matchSource = matchSource,
                     possibleMatch = possible,
-                    warning = "读取项目版本失败：${packFailureDetail(failure)}",
+                    warning = I18n.t("packsB2.packUpdates.readVersionsFailed", packFailureDetail(failure)),
                 )
             }
             val versions = loaded?.getOrNull().orEmpty()
@@ -536,7 +559,7 @@ class PackUpdateService
                             (it.isRegularFile() || it.isDirectory())
                     }.filter { it.isDirectory() || it.name.endsWith(".zip", true) }
                     .sortedBy { it.name.lowercase() }
-                    .map { localFile(it) }
+                    .map { local.of(it) }
             }.getOrElse { emptyList() }
         }
     }
@@ -612,11 +635,11 @@ private fun unmatchedPack(
 ): PackUpdateItem {
     if (error.isNotBlank()) {
         // 搜索失败只留在技术日志里；界面上这是「无法确认」，不能读成检查失败。
-        store.log("光影/资源包名称搜索未返回结果：$filename · $error")
+        store.log(I18n.t("packsB2.packUpdates.searchNoResult", filename, error))
     }
     return base.copy(
         status = PackUpdateStatus.Unknown,
-        warning = "未收录或名称无法匹配，无法确认更新",
+        warning = I18n.t("packsB2.packUpdates.unmatched"),
     )
 }
 
@@ -633,23 +656,33 @@ private fun packResolutionItem(
             status = PackUpdateStatus.Unknown,
             matchSource = matchSource,
             possibleMatch = possible,
-            warning = if (latest == null) "没有适用于当前游戏版本的版本" else "无法确认当前版本，请到项目页核对",
+            warning =
+                if (latest == null) {
+                    I18n.t("packsB2.packUpdates.noVersionForGame")
+                } else {
+                    I18n.t("packsB2.packUpdates.unknownCurrentVersion")
+                },
         )
     }
     val newer = compareModVersions(latest.number, current) > 0
+    val candidate = if (newer) packUpdateCandidate(latest) else null
+    val warning =
+        when {
+            !newer -> if (possible) I18n.t("packsB2.packUpdates.nameMatchedOnly") else ""
+            candidate == null -> I18n.t("packsB2.packUpdates.latestNoZip")
+            !candidate.downloadable -> I18n.t("packsB2.packUpdates.latestNoDownload")
+            possible -> I18n.t("packsB2.packUpdates.nameMatchedOnly")
+            else -> ""
+        }
     return base.copy(
         status = if (newer) PackUpdateStatus.Updatable else PackUpdateStatus.Latest,
         currentVersion = current,
         latestVersion = latest.number,
-        candidate = if (newer) packUpdateCandidate(latest) else null,
+        candidate = candidate,
         matchSource = matchSource,
         possibleMatch = possible,
-        warning =
-            when {
-                newer && latest.downloadUrl.isBlank() -> "最新版本需要到项目页手动下载"
-                possible -> "按名称匹配，可能不是同一项目"
-                else -> ""
-            },
+        applicable = candidate?.downloadable == true,
+        warning = warning,
     )
 }
 
@@ -664,12 +697,14 @@ private fun packUpdateCandidate(version: RemoteModVersion): PackUpdateCandidate?
         downloadUrl = version.downloadUrl,
         provider = version.project.provider,
         gameVersions = version.gameVersions,
+        size = version.size,
+        sha512 = version.sha512,
+        sha1 = version.sha1,
     )
 }
 
 /** 错误摘要统一截断，避免把整段服务端返回写进界面提示。 */
-private fun packFailureDetail(error: Throwable): String =
-    error.message.orEmpty().take(FAILURE_DETAIL_MAX_CHARS)
+private fun packFailureDetail(error: Throwable): String = error.message.orEmpty().take(FAILURE_DETAIL_MAX_CHARS)
 
 /** 指纹接口失败只影响该内容源；日志保留截断后的错误摘要。 */
 private fun packSourceFailure(
@@ -680,7 +715,7 @@ private fun packSourceFailure(
         error.message
             .orEmpty()
             .take(FINGERPRINT_LOG_MAX_CHARS)
-            .ifBlank { "请求失败" }
+            .ifBlank { I18n.t("packsB2.packUpdates.requestFailed") }
     return "$provider：$detail"
 }
 
@@ -691,8 +726,11 @@ private fun logBatchFailure(
     error: Exception,
 ) {
     store.log(
-        "$provider 批量版本查询失败，回退到逐项目查询：" +
-            packFailureDetail(error).ifBlank { "请求失败" },
+        I18n.t(
+            "packsB2.packUpdates.batchFailed",
+            provider,
+            packFailureDetail(error).ifBlank { I18n.t("packsB2.packUpdates.requestFailed") },
+        ),
         true,
     )
 }
@@ -737,8 +775,7 @@ internal fun defaultPackUpdateSources(
     network: NetworkClient,
     api: String,
     curseForge: CurseForgeBackend,
-): List<PackUpdateSource> =
-    listOf(ModrinthPackUpdateSource(network, api), CurseForgePackUpdateSource(curseForge))
+): List<PackUpdateSource> = listOf(ModrinthPackUpdateSource(network, api), CurseForgePackUpdateSource(curseForge))
 
 internal class ModrinthPackUpdateSource(
     private val network: NetworkClient,
@@ -931,6 +968,40 @@ internal class CurseForgePackUpdateSource(
         project: RemoteModProject,
         folder: PackFolder,
         instance: GameInstance,
-    ): List<RemoteModVersion> =
-        curseForge.available(project.id).mapNotNull { remoteVersion(it, project) }
+    ): List<RemoteModVersion> = curseForge.available(project.id).mapNotNull { remoteVersion(it, project) }
+}
+
+/** 资源包/光影本地指纹的短期缓存；与更新检查服务分开，避免服务类继续膨胀。 */
+private class PackUpdateLocalIndex {
+    private data class Cached(
+        val size: Long,
+        val modified: Long,
+        val sha512: String,
+    )
+
+    private val cache =
+        object : LinkedHashMap<Path, Cached>(64, .75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, Cached>?) = size > 512
+        }
+
+    @Synchronized
+    fun of(path: Path): LocalPackFile {
+        val normalized = path.toAbsolutePath().normalize()
+        val directory = runCatching { path.isDirectory() }.getOrDefault(false)
+        val size = runCatching { if (directory) 0L else path.fileSize() }.getOrDefault(0L)
+        val modified = runCatching { path.getLastModifiedTime().toMillis() }.getOrDefault(0L)
+        // 文件夹形式的包没有单文件指纹，只能按名称匹配。
+        val hash =
+            if (directory) {
+                ""
+            } else {
+                cache[normalized]
+                    ?.takeIf { it.size == size && it.modified == modified }
+                    ?.sha512
+                    ?: runCatching { digest(path, "SHA-512") }
+                        .getOrDefault("")
+                        .also { cache[normalized] = Cached(size, modified, it) }
+            }
+        return LocalPackFile(normalized, path.name, size, modified, hash)
+    }
 }

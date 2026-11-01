@@ -73,6 +73,9 @@ private fun libraryCoordinate(name: String): String {
 /**
  * 合并参数：新加载器声明的开关（含紧跟的值）替换旧值，其余原有参数按顺序保留，
  * 重复项只留一份；这样旧版本的 `--fml.forgeVersion` 之类不会和新值并存。
+ *
+ * `arguments.game/jvm` 里还可能有 `{"rules":…,"value":…}` 条件参数：它们不是字符串
+ * token，不能参与开关/值的替换匹配，只能原样保留；新旧条件参数按结构相等去重。
  */
 private fun mergedExternalArguments(
     original: JsonObject,
@@ -82,24 +85,47 @@ private fun mergedExternalArguments(
     val oldArguments = original.obj("arguments")
     val newArguments = loader.obj("arguments")
     for (kind in listOf("game", "jvm")) {
-        val old = oldArguments.array(kind).map { it.asString }
-        val incoming = newArguments.array(kind).map { it.asString }
+        val old = oldArguments.array(kind).map { it.deepCopy() }
+        val incoming = newArguments.array(kind).map { it.deepCopy() }
         if (old.isEmpty() && incoming.isEmpty()) continue
-        val replacedFlags = incoming.filter { it.startsWith("-") }.toSet()
-        val kept = mutableListOf<String>()
-        var skipValue = false
-        for (token in old) {
-            when {
-                skipValue && !token.startsWith("-") -> skipValue = false
-                token in replacedFlags -> skipValue = true
-                else -> {
-                    skipValue = false
-                    kept += token
-                }
-            }
-        }
-        for (token in incoming) if (token !in kept) kept += token
-        result.add(kind, JsonArray().apply { kept.forEach(::add) })
+        result.add(kind, JsonArray().apply { mergeArgumentTokens(old, incoming).forEach(::add) })
     }
     return result
 }
+
+/** 字符串 token 的开关替换规则；对象/数组条件参数只做结构去重，不参与 token 匹配。 */
+private fun mergeArgumentTokens(
+    old: List<JsonElement>,
+    incoming: List<JsonElement>,
+): List<JsonElement> {
+    val replacedFlags =
+        incoming.mapNotNull { it.argumentToken() }.filter { it.startsWith("-") }.toSet()
+    val kept = mutableListOf<JsonElement>()
+    var skipValue = false
+    for (element in old) {
+        val token = element.argumentToken()
+        when {
+            // 只跳过被替换开关紧跟的字符串值；条件参数不是值，遇到时保留并结束跳过状态。
+            skipValue && token != null && !token.startsWith("-") -> skipValue = false
+            token != null && token in replacedFlags -> skipValue = true
+            else -> {
+                skipValue = false
+                kept += element
+            }
+        }
+    }
+    for (element in incoming) {
+        val token = element.argumentToken()
+        val duplicate =
+            if (token == null) {
+                kept.any { it == element }
+            } else {
+                kept.any { it.argumentToken() == token }
+            }
+        if (!duplicate) kept += element
+    }
+    return kept
+}
+
+/** 对象/数组不是参数 token；数字等原始值沿用旧行为按文本比较。 */
+private fun JsonElement.argumentToken(): String? = takeIf { it.isJsonPrimitive }?.asString

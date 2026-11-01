@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
 
@@ -46,7 +47,13 @@ internal abstract class StoreScanActions(
     /** 载入完成后的收尾：补写 CurseForge 回退、刷新实例并说明迁移结果。 */
     fun startup() {
         if (core.curseForgeBaseFallback) {
-            log("CurseForge 服务地址无效，已使用默认镜像：$DEFAULT_CURSE_FORGE_BASE_URL", true)
+            log(
+                I18n.t(
+                    "miscA2.storeScan.curseForgeFallback",
+                    DEFAULT_CURSE_FORGE_BASE_URL,
+                ),
+                true,
+            )
         }
         refreshInstances()
         // 已删目录留下的设置键保持惰性，不因一次启动就删掉；下一次保存时由 mutate 统一清理。
@@ -60,8 +67,11 @@ internal abstract class StoreScanActions(
             val keptKeys =
                 legacyKeys.filter { key -> current.instanceSettings.containsKey(key) }
             log(
-                "实例列表迁移：保留 ${keptKeys.size} 个实例设置，跳过 ${legacyKeys.size - keptKeys.size} 个已不存在的目录；" +
-                    "此后以 versions/ 扫描为准",
+                I18n.t(
+                    "miscA2.storeScan.instanceMigrationSummary",
+                    keptKeys.size,
+                    legacyKeys.size - keptKeys.size,
+                ),
             )
         }
     }
@@ -90,7 +100,7 @@ internal abstract class StoreScanActions(
         // 选中项从旧随机 id / 已删除 id 收敛到扫描结果时写回，下一次启动不会再退回第一个目录。
         if (next.selectedInstanceId != current.selectedInstanceId) writeJson(core.config, next)
         if (normalizedIds > 0) {
-            log("实例 id 已规范化为目录稳定值：$normalizedIds 个（目录名仍是唯一身份）")
+            log(I18n.t("miscA2.storeScan.normalizedIds", normalizedIds))
         }
         logIsolationInference(instances)
         return instances.count { !it.broken }
@@ -142,7 +152,7 @@ internal abstract class StoreScanActions(
             )
         }
         missing.forEach { (key, settings) ->
-            log("清理失效实例记录：${settings.displayName.ifBlank { key }}（目录不存在）")
+            log(I18n.t("miscA2.storeScan.removedMissingInstance", settings.displayName.ifBlank { key }))
         }
         return missing.size
     }
@@ -181,7 +191,7 @@ internal abstract class StoreScanActions(
             val evidence = isolationEvidence(instance) ?: continue
             val key = "${instance.gameDirectoryId.orEmpty()}/${instance.instanceSettingsKey()}"
             if (core.inferenceLogged.add(key)) {
-                log("推断版本隔离：${instance.name}（目录内有 $evidence）")
+                log(I18n.t("miscA2.storeScan.isolationInferred", instance.name, evidence))
             }
         }
     }
@@ -198,7 +208,7 @@ internal abstract class StorePathActions(
                 core.data.gameDirectories
                     .find { it.id == directoryId }
                     ?.path
-                    ?: error("此版本的游戏目录已移除，请重新选择目录"),
+                    ?: error(I18n.t("miscA2.storePath.gameDirectoryRemoved")),
             )
         } ?: core.minecraftRoot
 
@@ -235,10 +245,18 @@ internal abstract class StorePathActions(
     override fun isolationTitle(instance: GameInstance): String =
         when (isolationSource(instance)) {
             IsolationSource.Explicit ->
-                if (instance.isolation == VersionIsolation.Enabled) "版本隔离" else "共用游戏目录"
-            IsolationSource.Inferred -> "版本隔离（自动推断）"
+                if (instance.isolation == VersionIsolation.Enabled) {
+                    I18n.t("core.isolationMigration.2")
+                } else {
+                    I18n.t("core.isolationMigration.1")
+                }
+            IsolationSource.Inferred -> I18n.t("miscA2.storePath.isolationInferredTitle")
             IsolationSource.GlobalDefault ->
-                if (core.data.settings.isolateVersions) "版本隔离（全局默认）" else "共用游戏目录（全局默认）"
+                if (core.data.settings.isolateVersions) {
+                    I18n.t("miscA2.storePath.isolationGlobalDefault")
+                } else {
+                    I18n.t("miscA2.storePath.sharedGlobalDefault")
+                }
         }
 
     /** 推断依据的目录条目名（saves、mods 等）；显式设置或没有证据时为 null。 */
@@ -256,7 +274,7 @@ internal abstract class StorePathActions(
     override fun instancePath(id: String): Path = gamePath(instance(id))
 
     override fun gamePath(instance: GameInstance): Path {
-        require(instance.id.isNotBlank()) { "实例标识无效" }
+        require(instance.id.isNotBlank()) { I18n.t("miscA2.storePath.invalidInstanceId") }
         if (!isolated(instance)) return minecraftRoot(instance)
         return versionGamePath(instance)
     }

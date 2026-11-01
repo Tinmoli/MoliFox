@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.awt.Font
 import java.awt.FontFormatException
 import java.io.IOException
@@ -31,24 +32,24 @@ fun importAppearanceBackground(
     source: Path,
 ): Path {
     require(source.isRegularFile() && source.fileSize() in 1..MAX_BACKGROUND_FILE_BYTES) {
-        "背景图片最大 12 MB"
+        I18n.t("core.appearanceAssets.1")
     }
     ImageIO.createImageInputStream(source.toFile()).use { input ->
-        require(input != null) { "无法读取背景图片" }
+        require(input != null) { I18n.t("core.appearanceAssets.2") }
         val readers = ImageIO.getImageReaders(input)
-        require(readers.hasNext()) { "请选择 PNG 或 JPEG 图片" }
+        require(readers.hasNext()) { I18n.t("core.appearanceAssets.3") }
         val reader = readers.next()
         try {
             reader.input = input
             require(reader.formatName.lowercase() in listOf("png", "jpeg", "jpg")) {
-                "请选择 PNG 或 JPEG 图片"
+                I18n.t("core.appearanceAssets.3")
             }
             val width = reader.getWidth(0)
             val height = reader.getHeight(0)
             require(width > 0 && height > 0 && width.toLong() * height <= MAX_BACKGROUND_PIXELS) {
-                "背景图片不能超过 2000 万像素"
+                I18n.t("core.appearanceAssets.4")
             }
-            require(reader.read(0) != null) { "背景图片已损坏" }
+            require(reader.read(0) != null) { I18n.t("core.appearanceAssets.5") }
         } finally {
             reader.dispose()
         }
@@ -89,15 +90,15 @@ fun importAppearanceFont(
     source: Path,
 ): LauncherFont {
     require(source.isRegularFile() && source.fileSize() in 1..MAX_FONT_FILE_BYTES) {
-        "字体文件最大 32 MB"
+        I18n.t("core.appearanceAssets.6")
     }
     val font =
         try {
             Files.newInputStream(source).use { Font.createFont(Font.TRUETYPE_FONT, it) }
         } catch (error: FontFormatException) {
-            throw IllegalArgumentException("请选择有效的 TTF 或 OTF 字体", error)
+            throw IllegalArgumentException(I18n.t("core.appearanceAssets.7"), error)
         } catch (error: IOException) {
-            throw IllegalArgumentException("请选择有效的 TTF 或 OTF 字体", error)
+            throw IllegalArgumentException(I18n.t("core.appearanceAssets.7"), error)
         }
     val hash = digest(source, "SHA-256")
     val directory = dataDirectory.resolve("appearance/fonts").createDirectories()

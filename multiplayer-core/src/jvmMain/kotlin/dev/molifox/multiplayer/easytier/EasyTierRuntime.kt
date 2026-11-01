@@ -1,6 +1,7 @@
 // EasyTier 核心进程生命周期：分配回环 RPC 端口、启动、等 CLI 可用、退出检测与幂等停止。
 package dev.molifox.multiplayer.easytier
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.delay
 import java.io.IOException
 import java.net.InetAddress
@@ -56,7 +57,7 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
                     .redirectErrorStream(true)
                     .start()
             } catch (failure: IOException) {
-                return Result.failure(IOException("无法启动 EasyTier：${failure.message}", failure))
+                return Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure))
             }
         val reader =
             Thread({ drainOutput(process, onOutput) }, "easytier-core-log").apply {
@@ -162,7 +163,7 @@ class EasyTierRuntime(
         request: EasyTierNodeRequest,
         onUnexpectedExit: (Int, String) -> Unit,
     ): Result<EasyTierCli> {
-        val rpc = beginStart() ?: return Result.failure(IllegalStateException("EasyTier 节点已在运行"))
+        val rpc = beginStart() ?: return Result.failure(IllegalStateException(I18n.t("multiplayer.easyTierRuntime.2")))
         val result = launchAndWait(request, rpc, onUnexpectedExit)
         if (result.isFailure) {
             stop()
@@ -191,7 +192,7 @@ class EasyTierRuntime(
         runCatching { EasyTierArguments.build(request, rpc) }.mapCatching { arguments ->
             val process = launchProcess(arguments, onUnexpectedExit)
             val candidate = EasyTierCli(cliExecutable, rpc, logger, commandRunner)
-            logger("EasyTier 已启动（RPC 127.0.0.1:$rpc）", false)
+            logger(I18n.t("multiplayerB.easyTierRuntime.started", rpc), false)
             val ready = awaitCliReady(candidate, process).getOrThrow()
             synchronized(lock) { currentCli = ready }
             ready
@@ -226,7 +227,7 @@ class EasyTierRuntime(
             }
         process?.stop()
         if (process != null) {
-            logger("EasyTier 已停止", false)
+            logger(I18n.t("multiplayerB.easyTierRuntime.stopped"), false)
         }
     }
 
@@ -250,9 +251,9 @@ class EasyTierRuntime(
             delay(cliReadyIntervalMillis)
         }
         return if (exited) {
-            Result.failure(IOException("EasyTier 启动后立即退出：${tailOutput()}"))
+            Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.3", tailOutput())))
         } else {
-            Result.failure(IOException("EasyTier 已启动但命令行在 ${cliReadyTimeoutMillis}ms 内不可用。"))
+            Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.4", cliReadyTimeoutMillis)))
         }
     }
 
@@ -263,7 +264,7 @@ class EasyTierRuntime(
                 if (!stopping && handle != null) unexpectedExit else null
             }
         if (unexpected != null) {
-            logger("EasyTier 进程意外退出（退出码 $code）：${tailOutput()}", true)
+            logger(I18n.t("multiplayerB.easyTierRuntime.unexpectedExit", code, tailOutput()), true)
             unexpected(code, tailOutput())
         }
     }
@@ -276,7 +277,10 @@ class EasyTierRuntime(
             }
     }
 
-    private fun tailOutput(): String = synchronized(lock) { recentOutput.ifBlank { "（没有日志输出）" } }
+    private fun tailOutput(): String =
+        synchronized(lock) {
+            recentOutput.ifBlank { I18n.t("multiplayer.easyTierRuntime.5") }
+        }
 
     private companion object {
         const val MAX_RECENT_OUTPUT_CHARS = 4_096

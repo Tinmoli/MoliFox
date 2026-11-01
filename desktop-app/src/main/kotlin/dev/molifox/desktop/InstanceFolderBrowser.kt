@@ -43,7 +43,8 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SearchOff
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -62,15 +63,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
-import java.nio.file.Path
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 import dev.molifox.core.data.instance.InstanceDirectoryEntry as FolderEntry
@@ -95,10 +100,16 @@ internal fun InstanceFolderBrowser(
     var query by remember { mutableStateOf("") }
     // 目录读取期间先显示骨架，读完再决定空态，避免空态闪一下被误判成“目录是空的”。
     var loading by remember(instance.id, folder) { mutableStateOf(true) }
-    var deletingFile by remember { mutableStateOf<Path?>(null) }
     // 子目录浏览只在前端维护，不改实例目录结构；返回上一级时清空栈。
     var subPath by remember(instance.id, folder) { mutableStateOf<List<String>>(emptyList()) }
+    var deletingEntry by remember(instance.id, folder, subPath) {
+        mutableStateOf<FolderEntry?>(null)
+    }
+    var renamingEntry by remember(instance.id, folder, subPath) {
+        mutableStateOf<FolderEntry?>(null)
+    }
     val busy = actions.controller.isInstanceBusy(instance.id)
+    val strings = LocalStrings.current
     val liveState by actions.controller.state.collectAsState()
     val root =
         actions.controller.store
@@ -121,43 +132,47 @@ internal fun InstanceFolderBrowser(
             }
         loading = false
     }
-    // 原理图删除会移入回收站，这里先确认再执行。
-    deletingFile?.let { file ->
-        SchematicTrashDialog(
-            file = file,
-            onDismiss = { deletingFile = null },
-            onConfirm = {
-                val name = file.name
-                deletingFile = null
-                actions.run {
-                    actions.controller.requireIdle(instance.id)
-                    actions.controller.content.deleteSchematic(instance.id, name)
-                    withContext(Dispatchers.Swing) { refresh++ }
-                }
-            },
-        )
-    }
+    // 原理图删除会移入回收站，这里先确认再执行；文件夹与文件走同一条删除流程。
+    SchematicEntryDialogs(
+        instance = instance,
+        actions = actions,
+        subPath = subPath,
+        deletingEntry = deletingEntry,
+        renamingEntry = renamingEntry,
+        onDismissDelete = { deletingEntry = null },
+        onDismissRename = { renamingEntry = null },
+        onChanged = { refresh++ },
+    )
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ContentToolbar(
             leading = {
                 if (subPath.isNotEmpty()) {
-                    ToolbarIconAction(Icons.Outlined.ArrowUpward, "返回上一级目录") {
+                    ToolbarIconAction(
+                        Icons.Outlined.ArrowUpward,
+                        strings.t("pages.folder.back"),
+                    ) {
                         subPath = subPath.dropLast(1)
                         query = ""
                     }
                 }
             },
-            flexible = { ToolbarSearchField(query, { query = it }, "在文件夹内搜索") },
+            flexible = {
+                ToolbarSearchField(
+                    query,
+                    { query = it },
+                    strings.t("pages.folder.search.placeholder"),
+                )
+            },
             importAction =
                 ToolbarAction(
-                    importLabel.ifBlank { "导入" },
+                    importLabel.ifBlank { strings.t("pages.folder.import") },
                     icon = Icons.Outlined.FileDownload,
                     enabled = !busy,
                 ) {
                     actions.run {
                         val chosen =
                             actions.choose(
-                                importLabel.ifBlank { "选择文件" },
+                                importLabel.ifBlank { strings.t("pages.folder.chooseFiles") },
                                 multiple = true,
                                 extensions = importExtensions,
                             )
@@ -168,25 +183,44 @@ internal fun InstanceFolderBrowser(
                     }
                 },
             refresh =
-                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+                ToolbarAction(
+                    strings.t("pages.folder.refresh"),
+                    icon = Icons.Outlined.Refresh,
+                    enabled = !busy,
+                ) { refresh++ },
             openFolder =
-                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen) {
+                ToolbarAction(strings.t("pages.folder.open"), icon = Icons.Outlined.FolderOpen) {
                     actions.run { actions.controller.openFolder(instance.id, folder) }
                 },
         )
-        Text(
-            directory.toString(),
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                directory.toString(),
+                modifier = Modifier.weight(1f),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (allowDelete) {
+                Text(
+                    strings.t("pages.folder.hint.contextMenu"),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f),
+                )
+            }
+        }
         if (loading && entries.isNotEmpty()) {
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         }
         val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
         // 空目录文案区分「目录本身为空」和「子目录为空」。
-        val emptyFolderTitle = if (subPath.isEmpty()) "这个目录还没有文件" else "这个子目录是空的"
+        val emptyFolderTitle =
+            if (subPath.isEmpty()) {
+                strings.t("pages.folder.empty.root")
+            } else {
+                strings.t("pages.folder.empty.sub")
+            }
         val list: @Composable () -> Unit = {
             FolderEntryList(
                 entries = entries,
@@ -202,7 +236,8 @@ internal fun InstanceFolderBrowser(
                         query = ""
                     }
                 },
-                onDelete = { entry -> deletingFile = entry.path },
+                onDelete = { entry -> deletingEntry = entry },
+                onRename = { entry -> renamingEntry = entry },
                 onRetry = { refresh++ },
                 onClearSearch = { query = "" },
             )
@@ -217,8 +252,7 @@ private suspend fun loadFolderEntries(
     instanceId: String,
     folder: String,
     subPath: List<String>,
-): Result<List<FolderEntry>> =
-    actions.controller.instanceWorkspace.listDirectory(instanceId, folder, subPath)
+): Result<List<FolderEntry>> = actions.controller.instanceWorkspace.listDirectory(instanceId, folder, subPath)
 
 /** 进入 / 返回子目录时整块淡入并轻微位移 4dp，告诉用户“换了一层目录”。 */
 @Composable
@@ -257,29 +291,41 @@ private fun FolderEntryList(
     busy: Boolean,
     onOpen: (FolderEntry) -> Unit,
     onDelete: (FolderEntry) -> Unit,
+    onRename: (FolderEntry) -> Unit,
     onRetry: () -> Unit,
     onClearSearch: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     when {
         loading && entries.isEmpty() -> ListSkeleton()
         error != null ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("无法读取这个目录", error.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton(onRetry) { Text("重试") }
+                EmptyState(
+                    strings.t("pages.folder.error.title"),
+                    error.orEmpty(),
+                    Icons.Outlined.CloudOff,
+                ) {
+                    TextButton(onRetry) { Text(strings.t("pages.folder.error.retry")) }
                 }
             }
         entries.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
                     emptyFolderTitle,
-                    "游戏生成或安装的内容会显示在这里。",
+                    strings.t("pages.folder.empty.body"),
                     Icons.Outlined.FolderOpen,
                 )
             }
         filtered.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
-                EmptyState("没有匹配的文件", "换个关键词试试", Icons.Outlined.SearchOff) {
-                    TextButton(onClearSearch) { Text("清除搜索") }
+                EmptyState(
+                    strings.t("pages.folder.filtered.title"),
+                    strings.t("pages.folder.filtered.body"),
+                    Icons.Outlined.SearchOff,
+                ) {
+                    TextButton(onClearSearch) {
+                        Text(strings.t("pages.folder.filtered.clear"))
+                    }
                 }
             }
         else ->
@@ -291,34 +337,15 @@ private fun FolderEntryList(
                     FolderRow(
                         entry,
                         modifier = Modifier.animateItem(),
-                        allowDelete = allowDelete && !entry.isDirectory,
+                        allowDelete = allowDelete,
                         onOpen = { onOpen(entry) },
                         onDelete = { onDelete(entry) },
+                        onRename = { onRename(entry) },
                         busy = busy,
                     )
                 }
             }
     }
-}
-
-/** 说明「移至回收站」的后果，并给出确认与取消两个动作。 */
-@Composable
-private fun SchematicTrashDialog(
-    file: Path,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("移至回收站？") },
-        text = { Text("「" + file.name + "」会从原理图目录移至回收站，需要时可以再找回。") },
-        confirmButton = {
-            TextButton(onConfirm) {
-                Text("移至回收站", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
-    )
 }
 
 @Composable
@@ -329,70 +356,180 @@ private fun FolderRow(
     busy: Boolean,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onRename: () -> Unit,
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
-    Surface(
-        modifier.fillMaxWidth().heightIn(min = 52.dp).pressScale(),
-        shape = shape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)),
-    ) {
-        Row(
+    val strings = LocalStrings.current
+    val density = LocalDensity.current
+    var menuOffset by remember(entry.path) { mutableStateOf<DpOffset?>(null) }
+    Box(modifier.fillMaxWidth()) {
+        Surface(
             Modifier
                 .fillMaxWidth()
-                .hoverHighlight(shape, alpha = .04f)
-                .then(if (entry.isDirectory) Modifier.clickable(onClick = onOpen) else Modifier)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .heightIn(min = 52.dp)
+                .then(
+                    Modifier.schematicContextClick(
+                        key = entry.path.toString(),
+                        enabled = allowDelete,
+                        density = density,
+                    ) { menuOffset = it },
+                ).pressScale(),
+            shape = shape,
+            color = MaterialTheme.colorScheme.surface,
+            border =
+                BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f),
+                ),
         ) {
-            Icon(
-                if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
-                null,
-                Modifier.size(19.dp),
-                MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(
-                    entry.path.name,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    listOf(
-                        if (entry.isDirectory) "文件夹" else formatFileSize(entry.sizeBytes),
-                        entry.modified
-                            ?.let {
-                                "修改于 " + it.toString().replace('T', ' ').take(16)
-                            }.orEmpty(),
-                    ).filter { it.isNotBlank() }
-                        .joinToString(" · "),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (entry.isDirectory) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .hoverHighlight(shape, alpha = .04f)
+                    .then(if (entry.isDirectory) Modifier.clickable(onClick = onOpen) else Modifier)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
-                    Icons.Outlined.ChevronRight,
+                    if (entry.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
                     null,
-                    Modifier.size(16.dp),
-                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    Modifier.size(19.dp),
+                    MaterialTheme.colorScheme.primary,
                 )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        entry.path.name,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        listOf(
+                            if (entry.isDirectory) {
+                                strings.t("pages.folder.row.directory")
+                            } else {
+                                formatFileSize(entry.sizeBytes)
+                            },
+                            entry.modified
+                                ?.let {
+                                    strings.t(
+                                        "pages.folder.row.modified",
+                                        it.toString().replace('T', ' ').take(16),
+                                    )
+                                }.orEmpty(),
+                        ).filter { it.isNotBlank() }
+                            .joinToString(" · "),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (entry.isDirectory) {
+                    Icon(
+                        Icons.Outlined.ChevronRight,
+                        null,
+                        Modifier.size(16.dp),
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (allowDelete && !entry.isDirectory) {
+                    RowIconAction(
+                        Icons.Outlined.DeleteOutline,
+                        strings.t("pages.folder.row.delete", entry.path.name),
+                        enabled = !busy,
+                        onClick = onDelete,
+                    )
+                }
             }
-            if (allowDelete) {
-                RowIconAction(
-                    Icons.Outlined.DeleteOutline,
-                    "移至回收站 " + entry.path.name,
-                    enabled = !busy,
-                    onClick = onDelete,
+        }
+        FolderEntryContextMenu(
+            expanded = menuOffset != null,
+            offset = menuOffset ?: DpOffset.Zero,
+            busy = busy,
+            onDismiss = { menuOffset = null },
+            onRename = onRename,
+            onDelete = onDelete,
+        )
+    }
+}
+
+/** 右键菜单：只负责展开状态与指针位置，条目的重命名/删除由调用方处理。 */
+@Composable
+private fun FolderEntryContextMenu(
+    expanded: Boolean,
+    offset: DpOffset,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        offset = offset,
+    ) {
+        DropdownMenuItem(
+            text = { Text(strings.t("pages.folder.menu.rename"), fontSize = 13.sp) },
+            onClick = {
+                onDismiss()
+                onRename()
+            },
+            enabled = !busy,
+        )
+        DropdownMenuItem(
+            text = {
+                Text(
+                    strings.t("pages.folder.menu.delete"),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
                 )
+            },
+            onClick = {
+                onDismiss()
+                onDelete()
+            },
+            enabled = !busy,
+        )
+    }
+}
+
+/** 把行内右键位置换算成 DpOffset；未允许多选删除时不接管指针事件。 */
+private fun Modifier.schematicContextClick(
+    key: String,
+    enabled: Boolean,
+    density: Density,
+    onOffset: (DpOffset) -> Unit,
+): Modifier =
+    if (!enabled) {
+        this
+    } else {
+        pointerInput(key) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    if (
+                        event.type == PointerEventType.Press &&
+                        event.buttons.isSecondaryPressed
+                    ) {
+                        onOffset(
+                            event.changes.firstOrNull()?.let { change ->
+                                with(density) {
+                                    DpOffset(
+                                        change.position.x.toDp(),
+                                        change.position.y.toDp(),
+                                    )
+                                }
+                            } ?: DpOffset.Zero,
+                        )
+                        event.changes.forEach { it.consume() }
+                    }
+                }
             }
         }
     }
-}
 
 internal fun formatFileSize(bytes: Long): String =
     when {

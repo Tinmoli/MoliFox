@@ -84,7 +84,7 @@ internal fun RecentMotd(
                 }
             }
         }
-    RecentTooltip(full.ifBlank { "服务器尚未返回公告" }, modifier.fillMaxWidth()) {
+    RecentTooltip(full.ifBlank { tr("deskI.motd.empty") }, modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 var offset = 0

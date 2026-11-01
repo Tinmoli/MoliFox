@@ -50,16 +50,16 @@ internal fun exportFileStem(name: String): String =
 /** 导出内容的中文名称；未知目录保留原名，避免凭空翻译。 */
 internal fun exportEntryLabel(name: String): String =
     when (name.lowercase()) {
-        "mods" -> "模组"
-        "resourcepacks" -> "资源包"
-        "shaderpacks" -> "光影包"
-        "saves" -> "单人游戏存档"
-        "screenshots" -> "截图"
-        "schematics" -> "原理图"
-        "config" -> "配置文件"
-        "defaultconfigs" -> "默认配置"
-        "datapacks" -> "数据包"
-        "servers.dat" -> "服务器列表"
+        "mods" -> tr("dialogs.pack.mods")
+        "resourcepacks" -> tr("dialogs.pack.resourcePacks")
+        "shaderpacks" -> tr("dialogs.pack.shaderPacks")
+        "saves" -> tr("dialogs.pack.saves")
+        "screenshots" -> tr("dialogs.pack.screenshots")
+        "schematics" -> tr("dialogs.pack.schematics")
+        "config" -> tr("dialogs.pack.config")
+        "defaultconfigs" -> tr("dialogs.pack.defaultConfigs")
+        "datapacks" -> tr("dialogs.pack.datapacks")
+        "servers.dat" -> tr("dialogs.pack.serverList")
         else -> name
     }
 
@@ -73,11 +73,12 @@ internal fun ExportEntryRow(
     onToggleNode: (String, Boolean) -> Unit,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     var expanded by remember(entry.key) { mutableStateOf(false) }
     val size =
         when {
             entry.scanning -> "…"
-            entry.directory -> "${entry.fileCount} 个文件 · ${reportBytes(entry.totalBytes)}"
+            entry.directory -> strings.t("dialogs.pack.fileSummary", entry.fileCount, reportBytes(entry.totalBytes))
             else -> reportBytes(entry.totalBytes)
         }
     Column(Modifier.fillMaxWidth()) {
@@ -111,7 +112,11 @@ internal fun ExportEntryRow(
                 )
                 if (!enabled) {
                     Text(
-                        if (entry.unavailable) "共用游戏目录，不写入导出包" else "仅完整备份可导出日志",
+                        if (entry.unavailable) {
+                            strings.t("dialogs.pack.sharedDir")
+                        } else {
+                            strings.t("dialogs.pack.logsOnlyFull")
+                        },
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -213,6 +218,7 @@ private fun ExportExpandArrow(
         Spacer(Modifier.size(18.dp))
         return
     }
+    val strings = LocalStrings.current
     val icon =
         if (expanded) {
             Icons.Filled.KeyboardArrowDown
@@ -221,7 +227,7 @@ private fun ExportExpandArrow(
         }
     Icon(
         icon,
-        contentDescription = if (expanded) "收起" else "展开",
+        contentDescription = if (expanded) strings.t("dialogs.export.collapse") else strings.t("dialogs.export.expand"),
         modifier =
             Modifier
                 .size(18.dp)

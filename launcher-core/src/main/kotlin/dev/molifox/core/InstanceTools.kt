@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
@@ -115,12 +116,14 @@ class InstanceTools(
     ): GameInstance =
         withContext(Dispatchers.IO) {
             val source = store.instance(sourceId)
-            require(!source.externalProfile) { "外部游戏目录的实例由原启动器维护，无法复制" }
-            require(store.isolated(source)) { "共用游戏目录的实例无法复制，请先启用版本隔离" }
+            require(!source.externalProfile) { I18n.t("core.instanceTools.1") }
+            require(store.isolated(source)) { I18n.t("core.instanceTools.2") }
             val sourceRoot = store.instancePath(sourceId)
-            require(sourceRoot.isDirectory()) { "实例目录不存在，无法复制" }
-            val requestedName = name?.trim().orEmpty().ifBlank { "${source.name} - 副本" }
-            require(requestedName.length <= MAX_INSTANCE_NAME_CHARS) { "实例名称需要 1–80 个字符" }
+            require(sourceRoot.isDirectory()) { I18n.t("core.instanceTools.3") }
+            val requestedName = name?.trim().orEmpty().ifBlank { I18n.t("core.instanceTools.4", source.name) }
+            require(requestedName.length <= MAX_INSTANCE_NAME_CHARS) {
+                I18n.t("instA2.instance.nameLength")
+            }
             val targetName = uniqueName(requestedName)
             val targetId = UUID.randomUUID().toString()
             val directoryName =
@@ -129,10 +132,10 @@ class InstanceTools(
             runCatching {
                 registerCopiedInstance(source, targetId, directoryName, targetName)
                 val destination = store.instancePath(targetId)
-                require(!destination.exists(LinkOption.NOFOLLOW_LINKS)) { "目标实例目录已存在" }
+                require(!destination.exists(LinkOption.NOFOLLOW_LINKS)) { I18n.t("core.instanceTools.5") }
                 targetRoot = destination
                 val entries = collectCopyEntries(sourceRoot, source, copySaves, copyMods, context)
-                context.progress(0f, "复制实例 · 文件 0/${entries.size}")
+                context.progress(0f, I18n.t("core.instanceTools.6", entries.size))
                 copyEntriesTo(destination, entries, context)
                 finishCopiedInstance(source, targetId, targetName, context)
                 store.instance(targetId)
@@ -186,7 +189,7 @@ class InstanceTools(
             Files.copy(entry.source, file, StandardCopyOption.REPLACE_EXISTING)
             context.progress(
                 (index + 1).toFloat() / entries.size,
-                "复制实例 · 文件 ${index + 1}/${entries.size}",
+                I18n.t("core.instanceTools.7", index + 1, entries.size),
             )
         }
     }
@@ -203,8 +206,8 @@ class InstanceTools(
             it.copy(installed = source.installed, packFile = archive.orEmpty())
         }
         VersionGameDirectories(store).writeProfile(store.instance(targetId))
-        context.progress(1f, "复制实例完成")
-        store.log("已复制实例：${source.name} → $targetName")
+        context.progress(1f, I18n.t("core.instanceTools.8"))
+        store.log(I18n.t("core.instanceTools.9", source.name, targetName))
     }
 
     /**
@@ -217,9 +220,9 @@ class InstanceTools(
         removeEmptyDirs: Boolean = true,
     ): TidyReport {
         val instance = store.instance(instanceId)
-        require(store.isolated(instance)) { "共用游戏目录的实例无法整理，请先启用版本隔离" }
+        require(store.isolated(instance)) { I18n.t("core.instanceTools.10") }
         val root = store.instancePath(instanceId)
-        require(root.isDirectory()) { "实例目录不存在，无法整理" }
+        require(root.isDirectory()) { I18n.t("core.instanceTools.11") }
         val mods = root.resolve("mods")
         val modFiles = listModFiles(mods)
         val disabledMods = modFiles.count { it.name.endsWith(".disabled", true) }
@@ -243,9 +246,9 @@ class InstanceTools(
      */
     fun verifyInstance(instanceId: String): VerifyReport {
         val instance = store.instance(instanceId)
-        require(store.isolated(instance)) { "共用游戏目录的实例无法校验，请先启用版本隔离" }
+        require(store.isolated(instance)) { I18n.t("core.instanceTools.12") }
         val root = store.instancePath(instanceId)
-        require(root.isDirectory()) { "实例目录不存在，无法校验" }
+        require(root.isDirectory()) { I18n.t("core.instanceTools.13") }
         val ownership = PackOwnershipStore.read(root, store) ?: return emptyVerifyReport
         val known = ownership.files.map { packRelative(it.path) }.toSet()
         val (missing, mismatched) = verifyOwnedFiles(root, ownership.files)
@@ -269,7 +272,7 @@ class InstanceTools(
             val candidate = "$base $index"
             if (candidate.length <= MAX_INSTANCE_NAME_CHARS && candidate !in taken) return candidate
         }
-        error("同名实例过多，请改用其他名称")
+        error(I18n.t("core.instanceTools.14"))
     }
 
     /** 复制整合包归档到数据目录的 packs/ 下，返回新路径；原归档缺失时只记录日志。 */
@@ -281,7 +284,10 @@ class InstanceTools(
         if (source.packFile.isBlank()) return null
         val archive = runCatching { Path.of(source.packFile) }.getOrNull()
         if (archive == null || !archive.isRegularFile() || Files.isSymbolicLink(archive)) {
-            store.log("原实例的整合包归档缺失，副本未记录整合包：${source.packFile}", true)
+            store.log(
+                I18n.t("instA2.instanceTools.packArchiveMissing", source.packFile),
+                true,
+            )
             return null
         }
         context.checkCancelled()

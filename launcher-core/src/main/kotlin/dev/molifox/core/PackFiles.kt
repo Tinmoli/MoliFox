@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -42,14 +43,14 @@ internal fun packDownload(
         require(
             env.string(side, "required") in setOf("required", "optional", "unsupported"),
         ) {
-            "整合包环境标记无效"
+            I18n.t("packsA2.packManifest.environmentFlagInvalid")
         }
     }
     val hashes = file.obj("hashes")
     val sha512 = hashes.string("sha512")
     val sha1 = hashes.string("sha1")
     require(sha512.matches(Regex("[a-fA-F0-9]{128}")) && sha1.matches(Regex("[a-fA-F0-9]{40}"))) {
-        "整合包文件需要有效的 SHA-1 和 SHA-512：${file.string("path")}"
+        I18n.t("packsA2.packManifest.hashesRequired", file.string("path"))
     }
     val sizeValue = file.get("fileSize")
     require(
@@ -58,10 +59,10 @@ internal fun packDownload(
             sizeValue.asJsonPrimitive.isNumber &&
             sizeValue.asString.matches(Regex("\\d+")),
     ) {
-        "整合包文件大小无效：${file.string("path")}"
+        I18n.t("packsA2.packManifest.sizeInvalidForPath", file.string("path"))
     }
     val size = sizeValue.asString.toLongOrNull()
-    require(size != null && size >= 0) { "整合包文件大小无效" }
+    require(size != null && size >= 0) { I18n.t("packsA2.packManifest.sizeInvalid") }
     return DownloadArtifact(validatePackUrl(url), target, sha512, size, "SHA-512")
 }
 
@@ -76,7 +77,7 @@ internal fun packPath(
             .lowercase()
             .startsWith(".molifox-"),
     ) {
-        "整合包不能覆盖启动器维护文件"
+        I18n.t("packsA2.packManifest.launcherFilesProtected")
     }
     return safePath(root, relative)
 }
@@ -121,7 +122,7 @@ internal class PackFileTransaction(
             val target = packPath(root, content.relativize(file).joinToString("/"))
             if (target.exists()) {
                 require(target.isRegularFile() && !Files.isSymbolicLink(target)) {
-                    "整合包目标不是普通文件：$target"
+                    I18n.t("packsA2.packTransaction.targetNotRegularFile", target)
                 }
                 val backup = safePath(directory, "backup/${backups.size}/${target.fileName}")
                 backup.parent.createDirectories()
@@ -153,7 +154,10 @@ internal class PackFileTransaction(
             }
         if (result.isFailure) {
             retain = true
-            return IOException("整合包安装未完成，原文件备份保留在 $directory", error).also {
+            return IOException(
+                I18n.t("packsA2.packTransaction.installIncompleteBackupRetained", directory),
+                error,
+            ).also {
                 result.exceptionOrNull()?.let(it::addSuppressed)
             }
         }
@@ -166,7 +170,10 @@ internal class PackFileTransaction(
             runCatching { store.platform.moveToTrash(backup) }
                 .onFailure {
                     retain = true
-                    store.log("旧整合包文件保留在 $directory", true)
+                    store.log(
+                        I18n.t("packsA2.packTransaction.previousPackFilesRetained", directory),
+                        true,
+                    )
                 }
         }
     }

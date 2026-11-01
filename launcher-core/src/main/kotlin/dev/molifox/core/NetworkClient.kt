@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.net.DOWNLOAD_BUDGET_BYTES
 import dev.molifox.core.net.DownloadSourceCatalog
 import dev.molifox.core.net.SourceHealth
@@ -47,7 +48,7 @@ data class DownloadArtifact(
 internal class DownloadHttpException(
     val code: Int,
     val host: String,
-) : IOException("下载失败 ($code)：$host")
+) : IOException(I18n.t("networkA.downloadHttp.failed", code, host))
 
 /** 大小或哈希不符：内容不可用，必须删除 `.part` 后重下，不能留下坏文件。 */
 internal class DownloadVerificationException(
@@ -218,7 +219,7 @@ fun validatePackUrl(url: String): String {
                 "edge.forgecdn.net",
             ),
     ) {
-        "不支持的整合包下载域名：${uri.host}"
+        I18n.t("networkA.packUrl.unsupportedHost", uri.host)
     }
     return url
 }

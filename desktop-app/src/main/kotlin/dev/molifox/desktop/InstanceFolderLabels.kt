@@ -10,14 +10,14 @@ import dev.molifox.core.domain.instance.GameFolder
 internal val GameFolder.title: String
     get() =
         when (this) {
-            GameFolder.Root -> "实例文件夹"
-            GameFolder.Mods -> "模组文件夹"
-            GameFolder.ResourcePacks -> "资源包文件夹"
-            GameFolder.ShaderPacks -> "光影包文件夹"
-            GameFolder.Saves -> "存档文件夹"
-            GameFolder.Schematics -> "原理图文件夹"
-            GameFolder.Config -> "配置文件夹"
-            GameFolder.Logs -> "日志文件夹"
-            GameFolder.CrashReports -> "崩溃报告文件夹"
-            GameFolder.Screenshots -> "截图文件夹"
+            GameFolder.Root -> tr("pages.folder.title.root")
+            GameFolder.Mods -> tr("pages.folder.title.mods")
+            GameFolder.ResourcePacks -> tr("pages.folder.title.resourcePacks")
+            GameFolder.ShaderPacks -> tr("pages.folder.title.shaderPacks")
+            GameFolder.Saves -> tr("pages.folder.title.saves")
+            GameFolder.Schematics -> tr("pages.folder.title.schematics")
+            GameFolder.Config -> tr("pages.folder.title.config")
+            GameFolder.Logs -> tr("pages.folder.title.logs")
+            GameFolder.CrashReports -> tr("pages.folder.title.crashReports")
+            GameFolder.Screenshots -> tr("pages.folder.title.screenshots")
         }

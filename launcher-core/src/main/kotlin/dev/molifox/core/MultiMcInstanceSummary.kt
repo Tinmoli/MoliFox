@@ -5,17 +5,19 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 /** 原包声明了但本启动器不迁移的设置：只提示，不改变实例行为。 */
 internal fun readMultiMcUnmigratedNotes(ini: Map<String, String>): List<String> =
     buildList {
         if (ini["prelaunchcommand"].orEmpty().isNotBlank()) {
-            add("原包的启动前命令出于安全原因未执行，也未迁移。")
+            add(I18n.t("packsC.multiMc.notePrelaunchCommand"))
         }
         if (isMultiMcEnabled(ini["joinserveronlaunch"])) {
-            add("原包设置为启动后自动进入服务器，本启动器未迁移该设置。")
+            add(I18n.t("packsC.multiMc.noteJoinServer"))
         }
         if (isMultiMcEnabled(ini["ignorejavacompatibility"])) {
-            add("原包设置为忽略 Java 兼容性检查，本启动器未迁移该设置。")
+            add(I18n.t("packsC.multiMc.noteIgnoreJavaCompatibility"))
         }
     }
 
@@ -27,10 +29,10 @@ internal fun multiMcSummary(
     warnings: List<String>,
 ): String =
     buildString {
-        append("MultiMC/Prism 实例：保留游戏内容，游戏依赖按官方元数据重建，不复制原启动器的 Java 路径或账户。")
+        append(I18n.t("packsC.multiMc.summaryIntro"))
         val migrated = migratedSettingLabels(launchOptions, defaults)
         if (migrated.isNotEmpty()) {
-            append("\n已迁移的实例设置：${migrated.joinToString("、")}。")
+            append(I18n.t("packsC.multiMc.migratedSettings", migrated.joinToString("、")))
         }
         for (line in warnings + notes) append("\n$line")
     }
@@ -40,8 +42,8 @@ private fun migratedSettingLabels(
     defaults: PackInstanceDefaults?,
 ): List<String> =
     buildList {
-        if (launchOptions != null) add("JVM 参数")
-        if ((defaults?.memoryMb ?: 0) > 0) add("最大内存")
-        if ((defaults?.initialMemoryMb ?: 0) > 0) add("初始内存")
-        if ((defaults?.width ?: 0) > 0 || (defaults?.height ?: 0) > 0) add("窗口尺寸")
+        if (launchOptions != null) add(I18n.t("packsC.multiMc.settingJvmArgs"))
+        if ((defaults?.memoryMb ?: 0) > 0) add(I18n.t("packsC.multiMc.settingMaxMemory"))
+        if ((defaults?.initialMemoryMb ?: 0) > 0) add(I18n.t("packsC.multiMc.settingInitialMemory"))
+        if ((defaults?.width ?: 0) > 0 || (defaults?.height ?: 0) > 0) add(I18n.t("packsC.multiMc.settingWindowSize"))
     }

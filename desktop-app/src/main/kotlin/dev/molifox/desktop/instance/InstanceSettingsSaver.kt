@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import dev.molifox.core.GameInstance
 import dev.molifox.core.validateInstanceDirectoryName
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.tr
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -56,9 +57,9 @@ internal class InstanceSettingsSaver(
             onDraftChange(draft.copy(name = instance.name))
             nameNotice =
                 if (problem != null) {
-                    "名称无效，已恢复为「${instance.name}」：$problem"
+                    tr("deskG.rename.invalidRestored", instance.name, problem)
                 } else {
-                    "请等待当前任务结束后再重命名。"
+                    tr("deskG.rename.busy")
                 }
             return
         }
@@ -115,9 +116,9 @@ internal class InstanceSettingsSaver(
         } else {
             nameNotice =
                 if (renamedId != null) {
-                    "名称已改为「$trimmed」，但其它设置未能保存：$failure"
+                    tr("deskG.rename.partial", trimmed, failure)
                 } else {
-                    "重命名失败，已恢复为「${instance.name}」：$failure"
+                    tr("deskG.rename.failed", instance.name, failure)
                 }
             if (renamedId == null) restoreDraft()
             saveError = null

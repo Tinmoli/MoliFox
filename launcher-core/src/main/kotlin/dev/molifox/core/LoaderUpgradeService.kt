@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -61,7 +62,14 @@ internal class LoaderUpgradeService(
             val base = baseProfileForUpgrade(current, context)
             val loader = fetchUpgradeLoader(target, base, context)
             applyUpgrade(target, base, loader, backups, backupId, context)
-            context.progress(1f, "${current.loader.title} 已升级到 $loaderVersion")
+            context.progress(
+                1f,
+                I18n.t(
+                    "networkB2.loaderUpgradeService.upgraded",
+                    current.loader.title,
+                    loaderVersion,
+                ),
+            )
         } catch (expected: Throwable) {
             restoreAfterFailedUpgrade(instanceId, current, backups, backupId)
             throw expected
@@ -73,15 +81,19 @@ internal class LoaderUpgradeService(
         current: GameInstance,
         loaderVersion: String,
     ) {
-        require(current.installed) { "请先完成游戏安装，再升级加载器" }
-        require(current.loader != LoaderType.Vanilla) { "原版实例没有可升级的加载器" }
-        require(current.packFile.isBlank()) { "整合包的加载器由包清单维护，请通过整合包更新维护" }
+        require(current.installed) { I18n.t("networkB2.loaderUpgradeService.installFirst") }
+        require(current.loader != LoaderType.Vanilla) {
+            I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader")
+        }
+        require(current.packFile.isBlank()) {
+            I18n.t("networkB2.loaderUpgradeService.packManaged")
+        }
         require(current.gameVersion.isNotBlank() && current.versionId.isNotBlank()) {
-            "实例缺少游戏版本标识，请先重新识别游戏目录"
+            I18n.t("networkB2.loaderUpgradeService.missingGameVersion")
         }
         safeFilename(loaderVersion)
         require(compareLoaderVersions(loaderVersion, current.loaderVersion) > 0) {
-            "只能升级到 ${current.loader.title} 的更新版本"
+            I18n.t("networkB2.loaderUpgradeService.newerVersionOnly", current.loader.title)
         }
     }
 
@@ -91,27 +103,44 @@ internal class LoaderUpgradeService(
         context: JobContext,
     ): JsonObject =
         when (target.loader) {
-            LoaderType.Vanilla -> error("原版实例没有可升级的加载器")
+            LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
             LoaderType.Fabric,
             LoaderType.Quilt,
-            ->
-                loaders.fetchFabricProfile(
-                    target,
-                    context,
-                    UPGRADE_LOADER_PROGRESS_START,
-                    UPGRADE_LOADER_PROGRESS_END,
-                )
+            LoaderType.LegacyFabric,
+            -> fabricUpgrade(target, context)
             LoaderType.Forge,
             LoaderType.NeoForge,
-            ->
-                loaders.fetchForgeProfile(
-                    target,
-                    base,
-                    context,
-                    UPGRADE_LOADER_PROGRESS_START,
-                    UPGRADE_LOADER_PROGRESS_END,
-                )
+            LoaderType.Cleanroom,
+            -> forgeUpgrade(target, base, context)
+            LoaderType.OptiFine -> optiFineUpgrade(target, base, context)
+            LoaderType.LiteLoader -> liteLoaderUpgrade(target, context)
         }
+
+    private suspend fun fabricUpgrade(
+        target: GameInstance,
+        context: JobContext,
+    ): JsonObject =
+        loaders.fetchFabricProfile(target, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
+
+    private suspend fun forgeUpgrade(
+        target: GameInstance,
+        base: ResolvedProfile,
+        context: JobContext,
+    ): JsonObject =
+        loaders.fetchForgeProfile(target, base, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
+
+    private suspend fun optiFineUpgrade(
+        target: GameInstance,
+        base: ResolvedProfile,
+        context: JobContext,
+    ): JsonObject =
+        loaders.optiFine.fetchProfile(target, base, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
+
+    private suspend fun liteLoaderUpgrade(
+        target: GameInstance,
+        context: JobContext,
+    ): JsonObject =
+        loaders.liteLoader.fetchProfile(target, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
 
     /** 合成并写回原实例目录，再补齐新加载器引入的依赖。 */
     private suspend fun applyUpgrade(
@@ -168,7 +197,10 @@ internal class LoaderUpgradeService(
                 }
                 store.refreshInstances()
             }.onFailure {
-                store.log("升级加载器失败后恢复原版本配置也失败：${it.message}", true)
+                store.log(
+                    I18n.t("networkB2.loaderUpgradeService.restoreFailed", it.message),
+                    true,
+                )
             }
         }
     }
@@ -183,12 +215,18 @@ internal class LoaderUpgradeService(
         if (root.resolve("versions/$baseId/$baseId.json").isRegularFile(NOFOLLOW_LINKS)) {
             return VersionResolver(root, store.platform).resolve(baseId)
         }
-        context.progress(METADATA_PROGRESS, "获取 Minecraft ${instance.gameVersion} 元数据…")
+        context.progress(
+            METADATA_PROGRESS,
+            I18n.t("networkB2.loaderUpgradeService.fetchingMetadata", instance.gameVersion),
+        )
         context.checkCancelled()
         val metadata =
-            catalog.versions().find { it.id == instance.gameVersion } ?: error("此游戏版本不存在")
+            catalog.versions().find { it.id == instance.gameVersion }
+                ?: error(I18n.t("miscA2.install.versionNotInCatalog"))
         val json = network.json(metadata.url).asJsonObject
-        require(json.string("mainClass").isNotBlank()) { "此游戏版本尚未支持" }
+        require(json.string("mainClass").isNotBlank()) {
+            I18n.t("miscA2.install.unsupportedVersion")
+        }
         return ResolvedProfile(baseId, baseId, json)
     }
 }

@@ -55,6 +55,7 @@ internal fun JavaRuntimePromptDialog(
     var rememberDismiss by remember(prompt.instanceId) { mutableStateOf(false) }
     var showList by remember(prompt.instanceId) { mutableStateOf(prompt.candidates.isEmpty()) }
     var choosing by remember(prompt.instanceId) { mutableStateOf(false) }
+    val strings = LocalStrings.current
     val state by actions.controller.state.collectAsState()
     val platform = actions.controller.platform
     val installing =
@@ -65,16 +66,15 @@ internal fun JavaRuntimePromptDialog(
 
     fun dismiss() = actions.controller.dismissJavaPrompt(rememberDismiss)
     Modal(
-        "没有找到可用的 Java",
+        strings.t("settings.java.prompt.title"),
         "${prompt.instanceName} · ${prompt.gameVersion}",
         width = 620.dp,
         onDismiss = { dismiss() },
     ) {
         Text(
-            "这个游戏版本需要 Java ${prompt.requiredMajor}。可以自动下载到 " +
-                "MoliFox\\runtimes\\，不会修改系统环境变量。",
+            strings.t("settings.java.prompt.requirement", prompt.requiredMajor),
         )
-        if (prompt.candidates.isEmpty()) MutedText("没有检测到其它可用的 Java。")
+        if (prompt.candidates.isEmpty()) MutedText(strings.t("settings.java.prompt.none"))
         if (showList) {
             Column(
                 Modifier
@@ -94,14 +94,18 @@ internal fun JavaRuntimePromptDialog(
         Row(verticalAlignment = Alignment.CenterVertically) {
             CompactSwitch(rememberDismiss, { rememberDismiss = it })
             Spacer(Modifier.width(6.dp))
-            Text("不再为这个实例提示", fontSize = 12.sp)
+            Text(strings.t("settings.java.prompt.remember"), fontSize = 12.sp)
         }
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             PrimaryButton(
-                if (installing) "正在安装…" else "下载并安装（约 40–60 MB）",
+                if (installing) {
+                    strings.t("settings.java.prompt.installing")
+                } else {
+                    strings.t("settings.java.prompt.install")
+                },
                 enabled = !installing,
             ) {
                 actions.controller.installJavaForPrompt()
@@ -116,7 +120,7 @@ internal fun JavaRuntimePromptDialog(
                             val chosen =
                                 actions
                                     .choose(
-                                        "选择 Java 可执行文件",
+                                        strings.t("settings.java.choose.file"),
                                         extensions =
                                             if (platform.osName == "windows") {
                                                 listOf("exe")
@@ -136,23 +140,20 @@ internal fun JavaRuntimePromptDialog(
                 },
                 enabled = !choosing,
             ) {
-                Text("选择已有的 Java…")
+                Text(strings.t("settings.java.prompt.chooseManual"))
             }
             SecondaryButton({ showList = !showList }) {
                 Text(
                     if (showList) {
-                        "隐藏系统 Java"
+                        strings.t("settings.java.prompt.hideSystem")
                     } else {
-                        "使用系统已安装的 Java（${prompt.candidates.size}）"
+                        strings.t("settings.java.prompt.useSystem", prompt.candidates.size)
                     },
                 )
             }
-            SecondaryButton({ dismiss() }) { Text("取消") }
+            SecondaryButton({ dismiss() }) { Text(strings.t("settings.common.cancel")) }
         }
-        MutedText(
-            "按设置里的「Java 下载源」选择 Zulu/Temurin 官方源（不含第三方镜像）；" +
-                "安装写入 MoliFox\\runtimes\\，不注册 PATH、不改 JAVA_HOME、不写注册表。",
-        )
+        MutedText(strings.t("settings.java.prompt.note"))
     }
 }
 

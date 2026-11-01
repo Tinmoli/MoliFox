@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import dev.molifox.core.DownloadJob
 import dev.molifox.core.GameInstance
 import dev.molifox.core.JobStatus
+import dev.molifox.core.LauncherTaskKind
 import dev.molifox.core.SaveBackupInfo
 import dev.molifox.core.SaveEntry
 import kotlinx.coroutines.CancellationException
@@ -47,6 +48,7 @@ internal fun InstanceSavesTab(
     actions: UiActions,
     modifier: Modifier,
 ) {
+    val strings = LocalStrings.current
     var saves by remember(instance.id) { mutableStateOf<List<SaveEntry>>(emptyList()) }
     var backups by remember(instance.id) { mutableStateOf<List<SaveBackupInfo>>(emptyList()) }
     var query by remember(instance.id) { mutableStateOf("") }
@@ -75,7 +77,9 @@ internal fun InstanceSavesTab(
             .resolve("saves")
     // 只把存档相关任务的结束当作刷新信号，避免其它下载任务反复触发备份 SHA1 重算。
     val saveJobsKey =
-        liveState.jobs.filter { it.title.contains("存档") }.map { it.id + ":" + it.status }
+        liveState.jobs
+            .filter { it.kind == LauncherTaskKind.SaveOperation }
+            .map { it.id + ":" + it.status }
     SavesLoadEffect(
         actions = actions,
         instanceId = instance.id,
@@ -92,7 +96,7 @@ internal fun InstanceSavesTab(
         onFailed = { message ->
             saves = emptyList()
             backups = emptyList()
-            loadError = message ?: "无法读取存档目录"
+            loadError = message ?: strings.t("pages.saves.loadFailed")
         },
         onFinished = { loading = false },
     )
@@ -109,7 +113,7 @@ internal fun InstanceSavesTab(
     val startBackup = { entry: SaveEntry ->
         actionError = null
         startSaveJob(
-            fallback = "无法开始备份存档",
+            fallback = strings.t("pages.saves.backup.startFailed"),
             onStarted = { watchingJob = it },
             onError = { actionError = it },
         ) { actions.controller.backupSave(instance.id, entry.name) }
@@ -117,7 +121,7 @@ internal fun InstanceSavesTab(
     val startRestore = { backup: SaveBackupInfo ->
         actionError = null
         startSaveJob(
-            fallback = "无法开始恢复存档",
+            fallback = strings.t("pages.saves.restore.startFailed"),
             onStarted = { watchingJob = it },
             onError = { actionError = it },
         ) { actions.controller.restoreSave(instance.id, backup.id) }
@@ -127,10 +131,10 @@ internal fun InstanceSavesTab(
         actionError = null
         when {
             dropped.isEmpty() -> Unit
-            dropped.size > 1 -> actionError = "请一次拖入一个存档"
+            dropped.size > 1 -> actionError = strings.t("pages.saves.drop.oneFile")
             else ->
                 startSaveJob(
-                    fallback = "无法导入存档",
+                    fallback = strings.t("pages.saves.import.startFailed"),
                     onStarted = { watchingJob = it },
                     onError = { actionError = it },
                 ) { actions.controller.importSave(instance.id, dropped.single()) }
@@ -138,15 +142,15 @@ internal fun InstanceSavesTab(
     }
     deleting?.let { entry ->
         SaveTrashDialog(
-            title = "移入回收站？",
-            message = "「${entry.name}」会移入回收站，可从回收站恢复。",
+            title = strings.t("pages.saves.trash.title"),
+            message = strings.t("pages.saves.trash.message", entry.name),
             onDismiss = { deleting = null },
             onConfirm = {
                 deleting = null
                 actionError = null
                 trashEntry(
                     actions = actions,
-                    message = "「${entry.name}」没有移入回收站：存档可能已不存在，或回收站不可用；详情见日志。",
+                    message = strings.t("pages.saves.trash.failed", entry.name),
                     onError = { actionError = it },
                     onRefresh = { refresh++ },
                 ) { actions.controller.deleteSave(instance.id, entry.name) }
@@ -155,17 +159,20 @@ internal fun InstanceSavesTab(
     }
     deletingBackup?.let { backup ->
         SaveTrashDialog(
-            title = "删除这个备份？",
+            title = strings.t("pages.saves.backup.delete.title"),
             message =
-                "「" + backup.saveName + "」（" + formatSaveTime(backup.createdAt) +
-                    "）的备份会移入回收站，可从回收站恢复。",
+                strings.t(
+                    "pages.saves.backup.delete.message",
+                    backup.saveName,
+                    formatSaveTime(backup.createdAt),
+                ),
             onDismiss = { deletingBackup = null },
             onConfirm = {
                 deletingBackup = null
                 actionError = null
                 trashEntry(
                     actions = actions,
-                    message = "备份没有移入回收站：文件可能已不存在，或回收站不可用；详情见日志。",
+                    message = strings.t("pages.saves.backup.delete.failed"),
                     onError = { actionError = it },
                     onRefresh = { refresh++ },
                 ) { actions.controller.deleteSaveBackup(instance.id, backup.id) }
@@ -224,7 +231,7 @@ internal fun InstanceSavesTab(
                 runCatching {
                     actions.controller.setReplaceSaveOnRestore(instance.id, enabled)
                 }.onFailure {
-                    actionError = it.message ?: "无法保存设置"
+                    actionError = it.message ?: strings.t("pages.saves.settings.saveFailed")
                 }
             },
         )
@@ -233,7 +240,7 @@ internal fun InstanceSavesTab(
             .fillMaxHeight()
             .contentDropTarget(
                 enabled = canManage,
-                hint = "请拖入存档 .zip 或世界文件夹",
+                hint = strings.t("pages.saves.dropHint"),
                 onError = { actionError = it },
             ) { dropped -> startImport(dropped) },
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -258,8 +265,8 @@ private fun savesBlockedNote(
     busy: Boolean,
 ): String =
     when {
-        running -> "游戏正在使用存档，请先退出游戏再进行存档操作。"
-        busy -> "任务进行中，存档操作暂时不可用。"
+        running -> tr("pages.saves.blocked.running")
+        busy -> tr("pages.saves.blocked.busy")
         else -> ""
     }
 
@@ -331,7 +338,7 @@ private fun SaveJobWatcher(
         val id = watchingJob ?: return@LaunchedEffect
         val job = jobs.firstOrNull { it.id == id } ?: return@LaunchedEffect
         when (job.status) {
-            JobStatus.Failed -> onFailed(job.error ?: "存档操作失败，详情见日志")
+            JobStatus.Failed -> onFailed(job.error ?: tr("pages.saves.job.failed"))
             JobStatus.Completed,
             JobStatus.Cancelled,
             -> onFinished()
@@ -380,16 +387,19 @@ private fun SaveTrashDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("移入回收站", color = MaterialTheme.colorScheme.error)
+                Text(strings.t("pages.saves.trash.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
+        },
     )
 }
 
@@ -400,20 +410,21 @@ private fun ReplaceSaveDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("用备份替换原世界？") },
-        text = {
-            Text(
-                "当前世界「" + backup.saveName + "」会先备份到 backups/，再用这个备份替换它；" +
-                    "当前世界会改名为「" + backup.saveName + "（替换前 时间）」保留，不会删除。",
-            )
-        },
+        title = { Text(strings.t("pages.saves.replace.title")) },
+        text = { Text(strings.t("pages.saves.replace.message", backup.saveName)) },
         confirmButton = {
             TextButton(onConfirm) {
-                Text("替换并恢复", color = MaterialTheme.colorScheme.error)
+                Text(
+                    strings.t("pages.saves.replace.confirm"),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
+        },
     )
 }

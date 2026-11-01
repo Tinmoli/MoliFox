@@ -50,8 +50,7 @@ object ScaffoldingProtocol {
         )
 
     /** 是否是协议定义的错误状态码（32..63）。 */
-    fun isProtocolError(status: Int): Boolean =
-        status in STATUS_PROTOCOL_ERROR_MIN until STATUS_PROTOCOL_ERROR_END
+    fun isProtocolError(status: Int): Boolean = status in STATUS_PROTOCOL_ERROR_MIN until STATUS_PROTOCOL_ERROR_END
 
     /** 是否是合法响应状态（0、32..63、255）；其他值说明对端实现异常。 */
     fun isKnownStatus(status: Int): Boolean =

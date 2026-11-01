@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -46,7 +47,7 @@ private class SaveFileCollector(
     }
 
     private fun checkCancelled() {
-        if (job != null && !job.isActive) throw CancellationException("存档操作已取消")
+        if (job != null && !job.isActive) throw CancellationException(I18n.t("saveA2.collector.cancelled"))
     }
 
     override fun preVisitDirectory(

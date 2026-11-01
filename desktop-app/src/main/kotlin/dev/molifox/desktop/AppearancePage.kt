@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -150,7 +151,8 @@ fun ColumnScope.AppearanceSection(
 }
 
 /** 外观子页标题：顺序与设置页左栏「外观」下面展开的子条目一致。 */
-internal val appearanceSubSections = listOf("主题与效果", "字体与缩放", "页面布局")
+internal val appearanceSubSectionKeys =
+    listOf("settings.appearance.sub.theme", "settings.appearance.sub.font", "settings.appearance.sub.layout")
 
 @Composable
 private fun ThemePreferences(
@@ -181,7 +183,8 @@ internal fun EnabledTag(enabled: Boolean) {
             tween(duration),
             label = "enabledTag",
         )
-    Tag(if (enabled) "已启用" else "未启用", color)
+    val strings = LocalStrings.current
+    Tag(if (enabled) strings.t("settings.appearance.enabled") else strings.t("settings.appearance.disabled"), color)
 }
 
 /** 主题卡片：64dp 预览块 + 12sp 标题 + 11sp 说明，选中时边框 2dp 主题色。 */
@@ -378,9 +381,10 @@ internal fun AccentChip(
 /** 当前字体名称：与「字体与缩放」子页的判定保持一致。 */
 internal fun fontLabel(settings: LauncherSettings): String =
     when {
-        settings.fontChoice.isBlank() -> "系统默认"
+        settings.fontChoice.isBlank() -> I18n.t("settings.font.systemDefault")
         settings.fontChoice.startsWith("file:") ->
-            settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name ?: "自定义字体"
+            settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name
+                ?: I18n.t("settings.font.custom")
         else -> settings.fontChoice.removePrefix("system:")
     }
 
@@ -395,12 +399,15 @@ fun PreferenceSlider(
     onApply: (Float) -> Unit,
 ) {
     val draft = rememberSliderDraft(value) { committed -> onApply(committed) }
+    val strings = LocalStrings.current
     Column {
         SettingRow(title) { Tag(format(draft.floatValue)) }
         CompactSlider(
             draft.floatValue,
             { draft.floatValue = it },
-            Modifier.fillMaxWidth().semantics { contentDescription = title + "滑块" },
+            Modifier.fillMaxWidth().semantics {
+                contentDescription = strings.t("settings.appearance.slider.a11y", title)
+            },
             valueRange = range,
             enabled = enabled,
         )

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 
 /** Register standard Minecraft roots by reference; shared assets and user data stay in place. */
@@ -47,7 +48,7 @@ class GameDirectoryService(
     /** 用户手动选择目录：登记后设为当前目录，空目录也接受（作为后续安装目标）。 */
     fun add(source: Path): Int {
         val instances = register(registry.resolveRoot(source), activate = true)
-        store.notify("已选择游戏目录，识别到 $instances 个版本")
+        store.notify(I18n.t("core.gameDirectoryService.1", instances))
         return instances
     }
 
@@ -65,8 +66,11 @@ class GameDirectoryService(
             val existing = registry.registered(root.path)
             val instances = register(root.path, activate = false)
             store.log(
-                "启动时识别游戏目录 ${root.path}：${root.versions} 个版本" +
-                    if (existing == null) "（新登记）" else "（已登记过，仅刷新实例）",
+                if (existing == null) {
+                    I18n.t("instA1.gameDirectory.discoveredNew", root.path, root.versions)
+                } else {
+                    I18n.t("instA1.gameDirectory.discoveredExisting", root.path, root.versions)
+                },
             )
             val newDiscovery = existing == null && added == null && instances > 0
             if (newDiscovery && !registry.sameDirectory(root.path, store.minecraftRoot)) {
@@ -139,7 +143,7 @@ class GameDirectoryService(
     }
 
     fun select(id: String?) {
-        require(id == null || store.data.gameDirectories.any { it.id == id }) { "找不到游戏目录" }
+        require(id == null || store.data.gameDirectories.any { it.id == id }) { I18n.t("core.gameDirectoryService.2") }
         store.mutate { data ->
             data.copy(
                 activeGameDirectoryId = id,
@@ -172,7 +176,7 @@ class GameDirectoryService(
                     } ?: instances.firstOrNull { it.gameDirectoryId == activeDirectory }?.id,
             )
         }
-        store.notify("已移除目录记录，游戏文件仍在原目录")
+        store.notify(I18n.t("core.gameDirectoryService.3"))
     }
 }
 

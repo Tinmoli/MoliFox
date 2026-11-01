@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CoroutineScope
 
 class AccountService(
@@ -20,7 +21,7 @@ class AccountService(
     private val microsoftLogin = MicrosoftLogin(store, network, vault, scope)
 
     fun addOffline(name: String) {
-        require(Regex("[A-Za-z0-9_]{3,16}").matches(name)) { "玩家名称需要 3–16 位字母、数字或下划线" }
+        require(Regex("[A-Za-z0-9_]{3,16}").matches(name)) { I18n.t("miscA1.accountService.invalidName") }
         val existing =
             store.data.accounts.find { it.type == AccountType.Offline && it.name == name }
         val account = existing ?: Account(name = name, uuid = offlineUuid(name))
@@ -77,7 +78,7 @@ class AccountService(
      * 必要时刷新令牌并同步游戏档案。
      */
     suspend fun credentials(accountId: String? = store.data.activeAccountId): GameCredentials {
-        val account = store.data.accounts.find { it.id == accountId } ?: error("请先添加并选择游戏账户")
+        val account = store.data.accounts.find { it.id == accountId } ?: error(I18n.t("core.accountService.1"))
         return when (account.type) {
             AccountType.Offline -> GameCredentials(account.name, account.uuid)
             AccountType.Authlib -> authlibAccounts.credentials(account)

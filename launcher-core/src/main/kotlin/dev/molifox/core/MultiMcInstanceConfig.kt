@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.util.zip.ZipFile
 
 /** 与实例创建校验共用同一个名称上限：导入、导出和新建实例必须一致。 */
@@ -12,12 +13,13 @@ internal const val MAX_MULTIMC_INSTANCE_NAME_CHARS = 80
 
 private const val MAX_MULTIMC_METADATA_BYTES = 1024 * 1024
 private const val MULTIMC_HEX_RADIX = 16
-private const val FALLBACK_INSTANCE_NAME = "MultiMC 实例"
 private const val GENERAL_SECTION = "General"
 
+/** 名称缺失时的兜底实例名：随当前语言变化，不能固化成常量。 */
+private fun fallbackInstanceName(): String = I18n.t("packsC.multiMc.fallbackName")
+
 /** cfg 里表示布尔开启的 `key=true`（Prism 写小写，这里兼容大小写与空白）。 */
-internal fun isMultiMcEnabled(value: String?): Boolean =
-    value.orEmpty().trim().equals("true", ignoreCase = true)
+internal fun isMultiMcEnabled(value: String?): Boolean = value.orEmpty().trim().equals("true", ignoreCase = true)
 
 /** instance.cfg 解析后的导入结果：名称、预览摘要与两类可迁移设置。 */
 internal data class MultiMcInstanceSettings(
@@ -89,9 +91,9 @@ internal fun multiMcText(
     name: String,
 ): String? {
     val entry = zip.getEntry(name) ?: return null
-    require(entry.size in 1..MAX_MULTIMC_METADATA_BYTES.toLong()) { "MultiMC/Prism 元数据过大或为空" }
+    require(entry.size in 1..MAX_MULTIMC_METADATA_BYTES.toLong()) { I18n.t("packsC.multiMc.metadataTooLargeOrEmpty") }
     val bytes = zip.getInputStream(entry).use { it.readNBytes(MAX_MULTIMC_METADATA_BYTES + 1) }
-    require(bytes.size <= MAX_MULTIMC_METADATA_BYTES) { "MultiMC/Prism 元数据过大" }
+    require(bytes.size <= MAX_MULTIMC_METADATA_BYTES) { I18n.t("packsC.multiMc.metadataTooLarge") }
     return bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
 }
 
@@ -112,13 +114,13 @@ private fun readMultiMcName(
 ): String {
     val raw = decodeMultiMcName(ini["name"].orEmpty()).trim()
     if (raw.isEmpty()) {
-        warnings += "instance.cfg 缺少实例名，已使用「$fallback」"
+        warnings += I18n.t("packsC.multiMc.nameMissing", fallback)
         return fallback
     }
     require(
         raw.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS && raw.none { it.isISOControl() },
     ) {
-        "MultiMC/Prism 实例名称过长或包含控制字符（最多 $MAX_MULTIMC_INSTANCE_NAME_CHARS 字）"
+        I18n.t("packsC.multiMc.nameTooLong", MAX_MULTIMC_INSTANCE_NAME_CHARS)
     }
     return raw
 }
@@ -130,7 +132,7 @@ private fun sanitizeMultiMcName(value: String): String {
             .map { if (it.isISOControl()) ' ' else it }
             .joinToString("")
             .trim()
-            .ifBlank { FALLBACK_INSTANCE_NAME }
+            .ifBlank { fallbackInstanceName() }
     if (cleaned.length <= MAX_MULTIMC_INSTANCE_NAME_CHARS) return cleaned
     val end =
         if (cleaned[MAX_MULTIMC_INSTANCE_NAME_CHARS - 1].isHighSurrogate()) {

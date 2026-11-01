@@ -47,18 +47,20 @@ fun Modifier.packDropTarget(actions: UiActions): Modifier {
                         val files =
                             event.awtTransferable.getTransferData(DataFlavor.javaFileListFlavor)
                                 as? List<*>
-                        require(files?.size == 1 && files.single() is File) { "请一次拖入一个整合包文件" }
+                        require(files?.size == 1 && files.single() is File) {
+                            tr("pages.packs.drop.oneFile")
+                        }
                         val file = files.single() as File
                         require(
                             file.extension.lowercase(java.util.Locale.ROOT) in
                                 setOf("mrpack", "zip"),
                         ) {
-                            "请拖入 .mrpack 或整合包 .zip 文件"
+                            tr("pages.packs.drop.wrongType")
                         }
                         actions.previewPackFile(file.toPath())
                         true
                     }.getOrElse {
-                        actions.controller.store.notify(it.message ?: "无法读取拖入的文件")
+                        actions.controller.store.notify(it.message ?: tr("pages.packs.drop.unreadable"))
                         false
                     }
                 }

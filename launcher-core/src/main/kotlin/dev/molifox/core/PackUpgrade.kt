@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -87,7 +88,7 @@ internal object PackUpgradePlanner {
         current: Map<String, PackFileState>,
         policy: PackUpgradePolicy = PackUpgradePolicy(),
     ): PackUpgradePlan {
-        require(instanceId.isNotBlank()) { "实例标识无效" }
+        require(instanceId.isNotBlank()) { I18n.t("packsB2.packUpgrade.invalidInstanceId") }
         val oldFiles = old.files.associateBy { packRelative(it.path) }
         val newFiles = new.files.associateBy { packRelative(it.path) }
         val states = current.mapKeys { packRelative(it.key) }
@@ -107,7 +108,7 @@ internal object PackUpgradePlanner {
                             path,
                             PackFileAction.Keep,
                             PackUserState.UserAdded,
-                            "保留用户自加文件",
+                            I18n.t("core.packUpgrade.1"),
                         )
                 }
         }
@@ -137,19 +138,19 @@ internal object PackUpgradePlanner {
         }
         return when {
             current.equals(newFile.sha1, true) ->
-                change(path, PackFileAction.Keep, PackUserState.Unchanged, "文件已是新整合包版本", optional)
+                change(path, PackFileAction.Keep, PackUserState.Unchanged, I18n.t("core.packUpgrade.2"), optional)
             oldFile != null && current.equals(oldFile.sha1, true) ->
-                change(path, PackFileAction.Replace, PackUserState.Unchanged, "整合包更新文件", optional)
+                change(path, PackFileAction.Replace, PackUserState.Unchanged, I18n.t("core.packUpgrade.3"), optional)
             policy.protectUserModified -> {
                 protectedPaths += path
-                change(path, PackFileAction.Keep, PackUserState.UserModified, "保留用户修改的文件", optional)
+                change(path, PackFileAction.Keep, PackUserState.UserModified, I18n.t("core.packUpgrade.4"), optional)
             }
             else ->
                 change(
                     path,
                     PackFileAction.Replace,
                     PackUserState.UserModified,
-                    "按策略覆盖用户修改的文件",
+                    I18n.t("core.packUpgrade.5"),
                     optional,
                 )
         }
@@ -167,7 +168,7 @@ internal object PackUpgradePlanner {
                 path,
                 PackFileAction.Keep,
                 PackUserState.UserDeleted,
-                "用户删除的整合包文件保持缺失",
+                I18n.t("core.packUpgrade.6"),
                 optional,
             )
         }
@@ -175,7 +176,7 @@ internal object PackUpgradePlanner {
             path,
             PackFileAction.Add,
             if (deleted) PackUserState.UserDeleted else PackUserState.Unchanged,
-            if (deleted) "恢复用户删除的整合包文件" else "新增整合包文件",
+            if (deleted) I18n.t("core.packUpgrade.7") else I18n.t("core.packUpgrade.8"),
             optional,
         )
     }
@@ -188,20 +189,20 @@ internal object PackUpgradePlanner {
         protectedPaths: MutableList<String>,
     ): PackFileChange {
         if (!state.present || state.sha1 == null) {
-            return change(path, PackFileAction.Keep, PackUserState.UserDeleted, "用户已删除的旧整合包文件")
+            return change(path, PackFileAction.Keep, PackUserState.UserDeleted, I18n.t("core.packUpgrade.9"))
         }
         if (state.sha1.equals(oldFile.sha1, true)) {
             return if (policy.removeObsoleteFiles) {
-                change(path, PackFileAction.Remove, PackUserState.Unchanged, "新整合包已移除该文件")
+                change(path, PackFileAction.Remove, PackUserState.Unchanged, I18n.t("core.packUpgrade.10"))
             } else {
-                change(path, PackFileAction.Keep, PackUserState.Unchanged, "按策略保留新整合包已移除的文件")
+                change(path, PackFileAction.Keep, PackUserState.Unchanged, I18n.t("core.packUpgrade.11"))
             }
         }
         if (policy.protectUserModified) {
             protectedPaths += path
-            return change(path, PackFileAction.Keep, PackUserState.UserModified, "保留用户修改的旧文件")
+            return change(path, PackFileAction.Keep, PackUserState.UserModified, I18n.t("core.packUpgrade.12"))
         }
-        return change(path, PackFileAction.Remove, PackUserState.UserModified, "按策略移除用户修改的旧文件")
+        return change(path, PackFileAction.Remove, PackUserState.UserModified, I18n.t("core.packUpgrade.13"))
     }
 
     private fun change(
@@ -228,8 +229,10 @@ internal class PackUpgradeTransaction(
     private var retain = false
 
     init {
-        require(directory.parent == root) { "升级备份目录必须直接位于实例目录下" }
-        require(directory.name.startsWith(".molifox-pack-upgrade-")) { "升级备份目录名称无效" }
+        require(directory.parent == root) { I18n.t("core.packUpgrade.14") }
+        require(directory.name.startsWith(".molifox-pack-upgrade-")) {
+            I18n.t("packsB2.packUpgrade.invalidBackupName")
+        }
     }
 
     suspend fun apply(
@@ -285,19 +288,19 @@ internal class PackUpgradeTransaction(
             context.checkCancelled()
             val target = packPath(root, change.path)
             if (!target.exists()) continue
-            requireUpgradeFile(target, "升级目标不是普通文件：${change.path}")
+            requireUpgradeFile(target, I18n.t("core.packUpgrade.15", change.path))
             val saved = safePath(backup, "files/$position/${target.fileName}")
             saved.parent.createDirectories()
             Files.move(target, saved)
             state.backups[target] = saved
         }
         if (state.ledger.exists()) {
-            requireUpgradeFile(state.ledger, "文件归属账本不是普通文件")
+            requireUpgradeFile(state.ledger, I18n.t("core.packUpgrade.16"))
             state.ledgerBackup =
                 safePath(backup, "ledger.json").also { Files.copy(state.ledger, it) }
         }
         if (state.archive.exists()) {
-            requireUpgradeFile(state.archive, "旧整合包归档不是普通文件")
+            requireUpgradeFile(state.archive, I18n.t("core.packUpgrade.17"))
             state.archiveBackup =
                 safePath(backup, "archive")
                     .createDirectories()
@@ -371,9 +374,11 @@ internal class PackUpgradeTransaction(
         content: Path,
         archiveSource: Path,
     ) {
-        require(content.startsWith(root) && content != root) { "升级暂存目录必须位于实例目录内" }
+        require(content.startsWith(root) && content != root) {
+            I18n.t("packsB2.packUpgrade.stagingOutsideRoot")
+        }
         require(archiveSource.isRegularFile() && !Files.isSymbolicLink(archiveSource)) {
-            "新整合包归档不可用"
+            I18n.t("core.packUpgrade.18")
         }
     }
 
@@ -384,7 +389,7 @@ internal class PackUpgradeTransaction(
                 .distinct()
                 .size == plan.changes.size,
         ) {
-            "升级计划包含重复路径"
+            I18n.t("core.packUpgrade.19")
         }
     }
 
@@ -395,7 +400,7 @@ internal class PackUpgradeTransaction(
         for (change in installing) {
             val source = packPath(content, change.path)
             require(source.isRegularFile() && !Files.isSymbolicLink(source)) {
-                "暂存文件缺失：${change.path}"
+                I18n.t("core.packUpgrade.20", change.path)
             }
         }
     }
@@ -407,8 +412,7 @@ internal class PackUpgradeTransaction(
         require(path.isRegularFile() && !Files.isSymbolicLink(path)) { message }
     }
 
-    private fun archiveParent(archive: Path): Path =
-        archive.parent ?: throw IOException("整合包归档路径无效")
+    private fun archiveParent(archive: Path): Path = archive.parent ?: throw IOException(I18n.t("core.packUpgrade.21"))
 
     /** 回滚已写入的文件、账本、归档与实例记录；有未恢复项时保留备份目录并返回带说明的异常。 */
     private fun rollbackUpgrade(
@@ -438,7 +442,7 @@ internal class PackUpgradeTransaction(
         }
         if (failures.isNotEmpty()) {
             retain = true
-            return IOException("整合包升级未完成，原文件备份保留在 $directory", error).also {
+            return IOException(I18n.t("core.packUpgrade.22", directory), error).also {
                 failures.forEach(it::addSuppressed)
             }
         }
@@ -451,11 +455,11 @@ internal class PackUpgradeTransaction(
         if (!directory.exists()) return
         runCatching {
             check(directory.parent == root && directory.name.startsWith(".molifox-pack-upgrade-"))
-            check(!Files.isSymbolicLink(directory)) { "升级备份目录是符号链接" }
+            check(!Files.isSymbolicLink(directory)) { I18n.t("core.packUpgrade.23") }
             Files.walk(directory).use { paths ->
                 paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
             }
-        }.onFailure { store.log("整合包升级备份清理失败：$directory", true) }
+        }.onFailure { store.log(I18n.t("packsB2.packUpgrade.cleanupFailed", directory), true) }
     }
 }
 

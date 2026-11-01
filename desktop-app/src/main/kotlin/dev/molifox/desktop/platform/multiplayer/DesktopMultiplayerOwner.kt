@@ -2,6 +2,7 @@
 package dev.molifox.desktop.platform.multiplayer
 
 import dev.molifox.core.LauncherController
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.domain.MultiplayerBackend
 
 class DesktopMultiplayerOwner(
@@ -24,7 +25,7 @@ class DesktopMultiplayerOwner(
     val backend: MultiplayerBackend
         get() =
             synchronized(lock) {
-                check(!closed) { "联机功能已关闭" }
+                check(!closed) { tr("deskI.multiplayer.closed") }
                 ownedBackend ?: createBackend().also { ownedBackend = it }
             }
 

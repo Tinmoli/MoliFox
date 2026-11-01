@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -15,6 +16,9 @@ import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
+
+/** 原版与加载器占整合包安装进度的前 90%；剩余 10% 留给整合包文件。 */
+private const val PACK_GAME_PROGRESS_END = 0.9f
 
 /** 整合包校验预览。 */
 internal interface ContentPackImportApi {
@@ -128,7 +132,7 @@ internal abstract class ContentPackImportActions(
         expectedHash: String?,
     ) {
         require(expectedHash == null || digest(snapshot, "SHA-256").equals(expectedHash, true)) {
-            "整合包文件已改变，请重新选择"
+            I18n.t("contentA2.contentPackImportActions.archiveChanged")
         }
     }
 
@@ -143,7 +147,7 @@ internal abstract class ContentPackImportActions(
                 existing.loader == request.loader &&
                 existing.loaderVersion == request.loaderVersion,
         ) {
-            "修复包的游戏版本或加载器与实例不符，请新建实例导入；修复不能替代升级"
+            I18n.t("contentA2.contentPackImportActions.repairMismatch")
         }
     }
 
@@ -152,7 +156,7 @@ internal abstract class ContentPackImportActions(
         optionalFiles: Set<String>?,
     ) {
         require(optionalFiles == null || optionalFiles.all { it in manifest.optionalFiles }) {
-            "所选可选文件已不在整合包中，请重新选择"
+            I18n.t("contentA2.contentPackImportActions.optionalFilesChanged")
         }
     }
 
@@ -186,16 +190,22 @@ internal abstract class ContentPackImportActions(
         var transaction: PackFileTransaction? = null
         var completed = false
         try {
-            installer.install(instance.id, context)
+            // 原版/加载器只占前 90%，剩余进度留给整合包文件；避免这里先报 100% 再倒回 2%。
+            installer.install(
+                instance.id,
+                context,
+                freshInstall = pack.repairId == null,
+                progressEnd = PACK_GAME_PROGRESS_END,
+                // 整合包导入失败要保留实例和存档，供同一实例重试修复。
+                discardOnFailure = false,
+                // 等整合包文件全部落盘后再重新扫描，避免中间状态把实例列表重建丢。
+                refreshAfterInstall = false,
+            )
             val root = store.instancePath(instance.id)
             val staged = PackFileTransaction(store, root)
             transaction = staged
             store.updateInstance(instance.id) { it.copy(installed = false) }
-            stagePackContent(staged, root, zip, pack, context)
-            staged.commit(context)
-            writePackOwnership(root, snapshot, zip, pack)
-            store.updateInstance(instance.id) { it.copy(installed = true) }
-            applyPackIconSafely(instance.id, zip, pack.manifest, "整合包图标未采用，使用已有或默认图标")
+            commitPackContent(instance.id, staged, root, snapshot, zip, pack, context)
             completed = true
         } finally {
             try {
@@ -209,5 +219,37 @@ internal abstract class ContentPackImportActions(
                 transaction?.cleanup()
             }
         }
+    }
+
+    /** 落盘整合包文件、提交事务并标记完成；进度接在原版安装之后。 */
+    private suspend fun commitPackContent(
+        instanceId: String,
+        transaction: PackFileTransaction,
+        root: Path,
+        snapshot: Path,
+        zip: ZipFile,
+        pack: PackImport,
+        context: JobContext,
+    ) {
+        stagePackContent(
+            transaction,
+            root,
+            zip,
+            pack,
+            context,
+            progressStart = PACK_GAME_PROGRESS_END,
+            progressEnd = 1f,
+        )
+        transaction.commit(context)
+        writePackOwnership(root, snapshot, zip, pack)
+        store.updateInstance(instanceId) { it.copy(installed = true) }
+        applyPackIconSafely(
+            instanceId,
+            zip,
+            pack.manifest,
+            I18n.t("contentA2.contentPackImportActions.iconNotApplied"),
+        )
+        context.progress(1f, I18n.t("contentA2.contentPackImportActions.installed"))
+        store.refreshInstances()
     }
 }

@@ -125,8 +125,7 @@ internal object JarInJarSelection {
         return JarInJarVersioning.compare(artifactVersion(node), selected) == 0
     }
 
-    private fun artifactVersion(node: EmbeddedJar): String =
-        node.artifactVersion.ifBlank { node.version }
+    private fun artifactVersion(node: EmbeddedJar): String = node.artifactVersion.ifBlank { node.version }
 
     /** 纯版本范围按 Maven 相等比较，区间范围走约束求值。 */
     private fun rangeContains(

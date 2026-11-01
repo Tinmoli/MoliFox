@@ -94,7 +94,7 @@ fun SimpleDropdown(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                values.find { it.first == value }?.second ?: value.ifBlank { "请选择" },
+                values.find { it.first == value }?.second ?: value.ifBlank { tr("deskI.dropdown.placeholder") },
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface,

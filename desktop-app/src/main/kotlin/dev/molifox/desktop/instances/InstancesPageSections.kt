@@ -33,12 +33,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherState
+import dev.molifox.core.i18n.Strings
 import dev.molifox.desktop.CompactSearchField
 import dev.molifox.desktop.CompactSelect
 import dev.molifox.desktop.CopyInstanceDialog
-import dev.molifox.desktop.ExportMrpackDialog
 import dev.molifox.desktop.GameDirectoryControls
 import dev.molifox.desktop.LocalAnimationsEnabled
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Motion
 import dev.molifox.desktop.Page
 import dev.molifox.desktop.Panel
@@ -46,6 +47,7 @@ import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SecondaryButton
 import dev.molifox.desktop.SmallIconButton
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.tr
 
 /** 子页页头：返回箭头 + 18sp 标题，右侧是「命中 / 总数」计数。 */
 @Composable
@@ -54,11 +56,12 @@ internal fun InstancesHeader(
     all: List<GameInstance>,
     onBack: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SmallIconButton(Icons.Outlined.ArrowBack, "返回开始页", onClick = onBack)
+        SmallIconButton(Icons.Outlined.ArrowBack, strings.t("pages.instances.back"), onClick = onBack)
         Spacer(Modifier.width(8.dp))
         Text(
-            "实例管理",
+            strings.t("pages.instances.title"),
             Modifier.weight(1f),
             fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
@@ -66,10 +69,14 @@ internal fun InstancesHeader(
         )
         Text(
             if (versions.size != all.size) {
-                versions.size.toString() + " / " + all.size + " 个实例 · " +
-                    versions.count { it.installed } + " 个已安装"
+                strings.t(
+                    "pages.instances.countFiltered",
+                    versions.size,
+                    all.size,
+                    versions.count { it.installed },
+                )
             } else {
-                all.size.toString() + " 个实例 · " + all.count { it.installed } + " 个已安装"
+                strings.t("pages.instances.count", all.size, all.count { it.installed })
             },
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -96,28 +103,30 @@ internal fun InstancesFilterBar(
     onShowList: () -> Unit,
     onShowGrid: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CompactSearchField(query, onQueryChange, Modifier.weight(1f), placeholder = "搜索实例名称")
+        CompactSearchField(
+            query,
+            onQueryChange,
+            Modifier.weight(1f),
+            placeholder = strings.t("pages.instances.search.placeholder"),
+        )
         CompactSelect(versionFilter, versionOptions, onVersionChange, Modifier.width(132.dp))
         CompactSelect(loaderFilter, loaderOptions, onLoaderChange, Modifier.width(168.dp))
         CompactSelect(
             sort,
-            listOf(
-                "recent" to "排序：最近游玩",
-                "name" to "排序：名称",
-                "created" to "排序：创建时间",
-            ),
+            instanceSortOptions(strings),
             onSortChange,
             Modifier.width(144.dp),
         )
         CompactToggleButton(
             selected = favorites,
             icon = if (favorites) Icons.Outlined.Star else Icons.Outlined.StarOutline,
-            label = "收藏",
+            label = strings.t("pages.instances.favorite"),
             onClick = onToggleFavorites,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -125,19 +134,27 @@ internal fun InstancesFilterBar(
                 selected = !grid,
                 icon = Icons.Outlined.ViewList,
                 label = null,
-                description = "列表视图",
+                description = strings.t("pages.instances.view.list"),
                 onClick = onShowList,
             )
             CompactToggleButton(
                 selected = grid,
                 icon = Icons.Outlined.GridView,
                 label = null,
-                description = "网格视图",
+                description = strings.t("pages.instances.view.grid"),
                 onClick = onShowGrid,
             )
         }
     }
 }
+
+/** 排序下拉项；取值是持久化的排序 key，显示名随语言变化。 */
+private fun instanceSortOptions(strings: Strings): List<Pair<String, String>> =
+    listOf(
+        "recent" to strings.t("pages.instances.sort.recent"),
+        "name" to strings.t("pages.instances.sort.name"),
+        "created" to strings.t("pages.instances.sort.created"),
+    )
 
 /** 目录工具面板与「新建实例 / 导入整合包」按钮。 */
 @Composable
@@ -147,6 +164,7 @@ internal fun InstancesToolbar(
     busy: Boolean,
     onNew: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.fillMaxWidth(), padding = 12) {
         Row(
             Modifier.fillMaxWidth(),
@@ -155,7 +173,7 @@ internal fun InstancesToolbar(
         ) {
             Box(Modifier.weight(1f)) { GameDirectoryControls(state, actions) }
             PrimaryButton(
-                "新建实例",
+                strings.t("pages.instances.new"),
                 Icons.Outlined.Add,
                 enabled = !busy,
                 onClick = onNew,
@@ -165,7 +183,7 @@ internal fun InstancesToolbar(
                 enabled = !busy,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
             ) {
-                Text("导入整合包", fontSize = 13.sp)
+                Text(strings.t("pages.instances.import"), fontSize = 13.sp)
             }
         }
     }
@@ -312,30 +330,19 @@ private fun InstancesListOrGrid(
     }
 }
 
-/** 行内操作打开的三个对话框，关闭与开始回调由本页提供。 */
+/** 行内操作打开的重命名/复制对话框；导出改为根级独立页面。 */
 @Composable
 internal fun InstancePageDialogs(
     renaming: GameInstance?,
     copying: GameInstance?,
-    exporting: GameInstance?,
     actions: UiActions,
     onRenameDismiss: () -> Unit,
     onCopyDismiss: () -> Unit,
-    onExportDismiss: () -> Unit,
-    onExportStarted: () -> Unit,
 ) {
     renaming?.let { instance ->
         RenameInstanceDialog(instance, actions) { onRenameDismiss() }
     }
     copying?.let { instance -> CopyInstanceDialog(instance, actions) { onCopyDismiss() } }
-    exporting?.let { instance ->
-        ExportMrpackDialog(
-            instance,
-            actions,
-            onDismiss = { onExportDismiss() },
-            onStarted = { onExportStarted() },
-        )
-    }
 }
 
 /** 启动入口：无法识别先提示，未安装先修复，没有账户先要求添加。 */
@@ -347,7 +354,7 @@ private fun launchInstance(
 ) {
     if (instance.broken) {
         actions.controller.store.notify(
-            "「" + instance.name + "」无法识别：" + instance.brokenReason,
+            tr("pages.instances.notify.broken", instance.name, instance.brokenReason),
         )
         return
     }
@@ -355,7 +362,7 @@ private fun launchInstance(
         actions.run { actions.controller.repair(instance.id) }
         actions.taskQueued()
     } else if (state.data.activeAccountId == null) {
-        actions.controller.store.notify("请先添加一个游戏账户")
+        actions.controller.store.notify(tr("pages.instances.notify.noAccount"))
         navigate(Page.Home)
     } else {
         actions.run {

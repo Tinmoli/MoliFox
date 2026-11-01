@@ -56,16 +56,17 @@ internal fun ExportEntriesSection(
     onToggle: (String, Boolean) -> Unit,
     onToggleNode: (String, Boolean) -> Unit,
 ) {
+    val strings = LocalStrings.current
     with(state) {
         when {
             !loaded && scanError != null ->
                 Panel(Modifier.fillMaxWidth()) {
                     EmptyState(
-                        "无法读取实例目录",
+                        strings.t("dialogs.export.readDirFailed"),
                         scanError.orEmpty(),
                         Icons.Outlined.ErrorOutline,
                     ) {
-                        TextButton({ onRetry() }) { Text("重试") }
+                        TextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
             !loaded ->
@@ -74,16 +75,16 @@ internal fun ExportEntriesSection(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    MutedText("正在读取实例目录…")
+                    MutedText(strings.t("dialogs.export.readingDir"))
                 }
             else -> {
                 var expanded by remember(selectableEntries) { mutableStateOf(true) }
                 SettingsSection(
-                    "打包内容",
-                    "已选 ${selectedEntries.size}/${selectableEntries.size}",
+                    strings.t("dialogs.export.contents"),
+                    strings.t("dialogs.export.selectedCount", selectedEntries.size, selectableEntries.size),
                     action = {
                         Text(
-                            if (expanded) "收起" else "展开",
+                            if (expanded) strings.t("dialogs.export.collapse") else strings.t("dialogs.export.expand"),
                             modifier =
                                 Modifier
                                     .clickable { expanded = !expanded }
@@ -117,23 +118,24 @@ internal fun ExportPreviewSection(
     state: ExportPreviewState,
     onRetry: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     with(state) {
         when {
             loading -> ExportLoadingSection()
             totalFiles == null ->
                 Panel(Modifier.fillMaxWidth()) {
                     EmptyState(
-                        "无法预览这次导出",
+                        strings.t("dialogs.export.previewFailed"),
                         error.orEmpty(),
                         Icons.Outlined.ErrorOutline,
                     ) {
-                        TextButton({ onRetry() }) { Text("重试") }
+                        TextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
             totalFiles == 0 ->
                 Panel(Modifier.fillMaxWidth()) {
                     EmptyState(
-                        "实例目录没有可导出的文件",
+                        strings.t("dialogs.export.nothingToExport"),
                         "",
                         Icons.Outlined.FolderOpen,
                     )
@@ -147,28 +149,30 @@ internal fun ExportPreviewSection(
 
 @Composable
 private fun ExportLoadingSection() {
+    val strings = LocalStrings.current
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LinearProgressIndicator(Modifier.fillMaxWidth())
-        MutedText("正在读取实例文件…")
+        MutedText(strings.t("dialogs.export.readingFiles"))
     }
 }
 
 @Composable
 private fun ExportPreviewStatistics(state: ExportPreviewState) {
+    val strings = LocalStrings.current
     with(state) {
-        SettingsSection("预览", "") {
-            SettingRow("包含文件", "") {
+        SettingsSection(strings.t("dialogs.export.preview"), "") {
+            SettingRow(strings.t("dialogs.export.includedFiles"), "") {
                 Text("$selectedFiles / $totalFiles", fontSize = 13.sp)
             }
             if (format == PackExportFormat.Modrinth && options.remoteResources) {
-                SettingRow("联网下载", "") {
+                SettingRow(strings.t("dialogs.export.onlineDownload"), "") {
                     Text("$downloads", fontSize = 13.sp)
                 }
             }
-            SettingRow("本地打包", "") {
+            SettingRow(strings.t("dialogs.export.localPack"), "") {
                 Text("$localResources", fontSize = 13.sp)
             }
         }

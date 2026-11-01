@@ -5,6 +5,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.LanWorld
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -215,4 +216,5 @@ private const val MAX_PING_TIMEOUT_MILLIS = 10_000L
 private val STATUS_REQUEST_PAYLOAD = byteArrayOf(STATUS_PACKET_ID.toByte())
 
 /** description 与 version 都缺失时的兜底名称；只用于界面展示。 */
-internal const val DEFAULT_WORLD_NAME = "Minecraft 世界"
+internal val DEFAULT_WORLD_NAME: String
+    get() = I18n.t("multiplayer.mcStatusPing.1")

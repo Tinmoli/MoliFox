@@ -40,9 +40,10 @@ fun PackImportDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var selected by remember(preview.hash) { mutableStateOf(preview.optionalFiles.toSet()) }
     var error by remember(preview.hash) { mutableStateOf<String?>(null) }
-    Modal("导入整合包", preview.title, onDismiss = onDismiss) {
+    Modal(strings.t("dialogs.packImport.title"), preview.title, onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -54,18 +55,28 @@ fun PackImportDialog(
                         if (preview.loaderVersion.isBlank()) "" else " ${preview.loaderVersion}",
                 )
             }
-            if (preview.version.isNotBlank()) MutedText("整合包版本 · ${preview.version}")
+            if (preview.version.isNotBlank()) MutedText(strings.t("dialogs.packImport.version", preview.version))
             if (preview.summary.isNotBlank()) MutedText(preview.summary)
             MutedText(
-                "必需文件 ${preview.requiredFiles} 项 · " +
-                    "可选文件 ${selected.size}/${preview.optionalFiles.size} 项",
+                strings.t(
+                    "dialogs.packImport.optionalSummary",
+                    preview.requiredFiles,
+                    selected.size,
+                    preview.optionalFiles.size,
+                ),
             )
             if (preview.optionalFiles.isNotEmpty()) {
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("可选内容", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    TextButton({ selected = preview.optionalFiles.toSet() }) { Text("全选") }
-                    TextButton({ selected = emptySet() }) { Text("全不选") }
+                    Text(
+                        strings.t("dialogs.packImport.optionalTitle"),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    TextButton({ selected = preview.optionalFiles.toSet() }) {
+                        Text(strings.t("dialogs.packImport.selectAll"))
+                    }
+                    TextButton({ selected = emptySet() }) { Text(strings.t("dialogs.packImport.selectNone")) }
                 }
                 preview.optionalFiles.forEach { file ->
                     Row(
@@ -87,14 +98,14 @@ fun PackImportDialog(
                     }
                 }
             }
-            MutedText("将新建独立实例。所选可选内容会被保存，修复时沿用本次选择。")
+            MutedText(strings.t("dialogs.packImport.note"))
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onDismiss) { Text("取消") }
+            TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) }
             Spacer(Modifier.width(12.dp))
             PrimaryButton(
-                "开始导入",
+                strings.t("dialogs.packImport.start"),
                 onClick = {
                     try {
                         actions.controller.importPack(
@@ -104,9 +115,9 @@ fun PackImportDialog(
                         )
                         onDismiss()
                     } catch (failure: IllegalArgumentException) {
-                        error = failure.message ?: "无法开始导入，请稍后重试"
+                        error = failure.message ?: strings.t("dialogs.packImport.failed")
                     } catch (failure: IllegalStateException) {
-                        error = failure.message ?: "无法开始导入，请稍后重试"
+                        error = failure.message ?: strings.t("dialogs.packImport.failed")
                     }
                 },
             )

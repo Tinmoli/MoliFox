@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -57,12 +58,14 @@ internal class DatapackPaths(
         world: Path,
         name: String,
     ) {
-        val entry = datapackEntry(world, name) ?: throw IllegalArgumentException("找不到数据包：$name")
+        val entry =
+            datapackEntry(world, name)
+                ?: throw IllegalArgumentException(I18n.t("saveA1.datapackPaths.entryNotFound", name))
         require(
             entry.isRegularFile(LinkOption.NOFOLLOW_LINKS) ||
                 entry.isDirectory(LinkOption.NOFOLLOW_LINKS),
         ) {
-            "数据包路径不是文件或文件夹：$name"
+            I18n.t("saveA1.datapackPaths.entryNotFile", name)
         }
     }
 
@@ -71,27 +74,29 @@ internal class DatapackPaths(
         instanceId: String,
         worldName: String,
     ): Path {
-        require(worldName.isNotBlank() && worldName.length <= MAX_WORLD_NAME_LENGTH) { "世界名称无效" }
+        require(worldName.isNotBlank() && worldName.length <= MAX_WORLD_NAME_LENGTH) {
+            I18n.t("saveA1.datapackPaths.worldNameInvalid")
+        }
         require('/' !in worldName && '\\' !in worldName && ':' !in worldName) {
-            "世界名称无效：$worldName"
+            I18n.t("saveA1.datapackPaths.worldNameInvalidNamed", worldName)
         }
         require(store.instance(instanceId).id.isNotBlank())
         val saves = store.instancePath(instanceId).resolve("saves")
         val world =
             runCatching { safePath(saves, worldName) }.getOrElse {
-                throw IllegalArgumentException("世界名称不安全：$worldName")
+                throw IllegalArgumentException(I18n.t("saveA1.datapackPaths.worldNameUnsafe", worldName))
             }
         require(world.parent.toAbsolutePath().normalize() == absolute(saves)) {
-            "只能操作 saves 目录下的世界：$worldName"
+            I18n.t("saveA1.datapackPaths.worldOutsideSaves", worldName)
         }
         require(world.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(world)) {
-            "找不到世界存档：$worldName"
+            I18n.t("saveA1.datapackPaths.worldNotFound", worldName)
         }
         require(
             world.resolve("level.dat").isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
                 !isLink(world.resolve("level.dat")),
         ) {
-            "世界缺少 level.dat，无法管理数据包：$worldName"
+            I18n.t("saveA1.datapackPaths.worldMissingLevelDat", worldName)
         }
         return world
     }
@@ -104,7 +109,7 @@ internal class DatapackPaths(
         val directory = world.resolve(DATAPACKS_DIRECTORY)
         if (directory.exists(LinkOption.NOFOLLOW_LINKS)) {
             require(directory.isDirectory(LinkOption.NOFOLLOW_LINKS) && !isLink(directory)) {
-                "datapacks 路径不是普通目录：$directory"
+                I18n.t("saveA1.datapackPaths.datapacksNotDirectory", directory)
             }
         } else if (create) {
             directory.createDirectories()
@@ -117,15 +122,19 @@ internal class DatapackPaths(
         world: Path,
         name: String,
     ): Path? {
-        require(name.isNotBlank() && name.length <= MAX_DATAPACK_NAME_LENGTH) { "数据包名称无效" }
-        require('/' !in name && '\\' !in name && ':' !in name) { "数据包名称无效：$name" }
+        require(name.isNotBlank() && name.length <= MAX_DATAPACK_NAME_LENGTH) {
+            I18n.t("saveA1.datapackPaths.nameInvalid")
+        }
+        require('/' !in name && '\\' !in name && ':' !in name) {
+            I18n.t("saveA1.datapackPaths.nameInvalidNamed", name)
+        }
         val directory = world.resolve(DATAPACKS_DIRECTORY)
         val path = runCatching { safePath(directory, name) }.getOrNull()
         return if (path == null) {
             null
         } else {
             require(path.parent.toAbsolutePath().normalize() == absolute(directory)) {
-                "数据包名称越界：$name"
+                I18n.t("saveA1.datapackPaths.nameOutside", name)
             }
             path.takeIf { it.exists(LinkOption.NOFOLLOW_LINKS) && !isLink(it) }
         }
@@ -140,7 +149,7 @@ internal class DatapackPaths(
                     target
             },
         ) {
-            "游戏正在使用此存档目录，请先退出游戏"
+            I18n.t("saveA1.datapackPaths.gameRunning")
         }
     }
 

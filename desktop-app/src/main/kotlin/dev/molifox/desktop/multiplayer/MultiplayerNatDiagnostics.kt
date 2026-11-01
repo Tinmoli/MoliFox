@@ -14,8 +14,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.SecondaryButton
+import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.CoreStatus
 import dev.molifox.multiplayer.common.NatDiagnostics
 import dev.molifox.multiplayer.common.NatType
@@ -26,6 +28,7 @@ internal fun MultiplayerNatDiagnosticsGroup(
     runtime: CoreStatus?,
     testNat: suspend () -> Result<NatDiagnostics>,
 ) {
+    val strings = LocalStrings.current
     var testing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<NatDiagnostics?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -40,7 +43,7 @@ internal fun MultiplayerNatDiagnosticsGroup(
                 testNat().fold(
                     onSuccess = { result = it },
                     onFailure = { failure ->
-                        error = failure.message ?: "网络测试失败，请稍后重试"
+                        error = failure.message ?: strings.t("dialogs.mp.nat.testFailed")
                     },
                 )
                 testing = false
@@ -49,14 +52,14 @@ internal fun MultiplayerNatDiagnosticsGroup(
     }
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
-        title = "网络诊断",
-        detail = "用 EasyTier 自带的 STUN 测试当前网络类型，不启动联机核心、不需要管理员，通常几秒出结果。",
+        title = strings.t("dialogs.mp.nat.title"),
+        detail = strings.t("dialogs.mp.nat.detail"),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(onClick = startTest, enabled = installed && !testing) {
-                Text(if (testing) "测试中…" else "测试网络类型（NAT）")
+                Text(if (testing) strings.t("dialogs.mp.nat.testing") else strings.t("dialogs.mp.nat.test"))
             }
-            if (!installed) MutedText("先下载 EasyTier 运行时")
+            if (!installed) MutedText(strings.t("dialogs.mp.nat.needRuntime"))
             val summary = result
             if (summary != null) DiagnosticsSummary(summary)
             error?.let { message ->
@@ -68,10 +71,20 @@ internal fun MultiplayerNatDiagnosticsGroup(
 
 @Composable
 private fun DiagnosticsSummary(diagnostics: NatDiagnostics) {
+    val strings = LocalStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("UDP 类型：${natTypeLabel(diagnostics.udpNatType)}")
-        Text("TCP 类型：${natTypeLabel(diagnostics.tcpNatType)}")
-        Text("IPv6：${if (diagnostics.supportsIpv6) "支持" else "不支持"}")
+        Text(strings.t("dialogs.mp.nat.udp", natTypeLabel(diagnostics.udpNatType)))
+        Text(strings.t("dialogs.mp.nat.tcp", natTypeLabel(diagnostics.tcpNatType)))
+        Text(
+            strings.t(
+                "dialogs.mp.nat.ipv6",
+                if (diagnostics.supportsIpv6) {
+                    strings.t("dialogs.mp.nat.supported")
+                } else {
+                    strings.t("dialogs.mp.nat.unsupported")
+                },
+            ),
+        )
         MutedText(natAdvice(diagnostics))
     }
 }
@@ -79,16 +92,16 @@ private fun DiagnosticsSummary(diagnostics: NatDiagnostics) {
 /** 与 PCL CE 工具页一致的 NAT 类型中文名，避免用户看到协议缩写。 */
 internal fun natTypeLabel(type: NatType): String =
     when (type) {
-        NatType.OpenInternet -> "开放网络"
-        NatType.NoPat -> "无 NAT"
-        NatType.FullCone -> "完全锥形"
-        NatType.Restricted -> "受限锥形"
-        NatType.PortRestricted -> "端口受限锥形"
-        NatType.SymmetricEasy -> "对称 NAT（较好打洞）"
-        NatType.Symmetric -> "对称 NAT"
-        NatType.SymmetricFirewall -> "对称 NAT（带防火墙）"
-        NatType.UdpBlocked -> "UDP 被封"
-        NatType.Unknown -> "未知"
+        NatType.OpenInternet -> tr("dialogs.mp.nat.open")
+        NatType.NoPat -> tr("dialogs.mp.nat.noPat")
+        NatType.FullCone -> tr("dialogs.mp.nat.fullCone")
+        NatType.Restricted -> tr("dialogs.mp.nat.restricted")
+        NatType.PortRestricted -> tr("dialogs.mp.nat.portRestricted")
+        NatType.SymmetricEasy -> tr("dialogs.mp.nat.symmetricEasy")
+        NatType.Symmetric -> tr("dialogs.mp.nat.symmetric")
+        NatType.SymmetricFirewall -> tr("dialogs.mp.nat.symmetricFirewall")
+        NatType.UdpBlocked -> tr("dialogs.mp.nat.udpBlocked")
+        NatType.Unknown -> tr("dialogs.mp.nat.unknown")
     }
 
 /** UDP 被封锁影响最大，先提示换网络；对称 NAT 再提示中继或局域网直连。 */
@@ -96,9 +109,9 @@ internal fun natAdvice(diagnostics: NatDiagnostics): String {
     val types = setOf(diagnostics.udpNatType, diagnostics.tcpNatType)
     val symmetric = setOf(NatType.Symmetric, NatType.SymmetricFirewall, NatType.SymmetricEasy)
     return when {
-        NatType.UdpBlocked in types -> "UDP 被封，联机可能不可用，请换网络或检查防火墙/安全软件。"
+        NatType.UdpBlocked in types -> tr("dialogs.mp.nat.udpBlockedHint")
         types.any { it in symmetric } ->
-            "对称 NAT 下打洞可能失败，启动器会自动改走内置中继；若中继只做信令或不允许转发，仍会失败。可换网络、局域网直连或填可转发的自定义中继。"
-        else -> "网络类型适合直连或打洞。"
+            tr("dialogs.mp.nat.symmetricHint")
+        else -> tr("dialogs.mp.nat.goodHint")
     }
 }

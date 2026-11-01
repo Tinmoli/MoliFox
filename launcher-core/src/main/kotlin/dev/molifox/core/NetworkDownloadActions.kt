@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import dev.molifox.core.net.CandidateSource
 import dev.molifox.core.net.DownloadConcurrency
 import dev.molifox.core.net.DownloadSourceFailureException
@@ -375,7 +376,10 @@ internal abstract class NetworkCandidateActions(
         status: Int?,
     ): Long {
         val wait = settings.health.recordRateLimited(candidate.source.key)
-        settings.logger("源 ${candidate.source.title} 返回 $status，${wait}ms 后重试同一源", false)
+        settings.logger(
+            I18n.t("networkA.source.rateLimited", candidate.source.title, status, wait),
+            false,
+        )
         return wait
     }
 
@@ -397,7 +401,10 @@ internal abstract class NetworkCandidateActions(
             )
         if (!rateLimited && settings.health.recordFailure(candidate.source.key)) {
             val count = settings.health.state(candidate.source.key).consecutiveFailures
-            settings.logger("源 ${candidate.source.title} 已禁用：连续 $count 次失败", true)
+            settings.logger(
+                I18n.t("networkA.source.disabled", candidate.source.title, count),
+                true,
+            )
         }
     }
 }

@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.nio.file.Files
@@ -66,9 +67,9 @@ internal class DatapackInstaller(
                 .map { it.asJsonObject }
                 .let { files ->
                     files.firstOrNull { it.boolean("primary") } ?: files.firstOrNull()
-                } ?: error("数据包没有可用文件")
+                } ?: error(I18n.t("saveA1.datapackInstaller.noFile"))
         val filename = safeFilename(file.string("filename"))
-        require(filename.endsWith(".zip", true)) { "数据包必须为 ZIP" }
+        require(filename.endsWith(".zip", true)) { I18n.t("saveA1.datapackInstaller.mustBeZip") }
         if (info.boolean("manual_download")) {
             throw ManualContentRequired(
                 listOf(ManualContentFile(hit.id, versionId, filename, info.string("website"))),
@@ -83,7 +84,7 @@ internal class DatapackInstaller(
                 (hash1.isBlank() || hash1.matches(Regex("[a-fA-F0-9]{40}"))) &&
                 (hash512.isNotBlank() || hash1.isNotBlank()),
         ) {
-            "数据包缺少有效大小或校验信息，或文件超过 200 MB"
+            I18n.t("saveA1.datapackInstaller.invalidSizeOrHash")
         }
         return DatapackFile(file, filename, size, hash512, hash1)
     }
@@ -101,14 +102,14 @@ internal class DatapackInstaller(
                 info.string("id") == versionId &&
                 info.array("game_versions").any { it.asString == instance.gameVersion },
         ) {
-            "数据包版本不属于此项目或不兼容目标游戏版本"
+            I18n.t("saveA1.datapackInstaller.versionMismatch")
         }
         require(
             info.array("dependencies").none {
                 it.asJsonObject.string("dependency_type") == "required"
             },
         ) {
-            "此数据包有必需前置，请先从项目页面确认并手动安装完整组合"
+            I18n.t("saveA1.datapackInstaller.requiredDependency")
         }
     }
 
@@ -133,14 +134,17 @@ internal class DatapackInstaller(
             ) { bytes, total ->
                 context.progress(
                     if (total > 0) bytes.toFloat() / total else 0f,
-                    "下载数据包 · ${selectedFile.filename}",
+                    I18n.t("saveA1.datapackInstaller.downloading", selectedFile.filename),
                 )
             }
             validateArchive(download)
             currentCoroutineContext().ensureActive()
             verifyDestinationUnchanged(destination)
             publishDatapack(download, selectedFile.filename, destination)
-            context.progress(1f, "已安装至 ${destination.worldName}/datapacks；进入世界后启用或重载")
+            context.progress(
+                1f,
+                I18n.t("saveA1.datapackInstaller.installed", destination.worldName),
+            )
         } finally {
             Files.deleteIfExists(download)
         }
@@ -155,17 +159,19 @@ internal class DatapackInstaller(
                 destination.world &&
                 worldIdentity(destination.world) == destination.identity,
         ) {
-            "目标实例或存档已经改变，请重新选择"
+            I18n.t("saveA1.datapackInstaller.destinationChanged")
         }
     }
 
     private fun validateArchive(download: Path) {
         ZipFile(download.toFile()).use { zip ->
-            val manifest = zip.getEntry("pack.mcmeta") ?: error("ZIP 根目录缺少 pack.mcmeta")
+            val manifest =
+                zip.getEntry("pack.mcmeta")
+                    ?: error(I18n.t("saveA1.datapackInstaller.missingManifest"))
             require(
                 !manifest.isDirectory && manifest.size in 1..MAX_DATAPACK_METADATA_BYTES,
             ) {
-                "数据包说明文件无效"
+                I18n.t("saveA1.datapackInstaller.invalidMetadata")
             }
             val text = zip.getInputStream(manifest).use { it.readNBytes(65537) }
             require(
@@ -175,7 +181,7 @@ internal class DatapackInstaller(
                         .asJsonObject
                         .has("pack"),
             ) {
-                "数据包说明格式无效"
+                I18n.t("saveA1.datapackInstaller.invalidMetadataFormat")
             }
         }
     }
@@ -193,7 +199,9 @@ internal class DatapackInstaller(
             directory.createDirectory()
         }
         val target = safePath(directory, filename)
-        require(!target.exists(NOFOLLOW_LINKS)) { "存档中已有同名数据包，请先在存档目录整理：$filename" }
+        require(!target.exists(NOFOLLOW_LINKS)) {
+            I18n.t("saveA1.datapackInstaller.nameConflict", filename)
+        }
         val staging = directory.resolve(".molifox-${UUID.randomUUID()}.tmp")
         try {
             Files.copy(download, staging)
@@ -203,7 +211,7 @@ internal class DatapackInstaller(
                 worldDirectory(destination.instanceId, destination.worldName) == world &&
                     worldIdentity(world) == destination.identity,
             ) {
-                "目标存档已经改变"
+                I18n.t("saveA1.datapackInstaller.worldChanged")
             }
             Files.move(staging, target)
         } finally {
@@ -220,13 +228,17 @@ internal class DatapackInstaller(
         val world = safePath(saves, safeFilename(name))
         requireOrdinaryDirectory(saves)
         requireOrdinaryDirectory(world)
-        require(world.resolve("level.dat").isRegularFile(NOFOLLOW_LINKS)) { "请选择已有的世界存档" }
+        require(world.resolve("level.dat").isRegularFile(NOFOLLOW_LINKS)) {
+            I18n.t("saveA1.datapackInstaller.pickExistingWorld")
+        }
         return world
     }
 
     private fun requireOrdinaryDirectory(path: Path) {
         val attrs = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-        require(attrs.isDirectory && !attrs.isSymbolicLink && !attrs.isOther) { "存档路径不是普通目录" }
+        require(attrs.isDirectory && !attrs.isSymbolicLink && !attrs.isOther) {
+            I18n.t("saveA1.datapackInstaller.notDirectory")
+        }
     }
 
     /** Windows providers may return a null fileKey, so it cannot identify a world alone. */
@@ -239,7 +251,7 @@ internal class DatapackInstaller(
                 !file.isSymbolicLink &&
                 file.size() <= MAX_WORLD_METADATA_BYTES,
         ) {
-            "存档元数据文件无效"
+            I18n.t("saveA1.datapackInstaller.invalidWorldMetadata")
         }
         return listOf(
             directory.fileKey()?.toString().orEmpty(),

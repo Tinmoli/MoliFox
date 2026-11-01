@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -66,7 +67,7 @@ internal abstract class LauncherDeletionActions(
             .exceptionOrNull()
             ?.let { failure ->
                 val message = failure.message
-                if (message.isNullOrBlank()) "无法删除实例" else message
+                if (message.isNullOrBlank()) I18n.t("instA2.deletion.blockedFallback") else message
             }
 
     /** 删除实例会一并删除的存档名单（名称 + 上次修改时间），只用于确认框展示。 */
@@ -103,7 +104,7 @@ internal abstract class LauncherDeletionActions(
                 throw cancelled
             } catch (blocked: InstanceDeletionBlockedException) {
                 // 共用版本目录等「整次拒绝」：日志与界面用同一句话，不写「已删除实例记录」。
-                store.log(blocked.message ?: "无法删除实例", true)
+                store.log(blocked.message ?: I18n.t("instA2.deletion.blockedFallback"), true)
                 Result.failure(blocked)
             } catch (failure: IOException) {
                 failureResult(failure)
@@ -122,12 +123,12 @@ internal abstract class LauncherDeletionActions(
         permanent: Boolean,
     ): InstanceDeletionReport {
         require(!game.isRunning(instanceId)) {
-            "实例正在运行，请先退出游戏再删除"
+            I18n.t("instA2.deletion.instanceRunning")
         }
         requireIdle(instanceId)
         val instance = store.instance(instanceId)
         val plan = deletion.plan(instanceId)
-        plan.preserved.forEach { store.log("删除实例时保留：$it") }
+        plan.preserved.forEach { store.log(I18n.t("instA2.deletion.preserved", it)) }
         // delete() 自己会核对每个目标是否真的消失；它成功返回才允许删记录。
         val report = deletion.delete(plan, permanent)
         forgetInstance(instance)
@@ -136,11 +137,20 @@ internal abstract class LauncherDeletionActions(
         icons.releaseUnused(instance.iconId)
         icons.releaseUnused(instance.packIconId)
         // 只报告真实发生的事：删了哪些、释放多少、哪些因共用而保留，不再把「保留」写成「已删除」。
-        store.log("已删除实例记录：${instance.name}（${deletionSummary(report)}）")
+        store.log(
+            I18n.t("instA2.deletion.recordRemoved", instance.name, deletionSummary(report)),
+        )
         return report
     }
 
-    /** 从记录里移除实例；选中项优先回退到同一游戏目录里的其他实例。 */
+    /**
+     * 从记录里移除实例；选中项优先回退到同一游戏目录里的其他实例。
+     *
+     * 选中项存的可能是旧（归化前）id、目录名或显示名——[StoreRecordActions.instance] 都接受，
+     * 所以不能只拿它和 `instance.id` 比字符串：那会漏掉别名形式的旧值，留下一个再也解析不到
+     * 任何实例的 id，界面下次读取就会抛异常。这里改为在删除后的列表里重新解析：
+     * 解析不到（说明指向的正是被删实例）才回退。
+     */
     private fun forgetInstance(instance: GameInstance) {
         store.mutate { data ->
             val instances = data.instances.filter { it.id != instance.id }
@@ -149,14 +159,18 @@ internal abstract class LauncherDeletionActions(
                 instances.firstOrNull {
                     it.gameDirectoryId == instance.gameDirectoryId
                 } ?: instances.firstOrNull()
+            val selected = data.selectedInstanceId
+            val stillSelected =
+                selected
+                    ?.let { id ->
+                        instances.any {
+                            it.id == id || it.instanceSettingsKey() == id || it.name == id
+                        }
+                    }
+                    ?: false
             data.copy(
                 instances = instances,
-                selectedInstanceId =
-                    if (data.selectedInstanceId == instance.id) {
-                        fallback?.id
-                    } else {
-                        data.selectedInstanceId
-                    },
+                selectedInstanceId = if (stillSelected) selected else fallback?.id,
             )
         }
     }
@@ -165,32 +179,41 @@ internal abstract class LauncherDeletionActions(
     private fun deletionSummary(report: InstanceDeletionReport): String {
         val outcome =
             when {
-                report.removedPaths.isEmpty() -> "实例目录已不存在，仅移除失效记录"
+                report.removedPaths.isEmpty() -> I18n.t("instA2.deletionSummary.directoryGone")
                 report.preserved.isNotEmpty() ->
-                    "已删除 ${report.removedPaths.size} 项；" +
-                        "保留 ${report.preserved.size} 项共用目录"
+                    I18n.t(
+                        "instA2.deletionSummary.removedAndPreserved",
+                        report.removedPaths.size,
+                        report.preserved.size,
+                    )
                 report.movedToTrash ->
-                    "版本文件夹与游戏文件夹已移入回收站（${report.removedPaths.size} 项）"
+                    I18n.t("instA2.deletionSummary.movedToTrash", report.removedPaths.size)
                 else ->
-                    "版本文件夹与游戏文件夹已永久删除（${report.removedPaths.size} 项）"
+                    I18n.t("instA2.deletionSummary.permanentlyDeleted", report.removedPaths.size)
             }
         val kept =
             report.preserved
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("；") { it }
-                ?.let { "；保留原因：$it" }
+                ?.let { I18n.t("instA2.deletionSummary.keptReason", it) }
                 .orEmpty()
         val freed =
             if (report.removedPaths.isNotEmpty()) {
-                "，释放 ${report.freedBytes} 字节"
+                I18n.t("instA2.deletionSummary.freed", report.freedBytes)
             } else {
-                "，释放 0 字节"
+                I18n.t("instA2.deletionSummary.freedZero")
             }
         return "$outcome$freed$kept"
     }
 
     private fun failureResult(failure: Exception): Result<InstanceDeletionReport> {
-        store.log("删除实例失败：${failure.message ?: "未知错误"}", true)
+        store.log(
+            I18n.t(
+                "instA2.deletion.deleteFailed",
+                failure.message ?: I18n.t("instA2.common.unknownError"),
+            ),
+            true,
+        )
         return Result.failure(failure)
     }
 }

@@ -145,7 +145,12 @@ private class InlineRenderer(
         depth: Int,
     ) {
         val href = safeUrl(match.url)
-        val label = if (match.kind == InlineKind.Image) match.text.ifBlank { "图片" } else match.text
+        val label =
+            if (match.kind == InlineKind.Image) {
+                match.text.ifBlank { tr("pages.markdown.image") }
+            } else {
+                match.text
+            }
         scan(label, style, if (href != null && link == null) href else link, depth + 1)
     }
 

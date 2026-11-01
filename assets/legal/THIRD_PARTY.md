@@ -36,6 +36,17 @@ source files in the Kotlin application.
 - Temurin runtime distribution: https://api.adoptium.net/
 - BMCLAPI mirror: https://bmclapidoc.bangbang93.com/
 
+## Loader identification icons
+
+MoliFox bundles small loader identification images so users can distinguish
+loader types in instance lists. They are used only for identification, remain
+the trademarks of their respective projects, and are not launcher artwork:
+
+- OptiFine: https://optifine.net/images/of16r.png
+- LiteLoader: https://wiki.mcbe-dev.net/w/images/a/a5/LiteLoader_icon.png
+- Legacy Fabric: https://legacyfabric.net/res/img/logo.png
+- Cleanroom: https://cleanroommc.com/cleanroom.png
+
 MoliFox's interface layout and workflows follow common conventions of desktop
 Minecraft launchers. No third-party launcher source files, XAML, images, icons
 or branding are included, and their licenses remain separate from MoliFox's own

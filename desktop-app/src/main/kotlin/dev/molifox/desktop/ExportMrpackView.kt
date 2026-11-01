@@ -72,7 +72,6 @@ internal fun exportEffectiveOptions(
     includeLogs: Boolean,
 ): PackExportOptions =
     options.copy(
-        includeLocalResources = options.includeLocalResources && !options.modrinthUploadMode,
         includeSaves = "saves" in selectedEntries,
         includeScreenshots = "screenshots" in selectedEntries,
         includeOptionsTxt =
@@ -116,9 +115,14 @@ internal fun exportConfirmText(
     format: PackExportFormat,
 ): String =
     when {
-        exporting -> if (format == PackExportFormat.Backup) "正在备份…" else "正在导出…"
-        format == PackExportFormat.Backup -> "生成备份"
-        else -> "开始导出"
+        exporting ->
+            if (format == PackExportFormat.Backup) {
+                tr("pages.export.backingUp")
+            } else {
+                tr("pages.export.exporting")
+            }
+        format == PackExportFormat.Backup -> tr("pages.export.startBackup")
+        else -> tr("pages.export.start")
     }
 
 /** 条目第一次到达时套用默认勾选，再用用户手动改过的行覆盖。 */

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 版本选择卡片：推荐版本、搜索与频道筛选、版本列表与其状态。
+// 版本选择卡片：搜索与频道筛选、版本列表与其状态。
 
 package dev.molifox.desktop
 
@@ -31,12 +31,10 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SearchOff
-import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,7 +48,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.ReleaseVersion
 
-/** 左侧版本选择卡片：推荐版本、搜索、频道与版本列表。 */
+/** 远古 Alpha/Beta 的版本类型。 */
+private val oldVersionTypes = setOf("old_alpha", "old_beta")
+
+private fun versionChannelTypes(channel: String): Set<String> =
+    when (channel) {
+        "release" -> setOf("release")
+        "snapshot" -> setOf("snapshot")
+        "old" -> oldVersionTypes
+        else -> setOf("release", "snapshot") + oldVersionTypes
+    }
+
+/** 左侧版本选择卡片：搜索、频道与版本列表。 */
 @Composable
 internal fun RowScope.VersionListPanel(
     versions: List<ReleaseVersion>,
@@ -65,54 +74,45 @@ internal fun RowScope.VersionListPanel(
     busy: Boolean,
     onRefresh: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Panel(Modifier.weight(1.15f).fillMaxHeight(), padding = 14) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Minecraft 版本", style = MaterialTheme.typography.titleMedium)
+            Text(strings.t("deskE.version.title"), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.weight(1f))
             SmallIconButton(
                 Icons.Outlined.Refresh,
-                "刷新版本列表",
+                strings.t("deskE.version.refresh"),
                 onRefresh,
                 enabled = !busy && !loading,
             )
         }
         Spacer(Modifier.height(8.dp))
-        if (!loading && error == null) {
-            versions
-                .filter { it.type == "release" }
-                .maxByOrNull { it.releaseTime }
-                ?.let { latest ->
-                    RecommendedVersionCard(latest) { id ->
-                        onSelect(id)
-                        onChannelChange("release")
-                        onQueryChange("")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-        }
         CompactSearchField(
             query,
             onQueryChange,
             Modifier.fillMaxWidth(),
-            placeholder = "搜索版本，例如 1.21",
+            placeholder = strings.t("deskE.version.searchPlaceholder"),
         )
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("release" to "正式版", "snapshot" to "快照", "all" to "全部")
-                .forEach { (id, title) ->
-                    FilterChip(
-                        channel == id,
-                        { onChannelChange(id) },
-                        { Text(title, fontSize = 11.sp) },
-                        modifier = Modifier.height(28.dp),
-                    )
-                }
+            listOf(
+                "release" to strings.t("deskE.version.channel.release"),
+                "snapshot" to strings.t("deskE.version.channel.snapshot"),
+                "old" to strings.t("deskE.version.channel.old"),
+                "all" to strings.t("deskE.version.channel.all"),
+            ).forEach { (id, title) ->
+                FilterChip(
+                    channel == id,
+                    { onChannelChange(id) },
+                    { Text(title, fontSize = 11.sp) },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
         }
         Spacer(Modifier.height(6.dp))
         val filtered =
             versions.filter {
-                it.type in listOf("release", "snapshot") &&
-                    (channel == "all" || it.type == channel) &&
+                it.type in versionChannelTypes(channel) &&
                     it.id.contains(query, true)
             }
         VersionListBody(filtered, loading, error, selected, onSelect, onRefresh)
@@ -129,6 +129,7 @@ private fun ColumnScope.VersionListBody(
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     when {
         loading ->
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -138,7 +139,7 @@ private fun ColumnScope.VersionListBody(
                 ) {
                     CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
                     Text(
-                        "正在加载版本列表…",
+                        strings.t("deskE.version.loading"),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -146,15 +147,19 @@ private fun ColumnScope.VersionListBody(
             }
         error != null ->
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                EmptyState("版本列表暂不可用", error.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton(onRefresh) { Text("重新加载") }
+                EmptyState(
+                    strings.t("deskE.version.unavailable"),
+                    error.orEmpty(),
+                    Icons.Outlined.CloudOff,
+                ) {
+                    TextButton(onRefresh) { Text(strings.t("deskE.version.reload")) }
                 }
             }
         filtered.isEmpty() ->
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 EmptyState(
-                    "没有符合条件的版本",
-                    "试试搜索其他版本号，或切换到「全部」频道。",
+                    strings.t("deskE.version.emptyTitle"),
+                    strings.t("deskE.version.emptyHint"),
                     Icons.Outlined.SearchOff,
                 )
             }
@@ -170,40 +175,6 @@ private fun ColumnScope.VersionListBody(
     }
 }
 
-/** 推荐卡片：直接选中最新正式版，并回到正式版频道与空搜索。 */
-@Composable
-private fun RecommendedVersionCard(
-    latest: ReleaseVersion,
-    onPick: (String) -> Unit,
-) {
-    Surface(
-        onClick = { onPick(latest.id) },
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Outlined.StarOutline, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "推荐 · 最新正式版",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    latest.id,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Text(latest.releaseTime.take(10), fontSize = 11.sp)
-        }
-    }
-}
-
 /** 单行版本：选中态由行底色、文字色与对勾共同表达。 */
 @Composable
 private fun LazyItemScope.VersionRow(
@@ -211,6 +182,7 @@ private fun LazyItemScope.VersionRow(
     active: Boolean,
     onSelect: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val rowShape = RoundedCornerShape(Metrics.cardRadius)
     val rowColor by
         animateColorAsState(
@@ -266,6 +238,11 @@ private fun LazyItemScope.VersionRow(
             )
             Spacer(Modifier.width(6.dp))
         }
-        if (version.type == "snapshot") Tag("快照") else Tag("正式版")
+        when (version.type) {
+            "snapshot" -> Tag(strings.t("deskE.version.channel.snapshot"))
+            "old_alpha" -> Tag(strings.t("deskE.version.channel.oldAlpha"))
+            "old_beta" -> Tag(strings.t("deskE.version.channel.oldBeta"))
+            else -> Tag(strings.t("deskE.version.channel.release"))
+        }
     }
 }

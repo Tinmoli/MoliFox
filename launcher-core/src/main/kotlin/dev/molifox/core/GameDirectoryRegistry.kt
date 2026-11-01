@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
 
@@ -22,9 +23,9 @@ internal class GameDirectoryRegistry(
                     sourcePath.resolve(".minecraft")
                 sourcePath.resolve(".minecraft").isDirectory() -> sourcePath.resolve(".minecraft")
                 sourcePath.isDirectory() -> sourcePath
-                else -> error("请选择包含 versions 的 Minecraft 目录，或其上一级文件夹")
+                else -> error(I18n.t("instA1.gameDirectory.selectVersionsFolder"))
             }.toRealPath()
-        require(root.parent != null) { "请选择专用的游戏文件夹，而非磁盘根目录" }
+        require(root.parent != null) { I18n.t("instA1.gameDirectory.selectDedicatedFolder") }
         return root
     }
 
@@ -103,8 +104,7 @@ internal class GameDirectoryRegistry(
     fun freshInstances(
         current: List<GameInstance>,
         instances: List<GameInstance>,
-    ): List<GameInstance> =
-        instances.filter { candidate -> current.none { it.versionId == candidate.versionId } }
+    ): List<GameInstance> = instances.filter { candidate -> current.none { it.versionId == candidate.versionId } }
 
     /** 选中实例仍存在就保留，否则退回该目录的第一个实例。 */
     fun selectedCandidate(

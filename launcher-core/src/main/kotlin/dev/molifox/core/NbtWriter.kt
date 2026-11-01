@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.util.zip.GZIPOutputStream
@@ -34,7 +35,7 @@ internal fun encodeNbt(document: NbtDocument): ByteArray {
         writeNbtTag(output, document.root, 0)
     }
     val bytes = buffer.toByteArray()
-    require(bytes.size <= MAX_NBT_BYTES) { "NBT 数据过大" }
+    require(bytes.size <= MAX_NBT_BYTES) { I18n.t("saveA1.nbt.dataTooLarge") }
     if (!document.compressed) return bytes
     return ByteArrayOutputStream()
         .also { encoded ->
@@ -63,7 +64,7 @@ private fun writeNbtTag(
     tag: NbtTag,
     depth: Int,
 ) {
-    require(depth <= MAX_NBT_DEPTH) { "NBT 嵌套过深" }
+    require(depth <= MAX_NBT_DEPTH) { I18n.t("saveA1.nbt.tooDeep") }
     when (tag) {
         is NbtByte -> output.writeByte(tag.value.toInt())
         is NbtShort -> output.writeShort(tag.value.toInt())
@@ -113,7 +114,7 @@ private fun writeNbtList(
         tag.elements.size <= MAX_NBT_LIST_ELEMENTS &&
             tag.elements.all { nbtType(it) == tag.elementType },
     ) {
-        "NBT 列表类型无效"
+        I18n.t("saveA1.nbt.invalidListType")
     }
     output.writeByte(tag.elementType)
     output.writeInt(tag.elements.size)

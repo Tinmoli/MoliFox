@@ -16,3 +16,4 @@ allprojects {
 
 apply(from = "gradle/test-hygiene.gradle.kts")
 apply(from = "gradle/quality.gradle.kts")
+apply(from = "gradle/i18n.gradle.kts")

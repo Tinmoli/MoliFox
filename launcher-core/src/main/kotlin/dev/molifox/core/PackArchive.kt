@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
@@ -20,13 +21,15 @@ internal fun packJson(
     name: String,
 ): JsonObject? {
     val entry = zip.getEntry(name) ?: return null
-    require(!entry.isDirectory && entry.size in 1..MAX_PACK_MANIFEST_BYTES) { "整合包清单过大或为空：$name" }
+    require(!entry.isDirectory && entry.size in 1..MAX_PACK_MANIFEST_BYTES) {
+        I18n.t("packsA1.packImport.manifestTooLarge", name)
+    }
     val bytes = zip.getInputStream(entry).use { it.readNBytes(8_388_609) }
-    require(bytes.size <= MAX_PACK_MANIFEST_BYTES) { "整合包清单过大：$name" }
+    require(bytes.size <= MAX_PACK_MANIFEST_BYTES) { I18n.t("packsA1.packImport.manifestExceedsLimit", name) }
     return try {
         JsonParser.parseString(bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")).asJsonObject
     } catch (_: Exception) {
-        error("整合包清单不是有效 JSON 对象：$name")
+        error(I18n.t("packsA1.packImport.manifestInvalidJson", name))
     }
 }
 
@@ -50,7 +53,7 @@ internal fun findArchiveMetadata(
         }.map { it.name }
         .toList()
         .also { found ->
-            require(found.distinct().size == found.size) { "整合包包含重复清单" }
+            require(found.distinct().size == found.size) { I18n.t("packsA1.packImport.duplicateManifest") }
         }
 
 private val packPayloadFolders =
@@ -87,11 +90,13 @@ internal fun validatePackPayload(
     fun key(path: String) = if (os == "windows") path.lowercase() else path
     val paths = entries.map { key(it.second) }
     val seen = paths.toSet()
-    require(seen.size == paths.size) { "整合包内容目录包含重复文件" }
+    require(seen.size == paths.size) { I18n.t("packsA1.packImport.duplicateFiles") }
     for (path in paths) {
         var parent = path.substringBeforeLast('/', "")
         while (parent.isNotBlank()) {
-            require(parent !in seen) { "整合包文件和目录冲突：$parent" }
+            require(parent !in seen) {
+                I18n.t("packsA1.packImport.fileDirectoryConflictWithPath", parent)
+            }
             parent = parent.substringBeforeLast('/', "")
         }
     }
@@ -110,11 +115,11 @@ internal fun zipEntryHash(
             val count = input.read(buffer)
             if (count < 0) break
             read += count
-            require(read <= entry.size) { "整合包条目实际大小不符：${entry.name}" }
+            require(read <= entry.size) { I18n.t("packsA1.packImport.entrySizeMismatch", entry.name) }
             hash.update(buffer, 0, count)
         }
     }
-    require(read == entry.size) { "整合包条目实际大小不符：${entry.name}" }
+    require(read == entry.size) { I18n.t("packsA1.packImport.entrySizeMismatch", entry.name) }
     return hash.digest().joinToString("") { "%02x".format(it) }
 }
 

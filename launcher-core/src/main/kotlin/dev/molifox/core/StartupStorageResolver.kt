@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.file.Files
@@ -23,9 +24,15 @@ class StartupStorageResolver(
         try {
             probe(target)
         } catch (error: IOException) {
-            throw IOException("无法写入启动器数据目录：$target\n${error.message.orEmpty()}", error)
+            throw IOException(
+                I18n.t("instA2.storage.writeFailed", target, error.message.orEmpty()),
+                error,
+            )
         } catch (error: SecurityException) {
-            throw IOException("没有启动器数据目录的写入权限：$target", error)
+            throw IOException(
+                I18n.t("instA2.storage.noWritePermission", target),
+                error,
+            )
         }
         return target
     }

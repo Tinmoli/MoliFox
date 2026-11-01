@@ -1,6 +1,7 @@
 // 本机回环 TCP 转发：把 127.0.0.1 上的一个本地端口桥接到另一个本机端口。
 package dev.molifox.multiplayer.net
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,12 +39,12 @@ class LocalPortForward(
 ) : AutoCloseable {
     init {
         require(targetPort in MIN_PORT..MAX_PORT) {
-            "targetPort 必须在 $MIN_PORT..$MAX_PORT 之间，收到 $targetPort"
+            I18n.t("multiplayer.minecraftLanBroadcast.2", MIN_PORT, MAX_PORT, targetPort)
         }
         require(listenPort in 0..MAX_PORT) {
-            "listenPort 必须在 0..$MAX_PORT 之间，收到 $listenPort"
+            I18n.t("multiplayer.minecraftLanDiscovery.1", MAX_PORT, listenPort)
         }
-        require(connectTimeoutMillis > 0) { "connectTimeoutMillis 必须为正数" }
+        require(connectTimeoutMillis > 0) { I18n.t("multiplayer.localPortForward.1") }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -60,14 +61,14 @@ class LocalPortForward(
         get() =
             synchronized(stateLock) {
                 boundPortValue.takeIf { it > 0 }
-                    ?: throw IllegalStateException("LocalPortForward 尚未启动")
+                    ?: throw IllegalStateException(I18n.t("multiplayer.localPortForward.2"))
             }
 
     /** 开始监听并返回本地端口；重复调用返回同一端口，绑定失败时返回带原因的 [Result]。 */
     fun start(): Result<Int> =
         synchronized(stateLock) {
             when {
-                closed -> Result.failure(IllegalStateException("LocalPortForward 已关闭"))
+                closed -> Result.failure(IllegalStateException(I18n.t("multiplayer.localPortForward.3")))
                 boundPortValue > 0 -> Result.success(boundPortValue)
                 else -> bindAndLaunch()
             }
@@ -105,7 +106,7 @@ class LocalPortForward(
             closeQuietly(listener)
             Result.failure(
                 IOException(
-                    "本机端口转发监听失败（listenPort=$listenPort）: ${failure.message}",
+                    I18n.t("multiplayer.localPortForward.4", listenPort, failure.message),
                     failure,
                 ),
             )

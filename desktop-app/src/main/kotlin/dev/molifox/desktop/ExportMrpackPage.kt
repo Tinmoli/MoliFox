@@ -57,6 +57,8 @@ fun ExportMrpackPage(
     var error by remember(instance.id) { mutableStateOf<String?>(null) }
     var attempt by remember(instance.id) { mutableIntStateOf(0) }
     var exporting by remember(instance.id) { mutableStateOf(false) }
+    // 预览请求序号：切换远程开关/格式时旧请求可能晚到，只接受最后一次请求的结果。
+    var previewRequest by remember(instance.id) { mutableIntStateOf(0) }
     // 顶层内容扫描：先列出条目，再逐步补全文件数与体积；关闭对话框即取消。
     var scan by remember(instance.id) { mutableStateOf<PackExportScan?>(null) }
     var scanError by remember(instance.id) { mutableStateOf<String?>(null) }
@@ -90,6 +92,8 @@ fun ExportMrpackPage(
         packName,
         includeLogs,
     ) {
+        val request = previewRequest + 1
+        previewRequest = request
         loading = true
         error = null
         try {
@@ -100,12 +104,12 @@ fun ExportMrpackPage(
                 format,
                 options.remoteResources,
                 includeLogs,
-                { plan = it },
-            ) {
-                error = it
+                { candidate -> if (request == previewRequest) plan = candidate },
+            ) { message ->
+                if (request == previewRequest) error = message
             }
         } finally {
-            loading = false
+            if (request == previewRequest) loading = false
         }
     }
     val prepared = plan
@@ -176,7 +180,6 @@ fun ExportMrpackPage(
                 } else {
                     PackExportOptions(
                         remoteResources = false,
-                        modrinthUploadMode = false,
                     )
                 }
             // 默认勾选与格式无关：保留用户当前选择，只丢弃已不存在的条目。

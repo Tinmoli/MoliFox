@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.zip.ZipFile
 
@@ -38,7 +39,7 @@ private data class MultiMcGame(
 /** A root instance or one enclosing folder; never guess among several exported instances. */
 internal fun findMultiMcManifest(zip: ZipFile): String? {
     val candidates = findArchiveMetadata(zip, setOf("mmc-pack.json"))
-    require(candidates.size <= 1) { "压缩包包含多个 MultiMC/Prism 实例，请分别导入" }
+    require(candidates.size <= 1) { I18n.t("packsA1.packImport.multipleInstances") }
     return candidates.singleOrNull()
 }
 
@@ -78,14 +79,14 @@ private fun readMultiMcComponents(
     val raw = requireNotNull(multiMcText(zip, manifestPath))
     val info = JsonParser.parseString(raw).asJsonObject
     require(info.string("formatVersion") == "1" && info.get("components")?.isJsonArray == true) {
-        "不支持的 MultiMC/Prism 组件清单版本（仅支持 formatVersion 1）"
+        I18n.t("packsA1.packImport.unsupportedFormatVersion")
     }
     val all = info.array("components").map { it.asJsonObject }
     require(
         all.size in 1..MAX_MULTIMC_COMPONENTS &&
             all.map { it.string("uid") }.distinct().size == all.size,
     ) {
-        "整合包组件为空、重复或过多"
+        I18n.t("packsA1.packImport.componentsInvalid")
     }
     return all
 }
@@ -98,15 +99,15 @@ private fun validateMultiMcArchive(
 ) {
     require(all.all { it.string("uid") in MULTIMC_SUPPORTED_UIDS }) {
         val unsupported = all.filter { it.string("uid") !in MULTIMC_SUPPORTED_UIDS }
-        "不支持的整合包组件：${unsupported.joinToString { it.string("uid") }}"
+        I18n.t("packsA1.packImport.unsupportedComponent", unsupported.joinToString { it.string("uid") })
     }
-    require(all.none { it.boolean("custom") }) { "暂不支持 MultiMC/Prism 自定义组件" }
+    require(all.none { it.boolean("custom") }) { I18n.t("packsA1.packImport.customComponentUnsupported") }
     require(
         zip.entries().asSequence().none {
             !it.isDirectory && unsupportedMultiMcEntry(it.name, prefix)
         },
     ) {
-        "暂不支持包含 patches 补丁、jarmods 或实例自带 libraries 的整合包；请让作者改用 mrpack/MCBBS 导出"
+        I18n.t("packsA1.packImport.patchesUnsupported")
     }
 }
 
@@ -123,24 +124,26 @@ private fun unsupportedMultiMcEntry(
 private fun readMultiMcGame(enabled: List<JsonObject>): MultiMcGame {
     val minecraft =
         enabled.singleOrNull { it.string("uid") == "net.minecraft" }
-            ?: error("整合包缺少启用的 Minecraft 组件")
+            ?: error(I18n.t("packsA1.packImport.minecraftComponentMissing"))
     val gameVersion =
         minecraft.string("version").also {
-            require(it.isNotBlank()) { "Minecraft 组件必须指定版本" }
+            require(it.isNotBlank()) { I18n.t("packsA1.packImport.minecraftVersionRequired") }
             safeFilename(it)
         }
     val selected = enabled.filter { it.string("uid") in MULTIMC_LOADERS }
-    require(selected.size <= 1) { "整合包包含多个启用的加载器" }
+    require(selected.size <= 1) { I18n.t("packsA1.packImport.multipleLoaders") }
     for (component in enabled.filter { it.string("uid") in MULTIMC_LWJGL_UIDS }) {
-        require(component.boolean("dependencyOnly")) { "暂不支持单独覆盖 LWJGL 版本的整合包" }
+        require(component.boolean("dependencyOnly")) { I18n.t("packsA1.packImport.lwjglOverrideUnsupported") }
     }
     val loader = selected.singleOrNull()
     val loaderType = loader?.let { MULTIMC_LOADERS.getValue(it.string("uid")) }
     val loaderVersion =
         loader?.let { multiMcLoaderVersion(it.string("version"), gameVersion) }.orEmpty()
-    require(loader == null || loaderVersion.isNotBlank()) { "加载器组件必须指定版本" }
+    require(loader == null || loaderVersion.isNotBlank()) {
+        I18n.t("packsA1.packImport.loaderVersionRequired")
+    }
     require(!(loaderType == LoaderType.Forge && loaderVersion.startsWith("0."))) {
-        "暂不支持 Cleanroom（Forge 0.x）整合包"
+        I18n.t("packsA1.packImport.cleanroomUnsupported")
     }
     if (loaderVersion.isNotBlank()) safeFilename(loaderVersion)
     return MultiMcGame(
@@ -167,7 +170,7 @@ private fun findMultiMcContentFolder(
         listOf("$prefix.minecraft/", "${prefix}minecraft/").filter { candidate ->
             zip.entries().asSequence().any { it.name.startsWith(candidate) }
         }
-    require(folders.size == 1) { "整合包需要唯一的 .minecraft 或 minecraft 内容目录" }
+    require(folders.size == 1) { I18n.t("packsA1.packImport.contentFolderMissing") }
     return folders.single()
 }
 
@@ -196,11 +199,11 @@ private fun collectMultiMcPaths(
             }
         }
     val seen = paths.toSet()
-    require(seen.size == paths.size) { "整合包内容目录包含重复文件" }
+    require(seen.size == paths.size) { I18n.t("packsA1.packImport.duplicateFiles") }
     for (path in paths) {
         var parent = path.substringBeforeLast('/', "")
         while (parent.isNotBlank()) {
-            require(parent !in seen) { "整合包文件和目录冲突" }
+            require(parent !in seen) { I18n.t("packsA1.packImport.fileDirectoryConflict") }
             parent = parent.substringBeforeLast('/', "")
         }
     }

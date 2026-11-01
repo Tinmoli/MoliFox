@@ -19,8 +19,9 @@ complexity:
     allowedDepth: 3
 
 style:
+  # 120 列与 Kotlin 官方风格一致；短 key + 内联参数的本地化调用不再被迫拆成难读的多行。
   MaxLineLength:
-    maxLineLength: 100
+    maxLineLength: 120
   ReturnCount:
     excludeGuardClauses: true
   MagicNumber:

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -55,11 +56,11 @@ internal class DatapackLevelDat(
         val level = world.resolve("level.dat")
         val before =
             runCatching { Files.readAllBytes(level) }.getOrElse {
-                throw IllegalArgumentException("无法读取 level.dat，数据包开关暂时只读")
+                throw IllegalArgumentException(I18n.t("saveA1.datapackLevelDat.readFailed"))
             }
         val document =
             runCatching { readNbtDocument(level) }.getOrElse {
-                throw IllegalArgumentException("level.dat 无法解析，数据包开关暂时只读；未修改任何文件")
+                throw IllegalArgumentException(I18n.t("saveA1.datapackLevelDat.parseFailed"))
             }
         val current = packsOf(document)
         val next = nextLists(current, name, enabled)
@@ -100,10 +101,12 @@ internal class DatapackLevelDat(
     ): List<String> {
         val list = packs.list(key) ?: return emptyList()
         require(list.elementType == NBT_TAG_STRING || list.elements.isEmpty()) {
-            "level.dat 的 Packs.$key 不是字符串列表，未修改文件"
+            I18n.t("saveA1.datapackLevelDat.notStringList", key)
         }
         return list.elements.map { element ->
-            require(element is NbtString) { "level.dat 的 Packs.$key 含有非字符串项，未修改文件" }
+            require(element is NbtString) {
+                I18n.t("saveA1.datapackLevelDat.nonStringEntry", key)
+            }
             element.value
         }
     }

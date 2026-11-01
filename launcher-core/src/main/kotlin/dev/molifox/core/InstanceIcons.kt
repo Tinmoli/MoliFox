@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -34,16 +35,21 @@ private const val MAX_ICON_SIZE = 1024
 private const val MAX_SETUP_INI_BYTES = 128L * 1024
 
 enum class InstanceIconStyle(
-    val title: String,
     val loader: LoaderType?,
+    private val titleKey: String,
 ) {
-    Auto("自动：原版草方块 / 加载器图标", null),
-    Grass("草方块", LoaderType.Vanilla),
-    Fabric("布卷", LoaderType.Fabric),
-    Quilt("拼布", LoaderType.Quilt),
-    Forge("铁砧", LoaderType.Forge),
-    NeoForge("橙色铁砧", LoaderType.NeoForge),
-    Custom("自定义图片", null),
+    Auto(null, "core.instanceIconStyle.auto"),
+    Grass(LoaderType.Vanilla, "core.instanceIconStyle.grass"),
+    Fabric(LoaderType.Fabric, "core.instanceIconStyle.fabric"),
+    Quilt(LoaderType.Quilt, "core.instanceIconStyle.quilt"),
+    Forge(LoaderType.Forge, "core.instanceIconStyle.forge"),
+    NeoForge(LoaderType.NeoForge, "core.instanceIconStyle.neoforge"),
+    Custom(null, "core.instanceIconStyle.custom"),
+    ;
+
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
 }
 
 internal fun validInstanceIcon(file: Path): Boolean =
@@ -143,7 +149,7 @@ class InstanceIcons(
         get() = store.directories.icons
 
     private fun managed(id: String): Path {
-        require(id.matches(Regex("[a-f0-9]{64}"))) { "实例图标标识无效" }
+        require(id.matches(Regex("[a-f0-9]{64}"))) { I18n.t("instA2.icon.invalidId") }
         return safePath(root, "$id.png")
     }
 
@@ -208,15 +214,15 @@ class InstanceIcons(
         fromPack: Boolean,
     ) = withContext(Dispatchers.IO) {
         val original = store.instance(instanceId)
-        require(validInstanceIcon(source)) { "请选择 16–1024 像素的正方形 PNG/JPEG 图标（不超过 2 MiB）" }
+        require(validInstanceIcon(source)) { I18n.t("instA2.icon.invalidSource") }
         root.createDirectories()
         val staging = safePath(root, ".${UUID.randomUUID()}.tmp")
         try {
             val bytes =
                 Files.newInputStream(source).use { it.readNBytes(MAX_ICON_BYTES.toInt() + 1) }
-            require(bytes.size <= MAX_ICON_BYTES) { "所选图标已改变或过大" }
+            require(bytes.size <= MAX_ICON_BYTES) { I18n.t("instA2.icon.changedOrTooLarge") }
             staging.writeBytes(bytes)
-            require(validInstanceIcon(staging)) { "所选图标已改变或损坏" }
+            require(validInstanceIcon(staging)) { I18n.t("instA2.icon.changedOrBroken") }
             val image = ImageIO.read(staging.toFile())
             ImageIO.write(image, "png", staging.toFile())
             val hash = digest(staging, "SHA-256")
@@ -248,7 +254,7 @@ class InstanceIcons(
         instanceId: String,
         style: InstanceIconStyle,
     ) = withContext(Dispatchers.IO) {
-        require(style != InstanceIconStyle.Custom) { "自定义图标需要先选择图片" }
+        require(style != InstanceIconStyle.Custom) { I18n.t("instA2.icon.customNeedsImage") }
         val old = store.instance(instanceId)
         store.updateInstance(instanceId) { it.copy(iconStyle = style, iconId = "") }
         releaseUnused(old.iconId)
@@ -259,6 +265,6 @@ class InstanceIcons(
             return
         }
         runCatching { managed(id).deleteIfExists() }
-            .onFailure { store.log("旧实例图标稍后清理：${it.message}") }
+            .onFailure { store.log(I18n.t("instA2.icon.releaseDeferred", it.message)) }
     }
 }

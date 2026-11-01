@@ -63,18 +63,23 @@ import dev.molifox.core.DownloadJob
 import dev.molifox.core.JobStatus
 import kotlinx.coroutines.delay
 
+private const val PROGRESS_DEPENDENCIES_THRESHOLD = 0.02f
+private const val PROGRESS_LOGIN_THRESHOLD = 0.4f
+private const val PROGRESS_PROCESS_THRESHOLD = 0.7f
+
 /** 启动阶段：标题 + 该阶段开始时的任务进度。阈值对应当前 `GameLauncher` 里的 progress 调用。 */
 private data class LaunchStage(
     val title: String,
     val threshold: Float,
 )
 
-private val launchStages =
+// 阶段标题随语言变化，因此每次调用时取当前语言，不缓存成顶层常量。
+private fun launchStages(): List<LaunchStage> =
     listOf(
-        LaunchStage("版本检查", 0f),
-        LaunchStage("依赖检查", .02f),
-        LaunchStage("登录", .4f),
-        LaunchStage("启动进程", .7f),
+        LaunchStage(tr("pages.launch.stage.versionCheck"), 0f),
+        LaunchStage(tr("pages.launch.stage.dependencies"), PROGRESS_DEPENDENCIES_THRESHOLD),
+        LaunchStage(tr("pages.launch.stage.login"), PROGRESS_LOGIN_THRESHOLD),
+        LaunchStage(tr("pages.launch.stage.process"), PROGRESS_PROCESS_THRESHOLD),
     )
 
 private enum class LaunchStagePhase {
@@ -85,13 +90,14 @@ private enum class LaunchStagePhase {
 
 private fun currentStageIndex(job: DownloadJob?): Int {
     val progress = job?.progress ?: 0f
-    return launchStages.indexOfLast { it.threshold <= progress }.coerceAtLeast(0)
+    return launchStages().indexOfLast { it.threshold <= progress }.coerceAtLeast(0)
 }
 
 private fun stagePhases(job: DownloadJob?): List<LaunchStagePhase> {
-    if (job?.status == JobStatus.Completed) return launchStages.map { LaunchStagePhase.Done }
+    val stages = launchStages()
+    if (job?.status == JobStatus.Completed) return stages.map { LaunchStagePhase.Done }
     val index = currentStageIndex(job)
-    return launchStages.mapIndexed { position, _ ->
+    return stages.mapIndexed { position, _ ->
         when {
             position < index -> LaunchStagePhase.Done
             position == index && job?.status == JobStatus.Running -> LaunchStagePhase.Active
@@ -162,8 +168,9 @@ fun LaunchProgressCard(
         )
 
     val phases = stagePhases(job)
+    val stages = launchStages()
     val progress = if (completed) 1f else (job?.progress ?: 0f).coerceIn(0f, 1f)
-    val stageTitle = launchStages[currentStageIndex(job)].title
+    val stageTitle = stages[currentStageIndex(job)].title
     val stateLabel = launchStateLabel(failed, completed, cancelled, running)
     val detail = launchDetail(failure, completed, cancelled, job, stageTitle)
 
@@ -191,7 +198,7 @@ fun LaunchProgressCard(
             HorizontalDivider(color = hairline())
             Spacer(Modifier.height(6.dp))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                launchStages.forEachIndexed { index, stage ->
+                launchStages().forEachIndexed { index, stage ->
                     LaunchStageRow(stage.title, phases[index])
                 }
             }
@@ -230,7 +237,7 @@ fun LaunchProgressCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    lastLog.ifBlank { "暂无日志" },
+                    lastLog.ifBlank { LocalStrings.current.t("pages.launch.noLog") },
                     Modifier.weight(1f),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -262,6 +269,7 @@ private fun LaunchCardHeader(
     completed: Boolean,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
@@ -297,7 +305,7 @@ private fun LaunchCardHeader(
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
-                "启动游戏",
+                strings.t("pages.launch.title"),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -311,7 +319,11 @@ private fun LaunchCardHeader(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SmallIconButton(Icons.Outlined.Close, "关闭启动进度", onDismiss)
+        SmallIconButton(
+            Icons.Outlined.Close,
+            strings.t("pages.launch.close"),
+            onDismiss,
+        )
     }
 }
 
@@ -327,6 +339,7 @@ private fun LaunchCardActions(
     onRetry: () -> Unit,
     onViewLogs: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     when {
         failed -> {
             Surface(
@@ -339,7 +352,7 @@ private fun LaunchCardActions(
                     ),
             ) {
                 Text(
-                    failure ?: "启动失败，请查看日志",
+                    failure ?: strings.t("pages.launch.failedDefault"),
                     Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
@@ -354,16 +367,35 @@ private fun LaunchCardActions(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SecondaryButton({ onViewLogs() }) { Text("查看日志", fontSize = 12.sp) }
+                SecondaryButton({ onViewLogs() }) {
+                    Text(strings.t("pages.launch.viewLogs"), fontSize = 12.sp)
+                }
                 Spacer(Modifier.width(8.dp))
-                PrimaryButton("重试", Icons.Outlined.Refresh, onClick = onRetry)
+                PrimaryButton(strings.t("pages.launch.retry"), Icons.Outlined.Refresh, onClick = onRetry)
             }
         }
-        completed -> LaunchCardResult(true, "已启动", "游戏进程已启动，窗口即将出现")
-        cancelled -> LaunchCardResult(false, "已取消", "启动任务已停止")
+        completed ->
+            LaunchCardResult(
+                true,
+                strings.t("pages.launch.result.startedTitle"),
+                strings.t("pages.launch.result.startedBody"),
+            )
+        cancelled ->
+            LaunchCardResult(
+                false,
+                strings.t("pages.launch.result.cancelledTitle"),
+                strings.t("pages.launch.result.cancelledBody"),
+            )
         else ->
             SecondaryButton(onCancel, Modifier.fillMaxWidth(), enabled = running) {
-                Text(if (running) "取消" else "请稍候…", fontSize = 12.sp)
+                Text(
+                    if (running) {
+                        strings.t("pages.launch.cancel")
+                    } else {
+                        strings.t("pages.launch.waiting")
+                    },
+                    fontSize = 12.sp,
+                )
             }
     }
 }
@@ -376,11 +408,11 @@ private fun launchStateLabel(
     running: Boolean,
 ): String =
     when {
-        failed -> "启动失败"
-        completed -> "已启动"
-        cancelled -> "已取消"
-        running -> "正在启动"
-        else -> "准备启动"
+        failed -> tr("pages.launch.state.failed")
+        completed -> tr("pages.launch.state.started")
+        cancelled -> tr("pages.launch.state.cancelled")
+        running -> tr("pages.launch.state.running")
+        else -> tr("pages.launch.state.preparing")
     }
 
 /** 详情行：失败、完成、取消各有固定文案，其余显示阶段与任务细节。 */
@@ -392,11 +424,11 @@ private fun launchDetail(
     stageTitle: String,
 ): String =
     when {
-        failure != null -> "启动未能完成"
-        completed -> "游戏进程已就绪"
-        cancelled -> "启动已取消"
-        job == null -> "准备启动…"
-        job.status == JobStatus.Queued -> "等待任务队列…"
+        failure != null -> tr("pages.launch.detail.incomplete")
+        completed -> tr("pages.launch.detail.ready")
+        cancelled -> tr("pages.launch.detail.cancelled")
+        job == null -> tr("pages.launch.detail.preparing")
+        job.status == JobStatus.Queued -> tr("pages.launch.detail.queued")
         else -> stageTitle + " · " + job.detail.orEmpty()
     }
 

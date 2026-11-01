@@ -6,6 +6,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import dev.molifox.core.i18n.I18n
 
 /** 协议 JSON 中玩家的 `kind` 字段：房主或普通玩家。 */
 enum class ScaffoldingPlayerKind {
@@ -49,9 +50,9 @@ internal fun parsePlayerPing(body: ByteArray): Result<ScaffoldingPlayer> =
 internal fun parsePlayerProfiles(body: ByteArray): Result<List<ScaffoldingPlayer>> =
     parseJson(body).mapCatching { element ->
         if (!element.isJsonArray) {
-            throw IllegalArgumentException("玩家列表不是 JSON 数组")
+            throw IllegalArgumentException(I18n.t("multiplayer.scaffoldingPlayer.1"))
         }
-        element.asJsonArray.map { item -> profileFromJson(item.asObject("玩家条目")) }
+        element.asJsonArray.map { item -> profileFromJson(item.asObject(I18n.t("multiplayer.scaffoldingPlayer.2"))) }
     }
 
 private fun profileJson(player: ScaffoldingPlayer): JsonObject =
@@ -78,12 +79,12 @@ private fun parseJson(body: ByteArray): Result<JsonElement> =
     try {
         Result.success(JsonParser.parseString(body.decodeToString()))
     } catch (failure: JsonParseException) {
-        Result.failure(IllegalArgumentException("Scaffolding JSON 解析失败", failure))
+        Result.failure(IllegalArgumentException(I18n.t("multiplayer.scaffoldingPlayer.3"), failure))
     }
 
 private fun JsonElement.asObject(what: String): JsonObject =
     takeIf { it.isJsonObject }?.asJsonObject
-        ?: throw IllegalArgumentException("$what 不是 JSON 对象")
+        ?: throw IllegalArgumentException(I18n.t("multiplayer.scaffoldingPlayer.4", what))
 
 private fun JsonObject.stringOrNull(key: String): String? =
     get(key)
@@ -94,4 +95,4 @@ private fun JsonObject.stringOrNull(key: String): String? =
 
 private fun JsonObject.requireString(key: String): String =
     stringOrNull(key)?.takeIf { it.isNotBlank() }
-        ?: throw IllegalArgumentException("玩家 JSON 缺少有效字段 $key")
+        ?: throw IllegalArgumentException(I18n.t("multiplayer.scaffoldingPlayer.5", key))

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -50,50 +51,58 @@ data class MrpackExportMetadata(
 
 /** 导出目标格式：前四项可被对应启动器导入，最后一项只是完整备份。 */
 enum class PackExportFormat(
-    val title: String,
+    private val titleKey: String,
     val extension: String,
     val importable: Boolean,
-    val purpose: String,
+    private val purposeKey: String,
 ) {
     Modrinth(
-        "Modrinth · .mrpack",
+        "core.packExportFormat.modrinth.title",
         "mrpack",
         true,
-        "标准整合包；可从 Modrinth 下载资源，未命中的文件自动打包。",
+        "core.packExportFormat.modrinth.purpose",
     ),
     CurseForge(
-        "ZIP · 通用整合包",
+        "core.packExportFormat.curseForge.title",
         "zip",
         true,
-        "全量打包；PCL CE、HMCL、Prism、CurseForge App 均可导入。",
+        "core.packExportFormat.curseForge.purpose",
     ),
     MultiMc(
-        "MultiMC / Prism · .zip（可导入）",
+        "core.packExportFormat.multiMc.title",
         "zip",
         true,
-        "MultiMC 实例目录：instance.cfg + mmc-pack.json + .minecraft/；" +
-            "Prism/MultiMC 可用「从 ZIP 导入实例」打开，实例内存/JVM/窗口设置一并写入。",
+        "core.packExportFormat.multiMc.purpose",
     ),
     Mcbbs(
-        "MCBBS · .zip（PCL / HMCL 可导入）",
+        "core.packExportFormat.mcbbs.title",
         "zip",
         true,
-        "HMCL / MCBBS 清单，内容全部放进 overrides/；PCL 与 HMCL 可导入。",
+        "core.packExportFormat.mcbbs.purpose",
     ),
     Backup(
-        "完整备份 · .zip（仅备份，不能当整合包导入）",
+        "core.packExportFormat.backup.title",
         "zip",
         false,
-        "完整备份：保留存档、截图和可选日志，只用于还原或留档；其他启动器不会把它识别成整合包。",
+        "core.packExportFormat.backup.purpose",
     ),
     ;
 
+    /** 显示名在读取时翻译，切换语言后重新取值。 */
+    val title: String
+        get() = I18n.t(titleKey)
+
+    /** 用途说明同样在读取时翻译。 */
+    val purpose: String
+        get() = I18n.t(purposeKey)
+
     companion object {
         /**
-         * 导出界面只保留两种：Modrinth 与通用 ZIP。其余枚举保留用于旧包识别与回退。
+         * 导出界面提供的格式：Modrinth、通用 ZIP、MultiMC、MCBBS 与完整备份。
+         * 服务器整合包不在其中；只有 Modrinth 允许在线解析资源，其余格式一律全量本地打包。
          */
         val offeredForExport: List<PackExportFormat> =
-            listOf(Modrinth, CurseForge)
+            listOf(Modrinth, CurseForge, MultiMc, Mcbbs, Backup)
     }
 }
 
@@ -103,11 +112,9 @@ enum class PackExportFormat(
  * 日志与崩溃报告只属于完整备份，且默认关闭。
  */
 data class PackExportOptions(
-    /** 优先写入远程来源（Modrinth/CurseForge 下载链接），默认开启。 */
+    /** 勾选时查询在线来源并写入下载链接；关闭时所有文件直接写入归档，不联网。 */
     val remoteResources: Boolean = true,
-    /** Modrinth 上传模式：只使用 Modrinth 来源，仅 CurseForge 有的文件改为本地打包。 */
-    val modrinthUploadMode: Boolean = false,
-    /** 未命中下载来源的本地模组/资源包/光影一并打包，默认开启。 */
+    /** 未命中下载来源或关闭远程查询时，本地模组/资源包/光影一并打包。 */
     val includeLocalResources: Boolean = true,
     val includeSaves: Boolean = false,
     val includeScreenshots: Boolean = false,
@@ -222,7 +229,7 @@ internal class MrpackExporter(
             val instance = exportableInstance(id)
             val root = store.instancePath(id).toAbsolutePath().normalize()
             require(root.isDirectory() && !Files.isSymbolicLink(root)) {
-                "实例目录不存在或是符号链接"
+                I18n.t("packsA1.mrpackExport.instanceDirectoryInvalid")
             }
             emitAll(PackExportScanner(root, instance.versionId, store.isolated(instance)).scan())
         }.flowOn(Dispatchers.IO)
@@ -238,7 +245,9 @@ internal class MrpackExporter(
             validatePackMetadata(metadata)
             val instance = exportableInstance(id)
             val root = store.instancePath(id).toAbsolutePath().normalize()
-            require(root.isDirectory() && !Files.isSymbolicLink(root)) { "实例目录不存在或是符号链接" }
+            require(root.isDirectory() && !Files.isSymbolicLink(root)) {
+                I18n.t("packsA1.mrpackExport.instanceDirectoryInvalid")
+            }
             val realRoot = root.toRealPath()
             val scan = ExportScanState(store, instance, root, realRoot, includeLogs)
             scanInstanceFiles(scan)
@@ -246,7 +255,7 @@ internal class MrpackExporter(
             val curseForgeIds =
                 resolveCurseForgeIds(root, scan.files, scan.warnings, resolveCurseForge)
             if (instance.externalProfile) {
-                scan.warnings += "外部实例仅导出标准游戏与加载器组件；原启动器的特殊补丁、启动命令和认证配置不会写入整合包。"
+                scan.warnings += I18n.t("packsA1.mrpackExport.externalProfileWarning")
             }
             MrpackExportPlan(
                 id,
@@ -291,7 +300,7 @@ internal class MrpackExporter(
         val icon = exportIcon(plan, format)
         val layout = buildPackExportLayout(format, plan, options, files, icon)
         require(layout.documents.all { it.second.size <= MAX_EXPORT_DOCUMENT_BYTES }) {
-            "导出清单过大，请减少选择的文件"
+            I18n.t("packsA1.mrpackExport.documentsTooLarge")
         }
         target.parent.createDirectories()
         val temporary = target.resolveSibling(".${target.fileName}.${UUID.randomUUID()}.part")
@@ -309,9 +318,11 @@ internal class MrpackExporter(
                 files.map { it.path }.toSet(),
             )
             validateSnapshot(plan)
-            require(resolveExportDestination(target) == resolved) { "导出目录已改变" }
+            require(resolveExportDestination(target) == resolved) {
+                I18n.t("packsA1.mrpackExport.destinationChanged")
+            }
             moveFromTemporary(temporary, target)
-            context.progress(1f, "${format.title} 已导出")
+            context.progress(1f, I18n.t("packsA1.mrpackExport.exported", format.title))
         } finally {
             temporary.deleteIfExists()
         }
@@ -329,7 +340,7 @@ internal class MrpackExporter(
                 store.minecraftRoot(store.instance(plan.instanceId)).toRealPath(),
             )
         require(protectedRoots.none { resolved.startsWith(it) }) {
-            "请将整合包保存到游戏目录和 MoliFox 数据目录外"
+            I18n.t("packsA1.mrpackExport.destinationInsideGame")
         }
     }
 
@@ -374,7 +385,7 @@ internal class MrpackExporter(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                warnings += "部分文件的 Modrinth 来源查询失败；未识别资源保持未选中，不会自动打包。"
+                warnings += I18n.t("packsA1.mrpackExport.modrinthLookupFailed")
             }
         }
         return remotes
@@ -414,7 +425,7 @@ internal class MrpackExporter(
         if (candidates.isEmpty()) return matchedIds
         val backend = curseForge
         if (backend == null) {
-            warnings += "CurseForge 匹配不可用；所有模组会放进 overrides/mods，不会写入受管清单。"
+            warnings += I18n.t("packsA1.mrpackExport.curseForgeUnavailable")
             return matchedIds
         }
         try {
@@ -426,14 +437,12 @@ internal class MrpackExporter(
             }
             val unmatched = candidates.size - matchedIds.size
             if (unmatched > 0) {
-                warnings +=
-                    "$unmatched 个模组未匹配到 CurseForge 编号，" +
-                    "会放进 overrides/mods（该包不会对它们自动更新）。"
+                warnings += I18n.t("packsA1.mrpackExport.curseForgeUnmatched", unmatched)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            warnings += "CurseForge 指纹匹配失败；所有模组会放进 overrides/mods，不会写入受管清单。"
+            warnings += I18n.t("packsA1.mrpackExport.curseForgeFingerprintFailed")
         }
         return matchedIds
     }
@@ -441,13 +450,13 @@ internal class MrpackExporter(
     private fun exportableInstance(id: String): GameInstance =
         store.instance(id).also {
             require(it.installed) {
-                "请先完成实例安装，再导出整合包"
+                I18n.t("packsA1.mrpackExport.instanceNotInstalled")
             }
             require(
                 it.gameVersion.isNotBlank() &&
                     (it.loader == LoaderType.Vanilla || it.loaderVersion.isNotBlank()),
             ) {
-                "实例缺少明确的游戏或加载器版本"
+                I18n.t("packsA1.mrpackExport.instanceVersionMissing")
             }
         }
 
@@ -460,7 +469,7 @@ internal class MrpackExporter(
                 instance.loader == plan.components.loader &&
                 instance.loaderVersion == plan.components.loaderVersion,
         ) {
-            "实例配置已改变，请重新预览"
+            I18n.t("packsA1.mrpackExport.snapshotChanged")
         }
     }
 }
@@ -468,16 +477,18 @@ internal class MrpackExporter(
 /** 校验整合包元数据的长度与非法字符，与导出对话框的输入限制共用。 */
 private fun validatePackMetadata(metadata: MrpackExportMetadata) {
     require(metadata.name.isNotBlank() && metadata.name.length <= MAX_PACK_NAME_LENGTH) {
-        "请输入整合包名称（最多 200 字）"
+        I18n.t("packsA1.mrpackExport.nameRequired")
     }
     require(metadata.version.isNotBlank() && metadata.version.length <= MAX_PACK_VERSION_LENGTH) {
-        "请输入整合包版本（最多 100 字）"
+        I18n.t("packsA1.mrpackExport.versionRequired")
     }
-    require(metadata.summary.length <= MAX_PACK_SUMMARY_LENGTH) { "整合包简介最多 2000 字" }
+    require(metadata.summary.length <= MAX_PACK_SUMMARY_LENGTH) {
+        I18n.t("packsA1.mrpackExport.summaryTooLong")
+    }
     require(
         listOf(metadata.name, metadata.version, metadata.summary).none { '\u0000' in it },
     ) {
-        "整合包信息包含无效字符"
+        I18n.t("packsA1.mrpackExport.invalidCharacters")
     }
 }
 
@@ -553,7 +564,7 @@ private fun exportTargetPath(
     destination: Path,
 ): Path {
     require(destination.extension.equals(format.extension, true)) {
-        "此整合包格式需要 .${format.extension} 扩展名"
+        I18n.t("packsA1.mrpackExport.extensionRequired", format.extension)
     }
     return destination.toAbsolutePath().normalize()
 }
@@ -566,13 +577,13 @@ private fun selectExportFiles(
     options: PackExportOptions,
 ): List<MrpackExportFile> {
     require(selected.all { path -> plan.files.any { it.path == path } }) {
-        "导出选择已失效，请重新预览"
+        I18n.t("packsA1.mrpackExport.selectionStale")
     }
-    require(selected.isNotEmpty()) { "请至少选择一项要写入的内容" }
+    require(selected.isNotEmpty()) { I18n.t("packsA1.mrpackExport.selectionEmpty") }
     require(
         format == PackExportFormat.Backup || selected.none { backupOnlyExportPath(it) },
     ) {
-        "日志与崩溃报告只随完整备份导出"
+        I18n.t("packsA1.mrpackExport.logsBackupOnly")
     }
     val filtered =
         plan.files
@@ -591,7 +602,7 @@ private fun selectExportFiles(
         } else {
             filtered
         }
-    require(files.isNotEmpty()) { "勾选的内容没有可写入的文件，请重新选择" }
+    require(files.isNotEmpty()) { I18n.t("packsA1.mrpackExport.noWritableFiles") }
     return files
 }
 
@@ -619,7 +630,7 @@ private fun requireExportPermissions(
             embedded.filter { it.requiresPermission && it.path !in permittedLocalFiles }
         }
     require(missing.isEmpty()) {
-        "以下本地资源尚未确认分发权限：${missing.joinToString { it.path }}"
+        I18n.t("packsA1.mrpackExport.permissionMissing", missing.joinToString { it.path })
     }
 }
 
@@ -643,6 +654,6 @@ private fun moveFromTemporary(
 private fun resolveExportDestination(path: Path): Path {
     var ancestor = path
     while (!Files.exists(ancestor, NOFOLLOW_LINKS)) ancestor = requireNotNull(ancestor.parent)
-    require(!Files.isSymbolicLink(path)) { "导出目标不能是符号链接" }
+    require(!Files.isSymbolicLink(path)) { I18n.t("packsA1.mrpackExport.destinationSymlink") }
     return ancestor.toRealPath().resolve(ancestor.relativize(path)).normalize()
 }

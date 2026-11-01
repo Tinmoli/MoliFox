@@ -5,6 +5,7 @@
 
 package dev.molifox.core.net
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 
 /** 失败原因在描述里的最大保留长度。 */
@@ -25,11 +26,14 @@ data class SourceRoute(
  */
 class DownloadSource(
     val key: String,
-    val title: String,
     /** 镜像类主机：受更低的并发上限与请求间隔限制。 */
     val mirror: Boolean,
     val routes: List<SourceRoute> = emptyList(),
 ) {
+    /** 展示名只用于日志与失败消息；按 key 在读取时翻译，避免类初始化时固化语言。 */
+    val title: String
+        get() = sourceTitleOf(key)
+
     /** 该源能提供的地址；服务不了这个前缀时返回 null。 */
     fun serve(url: String): String? {
         if (routes.isEmpty()) return url
@@ -41,6 +45,18 @@ class DownloadSource(
         return null
     }
 }
+
+/** 源展示名：日志与失败消息使用，按当前语言解析。 */
+private fun sourceTitleOf(key: String): String =
+    when (key) {
+        DownloadSourceCatalog.OFFICIAL -> I18n.t("settings.download.source.official")
+        "bmclapi" -> "BMCLAPI"
+        "aliyun" -> I18n.t("networkA.source.aliyun")
+        "tencent" -> I18n.t("networkA.source.tencent")
+        "huawei" -> I18n.t("networkA.source.huawei")
+        "central" -> "Maven Central"
+        else -> key
+    }
 
 /** 候选源：源与它提供的具体地址。 */
 data class CandidateSource(
@@ -60,8 +76,7 @@ class DownloadSourceCatalog(
 
     fun source(key: String): DownloadSource? = all.find { it.key == key }
 
-    fun plus(vararg extra: DownloadSource): DownloadSourceCatalog =
-        DownloadSourceCatalog(all + extra)
+    fun plus(vararg extra: DownloadSource): DownloadSourceCatalog = DownloadSourceCatalog(all + extra)
 
     /** 某个地址的候选源；[selection] 为 auto / official / bmclapi，旧值或未知值按自动。 */
     fun candidates(
@@ -108,10 +123,9 @@ class DownloadSourceCatalog(
         /** 游戏文件：官方与 BMCLAPI。 */
         private val GAME_SOURCES =
             listOf(
-                DownloadSource(OFFICIAL, "官方", mirror = false),
+                DownloadSource(OFFICIAL, mirror = false),
                 DownloadSource(
                     BMCLAPI,
-                    "BMCLAPI",
                     mirror = true,
                     routes =
                         listOf(
@@ -139,6 +153,10 @@ class DownloadSourceCatalog(
                                 "https://libraries.minecraft.net/",
                                 "https://bmclapi2.bangbang93.com/maven/",
                             ),
+                            SourceRoute(
+                                "https://maven.neoforged.net/releases/",
+                                "https://bmclapi2.bangbang93.com/maven/",
+                            ),
                         ),
                 ),
             )
@@ -148,29 +166,24 @@ class DownloadSourceCatalog(
             listOf(
                 mavenMirror(
                     "aliyun",
-                    "阿里云 Maven",
                     "https://maven.aliyun.com/repository/public/",
                 ),
                 mavenMirror(
                     "tencent",
-                    "腾讯云 Maven",
                     "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
                 ),
                 mavenMirror(
                     "huawei",
-                    "华为云 Maven",
                     "https://repo.huaweicloud.com/repository/maven/",
                 ),
-                mavenMirror("central", "Maven Central", "https://repo1.maven.org/maven2/"),
+                mavenMirror("central", "https://repo1.maven.org/maven2/"),
             )
 
         private fun mavenMirror(
             key: String,
-            title: String,
             base: String,
         ) = DownloadSource(
             key,
-            title,
             mirror = true,
             routes =
                 listOf(
@@ -216,18 +229,21 @@ class DownloadSourceFailureException(
             attempts: List<SourceAttempt>,
         ): String =
             buildString {
-                append("下载失败：").append(target)
+                append(I18n.t("networkA.downloadSources.failed", target))
                 if (attempts.isEmpty()) {
-                    append("\n没有可用的下载源（全部已禁用或无法服务该地址）")
+                    append(I18n.t("networkA.downloadSources.noSource"))
                 } else {
-                    append("\n每个源尝试的 URL 与状态码：")
+                    append(I18n.t("networkA.downloadSources.attemptList"))
                     attempts.take(MAX_LISTED_ATTEMPTS).forEach {
                         append("\n  ").append(it.describe())
                     }
                     if (attempts.size > MAX_LISTED_ATTEMPTS) {
-                        append("\n  …另有 ")
-                            .append(attempts.size - MAX_LISTED_ATTEMPTS)
-                            .append(" 个源")
+                        append(
+                            I18n.t(
+                                "networkA.downloadSources.moreSources",
+                                attempts.size - MAX_LISTED_ATTEMPTS,
+                            ),
+                        )
                     }
                 }
             }

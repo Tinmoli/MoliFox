@@ -76,14 +76,15 @@ internal fun ThirdPartyLicensesDialog(
     onDismiss: () -> Unit,
 ) {
     val entries = ThirdPartyLicenseCatalog.entries
+    val strings = LocalStrings.current
     Modal(
-        "第三方许可",
-        "第三方组件与协议参考来源；用途已分别标明，许可以上游原文为准。",
+        strings.t("settings.about.thirdParty"),
+        strings.t("settings.about.thirdParty.detail"),
         720.dp,
         onDismiss,
     ) {
         if (entries.isEmpty()) {
-            MutedText("未找到随包许可清单。")
+            MutedText(strings.t("settings.about.thirdParty.empty"))
         } else {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp), gap = 0.dp) {
                 entries.forEachIndexed { index, entry ->
@@ -97,7 +98,7 @@ internal fun ThirdPartyLicensesDialog(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onDismiss) { Text("关闭") }
+            TextButton(onDismiss) { Text(strings.t("settings.common.close")) }
         }
     }
 }

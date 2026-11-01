@@ -5,6 +5,8 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
+
 private const val MAX_MULTIMC_JVM_ARGS_CHARS = 4096
 
 /** JvmArgs 转成实例附加参数；会覆盖内存或入口的参数丢弃并警告，不阻断导入。 */
@@ -16,16 +18,16 @@ internal fun readMultiMcLaunchOptions(
     if (text.isEmpty()) return null
     val arguments =
         runCatching { splitArguments(text) }.getOrElse {
-            throw IllegalArgumentException("instance.cfg 的 JvmArgs 无法解析：${it.message}")
+            throw IllegalArgumentException(I18n.t("packsC.multiMc.jvmArgsUnparsable", it.message))
         }
     val (accepted, dropped) = arguments.partition(::isImportableJvmArgument)
     if (dropped.isNotEmpty()) {
-        warnings += "已忽略会覆盖内存或游戏入口的 JVM 参数：${dropped.joinToString(" ")}"
+        warnings += I18n.t("packsC.multiMc.jvmArgsDropped", dropped.joinToString(" "))
     }
     val quoted = accepted.takeIf { it.isNotEmpty() }?.let(::multiMcArgumentsText)
     val importable = quoted != null && quoted.length <= MAX_MULTIMC_JVM_ARGS_CHARS
     if (accepted.isNotEmpty() && !importable) {
-        warnings += "instance.cfg 的 JVM 参数无法无损导入，已忽略"
+        warnings += I18n.t("packsC.multiMc.jvmArgsLossy")
     }
     return if (importable) {
         PackLaunchOptions(accepted, emptyList(), isMultiMcEnabled(ini["overridejavaargs"]))
@@ -58,8 +60,8 @@ internal fun readMultiMcInstanceDefaults(
         PackInstanceDefaults(
             memory,
             initial,
-            importableWindowSize(ini["minecraftwinwidth"], "宽度", warnings),
-            importableWindowSize(ini["minecraftwinheight"], "高度", warnings),
+            importableWindowSize(ini["minecraftwinwidth"], I18n.t("core.instanceLaunchOptions.10"), warnings),
+            importableWindowSize(ini["minecraftwinheight"], I18n.t("core.instanceLaunchOptions.11"), warnings),
         )
     return defaults.takeUnless { it.isEmpty }
 }
@@ -72,8 +74,12 @@ private fun importableMaximumMemory(
     if (value == 0) return 0
     if (value in MIN_INSTANCE_MEMORY_MB..MAX_INSTANCE_MEMORY_MB) return value
     warnings +=
-        "instance.cfg 的最大内存 $value MB 超出 " +
-        "$MIN_INSTANCE_MEMORY_MB–$MAX_INSTANCE_MEMORY_MB，已改为跟随全局"
+        I18n.t(
+            "packsC.multiMc.maxMemoryOutOfRange",
+            value,
+            MIN_INSTANCE_MEMORY_MB,
+            MAX_INSTANCE_MEMORY_MB,
+        )
     return 0
 }
 
@@ -86,12 +92,16 @@ private fun importableInitialMemory(
     if (value == 0) return 0
     if (value !in MIN_PACK_INITIAL_MEMORY_MB..MAX_INSTANCE_MEMORY_MB) {
         warnings +=
-            "instance.cfg 的初始内存 $value MB 超出 " +
-            "$MIN_PACK_INITIAL_MEMORY_MB–$MAX_INSTANCE_MEMORY_MB，已改为跟随全局"
+            I18n.t(
+                "packsC.multiMc.initialMemoryOutOfRange",
+                value,
+                MIN_PACK_INITIAL_MEMORY_MB,
+                MAX_INSTANCE_MEMORY_MB,
+            )
         return 0
     }
     if (maximumMb >= MIN_INSTANCE_MEMORY_MB && value > maximumMb) {
-        warnings += "instance.cfg 的初始内存 $value MB 大于最大内存 $maximumMb MB，已按最大内存写入"
+        warnings += I18n.t("packsC.multiMc.initialMemoryClamped", value, maximumMb)
         return maximumMb
     }
     return value
@@ -106,7 +116,12 @@ private fun importableWindowSize(
     if (value == 0) return 0
     if (value in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE) return value
     warnings +=
-        "instance.cfg 的游戏窗口$label $value 超出 " +
-        "$MIN_GAME_WINDOW_SIZE–$MAX_GAME_WINDOW_SIZE，已改为跟随全局"
+        I18n.t(
+            "packsC.multiMc.windowSizeOutOfRange",
+            label,
+            value,
+            MIN_GAME_WINDOW_SIZE,
+            MAX_GAME_WINDOW_SIZE,
+        )
     return 0
 }

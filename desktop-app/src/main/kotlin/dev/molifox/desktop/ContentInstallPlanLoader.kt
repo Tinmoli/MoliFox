@@ -70,7 +70,9 @@ internal suspend fun loadInstallPlan(
                         ?: actions.controller.content.catalog
                             .details(hit.id, instanceId)
                 val resolvedVersionId = resolveContentVersionId(details, versionId)
-                require(resolvedVersionId.isNotBlank()) { "没有兼容当前游戏版本与加载器的版本" }
+                require(resolvedVersionId.isNotBlank()) {
+                    tr("pages.install.version.incompatible")
+                }
                 val planned =
                     actions.controller.content.planContent(
                         hit,

@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -64,6 +65,15 @@ internal interface StoreLogApi {
 
     fun notify(message: String)
 
+    /** 带流程类型的提示；默认实现只保证文案，测试替身可以忽略类型。 */
+    fun notify(
+        message: String,
+        kind: LauncherNoticeKind,
+    ) = notify(message)
+
+    /** 最近一次提示的类型；[dismissNotification] 之后为 null。界面据此判断流程结果，不解析文案。 */
+    fun lastNoticeKind(): LauncherNoticeKind? = null
+
     fun dismissNotification()
 }
 
@@ -107,7 +117,7 @@ internal abstract class StoreRecordActions(
         block: (GameInstance) -> GameInstance,
     ) = mutate { current ->
         val target =
-            resolveInstance(current, id) ?: error("找不到游戏实例")
+            resolveInstance(current, id) ?: error(I18n.t("miscA2.storeRecords.instanceNotFound"))
         current.copy(
             instances =
                 current.instances.map {
@@ -124,10 +134,9 @@ internal abstract class StoreRecordActions(
 
     /** 按 id 查；也接受目录名/显示名和本会话已知的旧 id，方便扫描结果和旧调用方混用。 */
     override fun instance(id: String): GameInstance =
-        resolveInstance(core.data, id) ?: error("找不到游戏实例")
+        resolveInstance(core.data, id) ?: error(I18n.t("miscA2.storeRecords.instanceNotFound"))
 
-    override fun instanceSettings(name: String): InstanceSettings? =
-        core.data.instanceSettings[name]
+    override fun instanceSettings(name: String): InstanceSettings? = core.data.instanceSettings[name]
 
     /** 重命名后把设置键从旧目录名搬到新目录名；实例 id 与选中项不变。 */
     @Synchronized
@@ -274,6 +283,13 @@ internal abstract class StoreLogActions(
         flushLogs(batch)
     }
 
+    /** 退出前把尚未刷进界面的游戏日志补上；进程即将结束时不让最后一批只留在磁盘。 */
+    @Synchronized
+    internal fun flushPendingLogs() {
+        gameLogFlushScheduled = false
+        flushPendingGameLogs()
+    }
+
     private fun scheduleGameLogFlush() {
         if (gameLogFlushScheduled) return
         gameLogFlushScheduled = true
@@ -303,11 +319,26 @@ internal abstract class StoreLogActions(
         updateState { it.copy(logs = emptyList()) }
     }
 
+    @Volatile
+    private var lastNotice: LauncherNoticeKind? = null
+
     override fun notify(message: String) {
+        lastNotice = null
         updateState { it.copy(toast = message) }
     }
 
+    override fun notify(
+        message: String,
+        kind: LauncherNoticeKind,
+    ) {
+        lastNotice = kind
+        updateState { it.copy(toast = message) }
+    }
+
+    override fun lastNoticeKind(): LauncherNoticeKind? = lastNotice
+
     override fun dismissNotification() {
+        lastNotice = null
         updateState { it.copy(toast = null) }
     }
 }

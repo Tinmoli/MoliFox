@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -61,7 +62,7 @@ class ScreenshotManager(
         val root = safePath(game, "screenshots")
         if (root.exists()) {
             require(root.isDirectory() && root.toRealPath().startsWith(game.toRealPath())) {
-                "截图目录不是实例内的普通目录"
+                I18n.t("core.screenshotManager.1")
             }
         }
         return root
@@ -130,7 +131,7 @@ class ScreenshotManager(
         withContext(Dispatchers.IO) {
             val root = directory(screenshot.instanceId)
             require(root.exists() && root.toRealPath().toString() == screenshot.directory) {
-                "实例截图目录已改变，请刷新"
+                I18n.t("core.screenshotManager.2")
             }
             val file = safePath(root, safeFilename(screenshot.name))
             require(
@@ -138,9 +139,11 @@ class ScreenshotManager(
                     file.fileSize() == screenshot.size &&
                     file.getLastModifiedTime().toMillis() == screenshot.modifiedMillis,
             ) {
-                "截图已改变或被移除，请刷新"
+                I18n.t("core.screenshotManager.3")
             }
-            require(file.toRealPath().startsWith(root.toRealPath())) { "截图指向目录外" }
+            require(file.toRealPath().startsWith(root.toRealPath())) {
+                I18n.t("diagA2.screenshotManager.outsideRoot")
+            }
             file
         }
 
@@ -154,13 +157,14 @@ class ScreenshotManager(
                     screenshot.previewable &&
                     screenshot.size <= maxBytes,
             ) {
-                "此截图暂不支持预览"
+                I18n.t("core.screenshotManager.4")
             }
             val file = resolve(screenshot)
-            require(dimensions(file) == (screenshot.width to screenshot.height)) { "截图尺寸已改变，请刷新" }
+            require(dimensions(file) == (screenshot.width to screenshot.height)) { I18n.t("core.screenshotManager.5") }
             ImageIO.createImageInputStream(file.toFile()).use { input ->
                 val reader =
-                    ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: error("截图无法解码")
+                    ImageIO.getImageReaders(input).asSequence().firstOrNull()
+                        ?: error(I18n.t("core.screenshotManager.6"))
                 try {
                     reader.input = input
                     val sample =
@@ -168,7 +172,7 @@ class ScreenshotManager(
                             .coerceAtLeast(1)
                     val parameter =
                         reader.defaultReadParam.apply { setSourceSubsampling(sample, sample, 0, 0) }
-                    val image = reader.read(0, parameter) ?: error("截图无法解码")
+                    val image = reader.read(0, parameter) ?: error(I18n.t("core.screenshotManager.6"))
                     ByteArrayOutputStream().use { output ->
                         ImageIO.write(image, "png", output)
                         output.toByteArray()
@@ -188,7 +192,7 @@ class ScreenshotManager(
                     .distinct()
                     .size == screenshots.size,
         ) {
-            "请选择 1–1000 张不同的截图"
+            I18n.t("core.screenshotManager.7")
         }
     }
 
@@ -201,8 +205,8 @@ class ScreenshotManager(
             requireExportSelection(screenshots)
             val sources = screenshots.map { resolve(it) }
             val destination = targetDirectory.toAbsolutePath().normalize()
-            require(screenshots.none { destination == Path.of(it.directory) }) { "请选择截图目录以外的导出位置" }
-            require(!Files.isSymbolicLink(destination)) { "导出目录不能是符号链接" }
+            require(screenshots.none { destination == Path.of(it.directory) }) { I18n.t("core.screenshotManager.8") }
+            require(!Files.isSymbolicLink(destination)) { I18n.t("core.screenshotManager.9") }
             destination.createDirectories()
             val written = mutableListOf<Path>()
             var completed = false
@@ -228,7 +232,7 @@ class ScreenshotManager(
             var target = safePath(destination, source.name)
             var suffix = 2
             while (target.exists()) {
-                require(suffix <= MAX_EXPORT_SUFFIX) { "导出目录存在过多重名文件" }
+                require(suffix <= MAX_EXPORT_SUFFIX) { I18n.t("core.screenshotManager.10") }
                 target =
                     safePath(
                         destination,
@@ -240,7 +244,7 @@ class ScreenshotManager(
                 Files.copy(source, staging)
                 coroutineContext.ensureActive()
                 resolve(screenshots[index])
-                require(staging.fileSize() == screenshots[index].size) { "截图在导出时改变" }
+                require(staging.fileSize() == screenshots[index].size) { I18n.t("core.screenshotManager.11") }
                 Files.move(staging, target)
                 written.add(target)
             } finally {
@@ -258,15 +262,14 @@ class ScreenshotManager(
                     .distinct()
                     .size == screenshots.size,
         ) {
-            "请选择要移入回收站的截图"
+            I18n.t("core.screenshotManager.12")
         }
     }
 
     private fun removalFailure(
         removed: Int,
         failure: Exception,
-    ): java.io.IOException =
-        java.io.IOException("已移入回收站 $removed 张，后续操作停止：${failure.message}", failure)
+    ): java.io.IOException = java.io.IOException(I18n.t("core.screenshotManager.13", removed, failure.message), failure)
 
     suspend fun remove(screenshots: List<GameScreenshot>) =
         withContext(Dispatchers.IO) {

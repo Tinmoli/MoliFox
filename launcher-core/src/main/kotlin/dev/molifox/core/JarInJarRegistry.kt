@@ -61,8 +61,7 @@ internal class JarInJarRegistry(
     fun orderedPair(
         left: JarInJarSource,
         right: JarInJarSource,
-    ): Pair<JarInJarSource, JarInJarSource> =
-        if (orderOf(left) <= orderOf(right)) left to right else right to left
+    ): Pair<JarInJarSource, JarInJarSource> = if (orderOf(left) <= orderOf(right)) left to right else right to left
 
     fun sourceKey(
         hostFilename: String,

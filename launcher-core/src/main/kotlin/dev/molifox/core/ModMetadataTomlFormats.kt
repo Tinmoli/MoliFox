@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import org.tomlj.Toml
 import org.tomlj.TomlArray
 import org.tomlj.TomlParseResult
@@ -14,8 +15,7 @@ import java.util.zip.ZipFile
 
 /** 只读取声明内容，不加载类、不解压文件、不执行构建表达式。 */
 internal object ModMetadataTomlFormats {
-    fun parseNeoForge(zip: ZipFile): ModMetadata? =
-        parseForgeToml(zip, "META-INF/neoforge.mods.toml", "NeoForge")
+    fun parseNeoForge(zip: ZipFile): ModMetadata? = parseForgeToml(zip, "META-INF/neoforge.mods.toml", "NeoForge")
 
     fun parseForge(zip: ZipFile): ModMetadata? = parseForgeToml(zip, "META-INF/mods.toml", "Forge")
 
@@ -26,14 +26,16 @@ internal object ModMetadataTomlFormats {
     ): ModMetadata? {
         val source = zip.declarationText(filename) ?: return null
         val parsed = Toml.parse(source)
-        require(!parsed.hasErrors()) { "TOML 声明格式错误" }
+        require(!parsed.hasErrors()) { I18n.t("packsC.toml.malformed") }
         val jarVersion =
             zip
                 .declarationText("META-INF/MANIFEST.MF")
                 ?.let {
                     Manifest(it.byteInputStream()).mainAttributes.getValue("Implementation-Version")
                 }.orEmpty()
-        val mods = parsed.getArray("mods") ?: return ModMetadata(loader, warning = "声明缺少 mods 列表")
+        val mods =
+            parsed.getArray("mods")
+                ?: return ModMetadata(loader, warning = I18n.t("packsC.toml.missingMods"))
         return ModMetadata(
             loader,
             (0 until mods.size()).map { index -> tomlEntry(parsed, mods, index, jarVersion) },

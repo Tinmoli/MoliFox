@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import java.io.IOException
@@ -105,8 +106,8 @@ class GitHubUpdater
         ) {
             val available =
                 release != null &&
-                    requireNotNull(VersionNumber.parse(release.version)) { "发布版本格式无效" } >
-                    (VersionNumber.parse(LAUNCHER_VERSION) ?: error("当前版本格式无效"))
+                    requireNotNull(VersionNumber.parse(release.version)) { I18n.t("core.gitHubUpdater.1") } >
+                    (VersionNumber.parse(LAUNCHER_VERSION) ?: error(I18n.t("core.gitHubUpdater.2")))
             store.updateState {
                 it.copy(
                     update =
@@ -124,9 +125,9 @@ class GitHubUpdater
             if (manual || available) {
                 store.notify(
                     when {
-                        release == null -> "项目尚未发布正式版本"
-                        available -> "发现 MoliFox ${release.version}，可在设置 → 通用下载"
-                        else -> "当前已是最新版本 $LAUNCHER_VERSION"
+                        release == null -> I18n.t("core.gitHubUpdater.3")
+                        available -> I18n.t("core.gitHubUpdater.4", release.version)
+                        else -> I18n.t("core.gitHubUpdater.5", LAUNCHER_VERSION)
                     },
                 )
             }
@@ -136,7 +137,7 @@ class GitHubUpdater
             failure: Exception,
             manual: Boolean,
         ) {
-            val message = failure.message ?: "GitHub 更新检查失败"
+            val message = failure.message ?: I18n.t("core.gitHubUpdater.6")
             store.updateState {
                 it.copy(update = it.update.copy(checking = false, error = message))
             }
@@ -147,34 +148,16 @@ class GitHubUpdater
         internal fun parseRelease(json: JsonObject): LauncherRelease {
             val version = json.string("tag_name")
             val page = json.string("html_url")
-            require(page.startsWith("${MoliFoxIdentity.RELEASES}/tag/")) { "更新发布页不属于茉狐项目" }
+            require(page.startsWith("${MoliFoxIdentity.RELEASES}/tag/")) {
+                I18n.t("networkB1.gitHubUpdater.invalidReleasePage")
+            }
             val name =
                 when (store.platform.osName) {
                     "windows" -> "MoliFox.exe"
                     "linux" -> "MoliFox-linux-x64.run"
                     else -> ""
                 }
-            val asset =
-                json
-                    .getAsJsonArray("assets")
-                    ?.map { it.asJsonObject }
-                    ?.firstOrNull {
-                        it.string("name") == name &&
-                            store.platform.architecture == "x64"
-                    }?.let {
-                        val url = it.string("browser_download_url")
-                        requireValidDownloadUrl(url)
-                        val digest = it.string("digest").removePrefix("sha256:")
-                        LauncherReleaseAsset(
-                            name,
-                            url,
-                            it.get("size")?.asLong ?: 0,
-                            digest
-                                .takeIf { hash ->
-                                    hash.matches(Regex("[a-fA-F0-9]{64}"))
-                                }.orEmpty(),
-                        )
-                    }
+            val asset = releaseAssetOf(json, name)
             return LauncherRelease(
                 version,
                 json.string("name").ifBlank { version },
@@ -185,31 +168,57 @@ class GitHubUpdater
             )
         }
 
+        /** 从 release 的 assets 里挑出当前平台文件；找不到返回 null，允许无附件发布。 */
+        private fun releaseAssetOf(
+            json: JsonObject,
+            name: String,
+        ): LauncherReleaseAsset? =
+            json
+                .getAsJsonArray("assets")
+                ?.map { it.asJsonObject }
+                ?.firstOrNull {
+                    it.string("name") == name &&
+                        store.platform.architecture == "x64"
+                }?.let {
+                    val url = it.string("browser_download_url")
+                    requireValidDownloadUrl(url)
+                    val digest = it.string("digest").removePrefix("sha256:")
+                    LauncherReleaseAsset(
+                        name,
+                        url,
+                        it.get("size")?.asLong ?: 0,
+                        digest
+                            .takeIf { hash ->
+                                hash.matches(Regex("[a-fA-F0-9]{64}"))
+                            }.orEmpty(),
+                    )
+                }
+
         suspend fun download(
             release: LauncherRelease,
             context: JobContext,
         ): Path {
-            val asset = requireNotNull(release.asset) { "该版本没有适合此系统架构的更新包，请前往发布页查看" }
+            val asset = requireNotNull(release.asset) { I18n.t("core.gitHubUpdater.7") }
             requireValidDownloadUrl(asset.url)
-            require(asset.sha256.isNotEmpty()) { "发布包缺少 GitHub SHA-256 摘要，请前往发布页手动下载" }
+            require(asset.sha256.isNotEmpty()) { I18n.t("core.gitHubUpdater.8") }
             require(
                 VersionNumber.parse(release.version) != null &&
                     asset.size in 1..(MAX_UPDATE_PACKAGE_BYTES),
             ) {
-                "更新包信息无效"
+                I18n.t("core.gitHubUpdater.9")
             }
             val directory =
                 store.downloadDirectory.resolve("updates").resolve(safeFilename(release.version))
             createStorageDirectory(directory)
             val target = directory.resolve(asset.name)
-            context.progress(0f, "下载 MoliFox ${release.version}…")
+            context.progress(0f, I18n.t("core.gitHubUpdater.10", release.version))
             downloadReleaseAsset(asset, target, context)
             store.updateState {
                 it.copy(
                     update = it.update.copy(downloadedFile = target.toString()),
                 )
             }
-            store.notify("更新包已校验；退出启动器后替换原文件，保留旁边的 MoliFox 文件夹")
+            store.notify(I18n.t("core.gitHubUpdater.11"))
             return target
         }
 
@@ -234,14 +243,14 @@ class GitHubUpdater
                         listOf(DownloadArtifact(url, target, asset.sha256, asset.size, "SHA-256")),
                         1,
                         context,
-                        "下载更新包",
+                        I18n.t("core.gitHubUpdater.12"),
                     )
                     return
                 } catch (failure: IOException) {
                     lastFailure = failure
                 }
             }
-            throw IOException("更新包下载失败：${lastFailure?.message}", lastFailure)
+            throw IOException(I18n.t("core.gitHubUpdater.13", lastFailure?.message), lastFailure)
         }
 
         private fun requireValidDownloadUrl(url: String) {
@@ -259,7 +268,7 @@ class GitHubUpdater
                             uri.path.startsWith("/Tinmoli/MoliFox/releases/download/")
                     ),
             ) {
-                "更新包必须来自茉狐自己的 GitHub Releases"
+                I18n.t("core.gitHubUpdater.14")
             }
         }
     }

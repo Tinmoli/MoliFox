@@ -48,6 +48,7 @@ internal fun InstanceMods(
     modifier: Modifier,
     onDiscover: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var mods by remember { mutableStateOf<List<ModFile>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
@@ -126,15 +127,23 @@ internal fun InstanceMods(
     val busy = actions.controller.isInstanceBusy(instance.id)
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ContentToolbar(
-            flexible = { ToolbarSearchField(query, { query = it }, "搜索已安装模组") },
+            flexible = { ToolbarSearchField(query, { query = it }, strings.t("deskD.mods.searchPlaceholder")) },
             refresh =
-                ToolbarAction("刷新", icon = Icons.Outlined.Refresh, enabled = !busy) { refresh++ },
+                ToolbarAction(
+                    strings.t("deskD.mods.refresh"),
+                    icon = Icons.Outlined.Refresh,
+                    enabled = !busy,
+                ) { refresh++ },
             importAction =
-                ToolbarAction("导入模组", icon = Icons.Outlined.FileDownload, enabled = !busy) {
+                ToolbarAction(strings.t("deskD.mods.importMods"), icon = Icons.Outlined.FileDownload, enabled = !busy) {
                     actions.run {
                         actions.controller.requireIdle(instance.id)
                         val files =
-                            actions.choose("导入本地模组", multiple = true, extensions = listOf("jar"))
+                            actions.choose(
+                                strings.t("deskD.mods.importDialogTitle"),
+                                multiple = true,
+                                extensions = listOf("jar"),
+                            )
                         actions.controller.content.importMods(instance.id, files)
                         withContext(Dispatchers.Swing) { refresh++ }
                     }
@@ -142,13 +151,13 @@ internal fun InstanceMods(
             downloads =
                 listOf(
                     ToolbarAction(
-                        "下载模组",
+                        strings.t("deskD.mods.download"),
                         icon = Icons.Outlined.Add,
                         style = ToolbarActionStyle.Filled,
                     ) { onDiscover() },
                 ),
             openFolder =
-                ToolbarAction("打开文件夹", icon = Icons.Outlined.FolderOpen, enabled = !busy) {
+                ToolbarAction(strings.t("deskD.mods.openFolder"), icon = Icons.Outlined.FolderOpen, enabled = !busy) {
                     actions.run { actions.controller.openFolder(instance.id, "mods") }
                 },
         )
@@ -202,7 +211,7 @@ internal fun InstanceMods(
             modsDirectory = modsDirectory,
             readIcon = actions.controller::modIconBytes,
             onIconFailure = {
-                actions.controller.store.log("模组图标解码失败：${it.message}", true)
+                actions.controller.store.log(strings.t("deskD.mods.iconDecodeFailed", it.message), true)
             },
             onRetry = { refresh++ },
             onDiscover = onDiscover,
@@ -277,7 +286,11 @@ private fun modUpdateJobOutcome(
             ModUpdateJobOutcome(
                 null,
                 job.error
-                    ?: if (job.status == JobStatus.Cancelled) "更新已取消" else "更新失败",
+                    ?: if (job.status == JobStatus.Cancelled) {
+                        tr("deskD.mods.updateCancelled")
+                    } else {
+                        tr("deskD.mods.updateFailed")
+                    },
             )
         else -> null
     }
@@ -312,11 +325,14 @@ private fun modsStatusText(
     counts: ModUpdateCounts,
 ): String =
     when {
-        checking -> "正在检查更新…"
+        checking -> tr("deskD.mods.checking")
         report == null -> ""
         counts.updatable > 0 ->
-            "${counts.updatable} 项可更新" +
-                if (counts.unknown > 0) " · ${counts.unknown} 项无法确认" else ""
-        counts.unknown > 0 -> "${counts.unknown} 项无法确认"
-        else -> "全部为最新"
+            if (counts.unknown > 0) {
+                tr("deskD.mods.updatableWithUnknown", counts.updatable, counts.unknown)
+            } else {
+                tr("deskD.mods.updatableCount", counts.updatable)
+            }
+        counts.unknown > 0 -> tr("deskD.mods.unknownCount", counts.unknown)
+        else -> tr("deskD.mods.allUpToDate")
     }

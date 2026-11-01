@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -40,7 +41,7 @@ internal class CurseForgeFiles(
                     "&pageSize=$FILE_PAGE_SIZE$filters"
             val response = api.request(path)
             val page = response.array("data").map { it.asJsonObject }
-            require(page.size <= FILE_PAGE_SIZE) { "CurseForge 文件分页格式无效" }
+            require(page.size <= FILE_PAGE_SIZE) { I18n.t("packsB1.curseForgeFiles.invalidPage") }
             files +=
                 page
                     .filter { it.boolean("isAvailable") && !it.boolean("isServerPack") }
@@ -65,18 +66,22 @@ internal class CurseForgeFiles(
         val files = loadFiles(requested.values.map { it.second })
         val index = if (requested.isEmpty()) null else api.classIndex()
         return requested.mapValues { (id, pair) ->
-            val project = projects[pair.first] ?: error("CurseForge 项目不可用：${pair.first}")
-            val file = files[pair.second] ?: error("CurseForge 文件不可用：$id")
+            val project =
+                projects[pair.first]
+                    ?: error(I18n.t("packsB1.curseForgeFiles.projectUnavailable", pair.first))
+            val file = files[pair.second] ?: error(I18n.t("packsB1.curseForgeFiles.fileUnavailable", id))
             val kind =
                 index?.kinds?.get(project.intOrNull("classId") ?: 0)
-                    ?: api.fail("整合包项目分类映射", "项目 classId 不在镜像分类表内", project)
+                    ?: api.fail(
+                        I18n.t("packsB1.curseForgeFiles.stagePackClassMapping"),
+                        I18n.t("packsB1.curseForgeBackend.projectClassIdUnknown"),
+                        project,
+                    )
             normalize(file, project) to kind
         }
     }
 
-    private suspend fun loadProjects(
-        projectIds: Collection<String>,
-    ): MutableMap<String, JsonObject> {
+    private suspend fun loadProjects(projectIds: Collection<String>): MutableMap<String, JsonObject> {
         val projects = mutableMapOf<String, JsonObject>()
         for (batch in projectIds.distinct().chunked(CURSE_FORGE_BATCH_SIZE)) {
             val body =
@@ -84,7 +89,7 @@ internal class CurseForgeFiles(
             for (entry in api.request("mods", body).array("data")) {
                 val info = entry.asJsonObject
                 require(info.string("id") in batch && info.isMinecraftProject()) {
-                    "CurseForge 返回不匹配的项目"
+                    I18n.t("packsB1.curseForgeFiles.projectMismatch")
                 }
                 projects[info.string("id")] = info
             }
@@ -99,7 +104,7 @@ internal class CurseForgeFiles(
                 JsonObject().apply { add("fileIds", gson.toJsonTree(batch.map { it.toLong() })) }
             for (entry in api.request("mods/files", body).array("data")) {
                 val info = entry.asJsonObject
-                require(info.string("id") in batch) { "CurseForge 返回不匹配的文件" }
+                require(info.string("id") in batch) { I18n.t("packsB1.curseForgeFiles.fileMismatch") }
                 files[info.string("id")] = info
             }
         }
@@ -119,7 +124,7 @@ internal class CurseForgeFiles(
                 file.boolean("isAvailable") &&
                 !file.boolean("isServerPack"),
         ) {
-            "CurseForge 文件不可用、属于服务端或项目不匹配"
+            I18n.t("packsB1.curseForgeFiles.fileNotUsable")
         }
         val tags = file.array("gameVersions").map { it.asString }
         val sha1 =
@@ -152,7 +157,7 @@ internal class CurseForgeFiles(
                 RELEASE_TYPE_RELEASE -> "release"
                 RELEASE_TYPE_BETA -> "beta"
                 RELEASE_TYPE_ALPHA -> "alpha"
-                else -> error("未知的 CurseForge 发布类型")
+                else -> error(I18n.t("packsB1.curseForgeFiles.unknownReleaseType"))
             },
         )
     }
@@ -203,7 +208,7 @@ internal class CurseForgeFiles(
                         "curseforge:${dep.string("modId")}".also(::curseForgeProjectId)
                     val relation =
                         relations[dep.int("relationType")]
-                            ?: error("未知的 CurseForge 依赖类型")
+                            ?: error(I18n.t("packsB1.curseForgeFiles.unknownDependencyType"))
                     mapOf(
                         "project_id" to dependency,
                         "dependency_type" to relation,
@@ -222,7 +227,7 @@ internal class CurseForgeFiles(
         val filename = safeFilename(file.string("fileName"))
         val size = file.get("fileLength")?.asLong ?: -1
         require(size >= 0 && sha1.matches(Regex("[a-fA-F0-9]{40}"))) {
-            "CurseForge 文件缺少有效大小或 SHA-1"
+            I18n.t("packsB1.curseForgeFiles.missingSizeOrHash")
         }
         val restricted =
             project.get("allowModDistribution")?.takeUnless { it.isJsonNull }?.asBoolean ==

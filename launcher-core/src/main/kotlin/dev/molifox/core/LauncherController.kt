@@ -45,6 +45,13 @@ class LauncherController
         val platform: PlatformServices
             get() = core.platform
 
+        /** 桌面层注册的优雅退出回调；自动更新替换前调用，确保联机与后台任务先收尾。 */
+        var exitHandler: (() -> Unit)?
+            get() = core.exitHandler
+            set(value) {
+                core.exitHandler = value
+            }
+
         val scope: CoroutineScope
             get() = core.scope
 
@@ -112,6 +119,11 @@ class LauncherController
             request: InstallRequest,
             gameDirectoryId: String? = core.store.data.activeGameDirectoryId,
         ): String = core.actions.install(request, gameDirectoryId)
+
+        /** 关闭崩溃原因弹窗；下一次启动失败会重新写入新的诊断结果。 */
+        fun dismissLaunchIssue() {
+            core.store.updateState { it.copy(launchIssue = null) }
+        }
 
         fun updateInstance(
             id: String,

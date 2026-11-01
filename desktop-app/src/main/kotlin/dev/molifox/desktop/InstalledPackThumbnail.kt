@@ -39,5 +39,9 @@ internal fun InstalledPackThumbnail(
             }
     }
     val image = bitmap
-    if (image == null) fallback() else Image(image, "本地包头像 ${entry.filename}", modifier)
+    if (image == null) {
+        fallback()
+    } else {
+        Image(image, tr("pages.packs.thumb.local", entry.filename), modifier)
+    }
 }

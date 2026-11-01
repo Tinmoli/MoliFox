@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -41,10 +42,14 @@ internal fun deletionOwnedTarget(
     candidate: Path,
 ): Path? {
     if (!candidate.exists(LinkOption.NOFOLLOW_LINKS)) return null
-    if (Files.isSymbolicLink(candidate)) throw IOException("实例路径是符号链接，不能删除：$candidate")
+    if (Files.isSymbolicLink(candidate)) {
+        throw IOException(I18n.t("instA1.deletionPaths.symbolicLink", candidate))
+    }
     if (!Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)) return null
     val normalized = candidate.toAbsolutePath().normalize()
-    if (!normalized.startsWith(root)) throw IOException("拒绝删除游戏目录以外的路径：$normalized")
+    if (!normalized.startsWith(root)) {
+        throw IOException(I18n.t("instA1.deletionPaths.outsideGameFolder", normalized))
+    }
     val real = normalized.toRealPath()
     return deletionRequireOwnedLayout(root, real)
 }
@@ -54,8 +59,12 @@ internal fun deletionRequireOwnedLayout(
     root: Path,
     real: Path,
 ): Path {
-    if (!real.startsWith(root) || real == root) throw IOException("拒绝删除游戏目录本身：$real")
-    if (!deletionHasTwoLevelLayout(root, real)) throw IOException("拒绝删除共享目录：$real")
+    if (!real.startsWith(root) || real == root) {
+        throw IOException(I18n.t("instA1.deletionPaths.gameFolderItself", real))
+    }
+    if (!deletionHasTwoLevelLayout(root, real)) {
+        throw IOException(I18n.t("instA1.deletionPaths.sharedFolder", real))
+    }
     return real
 }
 
@@ -95,19 +104,45 @@ internal fun deletionReferencesVersion(
 }
 
 /**
- * 递归删除 [target]：不跟随符号链接，符号链接只删除链接本身；缺失的子项跳过。
+ * 目录链接（reparse point）识别：Windows 目录联接（junction / mount point）**不是**符号链接，
+ * `Files.isSymbolicLink` 返回 false、`NOFOLLOW_LINKS` 也拦不住，并且 `walkFileTree` 会真的进入它的子树。
  *
- * `Files.walkFileTree` 默认不进入符号链接目录，因此链接指向的外部内容不会被删除。
+ * 这类目录的属性特征是 `isDirectory == true && isOther == true`（普通目录的 `isOther` 恒为 false）。
+ * 只靠 `fileKey == null` 不可靠：Windows 上普通目录也可能没有 fileKey。
+ */
+private fun BasicFileAttributes.isDirectoryLink(): Boolean = isDirectory && isOther
+
+/**
+ * 递归删除 [target]：不跟随符号链接与目录链接，链接只删除链接本身；缺失的子项跳过。
+ *
+ * `Files.walkFileTree` 默认不进入符号链接目录，但**会进入 Windows 目录联接**，因此必须在
+ * `preVisitDirectory` 里显式识别并跳过，否则会把链接外部（用户自己的存档、游戏目录）的真实文件删掉。
  */
 internal fun deletionDeleteTree(target: Path) {
     if (!target.exists(LinkOption.NOFOLLOW_LINKS)) return
-    if (Files.isSymbolicLink(target)) {
+    val targetAttributes =
+        runCatching {
+            Files.readAttributes(target, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        }.getOrNull()
+    if (targetAttributes?.isSymbolicLink == true || targetAttributes?.isDirectoryLink() == true) {
         Files.deleteIfExists(target)
         return
     }
     Files.walkFileTree(
         target,
         object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(
+                dir: Path,
+                attributes: BasicFileAttributes,
+            ): FileVisitResult {
+                // 链接本身可以删，但它指向的内容属于别处，绝不能进入。
+                if (dir != target && (attributes.isSymbolicLink || attributes.isDirectoryLink())) {
+                    Files.deleteIfExists(dir)
+                    return FileVisitResult.SKIP_SUBTREE
+                }
+                return FileVisitResult.CONTINUE
+            }
+
             override fun visitFile(
                 file: Path,
                 attributes: BasicFileAttributes,
@@ -138,14 +173,19 @@ internal fun deletionDeleteTree(target: Path) {
 }
 
 /**
- * 统计目录/文件原本占用的字节数：不跟随符号链接，符号链接与读不到的文件按 0 计。
+ * 统计目录/文件原本占用的字节数：不跟随符号链接与目录链接，链接与读不到的文件按 0 计。
  *
+ * 与 [deletionDeleteTree] 用同一套链接判据：目录联接背后的文件不属于本实例，不能算进占用。
  * 在删除之前统计，供「已删除 X MB」提示使用。
  */
 internal fun deletionBytesOf(path: Path): Long {
     if (!path.exists(LinkOption.NOFOLLOW_LINKS)) return 0L
-    if (Files.isSymbolicLink(path)) return 0L
-    if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+    val attributes =
+        runCatching {
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        }.getOrNull() ?: return 0L
+    if (attributes.isSymbolicLink || attributes.isDirectoryLink()) return 0L
+    if (!attributes.isDirectory) {
         return runCatching { path.fileSize() }.getOrDefault(0L)
     }
     var total = 0L
@@ -153,6 +193,16 @@ internal fun deletionBytesOf(path: Path): Long {
         Files.walkFileTree(
             path,
             object : SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(
+                    dir: Path,
+                    attributes: BasicFileAttributes,
+                ): FileVisitResult {
+                    if (dir != path && (attributes.isSymbolicLink || attributes.isDirectoryLink())) {
+                        return FileVisitResult.SKIP_SUBTREE
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+
                 override fun visitFile(
                     file: Path,
                     attributes: BasicFileAttributes,

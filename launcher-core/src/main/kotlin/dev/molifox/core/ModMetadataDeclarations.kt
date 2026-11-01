@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.util.zip.ZipFile
 
 /** 单个声明最多 2 MB，避免压缩炸弹把整个文件读进内存。 */
@@ -13,10 +14,10 @@ private const val MAX_DECLARATION_BYTES = 2 * 1024 * 1024
 /** 读取 ZIP 里指定名称的声明文本；条目不存在时返回 null。 */
 internal fun ZipFile.declarationText(name: String): String? {
     val entry = getEntry(name) ?: return null
-    require(entry.size <= MAX_DECLARATION_BYTES) { "声明文件过大" }
+    require(entry.size <= MAX_DECLARATION_BYTES) { I18n.t("packsC.modDecl.tooLarge") }
     return getInputStream(entry).use {
         val bytes = it.readNBytes(MAX_DECLARATION_BYTES + 1)
-        require(bytes.size <= MAX_DECLARATION_BYTES) { "声明文件过大" }
+        require(bytes.size <= MAX_DECLARATION_BYTES) { I18n.t("packsC.modDecl.tooLarge") }
         bytes.toString(Charsets.UTF_8)
     }
 }

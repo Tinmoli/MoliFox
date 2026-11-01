@@ -57,6 +57,7 @@ fun ContentUpdatesDialog(
     actions: UiActions,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     var report by remember(instanceId) { mutableStateOf<ContentUpdateReport?>(null) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var includePrerelease by remember { mutableStateOf(false) }
@@ -112,7 +113,11 @@ fun ContentUpdatesDialog(
         )
         return
     }
-    Modal("资源更新管理", "检查模组、资源包和光影 · 只匹配当前游戏与加载器", onDismiss = onDismiss) {
+    Modal(
+        strings.t("dialogs.contentUpdates.title"),
+        strings.t("dialogs.contentUpdates.subtitle"),
+        onDismiss = onDismiss,
+    ) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -233,20 +238,24 @@ private fun ContentCheckSettings(
     busy: Boolean,
     onRecheck: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     SettingsSection(
-        "检查设置",
-        "按文件哈希在当前内容源（$sourceName）识别资源，只匹配当前游戏版本与加载器。",
+        strings.t("dialogs.contentUpdates.settings"),
+        strings.t("dialogs.contentUpdates.settingsHint", sourceName),
     ) {
-        SettingRow("包含测试版和预览版", "版本列表会包含测试版与预览版") {
+        SettingRow(
+            strings.t("dialogs.contentUpdates.includePrerelease"),
+            strings.t("dialogs.contentUpdates.includePrereleaseHint"),
+        ) {
             CompactSwitch(
                 includePrerelease,
                 onIncludePrereleaseChange,
                 enabled = !loading && !busy,
             )
         }
-        SettingRow("重新检查", "重新读取本地文件并按哈希匹配来源") {
+        SettingRow(strings.t("dialogs.contentUpdates.recheck"), strings.t("dialogs.contentUpdates.recheckHint")) {
             SecondaryButton(onRecheck, enabled = !loading && !busy) {
-                Text("重新检查", fontSize = 12.sp)
+                Text(strings.t("dialogs.contentUpdates.recheck"), fontSize = 12.sp)
             }
         }
     }
@@ -255,7 +264,11 @@ private fun ContentCheckSettings(
 /** 已经准备好的安装计划预览。 */
 @Composable
 private fun PreparedPlanSection(prepared: ContentInstallPlan) {
-    SettingsSection("即将安装", "将安装 ${prepared.files.size} 项（包括必要前置）") {
+    val strings = LocalStrings.current
+    SettingsSection(
+        strings.t("dialogs.contentUpdates.pendingTitle"),
+        strings.t("dialogs.contentUpdates.pendingHint", prepared.files.size),
+    ) {
         prepared.files.forEach { file ->
             Row(
                 Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
@@ -275,7 +288,7 @@ private fun PreparedPlanSection(prepared: ContentInstallPlan) {
             }
         }
         if (prepared.optional.isNotEmpty()) {
-            MutedText("可选前置默认不安装；可在项目详情中单独选择。")
+            MutedText(strings.t("dialogs.contentUpdates.optionalDepsNote"))
         }
     }
 }
@@ -292,6 +305,7 @@ private fun ContentUpdatesBody(
     onDetails: (ContentSource) -> Unit,
     onToggleLock: (ContentSource) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (plan != null) {
         PreparedPlanSection(plan)
         return
@@ -300,16 +314,16 @@ private fun ContentUpdatesBody(
     if (result.items.isEmpty()) {
         Panel(Modifier.fillMaxWidth()) {
             EmptyState(
-                "没有可检查的资源",
-                "没有可检查的 JAR 或 ZIP 资源。",
+                strings.t("dialogs.contentUpdates.emptyTitle"),
+                strings.t("dialogs.contentUpdates.emptyHint"),
                 Icons.Outlined.CloudOff,
             )
         }
         return
     }
     SettingsSection(
-        "可更新资源",
-        "已识别 ${result.items.size} 个文件 · 已选 ${selected.size} 项",
+        strings.t("dialogs.contentUpdates.updatableTitle"),
+        strings.t("dialogs.contentUpdates.updatableHint", result.items.size, selected.size),
     ) {
         result.items.forEach { item ->
             ContentUpdateRow(
@@ -340,6 +354,7 @@ private fun ContentUpdateRow(
     onDetails: (ContentSource) -> Unit,
     onToggleLock: (ContentSource) -> Unit,
 ) {
+    val strings = LocalStrings.current
     val origin = item.source
     Row(
         Modifier.fillMaxWidth().heightIn(min = Metrics.rowHeight),
@@ -368,11 +383,15 @@ private fun ContentUpdateRow(
         }
         if (origin != null) {
             TextButton({ onDetails(origin) }, enabled = !busy) {
-                Text("详情", fontSize = 12.sp)
+                Text(strings.t("dialogs.contentUpdates.details"), fontSize = 12.sp)
             }
             TextButton({ onToggleLock(origin) }, enabled = !loading && !busy) {
                 Text(
-                    if (origin.locked) "解锁" else "锁定",
+                    if (origin.locked) {
+                        strings.t("dialogs.contentUpdates.unlock")
+                    } else {
+                        strings.t("dialogs.contentUpdates.lock")
+                    },
                     fontSize = 12.sp,
                 )
             }
@@ -387,7 +406,7 @@ private fun updateStatusLine(item: ContentUpdate): String =
         item.update != null ->
             "${item.currentVersion} → " +
                 "${item.update?.number}"
-        else -> "${item.currentVersion} · " + "当前筛选下没有更高版本"
+        else -> "${item.currentVersion} · " + tr("dialogs.contentUpdates.noNewer")
     }
 
 /** 底部操作：关闭、返回选择与准备/确认更新。 */
@@ -401,11 +420,16 @@ private fun ContentUpdatesFooter(
     onBackToSelection: () -> Unit,
     onPrimary: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        TextButton(onClose) { Text("关闭更新管理") }
-        if (plan != null) TextButton(onBackToSelection) { Text("返回选择") }
+        TextButton(onClose) { Text(strings.t("dialogs.contentUpdates.close")) }
+        if (plan != null) TextButton(onBackToSelection) { Text(strings.t("dialogs.contentUpdates.backToSelection")) }
         PrimaryButton(
-            if (plan == null) "准备所选更新 ($selectedCount)" else "确认更新",
+            if (plan == null) {
+                strings.t("dialogs.contentUpdates.prepare", selectedCount)
+            } else {
+                strings.t("dialogs.contentUpdates.confirm")
+            },
             enabled = !loading && !busy && selectedCount > 0,
             onClick = onPrimary,
         )
@@ -417,6 +441,7 @@ fun ModDetailsDialog(
     mod: ModFile,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     Modal(mod.metadata.title.ifBlank { mod.filename }, mod.filename, onDismiss = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
@@ -430,14 +455,14 @@ fun ModDetailsDialog(
                     style = MaterialTheme.typography.titleSmall,
                 )
                 MutedText("Mod ID：${entry.id}")
-                if (entry.authors.isNotBlank()) Text("作者：${entry.authors}")
+                if (entry.authors.isNotBlank()) Text(strings.t("dialogs.contentUpdates.authors", entry.authors))
                 if (entry.description.isNotBlank()) Text(entry.description)
                 if (entry.dependencies.isNotEmpty()) {
-                    Text("声明的依赖：\n${entry.dependencies.joinToString("\n")}")
+                    Text(strings.t("dialogs.contentUpdates.dependencies", entry.dependencies.joinToString("\n")))
                 }
             }
-            MutedText("使用模组页的「检查更新」查看更新；这里可按文件哈希识别内容来源，再查看项目详情、选择版本或锁定。")
+            MutedText(strings.t("dialogs.contentUpdates.footer"))
         }
-        TextButton(onDismiss) { Text("关闭模组详情") }
+        TextButton(onDismiss) { Text(strings.t("dialogs.contentUpdates.closeDetails")) }
     }
 }
