@@ -802,44 +802,14 @@ internal class ModrinthPackUpdateSource(
         folder: PackFolder,
         instance: GameInstance,
         allowPrerelease: Boolean,
-    ): Map<String, RemoteModVersion> {
-        val result = mutableMapOf<String, RemoteModVersion>()
-        val hashes = files.map { it.sha512 }.filter { it.isNotBlank() }.distinct()
-        if (hashes.isEmpty()) return result
-        for (batch in hashes.chunked(HASH_BATCH_SIZE)) {
-            val body =
-                JsonObject().apply {
-                    add("hashes", gson.toJsonTree(batch))
-                    addProperty("algorithm", "sha512")
-                    // 资源包必须匹配游戏版本；光影常不声明版本，交给本地规则判断。
-                    if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank()) {
-                        add("game_versions", gson.toJsonTree(listOf(instance.gameVersion)))
-                    }
-                    add(
-                        "version_types",
-                        gson.toJsonTree(
-                            if (allowPrerelease) {
-                                listOf("release", "beta", "alpha")
-                            } else {
-                                listOf("release")
-                            },
-                        ),
-                    )
-                }
-            network.post("$api/version_files/update", body).entrySet().forEach { (hash, value) ->
-                val info = value.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@forEach
-                val projectId = info.string("project_id")
-                if (projectId.isBlank()) return@forEach
-                val version =
-                    remoteVersion(info, RemoteModProject(projectId, "", "", provider))
-                        ?: return@forEach
-                files.filter { it.sha512.equals(hash, true) }.forEach {
-                    result[it.filename] = version
-                }
-            }
-        }
-        return result
-    }
+    ): Map<String, RemoteModVersion> =
+        network.latestModrinthFiles(
+            api,
+            files.map { it.filename to it.sha512 },
+            if (folder == PackFolder.ResourcePacks) instance.gameVersion else "",
+            "",
+            allowPrerelease,
+        )
 
     override suspend fun search(
         name: String,

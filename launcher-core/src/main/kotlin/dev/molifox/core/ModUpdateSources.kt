@@ -11,7 +11,6 @@ import dev.molifox.core.i18n.I18n
 import kotlin.io.path.name
 
 private const val FINGERPRINT_QUERY_BATCH_SIZE = 100
-private const val HASH_QUERY_BATCH_SIZE = 100
 
 /** 内容源默认顺序：Modrinth 优先，CurseForge 公共镜像兜底；两者都不需要 API Key。 */
 internal fun defaultModUpdateSources(
@@ -88,46 +87,14 @@ internal class ModrinthModUpdateSource(
         files: List<LocalModFile>,
         instance: GameInstance,
         allowPrerelease: Boolean,
-    ): Map<String, RemoteModVersion> {
-        val result = mutableMapOf<String, RemoteModVersion>()
-        val hashes = files.map { it.sha512 }.filter { it.isNotBlank() }.distinct()
-        if (hashes.isEmpty()) return result
-        for (batch in hashes.chunked(HASH_QUERY_BATCH_SIZE)) {
-            val body =
-                JsonObject().apply {
-                    add("hashes", gson.toJsonTree(batch))
-                    addProperty("algorithm", "sha512")
-                    if (instance.gameVersion.isNotBlank()) {
-                        add("game_versions", gson.toJsonTree(listOf(instance.gameVersion)))
-                    }
-                    if (instance.loader != LoaderType.Vanilla) {
-                        add("loaders", gson.toJsonTree(listOf(instance.loader.name.lowercase())))
-                    }
-                    add(
-                        "version_types",
-                        gson.toJsonTree(
-                            if (allowPrerelease) {
-                                listOf("release", "beta", "alpha")
-                            } else {
-                                listOf("release")
-                            },
-                        ),
-                    )
-                }
-            network.post("$api/version_files/update", body).entrySet().forEach { (hash, value) ->
-                val info = value.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@forEach
-                val projectId = info.string("project_id")
-                if (projectId.isBlank()) return@forEach
-                val version =
-                    remoteVersion(info, RemoteModProject(projectId, "", "", provider))
-                        ?: return@forEach
-                files.filter { it.sha512.equals(hash, true) }.forEach {
-                    result[it.filename] = version
-                }
-            }
-        }
-        return result
-    }
+    ): Map<String, RemoteModVersion> =
+        network.latestModrinthFiles(
+            api,
+            files.map { it.filename to it.sha512 },
+            instance.gameVersion,
+            if (instance.loader == LoaderType.Vanilla) "" else instance.loader.name.lowercase(),
+            allowPrerelease,
+        )
 
     override suspend fun projectBySlug(
         slug: String,
