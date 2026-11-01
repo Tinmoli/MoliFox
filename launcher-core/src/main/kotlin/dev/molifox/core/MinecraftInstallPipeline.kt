@@ -323,31 +323,10 @@ internal class MinecraftInstallPipeline(
         base: ResolvedProfile,
         context: JobContext,
     ): JsonObject? =
-        when (instance.loader) {
-            LoaderType.Vanilla -> null
-            LoaderType.Fabric,
-            LoaderType.Quilt,
-            LoaderType.LegacyFabric,
-            -> loaders.fetchFabricProfile(instance, context, LOADER_PROGRESS_START, LOADER_PROGRESS_END)
-            LoaderType.OptiFine ->
-                loaders.optiFine.fetchProfile(
-                    instance,
-                    base,
-                    context,
-                    LOADER_PROGRESS_START,
-                    LOADER_PROGRESS_END,
-                )
-            LoaderType.LiteLoader ->
-                loaders.liteLoader.fetchProfile(
-                    instance,
-                    context,
-                    LOADER_PROGRESS_START,
-                    LOADER_PROGRESS_END,
-                )
-            LoaderType.Forge,
-            LoaderType.NeoForge,
-            LoaderType.Cleanroom,
-            -> loaders.fetchForgeProfile(instance, base, context, LOADER_PROGRESS_START, LOADER_PROGRESS_END)
+        if (instance.loader == LoaderType.Vanilla) {
+            null
+        } else {
+            loaders.fetchLoaderProfile(instance, base, context, LOADER_PROGRESS_START, LOADER_PROGRESS_END)
         }
 
     /** 外部版本目录里缺配置时补一份指向原目录的存根，不复制、不改写原版本。 */

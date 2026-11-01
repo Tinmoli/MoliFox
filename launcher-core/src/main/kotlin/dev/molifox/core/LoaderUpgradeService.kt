@@ -60,7 +60,8 @@ internal class LoaderUpgradeService(
                 it.copy(loaderVersion = loaderVersion, installed = false)
             }
             val base = baseProfileForUpgrade(current, context)
-            val loader = fetchUpgradeLoader(target, base, context)
+            val loader =
+                loaders.fetchLoaderProfile(target, base, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
             applyUpgrade(target, base, loader, backups, backupId, context)
             context.progress(
                 1f,
@@ -96,51 +97,6 @@ internal class LoaderUpgradeService(
             I18n.t("networkB2.loaderUpgradeService.newerVersionOnly", current.loader.title)
         }
     }
-
-    private suspend fun fetchUpgradeLoader(
-        target: GameInstance,
-        base: ResolvedProfile,
-        context: JobContext,
-    ): JsonObject =
-        when (target.loader) {
-            LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
-            LoaderType.Fabric,
-            LoaderType.Quilt,
-            LoaderType.LegacyFabric,
-            -> fabricUpgrade(target, context)
-            LoaderType.Forge,
-            LoaderType.NeoForge,
-            LoaderType.Cleanroom,
-            -> forgeUpgrade(target, base, context)
-            LoaderType.OptiFine -> optiFineUpgrade(target, base, context)
-            LoaderType.LiteLoader -> liteLoaderUpgrade(target, context)
-        }
-
-    private suspend fun fabricUpgrade(
-        target: GameInstance,
-        context: JobContext,
-    ): JsonObject =
-        loaders.fetchFabricProfile(target, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
-
-    private suspend fun forgeUpgrade(
-        target: GameInstance,
-        base: ResolvedProfile,
-        context: JobContext,
-    ): JsonObject =
-        loaders.fetchForgeProfile(target, base, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
-
-    private suspend fun optiFineUpgrade(
-        target: GameInstance,
-        base: ResolvedProfile,
-        context: JobContext,
-    ): JsonObject =
-        loaders.optiFine.fetchProfile(target, base, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
-
-    private suspend fun liteLoaderUpgrade(
-        target: GameInstance,
-        context: JobContext,
-    ): JsonObject =
-        loaders.liteLoader.fetchProfile(target, context, UPGRADE_LOADER_PROGRESS_START, UPGRADE_LOADER_PROGRESS_END)
 
     /** 合成并写回原实例目录，再补齐新加载器引入的依赖。 */
     private suspend fun applyUpgrade(
@@ -230,3 +186,29 @@ internal class LoaderUpgradeService(
         return ResolvedProfile(baseId, baseId, json)
     }
 }
+
+/** 安装与升级共用加载器分派；进度区间仍由各流程决定。 */
+internal suspend fun LoaderProfileFetcher.fetchLoaderProfile(
+    instance: GameInstance,
+    base: ResolvedProfile,
+    context: JobContext,
+    from: Float,
+    to: Float,
+): JsonObject =
+    when (instance.loader) {
+        LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
+
+        LoaderType.Fabric,
+        LoaderType.Quilt,
+        LoaderType.LegacyFabric,
+        -> fetchFabricProfile(instance, context, from, to)
+
+        LoaderType.Forge,
+        LoaderType.NeoForge,
+        LoaderType.Cleanroom,
+        -> fetchForgeProfile(instance, base, context, from, to)
+
+        LoaderType.OptiFine -> optiFine.fetchProfile(instance, base, context, from, to)
+
+        LoaderType.LiteLoader -> liteLoader.fetchProfile(instance, context, from, to)
+    }

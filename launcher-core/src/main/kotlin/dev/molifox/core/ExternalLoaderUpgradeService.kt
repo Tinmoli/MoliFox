@@ -146,7 +146,8 @@ internal class ExternalLoaderUpgradeService(
                 VersionResolver(root, store.platform).resolve(current.versionId)
             }
         val target = current.copy(loaderVersion = loaderVersion)
-        val loader = fetchExternalLoader(target, base, context)
+        val loader =
+            loaders.fetchLoaderProfile(target, base, context, EXTERNAL_LOADER_PROGRESS_START, EXTERNAL_LOADER_PROGRESS_END)
         writeExternalUpgrade(
             current,
             loaderVersion,
@@ -158,45 +159,6 @@ internal class ExternalLoaderUpgradeService(
             context,
         )
     }
-
-    private suspend fun fetchExternalLoader(
-        target: GameInstance,
-        base: ResolvedProfile,
-        context: JobContext,
-    ): JsonObject =
-        when (target.loader) {
-            LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
-            LoaderType.Fabric,
-            LoaderType.Quilt,
-            LoaderType.LegacyFabric,
-            -> loaders.fetchFabricProfile(target, context, EXTERNAL_LOADER_PROGRESS_START, EXTERNAL_LOADER_PROGRESS_END)
-            LoaderType.Forge,
-            LoaderType.NeoForge,
-            LoaderType.Cleanroom,
-            ->
-                loaders.fetchForgeProfile(
-                    target,
-                    base,
-                    context,
-                    EXTERNAL_LOADER_PROGRESS_START,
-                    EXTERNAL_LOADER_PROGRESS_END,
-                )
-            LoaderType.OptiFine ->
-                loaders.optiFine.fetchProfile(
-                    target,
-                    base,
-                    context,
-                    EXTERNAL_LOADER_PROGRESS_START,
-                    EXTERNAL_LOADER_PROGRESS_END,
-                )
-            LoaderType.LiteLoader ->
-                loaders.liteLoader.fetchProfile(
-                    target,
-                    context,
-                    EXTERNAL_LOADER_PROGRESS_START,
-                    EXTERNAL_LOADER_PROGRESS_END,
-                )
-        }
 
     /** 写回合并后的配置并补齐依赖；失败时按字节恢复备份的 JSON。 */
     private suspend fun writeExternalUpgrade(
