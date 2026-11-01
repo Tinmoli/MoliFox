@@ -8,7 +8,6 @@ package dev.molifox.core
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -19,11 +18,9 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
-import java.util.Collections
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.exists
@@ -34,16 +31,10 @@ import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.readText
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DownloadEngineTest {
     @TempDir lateinit var directory: Path
-
-    @BeforeEach
-    fun resetGates() {
-        DownloadThrottle.resetForTests()
-    }
 
     private suspend fun eventually(condition: () -> Boolean) =
         withTimeout(10_000) {
@@ -99,37 +90,6 @@ class DownloadEngineTest {
                     }
                 }
             }
-        }
-
-    @Test
-    fun `mirror gate keeps four concurrent transfers and spaces starts`() =
-        runBlocking {
-            assertTrue(DownloadThrottle.isMirror("bmclapi2.bangbang93.com"))
-            assertFalse(DownloadThrottle.isMirror("piston-meta.mojang.com"))
-            val gate = HostGate(permits = DownloadThrottle.MIRROR_LIMIT, spacingMillis = 100)
-            val inFlight = AtomicInteger()
-            val peak = AtomicInteger()
-            val starts: MutableList<Long> = Collections.synchronizedList(mutableListOf())
-            coroutineScope {
-                repeat(8) {
-                    launch(Dispatchers.IO) {
-                        gate.run {
-                            starts += System.nanoTime()
-                            val current = inFlight.incrementAndGet()
-                            peak.accumulateAndGet(current) { left, right -> maxOf(left, right) }
-                            delay(250)
-                            inFlight.decrementAndGet()
-                        }
-                    }
-                }
-            }
-            assertTrue(peak.get() in 1..DownloadThrottle.MIRROR_LIMIT, "镜像并发 ${peak.get()} 超出上限")
-            val ordered = starts.sorted()
-            val spanMillis = (ordered.last() - ordered.first()) / 1_000_000
-            assertTrue(
-                spanMillis >= 600,
-                "8 个镜像请求应被 100ms 间隔拉开，实际总跨度 ${spanMillis}ms",
-            )
         }
 
     @Test

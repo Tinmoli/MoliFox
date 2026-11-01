@@ -5,7 +5,8 @@
 
 package dev.molifox.core.net
 
-import dev.molifox.core.HostGate
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -16,21 +17,21 @@ internal object SourceThrottle {
     /** 单源最大并发，与设置项「下载线程数」的上限保持一致。 */
     const val MAX_CONCURRENCY = 128
 
-    private val gates = ConcurrentHashMap<String, HostGate>()
+    private val gates = ConcurrentHashMap<String, Semaphore>()
 
-    internal fun gateFor(
+    private fun gateFor(
         source: DownloadSource,
         mirrorConcurrency: Int,
-    ): HostGate {
+    ): Semaphore {
         val limit = mirrorConcurrency.coerceIn(1, MAX_CONCURRENCY)
-        return gates.computeIfAbsent("${source.key}:$limit") { HostGate(limit, 0L) }
+        return gates.computeIfAbsent("${source.key}:$limit") { Semaphore(limit) }
     }
 
     suspend fun <T> run(
         source: DownloadSource,
         mirrorConcurrency: Int = MAX_CONCURRENCY,
         block: suspend () -> T,
-    ): T = gateFor(source, mirrorConcurrency).run(block)
+    ): T = gateFor(source, mirrorConcurrency).withPermit { block() }
 
     internal fun resetForTests() {
         gates.clear()
