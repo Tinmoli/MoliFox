@@ -143,14 +143,7 @@ internal class ContentInstallPlanner(
             ) {
                 I18n.t("contentA1.installPlan.duplicateProjectFiles")
             }
-            registry.add(
-                source.projectId,
-                contentSourceRecord(
-                    source.copy(
-                        locked = source.locked || registry.obj(source.projectId).boolean("locked"),
-                    ),
-                ),
-            )
+            registry.adoptContentSource(source)
         }
     }
 }

@@ -91,6 +91,28 @@ internal fun contentSourceRecord(source: ContentSource) =
         addProperty("title", source.title)
     }
 
+internal fun JsonObject.adoptContentSource(source: ContentSource) {
+    add(
+        source.projectId,
+        contentSourceRecord(source.copy(locked = source.locked || obj(source.projectId).boolean("locked"))),
+    )
+}
+
+private fun JsonObject.toContentHit(
+    projectId: String,
+    kind: String,
+): ContentHit =
+    ContentHit(
+        projectId,
+        string("slug"),
+        string("title"),
+        string("description"),
+        string("author"),
+        get("downloads")?.asLong ?: 0,
+        kind,
+        string("icon_url").takeIf { it.isNotBlank() },
+    )
+
 internal fun verifyContentSource(
     store: LauncherStore,
     instanceId: String,
@@ -150,17 +172,7 @@ class ContentCatalog
             val project = backend.project(projectId)
             val kind = project.string("project_type")
             require(kind in supportedContentKinds) { I18n.t("contentA1.catalog.unsupportedKind") }
-            val hit =
-                ContentHit(
-                    projectId,
-                    project.string("slug"),
-                    project.string("title"),
-                    project.string("description"),
-                    project.string("author"),
-                    project.get("downloads")?.asLong ?: 0,
-                    kind,
-                    project.string("icon_url").takeIf { it.isNotBlank() },
-                )
+            val hit = project.toContentHit(projectId, kind)
             val versions =
                 backend
                     .browseVersions(projectId)
@@ -226,17 +238,7 @@ class ContentCatalog
             require(kind in setOf("mod", "resourcepack", "shader")) {
                 I18n.t("contentA1.catalog.versionManagementUnsupported")
             }
-            val hit =
-                ContentHit(
-                    projectId,
-                    project.string("slug"),
-                    project.string("title"),
-                    project.string("description"),
-                    project.string("author"),
-                    project.get("downloads")?.asLong ?: 0,
-                    kind,
-                    project.string("icon_url").takeIf { it.isNotBlank() },
-                )
+            val hit = project.toContentHit(projectId, kind)
             val instance = store.instance(instanceId)
             val versions =
                 backend
