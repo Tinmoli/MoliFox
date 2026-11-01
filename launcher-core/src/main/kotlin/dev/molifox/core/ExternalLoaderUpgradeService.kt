@@ -147,7 +147,13 @@ internal class ExternalLoaderUpgradeService(
             }
         val target = current.copy(loaderVersion = loaderVersion)
         val loader =
-            loaders.fetchLoaderProfile(target, base, context, EXTERNAL_LOADER_PROGRESS_START, EXTERNAL_LOADER_PROGRESS_END)
+            loaders.fetchLoaderProfile(
+                target,
+                base,
+                context,
+                EXTERNAL_LOADER_PROGRESS_START,
+                EXTERNAL_LOADER_PROGRESS_END,
+            )
         writeExternalUpgrade(
             current,
             loaderVersion,

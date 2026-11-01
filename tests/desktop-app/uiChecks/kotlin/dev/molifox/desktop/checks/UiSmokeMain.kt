@@ -125,29 +125,37 @@ private fun runScenarios(
 ) {
     ui.await("首页可操作") { ui.exists("版本设置") }
     ui.capture("home")
-    if (java.lang.Boolean.getBoolean("molifox.ui.lifecycleOnly")) {
-        checkInstanceSettingsAutoSave(ui, fixture)
-        passed += "instance-settings-autosave"
-        checkManageRail(ui)
-        passed += "instance-manage-section"
-        checkDeletion(ui, fixture)
-        passed += "instance-delete-and-continue"
-        return
+    when {
+        java.lang.Boolean.getBoolean("molifox.ui.lifecycleOnly") -> runLifecycleScenarios(ui, fixture, passed)
+
+        java.lang.Boolean.getBoolean("molifox.ui.deletionOnly") -> {
+            ui.click("版本设置")
+            ui.click("管理")
+            checkDeletion(ui, fixture)
+            passed += "instance-delete-and-continue"
+        }
+
+        java.lang.Boolean.getBoolean("molifox.ui.refinements") -> {
+            checkAppearanceRefinements(ui, fixture)
+            passed += "appearance-scale-transparency-fonts-dropdowns"
+            checkStartupErrorDialog(ui, fixture)
+            passed += "startup-error-window"
+        }
+
+        else -> runDefaultScenarios(ui, fixture, passed)
     }
-    if (java.lang.Boolean.getBoolean("molifox.ui.deletionOnly")) {
-        ui.click("版本设置")
-        ui.click("管理")
-        checkDeletion(ui, fixture)
-        passed += "instance-delete-and-continue"
-        return
-    }
-    if (java.lang.Boolean.getBoolean("molifox.ui.refinements")) {
-        checkAppearanceRefinements(ui, fixture)
-        passed += "appearance-scale-transparency-fonts-dropdowns"
-        checkStartupErrorDialog(ui, fixture)
-        passed += "startup-error-window"
-        return
-    }
+}
+
+private fun runLifecycleScenarios(ui: UiProbe, fixture: UiFixture, passed: MutableList<String>) {
+    checkInstanceSettingsAutoSave(ui, fixture)
+    passed += "instance-settings-autosave"
+    checkManageRail(ui)
+    passed += "instance-manage-section"
+    checkDeletion(ui, fixture)
+    passed += "instance-delete-and-continue"
+}
+
+private fun runDefaultScenarios(ui: UiProbe, fixture: UiFixture, passed: MutableList<String>) {
     val scenarios =
         listOf<Pair<String, () -> Unit>>(
             "account-input-and-persistence" to { checkAccount(ui, fixture) },
