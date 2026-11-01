@@ -30,16 +30,25 @@ internal fun taskResourcesForInstances(
 ): Set<String> =
     buildSet {
         ids.forEach { id ->
-            val instance = store.instance(id)
-            add("instance:$id")
-            add("files:${taskPathKey(store.gamePath(instance))}")
-            for (version in setOf(instance.versionId, instance.gameVersion)) {
-                add(
-                    "version:${taskPathKey(
-                        store.minecraftRoot(instance).resolve("versions").resolve(version),
-                    )}",
-                )
-            }
+            addAll(taskResourcesForInstance(store, id, store.instance(id)))
+        }
+    }
+
+/** 保留调用方的原 ID 键；只读查询可以传入已解析快照，不改变任务隔离语义。 */
+internal fun taskResourcesForInstance(
+    store: LauncherStore,
+    id: String,
+    instance: GameInstance,
+): Set<String> =
+    buildSet {
+        add("instance:$id")
+        add("files:${taskPathKey(store.gamePath(instance))}")
+        for (version in setOf(instance.versionId, instance.gameVersion)) {
+            add(
+                "version:${taskPathKey(
+                    store.minecraftRoot(instance).resolve("versions").resolve(version),
+                )}",
+            )
         }
     }
 

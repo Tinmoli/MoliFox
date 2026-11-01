@@ -18,6 +18,7 @@ import java.util.jar.JarOutputStream
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -155,14 +156,43 @@ class InstanceDeletionAliasTest {
                 controller.store.data.instances
                     .first()
             val displayedPath = controller.store.gamePath(instance)
+            val resources = taskResourcesForInstances(controller.store, instance.id)
+            assertFalse(controller.isInstanceBusy(instance.id))
             runBlocking { controller.deleteInstance(instance.id) }.getOrThrow()
 
             assertTrue(
                 runCatching { controller.store.instance(instance.id) }.isFailure,
             )
             assertNull(runBlocking { controller.instanceDirectorySize(instance.id) })
+            assertTrue(controller.isInstanceBusy(instance.id))
+            assertTrue(controller.isInstanceBusy(instance.instanceSettingsKey()))
+            assertEquals(resources, taskResourcesForInstance(controller.store, instance.id, instance))
             // 已退出的页面仍可用旧快照完成一次只读路径计算，不再重新查已删除的 id。
             assertEquals(displayedPath, controller.store.gamePath(instance))
+        }
+    }
+
+    @Test
+    fun `snapshot resources preserve caller aliases and shared directory conflicts`() {
+        LauncherController(TrashPlatform(temporary.resolve("trash")), temporary.resolve("MoliFox")).use { controller ->
+            val first = GameInstance(name = "First", versionId = "1.20.1", gameVersion = "1.20.1")
+            val second = first.copy(id = "second", name = "Second")
+            controller.store.mutate { it.copy(instances = listOf(first, second)) }
+            val alias = first.instanceSettingsKey()
+            val actual = taskResourcesForInstances(controller.store, alias)
+            val expected =
+                linkedSetOf(
+                    "instance:$alias",
+                    "files:${taskPathKey(controller.store.gamePath(first))}",
+                    "version:${taskPathKey(controller.store.minecraftRoot(first).resolve("versions/1.20.1"))}",
+                )
+            assertEquals(expected.toList(), actual.toList())
+            assertEquals(actual, taskResourcesForInstance(controller.store, alias, first))
+            assertTrue(taskResourcesConflict(actual, taskResourcesForInstances(controller.store, second.id)))
+            controller.store.mutate { it.copy(instances = emptyList()) }
+            assertNull(controller.store.instanceOrNull(alias))
+            assertEquals(actual, taskResourcesForInstance(controller.store, alias, first))
+            assertTrue(runCatching { controller.requireIdle(alias) }.isFailure)
         }
     }
 }

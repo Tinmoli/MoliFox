@@ -43,12 +43,7 @@ internal abstract class LauncherQueryActions(
         withContext(Dispatchers.IO) {
             // 实例可能刚被删除、界面还带着旧 id 调用一次。查询按「查不到就是没有」处理，
             // 不抛异常：调用方在 LaunchedEffect 里，异常会变成 Compose 的 Error 对话框。
-            val instance =
-                try {
-                    store.instance(id)
-                } catch (_: IllegalStateException) {
-                    return@withContext null
-                }
+            val instance = store.instanceOrNull(id) ?: return@withContext null
             val taskContext = kotlinx.coroutines.currentCoroutineContext()
             dev.molifox.core.platform.files
                 .directoryByteSize(

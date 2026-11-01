@@ -57,15 +57,18 @@ internal abstract class LauncherRuntimeActions(
         if (widthPx > 0 && heightPx > 0) store.launcherWindowSize = widthPx to heightPx
     }
 
-    override fun isInstanceBusy(id: String): Boolean =
-        jobs.conflicts(taskResourcesForInstances(store, id)) ||
+    override fun isInstanceBusy(id: String): Boolean {
+        // 删除后的旧界面只禁用操作；资源键使用同一次解析的快照，避免再次查旧 ID。
+        val instance = store.instanceOrNull(id) ?: return true
+        return jobs.conflicts(taskResourcesForInstance(store, id, instance)) ||
             (
-                !store.instance(id).installed &&
+                !instance.installed &&
                     state.value.jobs.any {
                         it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
                             it.resources.any { resource -> resource.startsWith("new-pack:") }
                     }
             )
+    }
 
     override fun checkForUpdates(manual: Boolean) {
         scope.launch { updater.check(manual) }

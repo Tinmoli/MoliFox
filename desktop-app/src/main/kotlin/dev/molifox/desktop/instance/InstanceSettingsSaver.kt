@@ -140,22 +140,10 @@ internal fun InstanceSettingsAutoSave(
         // 连续输入合并成一次写盘；核心会再次校验，非法值不会落盘。
         delay(300)
         if (saver.nameCommitting) return@LaunchedEffect
-        val failure =
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    // 名称以记录当前值为准：重命名进行中也不会把旧名称写回去。
-                    val currentName =
-                        actions.controller.store
-                            .instance(instance.id)
-                            .name
-                    actions.controller.saveInstanceConfiguration(
-                        snapshot.copy(name = currentName),
-                        notify = false,
-                    )
-                }
-            }.exceptionOrNull()
-                ?.message
-        saver.saveError = failure
+        saver.saveError =
+            savePendingInstanceSettings(actions.controller, snapshot)
+                .exceptionOrNull()
+                ?.let { it.message ?: tr("pages.common.actionFailed") }
     }
     // 离开页面时补写还没到防抖时间的有效改动；非法值仍由核心拒绝，不会落盘。
     val latestEdit by rememberUpdatedState(snapshot)
@@ -163,18 +151,14 @@ internal fun InstanceSettingsAutoSave(
     DisposableEffect(instance.id) {
         onDispose {
             val pending = latestEdit
-            if (!actions.controller.isInstanceBusy(pending.id) && pending != latestInstance) {
+            if (!saver.nameCommitting && pending != latestInstance) {
                 actions.controller.scope.launch {
-                    runCatching {
-                        val currentName =
-                            actions.controller.store
-                                .instance(pending.id)
-                                .name
-                        actions.controller.saveInstanceConfiguration(
-                            pending.copy(name = currentName),
-                            notify = false,
-                        )
-                    }
+                    savePendingInstanceSettings(actions.controller, pending)
+                        .onFailure { failure ->
+                            val message = failure.message ?: tr("pages.common.actionFailed")
+                            actions.controller.store.log(message, true)
+                            actions.controller.store.notify(message)
+                        }
                 }
             }
         }
