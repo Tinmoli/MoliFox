@@ -7,9 +7,7 @@ package dev.molifox.core
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import com.google.gson.JsonParseException
 import dev.molifox.core.i18n.I18n
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -20,7 +18,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.fileSize
@@ -312,19 +309,11 @@ class PackUpdateService
                 val pending = files.filter { it.filename !in fingerprints }
                 if (pending.isEmpty()) break
                 attempted++
-                try {
+                packSourceAttempt {
                     source.fingerprint(pending, folder).forEach { (filename, version) ->
                         fingerprints[filename] = source to version
                     }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: IOException) {
-                    failures += packSourceFailure(source.provider, error)
-                } catch (error: IllegalArgumentException) {
-                    failures += packSourceFailure(source.provider, error)
-                } catch (error: IllegalStateException) {
-                    failures += packSourceFailure(source.provider, error)
-                } catch (error: JsonParseException) {
+                }.onFailure { error ->
                     failures += packSourceFailure(source.provider, error)
                 }
             }
@@ -371,25 +360,14 @@ class PackUpdateService
             instance: GameInstance,
             allowPrerelease: Boolean,
         ): Map<String, RemoteModVersion>? =
-            try {
+            packSourceAttempt {
                 group.first().second.latestVersions(
                     group.map { it.first },
                     folder,
                     instance,
                     allowPrerelease,
                 )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: IOException) {
-                logBatchFailure(store, provider, error)
-                null
-            } catch (error: IllegalArgumentException) {
-                logBatchFailure(store, provider, error)
-                null
-            } catch (error: IllegalStateException) {
-                logBatchFailure(store, provider, error)
-                null
-            } catch (error: JsonParseException) {
+            }.getOrElse { error ->
                 logBatchFailure(store, provider, error)
                 null
             }
@@ -590,7 +568,7 @@ private suspend fun packSearchCandidates(
     var error = ""
     for (source in sources) {
         currentCoroutineContext().ensureActive()
-        val found = packSourceSearch(source, query, folder, instance)
+        val found = packSourceAttempt { source.search(query, folder, instance) }
         val failure = found.exceptionOrNull()
         if (failure != null) {
             error = packFailureDetail(failure)
@@ -604,27 +582,6 @@ private suspend fun packSearchCandidates(
     }
     return PackSearchResult(candidates, error)
 }
-
-/** 单个内容源的名称搜索；只把失败原因交回调用方，不写日志。 */
-private suspend fun packSourceSearch(
-    source: PackUpdateSource,
-    query: String,
-    folder: PackFolder,
-    instance: GameInstance,
-): Result<List<RemoteModProject>> =
-    try {
-        Result.success(source.search(query, folder, instance))
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: IOException) {
-        Result.failure(error)
-    } catch (error: IllegalArgumentException) {
-        Result.failure(error)
-    } catch (error: IllegalStateException) {
-        Result.failure(error)
-    } catch (error: JsonParseException) {
-        Result.failure(error)
-    }
 
 /** 名称搜索无结果：失败原因只写技术日志，界面统一为「无法确认」。 */
 private fun unmatchedPack(
@@ -709,7 +666,7 @@ private fun packFailureDetail(error: Throwable): String = error.message.orEmpty(
 /** 指纹接口失败只影响该内容源；日志保留截断后的错误摘要。 */
 private fun packSourceFailure(
     provider: String,
-    error: Exception,
+    error: Throwable,
 ): String {
     val detail =
         error.message
@@ -723,7 +680,7 @@ private fun packSourceFailure(
 private fun logBatchFailure(
     store: LauncherStore,
     provider: String,
-    error: Exception,
+    error: Throwable,
 ) {
     store.log(
         I18n.t(
