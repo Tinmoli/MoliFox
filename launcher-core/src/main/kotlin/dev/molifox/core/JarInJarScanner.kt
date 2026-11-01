@@ -111,7 +111,7 @@ internal class JarInJarScanner(
     temporaryDirectory: Path,
     private val limits: JarInJarLimits = JarInJarLimits(),
 ) {
-    private val copier = JarInJarArchiveCopier(temporaryDirectory, limits)
+    private val copier = JarInJarArchiveCopier(temporaryDirectory)
 
     fun scan(
         host: Path,

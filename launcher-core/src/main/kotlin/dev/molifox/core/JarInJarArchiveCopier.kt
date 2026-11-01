@@ -22,7 +22,6 @@ private const val COPY_BUFFER_BYTES = 64 * 1024
 /** 临时目录只放本次扫描的中间文件，调用方负责在解析后删除。 */
 internal class JarInJarArchiveCopier(
     temporaryDirectory: Path,
-    private val limits: JarInJarLimits,
 ) {
     private val temporaryRoot: Path = temporaryDirectory.resolve(TEMPORARY_DIRECTORY_NAME)
 
