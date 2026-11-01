@@ -5,7 +5,6 @@
 
 package dev.molifox.desktop
 
-import com.google.gson.JsonParseException
 import dev.molifox.core.ContentDetails
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentInstallPlan
@@ -15,7 +14,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /** 版本更新日志：网络、JSON 解析与版本校验错误由对话框提示，不中断页面。 */
 internal suspend fun loadChangelog(
@@ -24,23 +22,11 @@ internal suspend fun loadChangelog(
     instanceId: String,
     versionId: String,
 ): Result<ContentVersion> =
-    try {
-        Result.success(
-            withContext(Dispatchers.IO) {
-                actions.controller.content.catalog
-                    .versionDetails(hit.id, versionId, instanceId)
-            },
-        )
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: IOException) {
-        Result.failure(failure)
-    } catch (failure: JsonParseException) {
-        Result.failure(failure)
-    } catch (failure: IllegalStateException) {
-        Result.failure(failure)
-    } catch (failure: IllegalArgumentException) {
-        Result.failure(failure)
+    resourceAttempt {
+        withContext(Dispatchers.IO) {
+            actions.controller.content.catalog
+                .versionDetails(hit.id, versionId, instanceId)
+        }
     }
 
 /** 安装计划与自动选定的兼容版本：同时带回首次读取的项目详情。 */
@@ -62,42 +48,30 @@ internal suspend fun loadInstallPlan(
     relatedSources: List<ContentSource>,
     destinationFolder: String?,
 ): Result<LoadedInstallPlan> =
-    try {
-        Result.success(
-            withContext(Dispatchers.IO) {
-                val details =
-                    knownDetails
-                        ?: actions.controller.content.catalog
-                            .details(hit.id, instanceId)
-                val resolvedVersionId = resolveContentVersionId(details, versionId)
-                require(resolvedVersionId.isNotBlank()) {
-                    tr("pages.install.version.incompatible")
-                }
-                val planned =
-                    actions.controller.content.planContent(
-                        hit,
-                        instanceId,
-                        selected,
-                        resolvedVersionId,
-                        mergedContentSources(relatedSources, source),
-                    )
-                LoadedInstallPlan(
-                    details,
+    resourceAttempt {
+        withContext(Dispatchers.IO) {
+            val details =
+                knownDetails
+                    ?: actions.controller.content.catalog
+                        .details(hit.id, instanceId)
+            val resolvedVersionId = resolveContentVersionId(details, versionId)
+            require(resolvedVersionId.isNotBlank()) {
+                tr("pages.install.version.incompatible")
+            }
+            val planned =
+                actions.controller.content.planContent(
+                    hit,
+                    instanceId,
+                    selected,
                     resolvedVersionId,
-                    applyDestinationFolder(planned, destinationFolder),
+                    mergedContentSources(relatedSources, source),
                 )
-            },
-        )
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: IOException) {
-        Result.failure(failure)
-    } catch (failure: JsonParseException) {
-        Result.failure(failure)
-    } catch (failure: IllegalStateException) {
-        Result.failure(failure)
-    } catch (failure: IllegalArgumentException) {
-        Result.failure(failure)
+            LoadedInstallPlan(
+                details,
+                resolvedVersionId,
+                applyDestinationFolder(planned, destinationFolder),
+            )
+        }
     }
 
 /** 没有指定版本时按「正式版优先，其次第一个兼容版本」自动选择。 */

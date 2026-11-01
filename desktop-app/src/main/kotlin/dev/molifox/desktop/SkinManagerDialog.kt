@@ -88,7 +88,7 @@ fun SkinManagerDialog(
             error = null
             message = null
             try {
-                skinAttempt { action() }
+                resourceAttempt { action() }
                     .onSuccess {
                         revision++
                         if (refreshAvatar) onUpdated()
@@ -99,7 +99,7 @@ fun SkinManagerDialog(
         }
     }
     LaunchedEffect(account.id, revision) {
-        skinAttempt { service.library.list() }
+        resourceAttempt { service.library.list() }
             .onSuccess { entries = it }
             .onFailure { failure -> error = failure.message }
     }
@@ -115,7 +115,7 @@ fun SkinManagerDialog(
         ) {
             value = null
             textureError = null
-            skinAttempt { loadSkinBitmap(service, account, selectedId) }
+            resourceAttempt { loadSkinBitmap(service, account, selectedId) }
                 .onSuccess { value = it }
                 .onFailure { failure -> textureError = failure.message }
         }

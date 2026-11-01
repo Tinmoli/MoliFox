@@ -7,40 +7,17 @@ package dev.molifox.desktop
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import com.google.gson.JsonParseException
 import dev.molifox.core.Account
 import dev.molifox.core.AccountType
 import dev.molifox.core.LibrarySkin
 import dev.molifox.core.SkinService
 import dev.molifox.core.SkinVariant
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.nio.file.Files
 import kotlin.io.path.nameWithoutExtension
 import org.jetbrains.skia.Image as SkiaImage
-
-/**
- * 皮肤操作把文件、网络与皮肤库校验的失败统一翻成界面文案。
- *
- * 只接住这几类可预期异常；取消与 Error 继续向上抛，避免把真正的缺陷吞成提示。
- */
-internal suspend fun <T> skinAttempt(block: suspend () -> T): Result<T> =
-    try {
-        Result.success(block())
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: IOException) {
-        Result.failure(failure)
-    } catch (failure: JsonParseException) {
-        Result.failure(failure)
-    } catch (failure: IllegalStateException) {
-        Result.failure(failure)
-    } catch (failure: IllegalArgumentException) {
-        Result.failure(failure)
-    }
 
 /** 读取选中皮肤或账户皮肤的纹理并解码成位图；没有纹理时返回 null。 */
 internal suspend fun loadSkinBitmap(
