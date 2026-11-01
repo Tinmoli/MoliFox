@@ -760,6 +760,7 @@ fun registerGuiSmoke(
 val uiSmoke =
     tasks.register<JavaExec>("uiSmoke") {
         systemProperty("molifox.ui.deletionOnly", providers.gradleProperty("uiDeletionOnly").getOrElse("false"))
+        systemProperty("molifox.ui.lifecycleOnly", providers.gradleProperty("uiLifecycleOnly").getOrElse("false"))
         group = "verification"
         description =
             "Exercise current desktop UI with temporary instances and in-process API fixtures"

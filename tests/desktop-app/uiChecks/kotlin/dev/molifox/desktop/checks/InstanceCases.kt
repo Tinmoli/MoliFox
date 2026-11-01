@@ -45,6 +45,8 @@ internal fun checkMove(
     fixture: UiFixture,
 ) {
     fixture.picker.chooseNext(fixture.destination)
+    // 导出弹窗关闭后页面会重建折叠区，移动前明确展开，原移动断言保持不变。
+    if (ui.exists("展开管理")) ui.click("管理")
     ui.click("移动实例")
     ui.await("移动预览完成") { ui.exists("开始移动") && ui.enabled("开始移动") }
     ui.capture("instance-move")

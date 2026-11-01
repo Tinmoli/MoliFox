@@ -9,12 +9,14 @@ import com.google.gson.JsonObject
 import dev.molifox.core.MAX_GAME_WINDOW_SIZE
 import dev.molifox.core.MIN_GAME_WINDOW_SIZE
 import dev.molifox.core.VersionIsolation
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 
 private val MEMORY_LABEL = Regex("""^(\d+) MB（[\d.]+ GB）$""")
 private val WINDOW_WIDTH_ERROR = "游戏窗口宽度需为 0 或 $MIN_GAME_WINDOW_SIZE–$MAX_GAME_WINDOW_SIZE"
-private const val NAME_FIELD = "实例名称（离开输入框时同时重命名目录）"
+private val nameField: String
+    get() = I18n.t("instA1.settings.nameLabel")
 private const val WIDTH_FIELD = "窗口宽度（px）"
 private const val HEIGHT_FIELD = "窗口高度（px）"
 private const val MEMORY_SLIDER = "实例最大内存滑块"
@@ -146,7 +148,7 @@ private fun checkRename(
     folder: String,
 ) {
     val oldDirectory = fixture.instanceDirectory(fixture.selectedInstance())
-    ui.type(NAME_FIELD, RENAMED_FOLDER)
+    ui.type(nameField, RENAMED_FOLDER)
     ui.await("名称输入框已更新") { ui.exists(RENAMED_FOLDER) }
     ui.click(WIDTH_FIELD)
     ui.await("目录已改名") {
@@ -173,7 +175,7 @@ private fun checkRename(
         Files.readString(Path.of(renamedDirectories.single().toString(), "$RENAMED_FOLDER.json"))
     check(versionJson.contains("\"id\"")) { "改名后的版本配置缺少 id" }
     ui.await("改名后仍停留在详情页") {
-        ui.exists("游戏文件夹") && ui.exists(NAME_FIELD)
+        ui.exists("游戏文件夹") && ui.exists(nameField)
     }
     ui.await("改名后的实例仍可见") { ui.exists(RENAMED_FOLDER) || ui.exists("更多操作 $RENAMED_FOLDER") }
     check(fixture.selectedInstance().name == RENAMED_FOLDER)
@@ -216,5 +218,5 @@ private fun isVisible(
 /** 滚轮在顶部会夹住：一次大幅上滚即可恢复初始位置，再用名称框的纵坐标确认。 */
 private fun scrollToTop(ui: UiProbe) {
     ui.scroll(SCROLL_TO_TOP_NOTCHES)
-    ui.await("回到设置页顶部") { ui.bounds(NAME_FIELD)?.y?.let { it in TOP_NAME_RANGE } == true }
+    ui.await("回到设置页顶部") { ui.bounds(nameField)?.y?.let { it in TOP_NAME_RANGE } == true }
 }

@@ -125,6 +125,15 @@ private fun runScenarios(
 ) {
     ui.await("首页可操作") { ui.exists("版本设置") }
     ui.capture("home")
+    if (java.lang.Boolean.getBoolean("molifox.ui.lifecycleOnly")) {
+        checkInstanceSettingsAutoSave(ui, fixture)
+        passed += "instance-settings-autosave"
+        checkManageRail(ui)
+        passed += "instance-manage-section"
+        checkDeletion(ui, fixture)
+        passed += "instance-delete-and-continue"
+        return
+    }
     if (java.lang.Boolean.getBoolean("molifox.ui.deletionOnly")) {
         ui.click("版本设置")
         ui.click("管理")
