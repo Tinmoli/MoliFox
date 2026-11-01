@@ -1,6 +1,8 @@
 {
   "minLines": 10,
   "minTokens": 70,
+  "maxLines": 20000,
+  "maxSize": "1mb",
   "mode": "strict",
   "format": ["kotlin", "cpp"],
   "reporters": ["json"],
