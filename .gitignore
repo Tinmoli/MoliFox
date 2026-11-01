@@ -1,32 +1,54 @@
-.gradle/
+# 入库：源码、tests/ 测试源码与检查工具、构建脚本、规则配置、项目资源和文档。
+# 构建缓存、工具下载与生成文件
 .dev/
+.gradle/
+.gradle-home/
+.kotlin/
+.work/
+**/build/
+node_modules/
+__pycache__/
+*.py[cod]
+
+# 发布包通过 Releases 分发，不提交到源码仓库
+/dist/
+/archive/
+/release/
+/MoliFox.exe
+/MoliFox-*.exe
+/MoliFox-*.run
+
+# 本机运行数据、游戏文件与测试产物
 /MoliFox/
 /.minecraft/
-MoliFox.exe
-MoliFox-*.exe
-MoliFox-linux-*.run
-MoliFox-*-linux-x86_64.run
-MoliFox-*-windows-x86_64.exe
-# 测试临时目录与发布包输出
-tests/.tmp/
-dist/
-# 测试源码与本地交接文档只留在工作区，不发布到 GitHub；构建仍从 tests/ 读取测试源码。
-/tests/
-/docs/
-# 本机构建密钥（Microsoft Client ID 等），不提交。
-local.properties
-.kotlin/
-**/build/
-.idea/
-*.iml
-archive/
-release/
-.local-test/
 /data/
+.local-test/
+/tests/.tmp/
+/docs/screenshots/
+/docs/ui-reference/
 *.log
-.DS_Store
-# Local-only launcher references; never publish third-party screenshots or cached source.
-docs/ui-reference/
+hs_err_pid*
+*.hprof
+*.heapdump
+*.dmp
 
-__pycache__/
-*.pyc
+# 本机构建参数、凭据与签名私钥；示例环境配置可以提交
+local.properties
+.env
+.env.*
+!.env.example
+!.env.template
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+
+# 编辑器与系统文件
+.idea/
+.vs/
+*.iml
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
