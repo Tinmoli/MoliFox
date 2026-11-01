@@ -52,7 +52,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.gson.JsonParseException
 import dev.molifox.core.ContentCategoryOption
 import dev.molifox.core.ContentFilter
 import dev.molifox.core.ContentHit
@@ -70,6 +69,7 @@ import dev.molifox.desktop.SecondaryButton
 import dev.molifox.desktop.SimpleDropdown
 import dev.molifox.desktop.SmallIconButton
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.resourceFailureMessage
 import dev.molifox.desktop.selectedRowBackground
 import dev.molifox.desktop.tr
 import kotlinx.coroutines.CancellationException
@@ -78,7 +78,6 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /** 结果排序：只在当前页内重排（后端分页接口只按相关度返回，不改业务参数）。 */
 private fun contentSortOptions(): List<Pair<String, String>> =
@@ -142,7 +141,7 @@ fun ColumnScope.ContentBrowser(
     var versionListError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         val message =
-            runContentRequest {
+            resourceFailureMessage {
                 gameVersions =
                     withContext(Dispatchers.IO) {
                         actions.controller.installer
@@ -200,7 +199,7 @@ fun ColumnScope.ContentBrowser(
         delay(350)
         try {
             val message =
-                runContentRequest {
+                resourceFailureMessage {
                     result =
                         withContext(Dispatchers.IO) {
                             actions.controller.content.search(
@@ -435,27 +434,6 @@ private suspend fun loadSourceCategories(
         emptyList()
     }
 }
-
-/**
- * 执行一次网络检索或版本列表请求，返回可展示的失败原因。
- *
- * 只把网络、JSON 解析与状态/参数校验失败交给界面；取消继续上抛，其余异常（程序错误）保持原样抛出。
- */
-private suspend fun runContentRequest(block: suspend () -> Unit): String? =
-    try {
-        block()
-        null
-    } catch (cancelled: CancellationException) {
-        rethrowCancellation(cancelled)
-    } catch (failure: IOException) {
-        failure.message
-    } catch (failure: JsonParseException) {
-        failure.message
-    } catch (failure: IllegalStateException) {
-        failure.message
-    } catch (failure: IllegalArgumentException) {
-        failure.message
-    }
 
 @Composable
 internal fun ViewToggle(

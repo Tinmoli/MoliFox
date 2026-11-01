@@ -35,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.gson.JsonParseException
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentSource
@@ -43,12 +42,10 @@ import dev.molifox.core.ContentUpdate
 import dev.molifox.core.ContentUpdateReport
 import dev.molifox.core.ModFile
 import dev.molifox.desktop.content.contentSourceName
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /** 资源更新管理：检查更新后选择资源、准备安装计划，再确认执行更新任务。 */
 @Composable
@@ -79,7 +76,7 @@ fun ContentUpdatesDialog(
         selected = emptySet()
         try {
             val message =
-                catchContentFailure {
+                resourceFailureMessage {
                     val checkedReport =
                         withContext(Dispatchers.IO) {
                             actions.controller.content.catalog
@@ -147,7 +144,7 @@ fun ContentUpdatesDialog(
                     error = null
                     scope.launch {
                         val message =
-                            catchContentFailure {
+                            resourceFailureMessage {
                                 actions.controller.requireIdle(instanceId)
                                 withContext(Dispatchers.IO) {
                                     actions.controller.content.catalog
@@ -180,7 +177,7 @@ fun ContentUpdatesDialog(
                 scope.launch {
                     try {
                         val message =
-                            catchContentFailure {
+                            resourceFailureMessage {
                                 val prepared = plan
                                 if (prepared != null) {
                                     actions.controller.installContent(prepared)
@@ -206,27 +203,6 @@ fun ContentUpdatesDialog(
         )
     }
 }
-
-/**
- * 执行一次内容目录操作，只把可预期的文件、解析与前置校验失败交给界面提示。
- *
- * 取消继续上抛；未列出的异常（程序错误）保持原样抛出，不再显示成用户提示。
- */
-private suspend fun catchContentFailure(block: suspend () -> Unit): String? =
-    try {
-        block()
-        null
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: IOException) {
-        failure.message
-    } catch (failure: JsonParseException) {
-        failure.message
-    } catch (failure: IllegalStateException) {
-        failure.message
-    } catch (failure: IllegalArgumentException) {
-        failure.message
-    }
 
 /** 检查设置：是否包含预发布版本与重新检查按钮。 */
 @Composable

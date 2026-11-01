@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
-import com.google.gson.JsonParseException
 import dev.molifox.core.ContentFilter
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentVersion
@@ -32,18 +31,13 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherState
 import dev.molifox.core.filteredContentVersions
 import dev.molifox.core.recommendedContentVersion
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
-
-/** 协程取消必须原样抛出，不能当成普通失败显示在界面上。 */
-private fun rethrowCancellation(cancelled: CancellationException): Nothing = throw cancelled
 
 /** Project browsing is available without an installation target, including old versions. */
 @Composable
@@ -201,21 +195,15 @@ private fun ContentProjectEffects(
         ui.loading = true
         ui.error = null
         try {
-            ui.details =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog
-                        .browse(hit.id)
-                }
-        } catch (cancelled: CancellationException) {
-            rethrowCancellation(cancelled)
-        } catch (failure: IOException) {
-            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
-        } catch (failure: JsonParseException) {
-            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
-        } catch (failure: IllegalStateException) {
-            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
-        } catch (failure: IllegalArgumentException) {
-            ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
+            resourceAttempt {
+                ui.details =
+                    withContext(Dispatchers.IO) {
+                        actions.controller.content.catalog
+                            .browse(hit.id)
+                    }
+            }.onFailure { failure ->
+                ui.error = failure.message ?: strings.t("dialogs.content.project.unavailable")
+            }
         } finally {
             if (isActive) ui.loading = false
         }
@@ -245,21 +233,13 @@ private fun ContentProjectVersionEffect(
         if (ui.tab != "changelog" || ui.versionId.isBlank()) return@LaunchedEffect
         ui.changelogLoading = true
         try {
-            ui.changelog =
-                withContext(Dispatchers.IO) {
-                    actions.controller.content.catalog
-                        .browseVersion(hit.id, ui.versionId)
-                }
-        } catch (cancelled: CancellationException) {
-            rethrowCancellation(cancelled)
-        } catch (failure: IOException) {
-            ui.changelogError = failure.message
-        } catch (failure: JsonParseException) {
-            ui.changelogError = failure.message
-        } catch (failure: IllegalStateException) {
-            ui.changelogError = failure.message
-        } catch (failure: IllegalArgumentException) {
-            ui.changelogError = failure.message
+            resourceAttempt {
+                ui.changelog =
+                    withContext(Dispatchers.IO) {
+                        actions.controller.content.catalog
+                            .browseVersion(hit.id, ui.versionId)
+                    }
+            }.onFailure { failure -> ui.changelogError = failure.message }
         } finally {
             if (isActive) ui.changelogLoading = false
         }
@@ -279,7 +259,7 @@ private fun ContentProjectWorldEffect(
         ui.worldName = ""
         ui.worldError = null
         if (hit.type != "datapack" || target == null) return@LaunchedEffect
-        try {
+        resourceAttempt {
             ui.worlds =
                 withContext(Dispatchers.IO) {
                     actions.controller.saves.listSaves(target.id).filter {
@@ -291,16 +271,6 @@ private fun ContentProjectWorldEffect(
                     .firstOrNull()
                     ?.name
                     .orEmpty()
-        } catch (cancelled: CancellationException) {
-            rethrowCancellation(cancelled)
-        } catch (failure: IOException) {
-            ui.worldError = failure.message
-        } catch (failure: JsonParseException) {
-            ui.worldError = failure.message
-        } catch (failure: IllegalStateException) {
-            ui.worldError = failure.message
-        } catch (failure: IllegalArgumentException) {
-            ui.worldError = failure.message
-        }
+        }.onFailure { failure -> ui.worldError = failure.message }
     }
 }

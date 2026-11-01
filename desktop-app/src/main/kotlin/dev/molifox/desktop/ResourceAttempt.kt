@@ -22,3 +22,6 @@ internal suspend fun <T> resourceAttempt(block: suspend () -> T): Result<T> =
     } catch (failure: IllegalArgumentException) {
         Result.failure(failure)
     }
+
+internal suspend fun resourceFailureMessage(block: suspend () -> Unit): String? =
+    resourceAttempt(block).exceptionOrNull()?.message
