@@ -164,26 +164,25 @@ class InstanceIconsTest {
         }
 
     @Test
-    fun `optional PCL settings remain bounded and preserve icon priority`(): Unit =
-        runBlocking {
-            val (store, instance) = fixture()
-            val version = store.minecraftRoot(instance).resolve("versions").resolve(instance.versionId)
-            val logo = image(version.resolve("PCL/Logo.png"))
-            val settings = version.resolve("PCL/Setup.ini")
-            val icons = InstanceIcons(store)
-            assertNull(icons.existingTexture(instance))
-            val valid = "LogoCustom:true\nLogo:PCL/Logo.png\n"
-            settings.writeText(valid)
-            assertEquals(logo, icons.existingTexture(instance))
-            val preferred = image(version.resolve("icon.png"))
-            assertEquals(preferred, icons.existingTexture(instance))
-            preferred.deleteExisting()
-            settings.writeText(valid + " ".repeat(128 * 1024))
-            assertNull(icons.existingTexture(instance))
-            settings.deleteExisting()
-            settings.createDirectories()
-            assertNull(icons.existingTexture(instance))
-        }
+    fun `optional PCL settings remain bounded and preserve icon priority`(): Unit = runBlocking {
+        val (store, instance) = fixture()
+        val version = store.minecraftRoot(instance).resolve("versions").resolve(instance.versionId)
+        val logo = image(version.resolve("PCL/Logo.png"))
+        val settings = version.resolve("PCL/Setup.ini")
+        val icons = InstanceIcons(store)
+        assertNull(icons.existingTexture(instance))
+        val valid = "LogoCustom:true\nLogo:PCL/Logo.png\n"
+        settings.writeText(valid)
+        assertEquals(logo, icons.existingTexture(instance))
+        val preferred = image(version.resolve("icon.png"))
+        assertEquals(preferred, icons.existingTexture(instance))
+        preferred.deleteExisting()
+        settings.writeText(valid + " ".repeat(128 * 1024))
+        assertNull(icons.existingTexture(instance))
+        settings.deleteExisting()
+        settings.createDirectories()
+        assertNull(icons.existingTexture(instance))
+    }
 
     @Test
     fun `older instance JSON retains automatic icon defaults`() {

@@ -19,10 +19,7 @@ internal object SourceThrottle {
 
     private val gates = ConcurrentHashMap<String, Semaphore>()
 
-    private fun gateFor(
-        source: DownloadSource,
-        mirrorConcurrency: Int,
-    ): Semaphore {
+    private fun gateFor(source: DownloadSource, mirrorConcurrency: Int): Semaphore {
         val limit = mirrorConcurrency.coerceIn(1, MAX_CONCURRENCY)
         return gates.computeIfAbsent("${source.key}:$limit") { Semaphore(limit) }
     }

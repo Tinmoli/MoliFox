@@ -7,6 +7,8 @@ package dev.molifox.desktop.checks
 
 import java.nio.file.Files
 
+private const val DELETION_CALLBACK_SETTLE_MILLIS = 1000L
+
 internal fun checkInstance(
     ui: UiProbe,
     fixture: UiFixture,
@@ -82,10 +84,7 @@ private fun instanceTabName(tab: String): String =
     }
 
 /** 删除确认、记录消失和后续导航必须在同一个测试窗口内完成。 */
-internal fun checkDeletion(
-    ui: UiProbe,
-    fixture: UiFixture,
-) {
+internal fun checkDeletion(ui: UiProbe, fixture: UiFixture) {
     val instance = fixture.selectedInstance()
     val directory = fixture.instanceDirectory(instance)
     ui.click("删除实例")
@@ -96,7 +95,7 @@ internal fun checkDeletion(
             !Files.exists(directory)
     }
     // 留出迟到的目录占用查询和退出补写执行时间，再通过导航确认界面仍可交互。
-    Thread.sleep(1000)
+    Thread.sleep(DELETION_CALLBACK_SETTLE_MILLIS)
     check(!ui.exists("找不到游戏实例"))
     ui.tab("设置", navigation = true)
     ui.await("删除后仍可使用设置") { ui.exists("外观") }

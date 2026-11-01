@@ -249,27 +249,30 @@ class ReportedIssuesTest {
         }
 
     @Test
-    fun `skin cleanup failures preserve success fallback and cancellation`() =
-        runBlocking {
-            val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
-            val account = Account(type = AccountType.Microsoft, skinUrl = "https://textures.minecraft.net/texture/${"a".repeat(64)}")
-            NetworkClient().use { network ->
-                var bytes = skinBytes(0xFF123456.toInt())
-                var cancel = false
-                val cache =
-                    AccountSkinCache(store, network, removeTemporary = {
-                        if (cancel) throw CancellationException("cancel during cleanup")
-                        throw IOException("fixture locked file")
-                    }) { bytes }
-                val original = requireNotNull(cache.load(account, false))
-                assertTrue(validSkinTexture(original))
-                bytes = byteArrayOf(1, 2, 3)
-                assertEquals(original, cache.load(account, true))
-                assertTrue(validSkinTexture(original))
-                cancel = true
-                assertFailsWith<CancellationException> { cache.load(account, true) }
-            }
+    fun `skin cleanup failures preserve success fallback and cancellation`() = runBlocking {
+        val store = LauncherStore(DesktopPlatform(), temporary.resolve("launcher"))
+        val account =
+            Account(
+                type = AccountType.Microsoft,
+                skinUrl = "https://textures.minecraft.net/texture/${"a".repeat(64)}",
+            )
+        NetworkClient().use { network ->
+            var bytes = skinBytes(0xFF123456.toInt())
+            var cancel = false
+            val cache =
+                AccountSkinCache(store, network, removeTemporary = {
+                    if (cancel) throw CancellationException("cancel during cleanup")
+                    throw IOException("fixture locked file")
+                }) { bytes }
+            val original = requireNotNull(cache.load(account, false))
+            assertTrue(validSkinTexture(original))
+            bytes = byteArrayOf(1, 2, 3)
+            assertEquals(original, cache.load(account, true))
+            assertTrue(validSkinTexture(original))
+            cancel = true
+            assertFailsWith<CancellationException> { cache.load(account, true) }
         }
+    }
 
     @Test
     fun `automatic allocation grows with mod count and stays steppable`() {

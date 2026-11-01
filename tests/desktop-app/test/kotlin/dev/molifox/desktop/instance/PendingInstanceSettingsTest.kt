@@ -21,9 +21,7 @@ import kotlin.test.assertTrue
 class PendingInstanceSettingsTest {
     @TempDir lateinit var temporary: Path
 
-    private class TestPlatform(
-        override val defaultDataDirectory: Path,
-    ) : PlatformServices {
+    private class TestPlatform(override val defaultDataDirectory: Path) : PlatformServices {
         var onMemoryRead: () -> Unit = {}
         override val osName = "windows"
         override val architecture = "x86_64"
@@ -42,34 +40,31 @@ class PendingInstanceSettingsTest {
         override fun moveToTrash(file: Path) = error("Unexpected trash operation")
     }
 
-    private fun fixture(check: suspend (LauncherController, TestPlatform, GameInstance) -> Unit) =
-        runBlocking {
-            val platform = TestPlatform(temporary.resolve("profile"))
-            LauncherController(platform).use { controller ->
-                val instance = GameInstance(name = "Current", versionId = "1.20.1", gameVersion = "1.20.1")
-                controller.store.mutate { it.copy(instances = listOf(instance)) }
-                check(controller, platform, instance)
-            }
+    private fun fixture(check: suspend (LauncherController, TestPlatform, GameInstance) -> Unit) = runBlocking {
+        val platform = TestPlatform(temporary.resolve("profile"))
+        LauncherController(platform).use { controller ->
+            val instance = GameInstance(name = "Current", versionId = "1.20.1", gameVersion = "1.20.1")
+            controller.store.mutate { it.copy(instances = listOf(instance)) }
+            check(controller, platform, instance)
         }
+    }
 
     @Test
-    fun `pending settings save preserves current name`() =
-        fixture { controller, _, instance ->
-            val draft = instance.copy(name = "Old name", notes = "new notes")
-            assertTrue(savePendingInstanceSettings(controller, draft).getOrThrow())
-            assertEquals("Current", controller.store.instance(instance.id).name)
-            assertEquals("new notes", controller.store.instance(instance.id).notes)
-        }
+    fun `pending settings save preserves current name`() = fixture { controller, _, instance ->
+        val draft = instance.copy(name = "Old name", notes = "new notes")
+        assertTrue(savePendingInstanceSettings(controller, draft).getOrThrow())
+        assertEquals("Current", controller.store.instance(instance.id).name)
+        assertEquals("new notes", controller.store.instance(instance.id).notes)
+    }
 
     @Test
-    fun `deleted drafts are skipped and strict commands still fail`() =
-        fixture { controller, _, instance ->
-            controller.store.mutate { it.copy(instances = emptyList()) }
-            assertFalse(savePendingInstanceSettings(controller, instance.copy(notes = "late")).getOrThrow())
-            assertTrue(controller.store.data.instances.isEmpty())
-            assertTrue(controller.store.data.instanceSettings.isEmpty())
-            assertFailsWith<IllegalStateException> { controller.saveInstanceConfiguration(instance, false) }
-        }
+    fun `deleted drafts are skipped and strict commands still fail`() = fixture { controller, _, instance ->
+        controller.store.mutate { it.copy(instances = emptyList()) }
+        assertFalse(savePendingInstanceSettings(controller, instance.copy(notes = "late")).getOrThrow())
+        assertTrue(controller.store.data.instances.isEmpty())
+        assertTrue(controller.store.data.instanceSettings.isEmpty())
+        assertFailsWith<IllegalStateException> { controller.saveInstanceConfiguration(instance, false) }
+    }
 
     @Test
     fun `deletion between validation and write cannot resurrect the draft`() =
@@ -89,17 +84,18 @@ class PendingInstanceSettingsTest {
                 savePendingInstanceSettings(controller, instance.copy(width = -1)).exceptionOrNull(),
             )
             platform.onMemoryRead = { throw IOException("fixture read failure") }
-            assertIs<IOException>(savePendingInstanceSettings(controller, instance.copy(notes = "fail")).exceptionOrNull())
+            assertIs<IOException>(
+                savePendingInstanceSettings(controller, instance.copy(notes = "fail")).exceptionOrNull(),
+            )
             assertEquals(instance, controller.store.instance(instance.id))
         }
 
     @Test
-    fun `cancellation from saving propagates`() =
-        fixture { controller, platform, instance ->
-            platform.onMemoryRead = { throw CancellationException("fixture cancellation") }
-            assertFailsWith<CancellationException> {
-                savePendingInstanceSettings(controller, instance.copy(notes = "cancel"))
-            }
-            assertEquals(instance, controller.store.instance(instance.id))
+    fun `cancellation from saving propagates`() = fixture { controller, platform, instance ->
+        platform.onMemoryRead = { throw CancellationException("fixture cancellation") }
+        assertFailsWith<CancellationException> {
+            savePendingInstanceSettings(controller, instance.copy(notes = "cancel"))
         }
+        assertEquals(instance, controller.store.instance(instance.id))
+    }
 }

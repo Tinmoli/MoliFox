@@ -15,27 +15,26 @@ import java.io.IOException
 internal suspend fun savePendingInstanceSettings(
     controller: LauncherController,
     draft: GameInstance,
-): Result<Boolean> =
-    try {
-        withContext(Dispatchers.IO) {
-            val current = controller.state.value.data.instances.find { it.id == draft.id }
-            if (current == null || controller.isInstanceBusy(current.id)) {
-                return@withContext Result.success(false)
-            }
-            controller.saveInstanceConfiguration(draft.copy(name = current.name), notify = false)
-            Result.success(true)
+): Result<Boolean> = try {
+    withContext(Dispatchers.IO) {
+        val current = controller.state.value.data.instances.find { it.id == draft.id }
+        if (current == null || controller.isInstanceBusy(current.id)) {
+            return@withContext Result.success(false)
         }
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: IOException) {
-        Result.failure(failure)
-    } catch (failure: IllegalArgumentException) {
-        Result.failure(failure)
-    } catch (failure: IllegalStateException) {
-        // 删除可能发生在上述检查与核心写入之间；只忽略已经确认消失的目标。
-        if (controller.state.value.data.instances.none { it.id == draft.id }) {
-            Result.success(false)
-        } else {
-            Result.failure(failure)
-        }
+        controller.saveInstanceConfiguration(draft.copy(name = current.name), notify = false)
+        Result.success(true)
     }
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (failure: IOException) {
+    Result.failure(failure)
+} catch (failure: IllegalArgumentException) {
+    Result.failure(failure)
+} catch (failure: IllegalStateException) {
+    // 删除可能发生在上述检查与核心写入之间；只忽略已经确认消失的目标。
+    if (controller.state.value.data.instances.none { it.id == draft.id }) {
+        Result.success(false)
+    } else {
+        Result.failure(failure)
+    }
+}
