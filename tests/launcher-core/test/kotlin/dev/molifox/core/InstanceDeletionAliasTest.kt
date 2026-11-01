@@ -18,6 +18,7 @@ import java.util.jar.JarOutputStream
 import kotlin.io.path.createDirectories
 import kotlin.io.path.outputStream
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class InstanceDeletionAliasTest {
@@ -137,6 +138,28 @@ class InstanceDeletionAliasTest {
                 controller.store.data.instances
                     .none { it.id == remove.id },
             )
+        }
+    }
+
+    @Test
+    fun `queries with a deleted id return nothing instead of throwing`() {
+        // 界面在删除后仍可能带着旧 id 跑一次目录占用查询：必须按「查不到」处理。
+        // 抛异常会冒泡到 Compose 的未捕获异常处理器，弹出 Error 对话框并中止界面。
+        val root = temporary.resolve(".minecraft")
+        root.createDirectories()
+        version(root, "1.20.1")
+        val platform = TrashPlatform(temporary.resolve("trash"))
+        LauncherController(platform, temporary.resolve("MoliFox")).use { controller ->
+            controller.directories.add(root)
+            val instance =
+                controller.store.data.instances
+                    .first()
+            runBlocking { controller.deleteInstance(instance.id) }.getOrThrow()
+
+            assertTrue(
+                runCatching { controller.store.instance(instance.id) }.isFailure,
+            )
+            assertNull(runBlocking { controller.instanceDirectorySize(instance.id) })
         }
     }
 }

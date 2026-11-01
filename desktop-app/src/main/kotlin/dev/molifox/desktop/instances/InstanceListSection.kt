@@ -226,6 +226,7 @@ private fun InstanceListRow(
         mutableStateOf<Long?>(null)
     }
     LaunchedEffect(instance.id, instance.gameDirectoryId, sizeRevision) {
+        // 删除后的旧 id 由查询层返回空值；列表移除时仍让协程取消正常传播。
         directorySize = actions.controller.instanceDirectorySize(instance.id) ?: -1L
     }
     Box(Modifier.fillMaxWidth()) {
