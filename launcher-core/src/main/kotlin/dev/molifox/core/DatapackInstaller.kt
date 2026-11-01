@@ -253,9 +253,12 @@ internal class DatapackInstaller(
         ) {
             I18n.t("saveA1.datapackInstaller.invalidWorldMetadata")
         }
+        val directoryKey = directory.fileKey()?.toString()
         return listOf(
-            directory.fileKey()?.toString().orEmpty(),
-            directory.creationTime().toString(),
+            directoryKey.orEmpty(),
+            // 部分 Linux 文件系统用可变时间代替创建时间；有稳定文件标识时不把它当身份。
+            if (directoryKey == null) directory.creationTime().toString() else "",
+            file.fileKey()?.toString().orEmpty(),
             file.creationTime().toString(),
             digest(level, "SHA-256"),
         )
