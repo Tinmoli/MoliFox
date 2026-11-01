@@ -3,6 +3,9 @@ config:
   validation: true
   warningsAsErrors: true
 
+Compose:
+  active: true
+
 naming:
   FunctionNaming:
     ignoreAnnotated: ['Composable']

@@ -9,6 +9,7 @@ import org.gradle.api.tasks.compile.JavaCompile
 
 val ktlintClasspath = configurations.create("qualityKtlint")
 val detektClasspath = configurations.create("qualityDetekt")
+val detektPlugins = configurations.create("qualityDetektPlugins")
 listOf(ktlintClasspath, detektClasspath).forEach {
     it.attributes.attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL))
 }
@@ -18,6 +19,8 @@ val localDetektJar = providers.gradleProperty("qualityDetektJar")
 dependencies {
     add(ktlintClasspath.name, "com.pinterest.ktlint:ktlint-cli:1.7.1")
     add(detektClasspath.name, "dev.detekt:detekt-cli:2.0.0-alpha.6")
+    add(detektPlugins.name, "dev.detekt:detekt-rules-ktlint-wrapper:2.0.0-alpha.6")
+    add(detektPlugins.name, "io.nlopez.compose.rules:detekt:0.6.8")
 }
 
 val qualitySourcePatterns =
@@ -126,9 +129,9 @@ val styleToolTest =
         args(file("tests/.tmp/quality-tool").absolutePath)
     }
 
-tasks.register<JavaExec>("detekt") {
+fun registerDetektTask(taskName: String, createBaseline: Boolean) = tasks.register<JavaExec>(taskName) {
     group = "verification"
-    description = "Analyze Kotlin quality without a hidden warning baseline"
+    description = "Analyze Kotlin quality against the explicit historical baseline"
     mustRunAfter("ktlintFormat")
     classpath = if (localDetektJar.isPresent) files(localDetektJar.get()) else detektClasspath
     mainClass.set("dev.detekt.cli.Main")
@@ -144,9 +147,16 @@ tasks.register<JavaExec>("detekt") {
                     "desktop-app/src",
                     "launcher-bootstrap/src",
                     "multiplayer-core/src",
+                    "tests/launcher-core",
+                    "tests/desktop-app",
+                    "tests/multiplayer-core",
                 ).joinToString(File.pathSeparator),
                 "--config",
                 file("config/detekt.yml").absolutePath,
+                "--plugins",
+                detektPlugins.files.joinToString(File.pathSeparator) { it.absolutePath },
+                "--baseline",
+                file("config/detekt-baseline.xml").absolutePath,
                 "--build-upon-default-config",
                 "--base-path",
                 projectDir.absolutePath,
@@ -154,9 +164,12 @@ tasks.register<JavaExec>("detekt") {
                 "Warning",
                 "--report",
                 "sarif:${reports.resolve("detekt.sarif")}",
-            )
+            ) + if (createBaseline) listOf("--create-baseline") else emptyList()
     }
 }
+
+registerDetektTask("detekt", false)
+registerDetektTask("detektBaseline", true)
 
 tasks.register("qualityCheck") {
     group = "verification"

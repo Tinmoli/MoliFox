@@ -1,0 +1,5 @@
+{
+  "production": ["launcher-core/src/main/kotlin", "desktop-app/src/main/kotlin", "launcher-bootstrap/src/main/kotlin", "launcher-bootstrap/native", "multiplayer-core/src/commonMain/kotlin", "multiplayer-core/src/jvmMain/kotlin"],
+  "tests": ["tests/launcher-core", "tests/desktop-app", "tests/multiplayer-core", "tests/tools"],
+  "exclude": ["**/build/**", "**/generated/**", "**/.tmp/**", "**/.dev/**", "**/.work/**", "**/.gradle*/**", "**/node_modules/**", "**/third_party/**", "**/vendor/**", "**/miniz/**"]
+}

@@ -1,0 +1,4 @@
+{
+  "private": true,
+  "dependencies": {"jscpd": "4.0.5"}
+}
