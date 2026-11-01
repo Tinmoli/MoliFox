@@ -9,11 +9,9 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.deleteIfExists
@@ -76,7 +74,8 @@ internal class PackUpdateInstaller(
         context?.progress(0f, I18n.t("packsB2.packUpdate.downloading", newName))
         try {
             downloadAndVerify(candidate, temporary, context)
-            replacePackEntry(context, directory, old, target, temporary)
+            context?.checkCancelled()
+            store.replaceUpdatedFile(directory, old, target, temporary, "packsB2.packUpdate")
             store.log(
                 I18n.t(
                     "packsB2.packUpdate.updated",
@@ -178,63 +177,10 @@ internal class PackUpdateInstaller(
             I18n.t("packsB2.packUpdate.empty")
         }
         require(temporary.fileSize() == candidate.size) { I18n.t("packsB2.packUpdate.sizeMismatch") }
-        requireMatchingDigest(temporary, candidate)
+        requireUpdateDigest(temporary, candidate.sha512, candidate.sha1)
         ZipFile(temporary.toFile()).use { zip ->
             require(zip.entries().hasMoreElements()) { I18n.t("packsB2.packUpdate.invalidZip") }
         }
         context?.checkCancelled()
-    }
-
-    private fun requireMatchingDigest(
-        temporary: Path,
-        candidate: PackUpdateCandidate,
-    ) {
-        if (candidate.sha512.isNotBlank()) {
-            require(digest(temporary, "SHA-512").equals(candidate.sha512, true)) {
-                I18n.t("packsB2.packUpdate.hashMismatch")
-            }
-        } else if (candidate.sha1.isNotBlank()) {
-            require(digest(temporary, "SHA-1").equals(candidate.sha1, true)) {
-                I18n.t("packsB2.packUpdate.hashMismatch")
-            }
-        }
-    }
-
-    /** 旧条目先移到同目录备份；新文件落位失败时原样搬回，成功后备份进回收站。 */
-    private suspend fun replacePackEntry(
-        context: JobContext?,
-        directory: Path,
-        old: Path,
-        target: Path,
-        temporary: Path,
-    ) {
-        context?.checkCancelled()
-        val backup = safePath(directory, ".molifox-old-${UUID.randomUUID()}")
-        Files.move(old, backup)
-        try {
-            Files.move(temporary, target)
-        } catch (failure: IOException) {
-            val restored =
-                runCatching {
-                    Files.move(backup, old, StandardCopyOption.REPLACE_EXISTING)
-                }
-            if (restored.isFailure) {
-                store.log(
-                    I18n.t("packsB2.packUpdate.restoreFailed", backup.toAbsolutePath()),
-                    true,
-                )
-                restored.exceptionOrNull()?.let(failure::addSuppressed)
-            }
-            throw failure
-        }
-        try {
-            store.platform.moveToTrash(backup)
-        } catch (error: IOException) {
-            // 旧文件已由新文件取代，回收站搬运是尽力而为：失败只记日志并保留备份。
-            store.log(
-                I18n.t("packsB2.packUpdate.trashFailed", backup.toAbsolutePath(), error.message),
-                true,
-            )
-        }
     }
 }

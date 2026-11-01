@@ -9,10 +9,8 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.deleteIfExists
@@ -20,7 +18,6 @@ import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
 
 private fun ModUpdateCandidate.toRemoteVersion(): RemoteModVersion =
     RemoteModVersion(
@@ -66,7 +63,7 @@ internal class ModUpdateInstaller(
         context?.progress(0f, I18n.t("packsB2.packUpdate.downloading", newBase))
         try {
             downloadAndVerify(candidate, temporary, context)
-            replaceModFile(mods, old, target, temporary)
+            store.replaceUpdatedFile(mods, old, target, temporary, "packsC.modUpdate")
             store.log(I18n.t("packsC.modUpdate.applied", item.title, item.currentVersion, candidate.versionNumber))
             context?.progress(1f, I18n.t("packsB2.packUpdate.done"))
         } finally {
@@ -137,61 +134,10 @@ internal class ModUpdateInstaller(
         if (candidate.size > 0) {
             require(temporary.fileSize() == candidate.size) { I18n.t("packsB2.packUpdate.sizeMismatch") }
         }
-        requireMatchingDigest(temporary, candidate)
+        requireUpdateDigest(temporary, candidate.sha512, candidate.sha1)
         ZipFile(temporary.toFile()).use { zip ->
             require(zip.entries().hasMoreElements()) { I18n.t("packsC.modUpdate.invalidJar") }
         }
         context?.checkCancelled()
-    }
-
-    private fun requireMatchingDigest(
-        temporary: Path,
-        candidate: ModUpdateCandidate,
-    ) {
-        if (candidate.sha512.isNotBlank()) {
-            require(digest(temporary, "SHA-512").equals(candidate.sha512, true)) {
-                I18n.t("packsB2.packUpdate.hashMismatch")
-            }
-        } else if (candidate.sha1.isNotBlank()) {
-            require(digest(temporary, "SHA-1").equals(candidate.sha1, true)) {
-                I18n.t("packsB2.packUpdate.hashMismatch")
-            }
-        }
-    }
-
-    private fun replaceModFile(
-        mods: Path,
-        old: Path,
-        target: Path,
-        temporary: Path,
-    ) {
-        val backup = safePath(mods, ".molifox-old-${UUID.randomUUID()}")
-        // 旧文件先移到同目录暂存名；新文件落位失败时原样搬回。
-        Files.move(old, backup)
-        try {
-            Files.move(temporary, target)
-        } catch (failure: IOException) {
-            val restored =
-                runCatching {
-                    Files.move(backup, old, StandardCopyOption.REPLACE_EXISTING)
-                }
-            if (restored.isFailure) {
-                store.log(
-                    I18n.t("packsC.modUpdate.restoreFailed", backup.toAbsolutePath()),
-                    true,
-                )
-                restored.exceptionOrNull()?.let(failure::addSuppressed)
-            }
-            throw failure
-        }
-        try {
-            store.platform.moveToTrash(backup)
-        } catch (error: IOException) {
-            // 旧文件已由新文件取代，回收站搬运是尽力而为：失败只记日志并保留备份。
-            store.log(
-                I18n.t("packsC.modUpdate.trashFailed", backup.toAbsolutePath(), error.message),
-                true,
-            )
-        }
     }
 }
