@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import dev.molifox.core.GameInstance
-import dev.molifox.core.MrpackExportPlan
 import dev.molifox.core.PackExportFormat
 import dev.molifox.core.PackExportOptions
 import dev.molifox.core.PackExportScan
@@ -21,7 +20,7 @@ import dev.molifox.core.retainExportSelection
 import java.nio.file.Path
 
 /**
- * 导出整合包的独立页面：先只读预览，再由任务队列写文件，进度与取消都在日志页。
+ * 导出页面只列选择；读取选中文件、可选远程查询与压缩全部在导出任务中执行。
  * 「选择内容」按实例目录的真实顶层条目勾选（文件夹整段写入或整段排除），
  * 默认只勾 mods/config/resourcepacks/shaderpacks；取消不会留下半写文件。
  */
@@ -52,13 +51,8 @@ fun ExportMrpackPage(
     var target by remember(instance.id) { mutableStateOf(defaultTarget) }
     var packName by remember(instance.id) { mutableStateOf(instance.name) }
     var version by remember(instance.id) { mutableStateOf("1.0.0") }
-    var plan by remember(instance.id) { mutableStateOf<MrpackExportPlan?>(null) }
-    var loading by remember(instance.id) { mutableStateOf(true) }
     var error by remember(instance.id) { mutableStateOf<String?>(null) }
-    var attempt by remember(instance.id) { mutableIntStateOf(0) }
     var exporting by remember(instance.id) { mutableStateOf(false) }
-    // 预览请求序号：切换远程开关/格式时旧请求可能晚到，只接受最后一次请求的结果。
-    var previewRequest by remember(instance.id) { mutableIntStateOf(0) }
     // 顶层内容扫描：先列出条目，再逐步补全文件数与体积；关闭对话框即取消。
     var scan by remember(instance.id) { mutableStateOf<PackExportScan?>(null) }
     var scanError by remember(instance.id) { mutableStateOf<String?>(null) }
@@ -83,40 +77,7 @@ fun ExportMrpackPage(
     val selectableKeys = rememberSelectableExportKeys(selectableEntries)
     val selectedEntries = checked.filterTo(mutableSetOf()) { it in selectableKeys }
     val includeLogs = exportIncludeLogs(format, scan, selectedEntries)
-    // 打开即预览：只读扫描实例目录；远程开关决定是否联网解析下载来源。
-    LaunchedEffect(
-        instance.id,
-        attempt,
-        format,
-        options.remoteResources,
-        packName,
-        includeLogs,
-    ) {
-        val request = previewRequest + 1
-        previewRequest = request
-        loading = true
-        error = null
-        try {
-            loadExportPreview(
-                actions,
-                instance.id,
-                packName,
-                format,
-                options.remoteResources,
-                includeLogs,
-                { candidate -> if (request == previewRequest) plan = candidate },
-            ) { message ->
-                if (request == previewRequest) error = message
-            }
-        } finally {
-            if (request == previewRequest) loading = false
-        }
-    }
-    val prepared = plan
-    val view = ExportMrpackView(target, format, version, packName, prepared)
-    val localPaths = rememberExportLocalPaths(prepared, format)
-    val selection =
-        rememberExportSelection(prepared, format, options, selectedEntries, excludedPaths)
+    val view = ExportMrpackView(target, format, version, packName)
 
     fun toggleEntry(
         key: String,
@@ -136,9 +97,7 @@ fun ExportMrpackPage(
     }
     val canConfirm =
         exportCanConfirm(
-            prepared,
-            selection.size,
-            loading,
+            selectedEntries.size,
             exporting,
             actions.controller.busy,
             view.validTarget,
@@ -152,7 +111,6 @@ fun ExportMrpackPage(
         target = target,
         packName = packName,
         version = version,
-        loading = loading,
         exporting = exporting,
         error = error,
         scan = scan,
@@ -160,10 +118,7 @@ fun ExportMrpackPage(
         selectableEntries = selectableEntries,
         selectedEntries = selectedEntries,
         excludedPaths = excludedPaths,
-        prepared = prepared,
         view = view,
-        localPaths = localPaths,
-        selection = selection,
         includeLogs = includeLogs,
         options = options,
         canConfirm = canConfirm,
@@ -187,7 +142,6 @@ fun ExportMrpackPage(
             format = chosen
         },
         onRetryScan = { scanAttempt++ },
-        onRetryPreview = { attempt++ },
         onToggleEntry = { key, on -> toggleEntry(key, on) },
         onToggleNode = { path, on -> toggleNode(path, on) },
         onOptionsChange = { options = it },

@@ -126,6 +126,11 @@ private fun runScenarios(
     ui.await("首页可操作") { ui.exists("版本设置") }
     ui.capture("home")
     when {
+        java.lang.Boolean.getBoolean("molifox.ui.exportOnly") -> {
+            checkDirectExport(ui, fixture)
+            passed += "direct-export-formats-and-selected-config"
+        }
+
         java.lang.Boolean.getBoolean("molifox.ui.lifecycleOnly") -> runLifecycleScenarios(ui, fixture, passed)
 
         java.lang.Boolean.getBoolean("molifox.ui.deletionOnly") -> {

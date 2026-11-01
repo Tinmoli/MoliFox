@@ -752,7 +752,10 @@ private fun ColumnScope.LauncherContent(
                 instance = exportInstance,
                 actions = actions,
                 onDismiss = { navigation.closeExport() },
-                onStarted = { actions.taskQueued() },
+                onStarted = {
+                    actions.taskQueued()
+                    actions.showTasks()
+                },
             )
         }
         return

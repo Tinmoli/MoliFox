@@ -103,10 +103,18 @@ internal abstract class LauncherInstanceActions(
             I18n.t("instA2.instance.unrecognized", instance.brokenReason)
         }
         require(instance.installed) { I18n.t("instA2.instance.notInstalled") }
+        val resources = taskResourcesForInstances(store, id)
+        check(
+            state.value.jobs.none {
+                it.kind == LauncherTaskKind.ExportContent &&
+                    it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
+                    taskResourcesConflict(resources, it.resources)
+            },
+        ) { I18n.t("miscA1.runtimeActions.instanceInUse") }
         require(store.data.activeAccountId != null) { I18n.t("core.accountService.1") }
         return jobs.enqueue(
             I18n.t("instA2.tasks.launch", store.instance(id).name),
-            taskResourcesForInstances(store, id),
+            resources,
             kind = LauncherTaskKind.LaunchGame,
         ) {
             game.launch(id, this, target)

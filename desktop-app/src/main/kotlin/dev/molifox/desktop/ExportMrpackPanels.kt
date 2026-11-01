@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.MrpackExportMetadata
-import dev.molifox.core.MrpackExportPlan
 import dev.molifox.core.PackExportEntry
 import dev.molifox.core.PackExportFormat
 import dev.molifox.core.PackExportOptions
@@ -47,7 +46,6 @@ internal fun ExportMrpackPageBody(
     target: String,
     packName: String,
     version: String,
-    loading: Boolean,
     exporting: Boolean,
     error: String?,
     scan: PackExportScan?,
@@ -55,10 +53,7 @@ internal fun ExportMrpackPageBody(
     selectableEntries: List<PackExportEntry>,
     selectedEntries: Set<String>,
     excludedPaths: Set<String>,
-    prepared: MrpackExportPlan?,
     view: ExportMrpackView,
-    localPaths: Set<String>,
-    selection: Set<String>,
     includeLogs: Boolean,
     options: PackExportOptions,
     canConfirm: Boolean,
@@ -67,7 +62,6 @@ internal fun ExportMrpackPageBody(
     onVersionChange: (String) -> Unit,
     onFormatChosen: (String) -> Unit,
     onRetryScan: () -> Unit,
-    onRetryPreview: () -> Unit,
     onToggleEntry: (String, Boolean) -> Unit,
     onToggleNode: (String, Boolean) -> Unit,
     onOptionsChange: (PackExportOptions) -> Unit,
@@ -129,19 +123,6 @@ internal fun ExportMrpackPageBody(
                     onToggle = onToggleEntry,
                     onToggleNode = onToggleNode,
                 )
-                ExportPreviewSection(
-                    ExportPreviewState(
-                        loading = loading,
-                        error = error,
-                        totalFiles = prepared?.files?.size,
-                        selectedFiles = selection.size,
-                        format = format,
-                        options = options,
-                        localResources = localPaths.size,
-                        downloads = view.downloads,
-                    ),
-                    onRetry = onRetryPreview,
-                )
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
@@ -153,14 +134,12 @@ internal fun ExportMrpackPageBody(
             ExportMrpackActions(
                 actions = actions,
                 instance = instance,
-                prepared = prepared,
                 view = view,
                 format = format,
                 options = options,
                 selectedEntries = selectedEntries,
                 excludedPaths = excludedPaths,
                 includeLogs = includeLogs,
-                loading = loading,
                 exporting = exporting,
                 canConfirm = canConfirm,
                 onExportStart = onExportStart,
@@ -309,14 +288,12 @@ private fun ExportCompactToggle(
 private fun ExportMrpackActions(
     actions: UiActions,
     instance: GameInstance,
-    prepared: MrpackExportPlan?,
     view: ExportMrpackView,
     format: PackExportFormat,
     options: PackExportOptions,
     selectedEntries: Set<String>,
     excludedPaths: Set<String>,
     includeLogs: Boolean,
-    loading: Boolean,
     exporting: Boolean,
     canConfirm: Boolean,
     onExportStart: () -> Unit,
@@ -330,14 +307,12 @@ private fun ExportMrpackActions(
         enabled = canConfirm,
         onCancel = onDismiss,
         onConfirm = {
-            val current = prepared
             val destination = view.destination
-            if (current != null && destination != null) {
+            if (destination != null) {
                 onExportStart()
                 startMrpackExport(
                     actions = actions,
                     instance = instance,
-                    current = current,
                     destination = destination,
                     metadata = MrpackExportMetadata(view.packName, view.versionText),
                     format = format,
@@ -353,6 +328,5 @@ private fun ExportMrpackActions(
                 )
             }
         },
-        hint = if (loading) strings.t("pages.export.loading") else "",
     )
 }

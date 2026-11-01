@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 只呈现导出内容与预览统计，通过回调交还选择和重试，不访问网络或磁盘。
+// 只呈现导出内容选择，通过回调交还选择和重试，不访问网络或磁盘。
 
 package dev.molifox.desktop
 
@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.PackExportEntry
-import dev.molifox.core.PackExportFormat
-import dev.molifox.core.PackExportOptions
 
 internal data class ExportEntriesState(
     val loaded: Boolean,
@@ -36,17 +33,6 @@ internal data class ExportEntriesState(
     val selectedEntries: Set<String>,
     val excludedPaths: Set<String>,
     val exporting: Boolean,
-)
-
-internal data class ExportPreviewState(
-    val loading: Boolean,
-    val error: String?,
-    val totalFiles: Int?,
-    val selectedFiles: Int,
-    val format: PackExportFormat,
-    val options: PackExportOptions,
-    val localResources: Int,
-    val downloads: Int,
 )
 
 @Composable
@@ -69,6 +55,7 @@ internal fun ExportEntriesSection(
                         TextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
+
             !loaded ->
                 Column(
                     Modifier.fillMaxWidth(),
@@ -77,6 +64,7 @@ internal fun ExportEntriesSection(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     MutedText(strings.t("dialogs.export.readingDir"))
                 }
+
             else -> {
                 var expanded by remember(selectableEntries) { mutableStateOf(true) }
                 SettingsSection(
@@ -85,10 +73,9 @@ internal fun ExportEntriesSection(
                     action = {
                         Text(
                             if (expanded) strings.t("dialogs.export.collapse") else strings.t("dialogs.export.expand"),
-                            modifier =
-                                Modifier
-                                    .clickable { expanded = !expanded }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            modifier = Modifier
+                                .clickable { expanded = !expanded }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -108,72 +95,6 @@ internal fun ExportEntriesSection(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun ExportPreviewSection(
-    state: ExportPreviewState,
-    onRetry: () -> Unit,
-) {
-    val strings = LocalStrings.current
-    with(state) {
-        when {
-            loading -> ExportLoadingSection()
-            totalFiles == null ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        strings.t("dialogs.export.previewFailed"),
-                        error.orEmpty(),
-                        Icons.Outlined.ErrorOutline,
-                    ) {
-                        TextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
-                    }
-                }
-            totalFiles == 0 ->
-                Panel(Modifier.fillMaxWidth()) {
-                    EmptyState(
-                        strings.t("dialogs.export.nothingToExport"),
-                        "",
-                        Icons.Outlined.FolderOpen,
-                    )
-                }
-            else -> {
-                ExportPreviewStatistics(state)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ExportLoadingSection() {
-    val strings = LocalStrings.current
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        LinearProgressIndicator(Modifier.fillMaxWidth())
-        MutedText(strings.t("dialogs.export.readingFiles"))
-    }
-}
-
-@Composable
-private fun ExportPreviewStatistics(state: ExportPreviewState) {
-    val strings = LocalStrings.current
-    with(state) {
-        SettingsSection(strings.t("dialogs.export.preview"), "") {
-            SettingRow(strings.t("dialogs.export.includedFiles"), "") {
-                Text("$selectedFiles / $totalFiles", fontSize = 13.sp)
-            }
-            if (format == PackExportFormat.Modrinth && options.remoteResources) {
-                SettingRow(strings.t("dialogs.export.onlineDownload"), "") {
-                    Text("$downloads", fontSize = 13.sp)
-                }
-            }
-            SettingRow(strings.t("dialogs.export.localPack"), "") {
-                Text("$localResources", fontSize = 13.sp)
             }
         }
     }

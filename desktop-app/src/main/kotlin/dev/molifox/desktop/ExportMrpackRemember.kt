@@ -7,13 +7,9 @@ package dev.molifox.desktop
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import dev.molifox.core.MrpackExportPlan
 import dev.molifox.core.PackExportEntry
 import dev.molifox.core.PackExportFormat
-import dev.molifox.core.PackExportOptions
 import dev.molifox.core.PackExportScan
-import dev.molifox.core.exportLocalResourcePaths
-import dev.molifox.core.exportSelectedPaths
 
 @Composable
 internal fun rememberSelectableExportEntries(
@@ -29,23 +25,3 @@ internal fun rememberSelectableExportEntries(
 @Composable
 internal fun rememberSelectableExportKeys(entries: List<PackExportEntry>): Set<String> =
     remember(entries) { entries.mapTo(mutableSetOf()) { it.key } }
-
-@Composable
-internal fun rememberExportLocalPaths(
-    prepared: MrpackExportPlan?,
-    format: PackExportFormat,
-): Set<String> = remember(prepared, format) { prepared?.let { exportLocalResourcePaths(it, format) }.orEmpty() }
-
-@Composable
-internal fun rememberExportSelection(
-    prepared: MrpackExportPlan?,
-    format: PackExportFormat,
-    options: PackExportOptions,
-    selectedEntries: Set<String>,
-    excludedPaths: Set<String>,
-): Set<String> =
-    remember(prepared, format, options, selectedEntries, excludedPaths) {
-        prepared
-            ?.let { exportSelectedPaths(it, format, options, selectedEntries, excludedPaths) }
-            .orEmpty()
-    }

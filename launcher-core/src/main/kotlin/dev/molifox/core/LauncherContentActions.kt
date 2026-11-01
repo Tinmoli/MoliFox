@@ -12,6 +12,8 @@ import kotlin.io.path.name
 
 /** 内容、整合包与导出的后台任务入口。 */
 internal interface LauncherContentApi : LauncherContentUpdateApi {
+    fun exportMrpack(request: PackExportRequest): String
+
     fun installContent(
         hit: ContentHit,
         id: String?,
@@ -73,6 +75,33 @@ internal abstract class LauncherContentActions(
     core: LauncherControllerCore,
 ) : LauncherContentUpdateActions(core),
     LauncherContentApi {
+    override fun exportMrpack(request: PackExportRequest): String {
+        requireIdle(request.instanceId)
+        val fixed = request.copy(
+            selectedEntries = request.selectedEntries.toSet(),
+            excludedPaths = request.excludedPaths.toSet(),
+        )
+        return jobs.enqueue(
+            I18n.t(
+                if (fixed.format.importable) "coreC.tasks.exportPack" else "coreC.tasks.exportFullBackup",
+                fixed.metadata.name,
+            ),
+            taskResourcesForInstances(store, fixed.instanceId),
+            kind = LauncherTaskKind.ExportContent,
+        ) {
+            val plan = content.prepareRequestedExport(fixed, this)
+            content.exportMrpack(
+                plan,
+                fixed.destination,
+                this,
+                plan.files.map { it.path }.toSet(),
+                exportLocalResourcePaths(plan, fixed.format),
+                fixed.format,
+                fixed.options,
+            )
+        }
+    }
+
     override fun installContent(
         hit: ContentHit,
         id: String?,

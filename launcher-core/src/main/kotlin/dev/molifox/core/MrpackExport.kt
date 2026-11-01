@@ -41,7 +41,8 @@ private const val MAX_PACK_SUMMARY_LENGTH = 2000
 private const val MODRINTH_HASH_BATCH_SIZE = 100
 
 /** 归档内单个清单/文本文件的大小上限。 */
-private const val MAX_EXPORT_DOCUMENT_BYTES = 8 * 1024 * 1024
+internal const val MAX_EXPORT_DOCUMENT_BYTES = 8 * 1024 * 1024
+private const val EXPORT_VALIDATION_PROGRESS = 0.98f
 
 data class MrpackExportMetadata(
     val name: String,
@@ -170,6 +171,7 @@ class MrpackExportPlan
         internal val components: InstallRequest,
         /** 实例级启动设置（内存/JVM/窗口），供 MultiMC/Prism 的 instance.cfg 使用。 */
         internal val instance: GameInstance,
+        internal val fileStamps: Map<String, ExportFileStamp> = emptyMap(),
     ) {
         val defaultSelection: Set<String>
             get() = files.filter { it.selectedByDefault }.map { it.path }.toSet()
@@ -240,20 +242,15 @@ internal class MrpackExporter(
         resolveDownloads: Boolean,
         resolveCurseForge: Boolean = false,
         includeLogs: Boolean = false,
+        preparation: ExportPreparation? = null,
     ): MrpackExportPlan =
         withContext(Dispatchers.IO) {
             validatePackMetadata(metadata)
-            val instance = exportableInstance(id)
-            val root = store.instancePath(id).toAbsolutePath().normalize()
-            require(root.isDirectory() && !Files.isSymbolicLink(root)) {
-                I18n.t("packsA1.mrpackExport.instanceDirectoryInvalid")
-            }
-            val realRoot = root.toRealPath()
-            val scan = ExportScanState(store, instance, root, realRoot, includeLogs)
-            scanInstanceFiles(scan)
-            val remotes = resolveDownloadUrls(scan.files, scan.warnings, resolveDownloads)
+            val scan = scanExportFiles(id, includeLogs, resolveDownloads, preparation)
+            val instance = scan.instance
+            val remotes = resolveDownloadUrls(scan.files, scan.warnings, resolveDownloads, preparation?.context)
             val curseForgeIds =
-                resolveCurseForgeIds(root, scan.files, scan.warnings, resolveCurseForge)
+                resolveCurseForgeIds(scan.root, scan.files, scan.warnings, resolveCurseForge)
             if (instance.externalProfile) {
                 scan.warnings += I18n.t("packsA1.mrpackExport.externalProfileWarning")
             }
@@ -267,8 +264,8 @@ internal class MrpackExporter(
                     },
                 scan.warnings.distinct(),
                 includeLogs,
-                root,
-                realRoot,
+                scan.root,
+                scan.realRoot,
                 InstallRequest(
                     instance.name,
                     instance.gameVersion,
@@ -276,8 +273,34 @@ internal class MrpackExporter(
                     instance.loaderVersion,
                 ),
                 instance,
+                scan.fileStamps,
             )
         }
+
+    private suspend fun scanExportFiles(
+        id: String,
+        includeLogs: Boolean,
+        resolveDownloads: Boolean,
+        preparation: ExportPreparation?,
+    ): ExportScanState {
+        val instance = exportableInstance(id)
+        val root = store.instancePath(id).toAbsolutePath().normalize()
+        require(root.isDirectory() && !Files.isSymbolicLink(root)) {
+            I18n.t("packsA1.mrpackExport.instanceDirectoryInvalid")
+        }
+        val scan =
+            ExportScanState(
+                store,
+                instance,
+                root,
+                root.toRealPath(),
+                includeLogs,
+                preparation == null,
+                resolveDownloads,
+            ).apply { select(preparation) }
+        scanInstanceFiles(scan)
+        return scan
+    }
 
     suspend fun export(
         plan: MrpackExportPlan,
@@ -306,8 +329,9 @@ internal class MrpackExporter(
         val temporary = target.resolveSibling(".${target.fileName}.${UUID.randomUUID()}.part")
         try {
             val output = Files.newOutputStream(temporary, StandardOpenOption.CREATE_NEW)
-            ZipOutputStream(output).use { zip -> writePackEntries(zip, layout, plan, context) }
+            ZipOutputStream(output).use { zip -> writePackEntries(zip, layout, plan, context, format, options) }
             context.checkCancelled()
+            context.progress(EXPORT_VALIDATION_PROGRESS, I18n.t("packsA2.packExport.validatingArchive"))
             // 重新打开写好的归档，逐项确认该格式必需的条目和清单字段都在。
             validatePackExport(
                 temporary,
@@ -369,17 +393,22 @@ internal class MrpackExporter(
         files: List<MrpackExportFile>,
         warnings: MutableList<String>,
         enabled: Boolean,
+        context: JobContext?,
     ): Map<String, String> {
         val remotes = mutableMapOf<String, String>()
         if (!enabled) return remotes
         val batches =
             files
-                .filter { it.requiresPermission }
+                .filter { remoteExportResource(it.path) && it.sha512.isNotEmpty() }
                 .map { it.sha512 }
                 .distinct()
                 .chunked(MODRINTH_HASH_BATCH_SIZE)
-        for (batch in batches) {
+        for ((index, batch) in batches.withIndex()) {
             coroutineContext.ensureActive()
+            context?.progress(
+                0f,
+                I18n.t("packsA2.packExport.resolvingResources", index + 1, batches.size),
+            )
             try {
                 resolveDownloadBatch(batch, files, remotes)
             } catch (cancelled: CancellationException) {
@@ -606,15 +635,17 @@ private fun selectExportFiles(
     return files
 }
 
-/** 去掉远程来源并标记为需授权打包，避免关闭远程后仍写下载链接或受管清单。 */
-private fun withoutRemoteSource(file: MrpackExportFile): MrpackExportFile =
-    file.copy(
+/** 去掉远程来源；仅原有本地资源或转成本地的远程资源保留权限要求。 */
+private fun withoutRemoteSource(file: MrpackExportFile): MrpackExportFile {
+    val remote = file.downloadUrl != null || file.curseForgeProjectId != null || file.curseForgeFileId != null
+    return file.copy(
         downloadUrl = null,
         curseForgeProjectId = null,
         curseForgeFileId = null,
         selectedByDefault = true,
-        requiresPermission = true,
+        requiresPermission = file.requiresPermission || remote,
     )
+}
 
 /** 完整备份只留在本机，不需要授权；其它格式要求先确认可分发。 */
 private fun requireExportPermissions(

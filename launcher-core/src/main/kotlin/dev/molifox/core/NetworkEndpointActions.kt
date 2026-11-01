@@ -228,7 +228,7 @@ internal abstract class NetworkPayloadActions(
             val request =
                 builder(url).post(body.toString().toRequestBody("application/json".toMediaType()))
             bearer?.let { request.header("Authorization", "Bearer $it") }
-            execute(request.build()).use { response ->
+            execute(request.build()).readCancellable { response ->
                 if (!response.isSuccessful) throw ServiceHttpException(response.code, URI(url).host)
                 val responseBody = requireNotNull(response.body) { I18n.t("core.networkEndpointActions.15") }
                 JsonParser.parseString(responseBody.string()).asJsonObject

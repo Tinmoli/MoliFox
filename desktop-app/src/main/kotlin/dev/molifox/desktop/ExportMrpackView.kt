@@ -5,7 +5,6 @@
 
 package dev.molifox.desktop
 
-import dev.molifox.core.MrpackExportPlan
 import dev.molifox.core.PackExportEntry
 import dev.molifox.core.PackExportFormat
 import dev.molifox.core.PackExportOptions
@@ -18,13 +17,7 @@ private const val MAX_EXPORT_NAME_LENGTH = 200
 private const val MAX_EXPORT_VERSION_LENGTH = 100
 
 /** 导出对话框的派生状态：路径、名称、校验结果与文件计数都在这里计算。 */
-internal class ExportMrpackView(
-    target: String,
-    format: PackExportFormat,
-    version: String,
-    name: String,
-    prepared: MrpackExportPlan?,
-) {
+internal class ExportMrpackView(target: String, format: PackExportFormat, version: String, name: String) {
     val destination: Path? = runCatching { Path.of(target.trim().trim('"').trim()) }.getOrNull()
 
     val fileName: String = destination?.fileName?.toString().orEmpty()
@@ -40,13 +33,6 @@ internal class ExportMrpackView(
 
     val validTarget: Boolean =
         destination != null && fileName.endsWith(".${format.extension}", true) && validName
-
-    val downloads: Int =
-        if (format == PackExportFormat.Modrinth) {
-            prepared?.files.orEmpty().count { it.downloadUrl != null }
-        } else {
-            0
-        }
 }
 
 /** 切换导出格式时只替换目标文件的扩展名，保留用户改过的目录与文件名。 */
@@ -90,20 +76,15 @@ internal fun exportIncludeLogs(
     format == PackExportFormat.Backup &&
         scan?.entries.orEmpty().any { it.backupOnly && it.key in selectedEntries }
 
-/** 只有预览就绪、有可写文件、目标与版本合法且没有任务在跑时才允许确认。 */
+/** 顶层选择可用即可提交；不等待目录统计、文件摘要或远程查询。 */
 internal fun exportCanConfirm(
-    prepared: MrpackExportPlan?,
     selectionSize: Int,
-    loading: Boolean,
     exporting: Boolean,
     busy: Boolean,
     validTarget: Boolean,
     validVersion: Boolean,
 ): Boolean =
-    prepared != null &&
-        prepared.files.isNotEmpty() &&
-        selectionSize > 0 &&
-        !loading &&
+    selectionSize > 0 &&
         !exporting &&
         !busy &&
         validTarget &&
