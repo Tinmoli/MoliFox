@@ -73,7 +73,7 @@ internal fun InstanceSavesTab(
     val blockedNote = savesBlockedNote(running, busy)
     val savesDirectory =
         actions.controller.store
-            .instancePath(instance.id)
+            .gamePath(instance)
             .resolve("saves")
     // 只把存档相关任务的结束当作刷新信号，避免其它下载任务反复触发备份 SHA1 重算。
     val saveJobsKey =

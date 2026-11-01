@@ -193,7 +193,7 @@ internal fun InstanceMods(
         val modsDirectory =
             runCatching {
                 actions.controller.store
-                    .instancePath(instance.id)
+                    .gamePath(instance)
                     .resolve("mods")
             }.getOrNull()
         // 首次读取还没有数据时给骨架；刷新时保留旧列表，只在顶部显示一条细进度。

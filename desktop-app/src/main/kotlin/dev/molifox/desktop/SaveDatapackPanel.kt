@@ -222,7 +222,7 @@ private fun SaveDatapackBody(
         }
     val savesDirectory =
         actions.controller.store
-            .instancePath(instance.id)
+            .gamePath(instance)
             .resolve("saves")
     val datapacksDirectory = savesDirectory.resolve(state.world).resolve("datapacks")
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {

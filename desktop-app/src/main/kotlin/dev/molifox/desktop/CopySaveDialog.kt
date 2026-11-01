@@ -39,11 +39,11 @@ fun CopySaveDialog(
             it.id != instance.id &&
                 it.installed &&
                 actions.controller.store
-                    .instancePath(it.id)
+                    .gamePath(it)
                     .toAbsolutePath()
                     .normalize() !=
                 actions.controller.store
-                    .instancePath(instance.id)
+                    .gamePath(instance)
                     .toAbsolutePath()
                     .normalize()
         }

@@ -154,12 +154,15 @@ class InstanceDeletionAliasTest {
             val instance =
                 controller.store.data.instances
                     .first()
+            val displayedPath = controller.store.gamePath(instance)
             runBlocking { controller.deleteInstance(instance.id) }.getOrThrow()
 
             assertTrue(
                 runCatching { controller.store.instance(instance.id) }.isFailure,
             )
             assertNull(runBlocking { controller.instanceDirectorySize(instance.id) })
+            // 已退出的页面仍可用旧快照完成一次只读路径计算，不再重新查已删除的 id。
+            assertEquals(displayedPath, controller.store.gamePath(instance))
         }
     }
 }

@@ -113,7 +113,7 @@ internal fun InstanceFolderBrowser(
     val liveState by actions.controller.state.collectAsState()
     val root =
         actions.controller.store
-            .instancePath(instance.id)
+            .gamePath(instance)
             .resolve(folder)
     val directory =
         if (subPath.isEmpty()) {
