@@ -82,14 +82,6 @@ class JobContext
             publishTransfers()
         }
 
-        /** 阶段推进时追加预计文件数（可为负，用于验收后释放不需要下载的文件）。 */
-        @Synchronized
-        internal fun expectFiles(count: Int) {
-            if (count == 0) return
-            transferCount = (transferCount + count).coerceAtLeast(0)
-            publishTransfers()
-        }
-
         /** 读取实际下载回调；首个偏移是已有断点，不计入本次网络速度。 */
         @Synchronized
         fun transfer(
