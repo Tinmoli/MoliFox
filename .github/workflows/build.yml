@@ -22,6 +22,7 @@ jobs:
         if: runner.os == 'Linux'
         run: chmod +x gradlew
       - uses: msys2/setup-msys2@v2
+        id: msys2
         if: runner.os == 'Windows'
         with:
           msystem: MINGW64
@@ -30,7 +31,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:MOLIFOX_MINGW_BIN = 'C:\msys64\mingw64\bin'
+          $env:MOLIFOX_MINGW_BIN = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
+          $env:PATH = "$env:MOLIFOX_MINGW_BIN;$env:PATH"
           .\gradlew.bat :desktop-app:portableWindows --console plain
       - name: Build Linux
         if: runner.os == 'Linux'

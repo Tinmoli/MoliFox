@@ -149,15 +149,48 @@ fun runtimeEntries(
             )
         }.distinctBy { it.filename }
 
+val skikoAwtVersion =
+    providers.provider {
+        configurations.runtimeClasspath
+            .get()
+            .incoming
+            .artifacts
+            .artifacts
+            .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
+            .first { it.group == "org.jetbrains.skiko" && it.module == "skiko-awt" }
+            .version
+    }
+
+fun nativeRuntimeConfiguration(platform: String): Configuration =
+    configurations.create("${platform}RuntimeNative") {
+        isCanBeConsumed = false
+        isTransitive = false
+        defaultDependencies {
+            add(project.dependencies.create("org.jetbrains.skiko:skiko-awt-runtime-$platform-x64:${skikoAwtVersion.get()}"))
+        }
+    }
+
+val windowsRuntimeNative = nativeRuntimeConfiguration("windows")
+val linuxRuntimeNative = nativeRuntimeConfiguration("linux")
+
+/** 打包目标与构建宿主独立；原生库版本沿用实际解析的 skiko，不改变清单格式。 */
+fun platformRuntimeEntries(
+    native: Configuration,
+    platform: String,
+): List<RuntimeEntry> =
+    runtimeEntries(configurations.runtimeClasspath.get(), platform)
+        .filterNot { it.filename.startsWith("skiko-awt-runtime-") } +
+        runtimeEntries(native, platform)
+
 /** 只写清单，不再把运行时 jar 塞进启动器：首次启动由引导程序从 Maven 镜像下载并校验。 */
 val preparePortableRuntime =
     tasks.register("preparePortableRuntime") {
         group = "distribution"
         description = "生成运行时依赖清单 build/portable/deps.json（依赖改为首次启动下载）"
-        inputs.files(configurations.runtimeClasspath)
+        inputs.files(configurations.runtimeClasspath, windowsRuntimeNative)
         outputs.file(runtimeManifestFile)
         doLast {
-            val entries = runtimeEntries(configurations.runtimeClasspath.get(), "windows-x64")
+            val entries = platformRuntimeEntries(windowsRuntimeNative, "windows-x64")
             check(entries.isNotEmpty()) { "运行时依赖清单为空" }
             val native = entries.filter { it.filename.startsWith("skiko-awt-runtime-") }
             check(native.size == 1 && native.single().filename.contains("-windows-x64")) {
@@ -363,68 +396,15 @@ tasks.register<Exec>("portableWindows") {
     }
 }
 
-val skikoAwtVersion =
-    providers.provider {
-        configurations.runtimeClasspath
-            .get()
-            .incoming
-            .artifacts
-            .artifacts
-            .mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier }
-            .first { it.group == "org.jetbrains.skiko" && it.module == "skiko-awt" }
-            .version
-    }
-val linuxRuntimeNative =
-    configurations.create("linuxRuntimeNative") {
-        isCanBeConsumed = false
-        isTransitive = false
-        defaultDependencies {
-            add(
-                project.dependencies.create(
-                    "org.jetbrains.skiko:skiko-awt-runtime-linux-x64:" + skikoAwtVersion.get(),
-                ),
-            )
-        }
-    }
 val linuxManifestFile = layout.buildDirectory.file("portable/linux/molifox-runtime.json")
 val prepareLinuxRuntime =
     tasks.register("prepareLinuxRuntime") {
-        dependsOn(preparePortableRuntime)
-        inputs.file(runtimeManifestFile)
-        inputs.files(linuxRuntimeNative)
+        inputs.files(configurations.runtimeClasspath, linuxRuntimeNative)
         outputs.file(linuxManifestFile)
         doLast {
-            // 复用 Windows 清单的全部条目，只把 skiko 原生库换成 linux-x64，并重新计算版本哈希。
-            val host =
-                groovy.json.JsonSlurper().parse(runtimeManifestFile.get().asFile) as Map<*, *>
-            val shared =
-                (host["dependencies"] as List<*>)
-                    .map { it as Map<*, *> }
-                    .filterNot { (it["filename"] as String).startsWith("skiko-awt-runtime-") }
-                    .map { dependency ->
-                        RuntimeEntry(
-                            group = dependency["group"] as String,
-                            artifact = dependency["artifact"] as String,
-                            version = dependency["version"] as String,
-                            filename = dependency["filename"] as String,
-                            sha256 = dependency["sha256"] as String,
-                            size = (dependency["size"] as Number).toLong(),
-                        )
-                    }
-            val native =
-                linuxRuntimeNative.files.map { file ->
-                    RuntimeEntry(
-                        group = "org.jetbrains.skiko",
-                        artifact = "skiko-awt-runtime-linux-x64",
-                        version = skikoAwtVersion.get(),
-                        filename = file.name,
-                        sha256 = sha256Of(file),
-                        size = file.length(),
-                    )
-                }
             val output = linuxManifestFile.get().asFile
             output.parentFile.mkdirs()
-            output.writeText(manifestJson(shared + native, "linux-x64"))
+            output.writeText(manifestJson(platformRuntimeEntries(linuxRuntimeNative, "linux-x64"), "linux-x64"))
         }
     }
 
