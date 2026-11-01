@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
-import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -377,16 +376,6 @@ internal fun AccentChip(
         }
     }
 }
-
-/** 当前字体名称：与「字体与缩放」子页的判定保持一致。 */
-internal fun fontLabel(settings: LauncherSettings): String =
-    when {
-        settings.fontChoice.isBlank() -> I18n.t("settings.font.systemDefault")
-        settings.fontChoice.startsWith("file:") ->
-            settings.customFonts.find { "file:" + it.path == settings.fontChoice }?.name
-                ?: I18n.t("settings.font.custom")
-        else -> settings.fontChoice.removePrefix("system:")
-    }
 
 /** 紧凑滑块行：标题 + 右侧数值 Tag，下方轨道 4dp / 滑块 14dp。 拖动时只改本地值保证跟手，停手 300ms 后写入设置。 */
 @Composable

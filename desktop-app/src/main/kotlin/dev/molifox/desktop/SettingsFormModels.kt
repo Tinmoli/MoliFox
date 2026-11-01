@@ -81,15 +81,6 @@ internal fun settingControl(
 /** 只有一行说明的条目：仍可被搜索命中。 */
 internal fun settingNote(text: String) = SettingBlock(text, "") { MutedText(text) }
 
-/** 下拉选项：标准值之后补上旧配置里的当前值，避免旧值显示成空白或被悄悄改掉。 */
-internal fun legacyOption(
-    value: Int,
-    standard: List<Int>,
-    label: (Int) -> String,
-): List<Pair<String, String>> =
-    standard.map { it.toString() to label(it) } +
-        (if (value in standard) emptyList() else listOf(value.toString() to label(value)))
-
 /**
  * 还原默认配置的取值：设置页负责的选项全部回到出厂值。 游戏目录、游戏目录语义与正版登录身份不属于本页，保持原样；
  * 已导入的字体、背景图片与左上角图标属于文件资产，只重置它们的选项，不删除文件本身。
