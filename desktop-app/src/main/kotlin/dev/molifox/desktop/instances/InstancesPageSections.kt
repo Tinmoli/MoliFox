@@ -266,6 +266,12 @@ private fun InstancesListOrGrid(
     navigate: (Page) -> Unit,
 ) {
     val selectedInstanceId = state.data.selectedInstanceId
+    val select: (GameInstance) -> Unit = {
+        actions.run { actions.controller.selectInstance(it.id) }
+        navigate(Page.Home)
+    }
+    val launch: (GameInstance) -> Unit = { launchInstance(it, actions, state, navigate) }
+    val favorite: (String) -> Unit = { actions.run { actions.controller.toggleFavorite(it) } }
     val list: @Composable () -> Unit = {
         InstanceListBody(
             versions,
@@ -276,19 +282,14 @@ private fun InstancesListOrGrid(
             sizeRevision,
             // 开始页的「版本选择」把这里当作挑选页：选中后立刻回开始页，
             // 「当前游戏」卡与按钮文字跟着切到新实例。
-            onSelect = {
-                actions.run { actions.controller.selectInstance(it.id) }
-                navigate(Page.Home)
-            },
-            onManage = { onManage(it) },
-            onLaunch = { launchInstance(it, actions, state, navigate) },
-            onDelete = { onDelete(it) },
-            onFavorite = {
-                actions.run { actions.controller.toggleFavorite(it) }
-            },
-            onRename = { onRename(it) },
-            onCopy = { onCopy(it) },
-            onExport = { onExport(it) },
+            onSelect = select,
+            onManage = onManage,
+            onLaunch = launch,
+            onDelete = onDelete,
+            onFavorite = favorite,
+            onRename = onRename,
+            onCopy = onCopy,
+            onExport = onExport,
         )
     }
     val cards: @Composable () -> Unit = {
@@ -298,19 +299,14 @@ private fun InstancesListOrGrid(
             selectedInstanceId,
             busy,
             // 网格视图与列表同一套挑选语义：选中后回到开始页。
-            onSelect = {
-                actions.run { actions.controller.selectInstance(it.id) }
-                navigate(Page.Home)
-            },
-            onManage = { onManage(it) },
-            onLaunch = { launchInstance(it, actions, state, navigate) },
-            onDelete = { onDelete(it) },
-            onFavorite = {
-                actions.run { actions.controller.toggleFavorite(it) }
-            },
-            onRename = { onRename(it) },
-            onCopy = { onCopy(it) },
-            onExport = { onExport(it) },
+            onSelect = select,
+            onManage = onManage,
+            onLaunch = launch,
+            onDelete = onDelete,
+            onFavorite = favorite,
+            onRename = onRename,
+            onCopy = onCopy,
+            onExport = onExport,
         )
     }
     // 列表 / 网格切换 180ms 交叉淡入；关闭动画时直接切换
