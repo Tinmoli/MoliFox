@@ -2,6 +2,8 @@
 package dev.molifox.multiplayer.easytier
 
 import dev.molifox.core.i18n.I18n
+import dev.molifox.core.platform.bindOwnedChild
+import dev.molifox.core.platform.ownedChildCommand
 import kotlinx.coroutines.delay
 import java.io.IOException
 import java.net.InetAddress
@@ -52,23 +54,43 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
     ): Result<EasyTierProcessHandle> {
         val process =
             try {
-                ProcessBuilder(command)
+                ProcessBuilder(ownedChildCommand(command))
                     .directory(workingDirectory.toFile())
                     .redirectErrorStream(true)
                     .start()
             } catch (failure: IOException) {
                 return Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure))
             }
+        val ownership = try {
+            bindOwnedChild(process)
+        } catch (failure: IOException) {
+            process.destroyForcibly().waitFor()
+            return Result.failure(failure)
+        }
         val reader =
             Thread({ drainOutput(process, onOutput) }, "easytier-core-log").apply {
                 isDaemon = true
                 start()
             }
+        val handle = JavaProcessHandle(process)
+        val shutdownHook = Thread({ handle.stop() }, "easytier-core-shutdown")
+        try {
+            Runtime.getRuntime().addShutdownHook(shutdownHook)
+        } catch (failure: IllegalStateException) {
+            handle.stop()
+            return Result.failure(failure)
+        }
         process.onExit().thenAccept { finished ->
+            ownership.close()
+            // JVM 进入关闭阶段时不能再移除 hook；此时 hook 的幂等 stop 负责兜底。
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+                .onFailure { failure ->
+                    if (failure !is IllegalStateException) System.err.println(failure.message)
+                }
             runCatching { reader.join(READER_JOIN_MILLIS) }
             onExit(finished.exitValue())
         }
-        return Result.success(JavaProcessHandle(process))
+        return Result.success(handle)
     }
 
     private fun drainOutput(
@@ -94,20 +116,27 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
 private class JavaProcessHandle(
     private val process: Process,
 ) : EasyTierProcessHandle {
-    @Volatile
-    private var stopped = false
-
     override val alive: Boolean
-        get() = !stopped && process.isAlive
+        get() = process.isAlive
 
+    @Synchronized
     override fun stop() {
-        if (stopped) return
-        stopped = true
+        if (!process.isAlive) return
         process.destroy()
-        if (!process.waitFor(STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly()
-            process.waitFor(FORCE_STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+        try {
+            if (process.waitFor(STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) return
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
+        if (process.isAlive) {
+            process.destroyForcibly()
+            try {
+                process.waitFor(FORCE_STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        check(!process.isAlive) { I18n.t("multiplayer.easyTierRuntime.stopFailed", process.pid()) }
     }
 
     private companion object {
@@ -174,7 +203,7 @@ class EasyTierRuntime(
     /** 占用一次启动机会并分配 RPC 端口；已有节点在运行时返回 null。 */
     private fun beginStart(): Int? =
         synchronized(lock) {
-            if (handle != null) {
+            if (handle != null || rpcPort != null) {
                 null
             } else {
                 stopping = false
@@ -194,7 +223,10 @@ class EasyTierRuntime(
             val candidate = EasyTierCli(cliExecutable, rpc, logger, commandRunner)
             logger(I18n.t("multiplayerB.easyTierRuntime.started", rpc), false)
             val ready = awaitCliReady(candidate, process).getOrThrow()
-            synchronized(lock) { currentCli = ready }
+            synchronized(lock) {
+                check(!stopping && handle === process && process.alive) { I18n.t("multiplayer.easyTierRuntime.2") }
+                currentCli = ready
+            }
             ready
         }
 
@@ -211,24 +243,30 @@ class EasyTierRuntime(
                 onExit = ::onProcessExit,
             )
         val process = launched.getOrElse { failure -> throw failure }
-        synchronized(lock) { handle = process }
+        synchronized(lock) {
+            if (stopping || rpcPort == null) {
+                process.stop()
+                error(I18n.t("multiplayer.easyTierRuntime.2"))
+            }
+            handle = process
+        }
         return process
     }
 
     /** 主动停止：结束进程并清空 RPC/CLI；可重复调用。 */
     override fun stop() {
-        val process =
-            synchronized(lock) {
-                if (stopping) return
-                stopping = true
-                currentCli = null
+        synchronized(lock) {
+            stopping = true
+            currentCli = null
+            try {
+                handle?.stop()
+                handle = null
                 rpcPort = null
-                handle.also { handle = null }
+            } finally {
+                stopping = false
             }
-        process?.stop()
-        if (process != null) {
-            logger(I18n.t("multiplayerB.easyTierRuntime.stopped"), false)
         }
+        logger(I18n.t("multiplayerB.easyTierRuntime.stopped"), false)
     }
 
     override fun close() = stop()

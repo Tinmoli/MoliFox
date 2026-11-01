@@ -84,12 +84,13 @@ internal abstract class NetworkTextActions(
             var lastError: Exception? = null
             for (candidate in orderedCandidates(url, sourceOverride ?: settings.source())) {
                 try {
-                    execute(builder(candidate).build()).use { response ->
+                    val text = execute(builder(candidate).build()).readCancellable { response ->
                         if (!response.isSuccessful) {
                             throw HttpStatusException(response.code, URI(url).host)
                         }
-                        return@withContext response.body?.string() ?: error(I18n.t("core.networkEndpointActions.2"))
+                        response.body?.string() ?: error(I18n.t("core.networkEndpointActions.2"))
                     }
+                    return@withContext text
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: IOException) {
@@ -118,7 +119,7 @@ internal abstract class NetworkTextActions(
                 I18n.t("core.networkEndpointActions.4")
             }
             execute(builder(url).header("Accept", "application/vnd.github+json").build())
-                .use { response ->
+                .readCancellable { response ->
                     check(response.isSuccessful) {
                         when (response.code) {
                             NET_HTTP_NOT_FOUND -> I18n.t("core.networkEndpointActions.5")

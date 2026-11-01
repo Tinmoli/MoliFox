@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.nio.file.Path
@@ -93,6 +94,7 @@ internal abstract class LauncherRuntimeActions(
             store.notify(I18n.t("miscA1.runtimeActions.downloadUpdateFirst"))
             return
         }
+        scope.launch(Dispatchers.IO) {
         UpdateApplier(store)
             .apply(downloaded)
             .onSuccess {
@@ -105,6 +107,7 @@ internal abstract class LauncherRuntimeActions(
                 store.log(message, true)
                 store.notify(message)
             }
+        }
     }
 
     override fun perform(action: suspend () -> Unit): Job =

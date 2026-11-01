@@ -41,6 +41,7 @@ internal fun normalizedSettings(input: LauncherSettings): LauncherSettings =
         javaDownloadSource = input.effectiveJavaDownloadSource,
         downloadSource = input.effectiveDownloadSource,
         versionListSource = input.effectiveVersionListSource,
+        githubSource = input.githubSource.takeIf { key -> GitHubSource.entries.any { it.key == key } } ?: "auto",
         // 旧配置里可能残留越界值：读入时收敛到可执行范围，避免整份设置校验失败。
         downloadThreads = input.downloadThreads.coerceIn(1, MAX_DOWNLOAD_THREADS),
         downloadSegments =
@@ -181,6 +182,10 @@ private fun validateScaleSettings(settings: LauncherSettings) {
 }
 
 private fun validateDownloadSettings(settings: LauncherSettings) {
+    require(GitHubSource.entries.any { it.key == settings.githubSource }) { I18n.t("settings.github.invalidSource") }
+    require(settings.githubSource != "custom" || validGitHubProxy(settings.githubCustomProxy)) {
+        I18n.t("settings.github.invalidAddress")
+    }
     require(
         settings.downloadThreads in 1..MAX_DOWNLOAD_THREADS &&
             settings.downloadSource in listOf("auto", "official", "bmclapi") &&

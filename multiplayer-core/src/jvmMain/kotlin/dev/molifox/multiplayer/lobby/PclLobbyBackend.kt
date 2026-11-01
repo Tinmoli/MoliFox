@@ -20,6 +20,7 @@ import dev.molifox.multiplayer.protocol.RoomCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -208,6 +209,7 @@ class PclLobbyBackend(
 
     override suspend fun host(worldPort: Int?): Result<Unit> =
         commandMutex.withLock {
+            if (closed) return@withLock Result.failure(IOException(I18n.t("deskI.multiplayer.closed")))
             if (store.current.connected || store.current.busy) {
                 return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.3"))
             }
@@ -225,6 +227,7 @@ class PclLobbyBackend(
 
     override suspend fun join(roomCode: String): Result<Unit> =
         commandMutex.withLock {
+            if (closed) return@withLock Result.failure(IOException(I18n.t("deskI.multiplayer.closed")))
             if (store.current.connected || store.current.busy) {
                 return@withLock store.fail(I18n.t("multiplayer.pclLobbyBackend.3"))
             }
@@ -278,11 +281,14 @@ class PclLobbyBackend(
             }
         }
 
-    override suspend fun close() {
+    override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
         closed = true
-        scanner.close()
-        commandMutex.withLock { coordinator.close() }
         scope.cancel()
+        try {
+            scanner.close()
+        } finally {
+            commandMutex.withLock { coordinator.close() }
+        }
     }
 
     private companion object {

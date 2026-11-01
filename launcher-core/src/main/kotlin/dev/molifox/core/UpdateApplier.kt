@@ -36,9 +36,11 @@ internal object LauncherBundlePath {
             else -> null
         }
 
-    /** Linux 的 .run 外壳进程；JVM 退出后它还要清理临时目录，需等它一起退出再覆盖文件。 */
-    fun wrapperPid(os: String): Long? =
-        if (os == "linux") System.getenv("MOLIFOX_WRAPPER_PID")?.toLongOrNull() else null
+    /** 原生外壳进程；JVM 退出后它还要清理临时目录并退出，覆盖文件前必须等它一起结束。 */
+    fun wrapperPid(): Long? =
+        System.getenv("MOLIFOX_WRAPPER_PID")
+            ?.toLongOrNull()
+            ?.takeIf { it != ProcessHandle.current().pid() }
 
     private fun isPortableWindowsExe(path: String): Boolean {
         if (!path.endsWith(".exe", ignoreCase = true)) return false
@@ -56,7 +58,7 @@ internal class UpdateApplier(
     private val store: LauncherStore,
     private val bundle: Path? = LauncherBundlePath.current(store.platform.osName),
     private val pid: Long = ProcessHandle.current().pid(),
-    private val wrapperPid: Long? = LauncherBundlePath.wrapperPid(store.platform.osName),
+    private val wrapperPid: Long? = LauncherBundlePath.wrapperPid(),
 ) {
     fun apply(downloaded: Path): Result<Unit> =
         runCatching {
@@ -73,12 +75,24 @@ internal class UpdateApplier(
             require(target.toAbsolutePath() != downloaded.toAbsolutePath()) {
                 I18n.t("networkB2.updateApplier.sameFile")
             }
-            launch(writeScript(target, downloaded))
+            require(!Files.isSameFile(target, downloaded)) { I18n.t("networkB2.updateApplier.sameFile") }
+            val asset = requireNotNull(store.state.value.update.release?.asset) { I18n.t("core.gitHubUpdater.7") }
+            require(asset.sha256.isNotBlank() && Files.size(downloaded) == asset.size &&
+                digest(downloaded, "SHA-256").equals(asset.sha256, true)) { I18n.t("core.gitHubUpdater.8") }
+            val staged = target.resolveSibling(".${target.fileName}.update-${UUID.randomUUID()}")
+            try {
+                Files.copy(downloaded, staged)
+                launch(writeScript(target, staged, asset.sha256.lowercase()))
+            } catch (failure: Exception) {
+                Files.deleteIfExists(staged)
+                throw failure
+            }
         }
 
     private fun writeScript(
         target: Path,
         downloaded: Path,
+        sha256: String,
     ): Path {
         val directory =
             store.downloadDirectory.resolve("updates").resolve("apply").also {
@@ -88,89 +102,48 @@ internal class UpdateApplier(
         val script = directory.resolve("apply-${UUID.randomUUID()}.$suffix")
         Files.writeString(
             script,
-            if (isWindows()) windowsScript(target, downloaded) else linuxScript(target, downloaded),
+            if (isWindows()) {
+                "\uFEFF" + UpdateReplacementScripts.windows(target, downloaded, listOfNotNull(pid, wrapperPid), sha256)
+            } else {
+                UpdateReplacementScripts.linux(target, downloaded, listOfNotNull(pid, wrapperPid), sha256)
+            },
         )
         return script
     }
 
     private fun isWindows(): Boolean = store.platform.osName == "windows"
 
-    /** 等待 JVM（以及 Linux 外壳）退出后覆盖启动器；用单引号字面量避免路径注入。 */
-    private fun windowsScript(
-        target: Path,
-        downloaded: Path,
-    ): String {
-        val waits =
-            listOfNotNull(pid, wrapperPid).joinToString(NEWLINE) { processPid ->
-                val check = "Get-Process -Id $processPid -ErrorAction SilentlyContinue"
-                "while ($check) { Start-Sleep -Milliseconds 500 }"
-            }
-        val copy =
-            "Copy-Item -LiteralPath '${psLiteral(downloaded)}' " +
-                "-Destination '${psLiteral(target)}' -Force"
-        return listOf(
-            "\$ErrorActionPreference = 'Stop'",
-            waits,
-            "for (\$attempt = 0; \$attempt -lt 30; \$attempt++) {",
-            "    try {",
-            "        $copy",
-            "        break",
-            "    } catch {",
-            "        Start-Sleep -Milliseconds 500",
-            "    }",
-            "}",
-            "Start-Process -FilePath '${psLiteral(target)}'",
-            "Remove-Item -LiteralPath \$PSCommandPath -Force",
-        ).joinToString(NEWLINE)
-    }
-
-    private fun linuxScript(
-        target: Path,
-        downloaded: Path,
-    ): String {
-        val wait = listOfNotNull(pid, wrapperPid).joinToString(" ") { "\"$it\"" }
-        return listOf(
-            "#!/bin/sh",
-            "for pid in $wait; do",
-            "  while kill -0 \"\$pid\" 2>/dev/null; do sleep 1; done",
-            "done",
-            "cp -f '${shLiteral(downloaded)}' '${shLiteral(target)}' && " +
-                "chmod +x '${shLiteral(target)}'",
-            "setsid '${shLiteral(target)}' >/dev/null 2>&1 &",
-            "rm -f \"\$0\"",
-        ).joinToString(NEWLINE) + NEWLINE
-    }
-
     private fun launch(script: Path) {
         val command =
             if (isWindows()) {
+                // 不使用裸命令名：部分机器 PATH 首位是应用执行别名，ProcessBuilder 会拿到拒绝访问。
+                val systemRoot = System.getenv("SystemRoot") ?: "C:\\Windows"
+                val powershell =
+                    Path.of(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+                        .takeIf(Files::isRegularFile)
+                        ?.toString()
+                        ?: "powershell.exe"
+                // -File 在受策略限制的机器上可能直接以拒绝访问失败；用 -Command 调用同一脚本更稳。
+                val scriptCommand = "& '${script.toString().replace("'", "''")}'"
                 listOf(
-                    "cmd.exe",
-                    "/c",
-                    "start",
-                    "",
-                    "/min",
-                    "powershell.exe",
+                    powershell,
                     "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    // 默认 Restricted 策略会拒绝 .ps1；替换脚本由本进程生成并校验，显式放行。
                     "-ExecutionPolicy",
                     "Bypass",
-                    "-File",
-                    script.toString(),
+                    "-Command",
+                    scriptCommand,
                 )
             } else {
                 listOf("setsid", "sh", script.toString())
             }
         ProcessBuilder(command)
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(script.resolveSibling("${script.fileName}.log").toFile()))
             .start()
     }
 
-    private fun psLiteral(path: Path): String = path.toAbsolutePath().toString().replace("'", "''")
-
-    private fun shLiteral(path: Path): String = path.toAbsolutePath().toString().replace("'", "'\''")
-
-    private companion object {
-        const val NEWLINE = "\n"
-    }
 }

@@ -32,6 +32,7 @@ internal fun downloadSettingCards(
     settings: LauncherSettings,
 ): List<SettingCard> {
     val cards = mutableListOf<SettingCard>()
+    cards.add(githubSourceSettingCard(actions, writer, settings))
     cards.add(
         SettingCard(
             I18n.t("settings.download.section.title"),

@@ -6,6 +6,7 @@
 package dev.molifox.core
 
 import com.google.gson.JsonObject
+import com.google.gson.JsonArray
 import com.google.gson.JsonParseException
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
@@ -28,6 +29,7 @@ data class LauncherUpdateState(
     val available: Boolean = false,
     val error: String? = null,
     val downloadedFile: String? = null,
+    val promptSerial: Long = 0,
 )
 
 data class LauncherRelease(
@@ -37,6 +39,7 @@ data class LauncherRelease(
     val publishedAt: String,
     val pageUrl: String,
     val asset: LauncherReleaseAsset? = null,
+    val prerelease: Boolean = false,
 )
 
 data class LauncherReleaseAsset(
@@ -79,14 +82,26 @@ class GitHubUpdater
         }
 
         private suspend fun latestRelease(): LauncherRelease? {
-            val releases = network.gitHubReleaseList("$api/releases?per_page=100")
+            val releases = network.gitHubReleaseList(
+                "$api/releases?per_page=100",
+                store.data.settings.gitHubSourceOptions(),
+            ) { list ->
+                selectRelease(list)?.let { isNewer(it.version) } == true
+            }
+            return selectRelease(releases)
+        }
+
+        private fun selectRelease(releases: JsonArray): LauncherRelease? {
             val latest =
                 releases
                     .mapNotNull { item ->
                         val release = item.asJsonObject
                         if (
                             release.get("draft")?.asBoolean == true ||
-                            release.get("prerelease")?.asBoolean == true
+                            (!store.data.settings.allowBetaUpdates && (
+                                release.get("prerelease")?.asBoolean == true ||
+                                    VersionNumber.parse(release.string("tag_name"))?.qualifier?.isNotEmpty() == true
+                            ))
                         ) {
                             null
                         } else {
@@ -104,10 +119,7 @@ class GitHubUpdater
             release: LauncherRelease?,
             manual: Boolean,
         ) {
-            val available =
-                release != null &&
-                    requireNotNull(VersionNumber.parse(release.version)) { I18n.t("core.gitHubUpdater.1") } >
-                    (VersionNumber.parse(LAUNCHER_VERSION) ?: error(I18n.t("core.gitHubUpdater.2")))
+            val available = release != null && isNewer(release.version)
             store.updateState {
                 it.copy(
                     update =
@@ -115,6 +127,7 @@ class GitHubUpdater
                             checked = true,
                             release = release,
                             available = available,
+                            promptSerial = it.update.promptSerial + 1,
                             downloadedFile =
                                 it.update.downloadedFile.takeIf { _ ->
                                     it.update.release == release
@@ -132,6 +145,10 @@ class GitHubUpdater
                 )
             }
         }
+
+        private fun isNewer(version: String): Boolean =
+            requireNotNull(VersionNumber.parse(version)) { I18n.t("core.gitHubUpdater.1") } >
+                (VersionNumber.parse(LAUNCHER_VERSION) ?: error(I18n.t("core.gitHubUpdater.2")))
 
         private fun reportCheckFailure(
             failure: Exception,
@@ -157,7 +174,13 @@ class GitHubUpdater
                     "linux" -> "MoliFox-linux-x64.run"
                     else -> ""
                 }
-            val asset = releaseAssetOf(json, name)
+            val normalizedVersion = version.removePrefix("v")
+            val versioned = when (store.platform.osName) {
+                "windows" -> "MoliFox-$normalizedVersion-windows-x86_64.exe"
+                "linux" -> "MoliFox-$normalizedVersion-linux-x86_64.run"
+                else -> ""
+            }
+            val asset = releaseAssetOf(json, listOf(versioned, name))
             return LauncherRelease(
                 version,
                 json.string("name").ifBlank { version },
@@ -165,26 +188,27 @@ class GitHubUpdater
                 json.string("published_at"),
                 page,
                 asset,
+                json.get("prerelease")?.asBoolean == true || VersionNumber.parse(version)?.qualifier?.isNotEmpty() == true,
             )
         }
 
         /** 从 release 的 assets 里挑出当前平台文件；找不到返回 null，允许无附件发布。 */
         private fun releaseAssetOf(
             json: JsonObject,
-            name: String,
+            names: List<String>,
         ): LauncherReleaseAsset? =
             json
                 .getAsJsonArray("assets")
                 ?.map { it.asJsonObject }
-                ?.firstOrNull {
-                    it.string("name") == name &&
+                ?.filter {
+                    it.string("name") in names &&
                         store.platform.architecture == "x64"
-                }?.let {
+                }?.minByOrNull { names.indexOf(it.string("name")) }?.let {
                     val url = it.string("browser_download_url")
                     requireValidDownloadUrl(url)
                     val digest = it.string("digest").removePrefix("sha256:")
                     LauncherReleaseAsset(
-                        name,
+                        it.string("name"),
                         url,
                         it.get("size")?.asLong ?: 0,
                         digest
@@ -199,6 +223,7 @@ class GitHubUpdater
             context: JobContext,
         ): Path {
             val asset = requireNotNull(release.asset) { I18n.t("core.gitHubUpdater.7") }
+            require(isNewer(release.version)) { I18n.t("settings.update.latest") }
             requireValidDownloadUrl(asset.url)
             require(asset.sha256.isNotEmpty()) { I18n.t("core.gitHubUpdater.8") }
             require(
@@ -227,7 +252,7 @@ class GitHubUpdater
             target: Path,
             context: JobContext,
         ) {
-            val candidates = gitHubDownloadCandidates(asset.url)
+            val candidates = gitHubDownloadCandidates(asset.url, store.data.settings.gitHubSourceOptions())
             val ordered =
                 if (candidates.size >
                     1

@@ -20,6 +20,6 @@
 | miniz | MIT | 原生启动器的 ZIP 解压。 | https://github.com/richgel999/miniz |
 | Azul Zulu JRE | GPLv2 with Classpath Exception | 首次启动下载的 Java 运行时，许可全文在其 legal/ 目录。 | https://www.azul.com/downloads/ |
 | Eclipse Temurin JRE | GPLv2 with Classpath Exception | Zulu 不可用时下载的 Java 运行时，许可全文在其 legal/ 目录。 | https://adoptium.net/ |
-| EasyTier 2.6.4（联机虚拟网络） | LGPL-3.0 | 经用户确认后按需下载，作为独立进程运行；不随包分发、不修改。 | https://github.com/EasyTier/EasyTier |
+| EasyTier 2.6.4 | LGPL-3.0 | 经用户确认后按需下载，作为独立进程运行。 | https://github.com/EasyTier/EasyTier |
 | JUnit 5 (Jupiter) | EPL-2.0 | 仅测试：单元测试框架。 | https://github.com/junit-team/junit |
 | MockWebServer / OkHttp TLS | Apache-2.0 | 仅测试：HTTP 与 TLS 模拟。 | https://github.com/square/okhttp |

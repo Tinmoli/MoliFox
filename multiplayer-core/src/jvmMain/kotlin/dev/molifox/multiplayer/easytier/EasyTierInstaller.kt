@@ -5,6 +5,9 @@ import dev.molifox.core.i18n.I18n
 import dev.molifox.multiplayer.common.CoreStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -304,17 +307,16 @@ private suspend fun orderedSources(
     cache: SourceRankingCache,
     now: Long,
 ): List<String> {
-    cache.order?.takeIf { now - cache.rankedAt < RANKING_TTL_MILLIS }?.let { cached ->
+    val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
+    cache.order?.takeIf { now - cache.rankedAt < RANKING_TTL_MILLIS && it.toSet() == candidates.toSet() }?.let { cached ->
         logger(I18n.t("multiplayerB.easyTierInstaller.reuseRanking", cached.joinToString()), false)
         return cached
     }
-    val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
     val measured =
-        candidates.mapNotNull { source ->
-            probe.measureSpeed(source)?.let {
-                source to
-                    it
-            }
+        coroutineScope {
+            candidates.map { source -> async(Dispatchers.IO) {
+                probe.measureSpeed(source)?.let { source to it }
+            } }.awaitAll().filterNotNull()
         }
     measured.forEach { (source, speed) ->
         logger(I18n.t("multiplayerB.easyTierInstaller.speedMeasured", speed / KIB, source), false)

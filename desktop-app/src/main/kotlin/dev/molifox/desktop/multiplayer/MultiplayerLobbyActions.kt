@@ -2,6 +2,7 @@
 package dev.molifox.desktop.multiplayer
 
 import dev.molifox.multiplayer.domain.MultiplayerBackend
+import kotlinx.coroutines.CancellationException
 
 internal typealias ExecuteMultiplayer = (suspend () -> Result<Unit>) -> Unit
 
@@ -41,8 +42,9 @@ internal fun multiplayerLobbyActions(
         join = { code -> execute { backend.join(code) } },
         leave = {
             execute {
-                backend.leave()
-                Result.success(Unit)
+                runCatching { backend.leave() }.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
+                }
             }
         },
         refreshWorlds = { execute { backend.refreshWorlds() } },

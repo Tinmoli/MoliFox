@@ -91,6 +91,7 @@ class NetworkClient
             /** 源被禁用、限流等需要留痕的事件。 */
             logger: (String, Boolean) -> Unit = { _, _ -> },
             interceptors: List<okhttp3.Interceptor> = emptyList(),
+            githubSources: () -> GitHubSourceOptions = { GitHubSourceOptions() },
         ) : this(
             NetworkActions(
                 NetworkClientSettings(
@@ -108,6 +109,7 @@ class NetworkClient
                     health = health,
                     logger = logger,
                     interceptors = interceptors,
+                    githubSources = githubSources,
                 ),
             ),
         )

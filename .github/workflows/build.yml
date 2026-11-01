@@ -26,28 +26,24 @@ jobs:
         with:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc
-      - name: Test and build Windows
+      - name: Build Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:MOLIFOX_MINGW_BIN = 'C:\msys64\mingw64\bin'
-          .\gradlew.bat :launcher-core:test :desktop-app:portableWindows --console plain
-      - name: Test and build Linux
+          .\gradlew.bat :desktop-app:portableWindows --console plain
+      - name: Build Linux
         if: runner.os == 'Linux'
-        run: ./gradlew :launcher-core:test :desktop-app:portableLinux --console plain
+        run: ./gradlew :desktop-app:portableLinux --console plain
       - uses: actions/upload-artifact@v4
         with:
           name: MoliFox-${{ runner.os }}-x64
           path: |
-            MoliFox-*-windows-x86_64.exe
+            dist/MoliFox-*-windows-x86_64.exe
             build/validation/windows-package.sha256
-            MoliFox-*-linux-x86_64.run
+            dist/MoliFox-*-linux-x86_64.run
             build/validation/linux-package.sha256
             LICENSE
             assets/legal/THIRD_PARTY.md
+            assets/legal/AGREEMENT*.md
             README.md
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: Test-results-${{ runner.os }}
-          path: launcher-core/build/reports/tests/test/

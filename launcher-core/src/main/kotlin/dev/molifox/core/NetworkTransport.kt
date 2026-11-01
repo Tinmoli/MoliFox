@@ -57,6 +57,7 @@ internal class NetworkClientSettings(
     val health: SourceHealth,
     val logger: (String, Boolean) -> Unit,
     val interceptors: List<Interceptor>,
+    val githubSources: () -> GitHubSourceOptions,
 )
 
 private fun requestLimit(settings: NetworkClientSettings): Int {

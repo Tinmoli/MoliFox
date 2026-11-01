@@ -233,9 +233,15 @@ data class LauncherSettings(
     val windowTransparent: Boolean = false,
     /** 界面语言：auto 跟随系统，或 zh-CN / zh-TW / zh-HK / en-US；旧配置保留原值。 */
     val language: String = "auto",
+    /** 已同意的用户协议版本；为空或低于当前版本时启动器会再次询问。 */
+    val agreementVersion: String = "",
     val gameLanguageFollowsLauncher: Boolean = true,
-    /** 启动时检查 GitHub 上已发布的正式版本。 */
-    val autoCheckUpdates: Boolean = false,
+    /** 启动时后台检查更新；已有配置中主动关闭的选择保留。 */
+    val autoCheckUpdates: Boolean = true,
+    val allowBetaUpdates: Boolean = false,
+    /** GitHub 公开资源统一线路：auto/direct/ghproxy/ghproxy-com/ghfast/custom。 */
+    val githubSource: String = "auto",
+    val githubCustomProxy: String = "",
     /** 版本列表源：official / bmclapi，独立于游戏文件下载源。 */
     val versionListSource: String = "auto",
     /** 附加内容（模组/整合包等）站点：modrinth / curseforge。 */

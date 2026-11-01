@@ -113,14 +113,12 @@ fun ContentInstallDialog(
         }.onFailure { error = it.message }
         if (isActive) loading = false
     }
+    // 实例可能在安装弹窗打开期间被删除：标题按空名称降级，不抛异常（会在 Compose 里弹 Error）。
+    val instanceStore = actions.controller.store
+    val instanceName = runCatching { instanceStore.instance(instanceId).name }.getOrNull().orEmpty()
     Modal(
         hit.title,
-        strings.t(
-            "dialogs.content.install.subtitle",
-            actions.controller.store
-                .instance(instanceId)
-                .name,
-        ),
+        strings.t("dialogs.content.install.subtitle", instanceName),
         onDismiss = onDismiss,
     ) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())

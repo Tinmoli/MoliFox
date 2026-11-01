@@ -58,9 +58,17 @@ val styleToolClasspath =
         ktlintClasspath
     }
 val styleToolClasses = layout.buildDirectory.dir("quality/classes")
+
+// ktlint 包装源码不再入库（开发工具只在本机保留），先找仓库目录、再找本机 .dev 目录；
+// 两处都没有时跳过 ktlint 任务，而不是让门禁因为缺文件直接失败。
+val styleToolSource =
+    listOf(file("tools/style"), file(".dev/tooling/style")).firstOrNull { it.isDirectory }
+val styleToolAvailable = styleToolSource != null
+
 val compileStyleTool =
     tasks.register<JavaCompile>("compileStyleTool") {
-        source(fileTree("tests/tools/style") { include("*.java") })
+        onlyIf { styleToolAvailable }
+        source(fileTree(styleToolSource ?: file("tools/style")) { include("*.java") })
         classpath = styleToolClasspath
         destinationDirectory.set(styleToolClasses)
         options.encoding = "UTF-8"
@@ -80,6 +88,7 @@ fun registerKtlintTask(
         } else {
             "Check all Kotlin formatting"
         }
+    onlyIf { styleToolAvailable }
     dependsOn(compileStyleTool)
     classpath = files(styleToolClasses, styleToolClasspath)
     mainClass.set("KotlinStyleMain")
@@ -108,6 +117,12 @@ fun registerKtlintTask(
 registerKtlintTask("ktlintCheck", false)
 registerKtlintTask("ktlintFormat", true)
 
+if (!styleToolAvailable) {
+    logger.lifecycle(
+        "ktlint 包装源码未找到（tools/style 与 .dev/tooling/style 都不存在），ktlintCheck/ktlintFormat 将跳过。",
+    )
+}
+
 allprojects {
     tasks.configureEach {
         if (name.startsWith("compile") && name.endsWith("Kotlin")) {
@@ -122,6 +137,7 @@ val styleToolTest =
     tasks.register<JavaExec>("styleToolTest") {
         group = "verification"
         description = "Verify formatting safety and idempotence using local fixtures"
+        onlyIf { styleToolAvailable }
         dependsOn(compileStyleTool)
         classpath = files(styleToolClasses, styleToolClasspath)
         mainClass.set("KotlinStyleTest")
@@ -129,7 +145,10 @@ val styleToolTest =
         args(file("tests/.tmp/quality-tool").absolutePath)
     }
 
-fun registerDetektTask(taskName: String, createBaseline: Boolean) = tasks.register<JavaExec>(taskName) {
+fun registerDetektTask(
+    taskName: String,
+    createBaseline: Boolean,
+) = tasks.register<JavaExec>(taskName) {
     group = "verification"
     description = "Analyze Kotlin quality against the explicit historical baseline"
     mustRunAfter("ktlintFormat")

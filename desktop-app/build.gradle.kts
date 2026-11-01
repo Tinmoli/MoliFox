@@ -526,6 +526,18 @@ tasks.register("verifyDesktopPackages") {
                         "$platform 包缺少许可声明 $notice"
                     }
                 }
+                // 用户协议随包发布：四种界面语言各一份，缺任何一份都会让对应语言的阅读页空白。
+                for (agreement in
+                    listOf(
+                        "AGREEMENT.md",
+                        "AGREEMENT.en-US.md",
+                        "AGREEMENT.zh-TW.md",
+                        "AGREEMENT.zh-HK.md",
+                    )) {
+                    check(zip.getEntry("META-INF/molifox/$agreement") != null) {
+                        "$platform 包缺少用户协议 $agreement"
+                    }
+                }
                 // 运行时依赖不再内嵌；jar 里只留清单。
                 val embedded =
                     zip.entries().asSequence().filter {
@@ -762,6 +774,7 @@ val uiSmoke =
         systemProperty("molifox.ui.deletionOnly", providers.gradleProperty("uiDeletionOnly").getOrElse("false"))
         systemProperty("molifox.ui.lifecycleOnly", providers.gradleProperty("uiLifecycleOnly").getOrElse("false"))
         systemProperty("molifox.ui.exportOnly", providers.gradleProperty("uiExportOnly").getOrElse("false"))
+        systemProperty("molifox.ui.agreementOnly", providers.gradleProperty("uiAgreementOnly").getOrElse("false"))
         group = "verification"
         description =
             "Exercise current desktop UI with temporary instances and in-process API fixtures"

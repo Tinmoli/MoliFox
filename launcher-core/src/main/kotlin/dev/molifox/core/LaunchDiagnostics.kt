@@ -65,6 +65,18 @@ internal fun isGameError(line: String): Boolean =
 /** 启动失败的常见特征与处理建议；声明顺序即匹配优先级。标题与建议存 key，使用时按当前语言取值。 */
 private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
     listOf(
+        // 账户/登录问题常常让启动在“解析凭据”阶段就中止，日志里只有这一条清晰原因，优先识别。
+        Triple(
+            Regex(
+                "登录凭据不可用|登录已失效|请重新登录|请先添加并选择游戏账户|" +
+                    "登入認證無法使用|登入已失效|請重新登入|請先新增並選擇遊戲帳戶|" +
+                    "credentials for this account are unavailable|sign-in has expired|" +
+                    "sign in again|Add and select a game account first",
+                RegexOption.IGNORE_CASE,
+            ),
+            "diagA2.launchDiagnostics.accountTitle",
+            "diagA2.launchDiagnostics.accountSuggestion",
+        ),
         Triple(
             Regex(
                 "SSLHandshakeException|Remote host terminated the handshake|" +
@@ -136,6 +148,12 @@ private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
         ),
     )
 
+/**
+ * 启动器主动中止启动时写入的 FATAL 行（“启动中止：原因”）；这一行的原因就是本次失败的真实原因，
+ * 直接拿它做判断和证据，避免整段日志里更早的旧错误盖住真正原因。
+ */
+private val LAUNCH_ABORTED = Regex("启动中止|啟動中止|Launch aborted", RegexOption.IGNORE_CASE)
+
 internal fun diagnoseGameFailure(
     text: String,
     directory: Path,
@@ -144,12 +162,20 @@ internal fun diagnoseGameFailure(
     // 在其中扫关键词会把普通网络警告误判成崩溃原因（例如 TLS）。
     val crashReport = readCrashReport(text)
     val evidence = crashReport ?: text
-    val memoryMatch = OUT_OF_MEMORY.find(evidence)
+    // 启动器主动中止时，“启动中止：原因”那一行才是本次失败的原因，先按它判断。
+    val aborted =
+        if (crashReport == null) {
+            text.lineSequence().firstOrNull { LAUNCH_ABORTED.containsMatchIn(it) }
+        } else {
+            null
+        }
+    val memoryMatch = if (aborted != null) OUT_OF_MEMORY.find(aborted) else OUT_OF_MEMORY.find(evidence)
+    // 有「启动中止」行时只在该行上找匹配，避免整段历史日志里的旧错误盖住真正原因。
+    val evidenceLines = if (aborted != null) sequenceOf(aborted) else evidence.lineSequence()
     val matched =
         FAILURE_PATTERNS.firstNotNullOfOrNull { (pattern, titleKey, suggestionKey) ->
-            evidence.lineSequence().firstOrNull { pattern.containsMatchIn(it) }?.let { line ->
-                Triple(line, titleKey, suggestionKey)
-            }
+            val line = evidenceLines.firstOrNull { pattern.containsMatchIn(it) }
+            if (line == null) null else Triple(line, titleKey, suggestionKey)
         }
     val jvmFatal = crashReport == null && JVM_FATAL_ERROR.containsMatchIn(text)
     return when {
@@ -160,8 +186,19 @@ internal fun diagnoseGameFailure(
                 memoryMatch.value,
                 directory,
             )
+
         jvmFatal -> genericIssue(text, directory)
+
         matched != null -> issue(matched.second, matched.third, matched.first, directory)
+
+        aborted != null ->
+            issue(
+                "diagA2.launchDiagnostics.abortedTitle",
+                "diagA2.launchDiagnostics.abortedSuggestion",
+                aborted,
+                directory,
+            )
+
         else -> genericIssue(text, directory)
     }
 }
@@ -204,19 +241,27 @@ private fun readCrashReport(text: String): String? =
 private fun genericIssue(
     text: String,
     directory: Path,
-): LaunchIssue =
-    LaunchIssue(
+): LaunchIssue {
+    // 兜底证据：优先异常消息行；堆栈帧只说明调用链，不能当原因展示。
+    val lines =
+        text
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+    val message =
+        lines.firstOrNull { line ->
+            val head = line.substringBefore(':', "")
+            val detail = line.substringAfter(':', "")
+            (head.endsWith("Exception") || head.endsWith("Error")) && detail.isNotBlank()
+        }
+    return LaunchIssue(
         I18n.t("diagA2.launchDiagnostics.genericTitle"),
         I18n.t("diagA2.launchDiagnostics.genericSuggestion"),
-        redactSecrets(
-            text
-                .lineSequence()
-                .filter { it.isNotBlank() }
-                .lastOrNull()
-                .orEmpty(),
-        ).take(EVIDENCE_MAX_LENGTH),
+        redactSecrets(message ?: lines.lastOrNull().orEmpty()).take(EVIDENCE_MAX_LENGTH),
         directory.toString(),
     )
+}
 
 internal class LaunchSession(
     private val store: LauncherStore,

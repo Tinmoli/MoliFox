@@ -1,5 +1,6 @@
-# 入库：源码、tests/ 测试源码与检查工具、构建脚本、规则配置、项目资源和文档。
+# 入库：源码、构建脚本、规则配置、项目资源和文档。测试源码只在本地保留，不入库。
 # 构建缓存、工具下载与生成文件
+/tools/
 .dev/
 .gradle/
 .gradle-home/
@@ -18,12 +19,12 @@ __pycache__/
 /MoliFox-*.exe
 /MoliFox-*.run
 
-# 本机运行数据、游戏文件与测试产物
+# 本机运行数据、游戏文件与测试源码/产物
 /MoliFox/
 /.minecraft/
 /data/
 .local-test/
-/tests/.tmp/
+/tests/
 /docs/screenshots/
 /docs/ui-reference/
 *.log

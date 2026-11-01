@@ -7,6 +7,7 @@ package dev.molifox.core
 
 import dev.molifox.core.net.CandidateSource
 import dev.molifox.core.net.DownloadSourceCatalog
+import dev.molifox.core.net.DownloadSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -29,7 +30,18 @@ internal abstract class NetworkSourceActions(
     fun candidateSources(
         url: String,
         selection: String = settings.source(),
-    ): List<CandidateSource> = settings.catalog.candidates(url, selection)
+    ): List<CandidateSource> {
+        val github = gitHubDownloadCandidates(url, settings.githubSources())
+        if (github.size > 1 || github.singleOrNull() != url) {
+            return github.map { candidate ->
+                CandidateSource(
+                    DownloadSource("github:${java.net.URI(candidate).host}", mirror = candidate != url),
+                    candidate,
+                )
+            }
+        }
+        return settings.catalog.candidates(url, selection)
+    }
 
     fun downloadCandidates(
         url: String,

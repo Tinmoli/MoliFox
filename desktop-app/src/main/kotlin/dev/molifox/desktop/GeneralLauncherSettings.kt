@@ -41,6 +41,12 @@ internal fun generalSettingCards(
                         { enabled -> writer.commit { it.copy(autoCheckUpdates = enabled) } },
                     )
                 },
+                settingRow(strings.t("settings.update.beta"), strings.t("settings.update.betaDetail")) {
+                    CompactSwitch(settings.allowBetaUpdates, { enabled ->
+                        writer.commit { it.copy(allowBetaUpdates = enabled) }
+                        actions.controller.checkForUpdates(true)
+                    })
+                },
             ),
         ),
         SettingCard(

@@ -85,6 +85,7 @@ import dev.molifox.core.TidyReport
 import dev.molifox.core.domain.server.ServerStatusQuery
 import dev.molifox.core.i18n.I18n
 import dev.molifox.core.launcherWindowAction
+import dev.molifox.core.platform.watchNativeLauncher
 import dev.molifox.desktop.content.DownloadsPage
 import dev.molifox.desktop.instances.InstancesPage
 import dev.molifox.desktop.platform.dialogs.FilePicker
@@ -142,6 +143,11 @@ class UiActions
         private var packPreviewLoading = false
         var launchPreview by mutableStateOf<LaunchPlan?>(null)
         var taskCenterOpen by mutableStateOf(false)
+
+        /** 用户协议阅读页：设置里的「用户协议」与首启提示的「查看」都打开它。 */
+        var agreementOpen by mutableStateOf(false)
+        internal var agreementSaving by mutableStateOf(false)
+        internal var agreementError by mutableStateOf<String?>(null)
 
         fun taskQueued() {
             controller.jobs.clearFinished()
@@ -243,6 +249,7 @@ class UiActions
     }
 
 fun main() {
+    watchNativeLauncher()
     // 启动计时：只用来看清启动各阶段的耗时，不改变任何行为。
     val startupStartedAt = System.nanoTime()
     // 各阶段的耗时都从同一个起点算，只进日志；需要打点的函数接收这个计时器。
@@ -251,7 +258,8 @@ fun main() {
     val controller = startLauncherController(startupMillis) ?: return
     val multiplayer = DesktopMultiplayerOwner(controller)
     try {
-        application { LauncherApplication(controller, startupMillis, multiplayer) }
+        // Compose 默认直接退出 JVM，会跳过外层 finally，必须先返回这里释放联机进程。
+        application(exitProcessOnExit = false) { LauncherApplication(controller, startupMillis, multiplayer) }
     } finally {
         try {
             runBlocking(Dispatchers.IO) { multiplayer.close() }
@@ -317,7 +325,10 @@ private fun ApplicationScope.LauncherApplication(
     }
     LaunchedEffect(restartForUpdate) {
         if (!restartForUpdate) return@LaunchedEffect
-        withContext(Dispatchers.IO) { runCatching { multiplayer.close() } }
+        withContext(Dispatchers.IO) {
+            runCatching { multiplayer.close() }
+                .onFailure { controller.store.log("Multiplayer shutdown failed: ${it.message}", true) }
+        }
         controller.close()
         exitApplication()
     }
@@ -503,6 +514,11 @@ private fun FrameWindowScope.LauncherRoot(
 ) {
     val strings = LocalStrings.current
     MoliTheme(launcherState.data.settings) {
+        if (actions.agreementOpen) {
+            // 阅读时只组合正文，菜单、弹窗与拖放入口均不挂载在下层。
+            AgreementViewer(onClose = { run { actions.agreementOpen = false } })
+            return@MoliTheme
+        }
         Box(
             Modifier
                 .fillMaxSize()
@@ -510,7 +526,13 @@ private fun FrameWindowScope.LauncherRoot(
                 .onSizeChanged {
                     controller.reportLauncherWindowSize(it.width, it.height)
                 }.border(1.dp, MaterialTheme.colorScheme.outline)
-                .packDropTarget(actions),
+                .then(
+                    if (launcherState.data.settings.agreementVersion == AGREEMENT_VERSION) {
+                        Modifier.packDropTarget(actions)
+                    } else {
+                        Modifier
+                    },
+                ),
         ) {
             LauncherBackdrop(launcherState.data.settings)
             Column(Modifier.fillMaxSize()) {
@@ -560,6 +582,15 @@ private fun FrameWindowScope.LauncherRoot(
                     MoliApp(launcherState, actions)
                 }
             }
+        }
+        if (!actions.agreementOpen && launcherState.data.settings.agreementVersion != AGREEMENT_VERSION) {
+            AgreementPrompt(
+                onView = { run { actions.agreementOpen = true } },
+                onDecline = onExit,
+                onAccept = { actions.acceptAgreement() },
+                saving = actions.agreementSaving,
+                error = actions.agreementError,
+            )
         }
         if (confirmExit) {
             AlertDialog(
@@ -903,6 +934,7 @@ private fun LauncherDialogs(
     }
     // 启动检查：实例缺少兼容 Java 时给出安装/选择入口；显式路径或已存在兼容 Java 时不出现。
     state.javaPrompt?.let { prompt -> JavaRuntimePromptDialog(prompt, actions) }
+    LauncherUpdateNotice(state.update, actions)
     if (actions.taskCenterOpen) TaskCenterDialog(state, actions)
     tidyReport?.let { (name, report) ->
         TidyReportDialog(name, report, onCloseTidy)

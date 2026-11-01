@@ -34,3 +34,8 @@ desktop-app/src/main/kotlin/dev/molifox/desktop/LauncherFonts.kt|"茉狐中文�
 
 # 第三方许可清单解析：跳过仓库内中文 Markdown 表格的表头「组件」行，该文本不显示。
 desktop-app/src/main/kotlin/dev/molifox/desktop/ThirdPartyLicenses.kt|"组件"
+
+# 启动失败诊断：日志措辞随界面语言变化，匹配旧版本/其他语言日志里的账户登录与“启动中止”行。
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|登录凭据不可用
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|登入認證無法使用
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|启动中止

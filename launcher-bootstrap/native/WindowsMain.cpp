@@ -428,6 +428,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         SetEnvironmentVariableW(L"MOLIFOX_DATA_DIR", data.c_str());
         // 传给 JVM：自动更新替换脚本要靠它定位当前便携版 exe（开发环境 java -jar 没有这个变量）。
         SetEnvironmentVariableW(L"MOLIFOX_BUNDLE_PATH", executable);
+        // JVM 侧据此监视原生外壳；外壳被任务管理器强杀时，JVM 与联机核心不能继续留在后台。
+        SetEnvironmentVariableW(L"MOLIFOX_WRAPPER_PID", std::to_wstring(GetCurrentProcessId()).c_str());
         SetEnvironmentVariableW(L"TEMP", temporary.path.c_str());
         SetEnvironmentVariableW(L"TMP", temporary.path.c_str());
         auto resource = FindResourceW(instance, MAKEINTRESOURCEW(101), RT_RCDATA);

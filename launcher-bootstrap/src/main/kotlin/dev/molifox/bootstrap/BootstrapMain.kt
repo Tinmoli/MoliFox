@@ -8,6 +8,7 @@ import com.google.gson.JsonParser
 import dev.molifox.core.LauncherLocation
 import dev.molifox.core.i18n.AppLanguage
 import dev.molifox.core.i18n.I18n
+import dev.molifox.core.platform.watchNativeLauncher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -111,6 +112,8 @@ private val logLock = Any()
 
 /** 启动入口：准备运行时组件并拉起桌面界面；失败时关闭准备窗口并给出可读的提示。 */
 fun main() {
+    // 准备窗口阶段也可能被强杀；此时桌面入口尚未执行，必须在这里就开始监视原生外壳。
+    watchNativeLauncher()
     val data = resolveDataDirectory()
     applySavedLanguage(data)
     var preparation: BootstrapWindow? = null

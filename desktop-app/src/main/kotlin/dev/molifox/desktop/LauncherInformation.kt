@@ -92,7 +92,7 @@ private fun LauncherReleaseDetails(
     if (release.notes.isNotBlank()) {
         Text(strings.t("settings.update.notes"), style = MaterialTheme.typography.titleSmall)
         ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
-            Text(release.notes, style = MaterialTheme.typography.bodySmall)
+            MarkdownText(release.notes)
         }
     }
     var confirmInstall by remember { mutableStateOf(false) }
@@ -188,6 +188,7 @@ fun LauncherAboutPanel(actions: UiActions) {
                 SecondaryButton({ document = name }) { Text(label) }
             }
             SecondaryButton({ licensesOpen = true }) { Text(strings.t("settings.about.thirdParty")) }
+            SecondaryButton({ actions.agreementOpen = true }) { Text(strings.t("settings.about.agreement")) }
         }
         SecondaryButton({
             val summary =

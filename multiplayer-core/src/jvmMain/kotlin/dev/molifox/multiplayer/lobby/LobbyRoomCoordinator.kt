@@ -183,10 +183,8 @@ internal class LobbyRoomCoordinator(
         guestSession?.let { session -> closeSession(I18n.t("multiplayer.lobbyRoomCoordinator.3"), session) }
         guestSession = null
         runtime?.let { node ->
-            runCatching { node.stop() }
-                .onFailure { failure ->
-                    logger(I18n.t("multiplayerB.lobbyRoomCoordinator.stopRuntimeFailed", failure.message), true)
-                }
+            // 停止失败必须保留运行时，允许退房/最终清理重试，不能报告已成功退出。
+            node.stop()
         }
         runtime = null
     }

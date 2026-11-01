@@ -2,6 +2,7 @@
 package dev.molifox.multiplayer.easytier
 
 import dev.molifox.core.i18n.I18n
+import dev.molifox.core.gitHubDownloadCandidates
 
 /** 一个平台的 EasyTier 官方发布包；[rootPrefix] 是压缩包内文件的公共目录前缀。 */
 data class EasyTierPackage(
@@ -40,17 +41,8 @@ object EasyTierCatalog {
      * GitHub Release 加速代理；两者都实测返回官方文件的完整内容（Content-Range 与官方大小一致）。
      * 用户网络环境不同，下载器会测速后选择最快的一个，失败再换下一个。
      */
-    private val MIRROR_PREFIXES =
-        listOf(
-            "https://gh-proxy.com/",
-            "https://ghproxy.net/",
-        )
-
     private fun mirrorsOf(officialUrl: String): List<String> =
-        MIRROR_PREFIXES.map { prefix ->
-            prefix +
-                officialUrl
-        }
+        gitHubDownloadCandidates(officialUrl).filterNot { it == officialUrl }
 
     private val packages =
         mapOf(

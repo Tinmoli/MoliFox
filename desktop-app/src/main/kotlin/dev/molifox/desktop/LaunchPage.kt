@@ -7,18 +7,11 @@ package dev.molifox.desktop
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,13 +44,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
@@ -282,49 +271,21 @@ internal fun HomeCard(
     }
 }
 
-/**
- * 「实例管理」入口：外观沿用 [SimpleDropdown] 那一套控件样式（34dp、圆角、实色填充 + 1dp 细边、悬停提亮），
- * 但点开不是菜单，而是进入实例列表页——顶部导航不含「实例」，这里是进入实例列表的入口。 文字固定为「实例管理」并居中，不显示实例名，也不带次要文字或箭头。
- */
+/** 实例管理与版本设置共用无填充描边按钮。 */
 @Composable
 internal fun InstanceManageButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val shape = RoundedCornerShape(Metrics.innerRadius)
-    val animation: androidx.compose.animation.core.AnimationSpec<Color> =
-        if (LocalReducedMotion.current) snap<Color>() else tween<Color>(Motion.FAST)
-    val fill by
-        animateColorAsState(
-            controlBackground(hovered = hovered),
-            animation,
-            label = "instancesEntryFill",
-        )
-    val borderColor by
-        animateColorAsState(controlBorderColor(), animation, label = "instancesEntryBorder")
-    Row(
-        modifier
-            .height(Metrics.controlHeight)
-            .clip(shape)
-            .background(fill, shape)
-            .border(1.dp, borderColor, shape)
-            .hoverable(interaction)
-            .clickable(
-                role = Role.Button,
-                onClickLabel = LocalStrings.current.t("pages.home.instances.openLabel"),
-                onClick = onClick,
-            ).padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    SecondaryButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
     ) {
         Text(
             LocalStrings.current.t("pages.home.instances.title"),
             Modifier.fillMaxWidth(),
             fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
     }

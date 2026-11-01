@@ -111,6 +111,7 @@ internal class LauncherControllerCore(
             mirrorConcurrency = downloadConcurrency,
             // 源被禁用、限流与并发预算调整都要在启动器日志里留一行。
             logger = { message, error -> store.log(message, error) },
+            githubSources = { store.data.settings.gitHubSourceOptions() },
         )
 
     val jobs = JobQueue(store, scope)
