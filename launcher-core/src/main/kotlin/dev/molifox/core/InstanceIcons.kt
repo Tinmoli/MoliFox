@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
@@ -20,7 +21,6 @@ import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.readBytes
 import kotlin.io.path.reader
 import kotlin.io.path.writeBytes
 
@@ -89,12 +89,6 @@ private fun iconCandidates(
             listOf("png", "jpg", "jpeg").map { directory.resolve("icon.$it") }
         }.toMutableList()
 
-/** Setup.ini 必须是普通文件且足够小，才值得读进来找自定义 Logo 设置。 */
-private fun isReadableSetupIni(settings: Path): Boolean =
-    settings.isRegularFile() &&
-        !Files.isSymbolicLink(settings) &&
-        settings.fileSize() <= MAX_SETUP_INI_BYTES
-
 /** 按 PCL 的 `logocustom`/`logo` 约定，把 `PCL/Logo.png` 追加为最低优先级候选。 */
 private fun appendPclLogo(
     candidates: MutableList<Path>,
@@ -110,14 +104,30 @@ private fun appendPclLogo(
 }
 
 /** 逐行解析 Setup.ini；读不到或格式异常时返回空表，不影响候选图标判断。 */
-private fun parseSetupIni(settings: Path): Map<String, String> =
-    runCatching {
-        val bytes = settings.readBytes()
+private fun parseSetupIni(
+    store: LauncherStore,
+    settings: Path,
+): Map<String, String> =
+    try {
+        if (!settings.isRegularFile() || settings.isSymbolicLink() || settings.fileSize() > MAX_SETUP_INI_BYTES) {
+            return emptyMap()
+        }
+        // 文件可能在大小检查后继续增长，因此读取本身也必须有上限。
+        val bytes = Files.newInputStream(settings).use { it.readNBytes(MAX_SETUP_INI_BYTES.toInt() + 1) }
+        if (bytes.size > MAX_SETUP_INI_BYTES) return emptyMap()
         decodeSetupIni(bytes)
             .lineSequence()
             .mapNotNull { line -> splitSetupIniLine(line) }
             .toMap()
-    }.getOrDefault(emptyMap())
+    } catch (_: NoSuchFileException) {
+        emptyMap()
+    } catch (failure: IOException) {
+        store.log(I18n.t("miscA1.instanceIcons.setupReadFailed", settings, failure.message))
+        emptyMap()
+    } catch (failure: SecurityException) {
+        store.log(I18n.t("miscA1.instanceIcons.setupReadFailed", settings, failure.message))
+        emptyMap()
+    }
 
 /** 优先按 UTF-8 解码，失败时回退到 PCL 常用的 GB18030。 */
 private fun decodeSetupIni(bytes: ByteArray): String =
@@ -192,9 +202,7 @@ class InstanceIcons(
                 )
             val candidates = iconCandidates(store, instance, version)
             val settings = version.resolve("PCL/Setup.ini")
-            if (isReadableSetupIni(settings)) {
-                appendPclLogo(candidates, version, parseSetupIni(settings))
-            }
+            appendPclLogo(candidates, version, parseSetupIni(store, settings))
             candidates.firstOrNull(::validInstanceIcon)
         }
 

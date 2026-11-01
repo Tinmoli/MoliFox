@@ -83,6 +83,7 @@ internal fun validSkinTexture(path: Path): Boolean =
 internal class AccountSkinCache(
     private val store: LauncherStore,
     network: NetworkClient,
+    private val removeTemporary: (Path) -> Unit = { it.deleteIfExists() },
     private val fetchTexture: suspend (String) -> ByteArray = network::skinTexture,
 ) {
     suspend fun load(
@@ -120,9 +121,20 @@ internal class AccountSkinCache(
             } catch (failure: NoSuchAlgorithmException) {
                 fallbackToCached(failure, cached)
             } finally {
-                temporary?.deleteIfExists()
+                temporary?.let(::cleanTemporary)
             }
         }
+
+    /** 清理失败不能覆盖已经完成的加载、回退或取消。 */
+    private fun cleanTemporary(path: Path) {
+        try {
+            removeTemporary(path)
+        } catch (failure: IOException) {
+            store.log(I18n.t("miscA1.accountSkinCache.cleanupFailed", path, failure.message))
+        } catch (failure: SecurityException) {
+            store.log(I18n.t("miscA1.accountSkinCache.cleanupFailed", path, failure.message))
+        }
+    }
 
     private fun textureKey(url: String): String =
         MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(
