@@ -11,6 +11,7 @@ import com.google.gson.JsonParseException
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
@@ -58,7 +59,10 @@ class GitHubUpdater
         private val checkLock = Mutex()
 
         suspend fun check(manual: Boolean = true) {
-            if (!checkLock.tryLock()) return
+            if (!checkLock.tryLock()) {
+                if (manual) notifyPendingCheck()
+                return
+            }
             store.updateState { it.copy(update = it.update.copy(checking = true, error = null)) }
             try {
                 val release = latestRelease()
@@ -135,15 +139,32 @@ class GitHubUpdater
                         ),
                 )
             }
-            if (manual || available) {
-                store.notify(
-                    when {
-                        release == null -> I18n.t("core.gitHubUpdater.3")
-                        available -> I18n.t("core.gitHubUpdater.4", release.version)
-                        else -> I18n.t("core.gitHubUpdater.5", LAUNCHER_VERSION)
-                    },
-                )
+            if (manual || available) notifyRelease(release, available)
+        }
+
+        /** 手动检查复用正在进行的请求结果，避免静默丢弃点击或重复请求。 */
+        private suspend fun notifyPendingCheck() {
+            checkLock.withLock {
+                val update = store.state.value.update
+                if (update.error != null) {
+                    store.notify(update.error)
+                } else if (update.checked) {
+                    notifyRelease(update.release, update.available)
+                }
             }
+        }
+
+        private fun notifyRelease(
+            release: LauncherRelease?,
+            available: Boolean,
+        ) {
+            store.notify(
+                when {
+                    release == null -> I18n.t("core.gitHubUpdater.3")
+                    available -> I18n.t("core.gitHubUpdater.4", release.version)
+                    else -> I18n.t("core.gitHubUpdater.5", LAUNCHER_VERSION)
+                },
+            )
         }
 
         private fun isNewer(version: String): Boolean =
