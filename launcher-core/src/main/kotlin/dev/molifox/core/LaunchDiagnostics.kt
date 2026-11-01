@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -36,6 +37,17 @@ private const val FRESH_LOG_WINDOW_MS = 2000L
 private const val GAME_LOG_MAX_BYTES = 8L * 1024 * 1024
 private const val BUNDLE_SESSION_LIMIT = 3L
 private const val BUNDLE_ENTRY_MAX_BYTES = 16L * 1024 * 1024
+private const val CRASH_REPORT_MAX_BYTES = 4L * 1024 * 1024
+
+private val CRASH_REPORT_REFERENCE =
+    Regex("#@!@# Game crashed! Crash report saved to: #@!@# (.+)")
+private val JVM_FATAL_ERROR =
+    Regex("A fatal error has been detected by the Java Runtime Environment")
+private val OUT_OF_MEMORY =
+    Regex(
+        "(?i)(java\\.lang\\.OutOfMemoryError|Java heap space|" +
+            "Out of Memory Error|insufficient memory for the Java Runtime)",
+    )
 
 data class LaunchIssue(
     val title: String,
@@ -50,27 +62,31 @@ internal fun isGameError(line: String): Boolean =
             "\\b[\\w.]+(?:Exception|Error)(?::|$)|^\\s+at [\\w.$]+\\()",
     ).containsMatchIn(line)
 
-/** 启动失败的常见特征与处理建议；声明顺序即匹配优先级。 */
+/** 启动失败的常见特征与处理建议；声明顺序即匹配优先级。标题与建议存 key，使用时按当前语言取值。 */
 private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
     listOf(
         Triple(
             Regex(
                 "SSLHandshakeException|Remote host terminated the handshake|" +
-                    "TLS 握手|证书校验失败|SSL peer shut down",
+                    "TLS 握手|证书校验失败|SSL peer shut down|TLS handshake|certificate verification failed",
                 RegexOption.IGNORE_CASE,
             ),
-            "启动准备时安全网络连接失败",
-            "检查网络、代理与系统时间后重试；游戏下载可使用自动源。此错误不表示游戏主类或模组缺失，无需先删除实例或关闭证书校验。",
+            "diagA2.launchDiagnostics.tlsTitle",
+            "diagA2.launchDiagnostics.tlsSuggestion",
         ),
-        Triple(Regex("启动前命令"), "启动前命令执行失败", "检查命令路径、参数、退出码及命令日志；启动前命令成功后才会运行游戏。"),
+        Triple(
+            Regex("启动前命令|Running pre-launch command"),
+            "diagA2.launchDiagnostics.preCommandTitle",
+            "diagA2.launchDiagnostics.preCommandSuggestion",
+        ),
         Triple(
             Regex(
                 "ReadOnlyFileSystemException|AccessDeniedException|" +
                     "Permission denied|the jar file .+ can't be written",
                 RegexOption.IGNORE_CASE,
             ),
-            "游戏目录或缓存无法写入",
-            "检查所选游戏目录的写入权限，确认 Java 能在该目录创建和修改缓存文件。",
+            "diagA2.launchDiagnostics.readOnlyTitle",
+            "diagA2.launchDiagnostics.readOnlySuggestion",
         ),
         Triple(
             Regex(
@@ -78,8 +94,8 @@ private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
                     "class file version|Unrecognized VM option",
                 RegexOption.IGNORE_CASE,
             ),
-            "Java 版本或参数不兼容",
-            "在版本设置中改用自动选择 Java，并检查附加 JVM 参数。",
+            "diagA2.launchDiagnostics.javaVersionTitle",
+            "diagA2.launchDiagnostics.javaVersionSuggestion",
         ),
         Triple(
             Regex(
@@ -87,8 +103,8 @@ private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
                     "insufficient memory|Invalid maximum heap",
                 RegexOption.IGNORE_CASE,
             ),
-            "游戏内存不足或分配失败",
-            "检查最大内存、Java 位数和系统可用内存；降低资源占用后重试。",
+            "diagA2.launchDiagnostics.memoryTitle",
+            "diagA2.launchDiagnostics.memorySuggestion",
         ),
         Triple(
             Regex(
@@ -96,17 +112,18 @@ private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
                     "Missing mandatory dependencies|Missing or unsupported mandatory",
                 RegexOption.IGNORE_CASE,
             ),
-            "模组依赖或版本不兼容",
-            "检查日志列出的模组、前置依赖和加载器版本，恢复最近改动后重试。",
+            "diagA2.launchDiagnostics.modDependencyTitle",
+            "diagA2.launchDiagnostics.modDependencySuggestion",
         ),
         Triple(
             Regex(
                 "couldn't locate the game|Could not find or load main class|" +
-                    "ClassNotFoundException|ZipException|游戏文件自动补全失败|缺少游戏主文件",
+                    "ClassNotFoundException|ZipException|游戏文件自动补全失败|缺少游戏主文件|" +
+                    "Automatic game file completion failed|The main game file is missing",
                 RegexOption.IGNORE_CASE,
             ),
-            "游戏文件或启动依赖可能不完整",
-            "使用版本维护中的修复功能；外部版本请确认原始游戏目录及加载器文件完整。",
+            "diagA2.launchDiagnostics.missingFilesTitle",
+            "diagA2.launchDiagnostics.missingFilesSuggestion",
         ),
         Triple(
             Regex(
@@ -114,8 +131,8 @@ private val FAILURE_PATTERNS: List<Triple<Regex, String, String>> =
                     "Failed to create window|Pixel format not accelerated",
                 RegexOption.IGNORE_CASE,
             ),
-            "图形环境可能不兼容",
-            "检查显卡驱动及当前桌面的 OpenGL 支持；远程或虚拟桌面也可能限制图形能力。",
+            "diagA2.launchDiagnostics.graphicsTitle",
+            "diagA2.launchDiagnostics.graphicsSuggestion",
         ),
     )
 
@@ -123,18 +140,74 @@ internal fun diagnoseGameFailure(
     text: String,
     directory: Path,
 ): LaunchIssue {
-    for ((pattern, title, suggestion) in FAILURE_PATTERNS) {
-        val line = text.lineSequence().firstOrNull { pattern.containsMatchIn(it) } ?: continue
-        return LaunchIssue(
-            title,
-            suggestion,
-            redactSecrets(line).take(EVIDENCE_MAX_LENGTH),
-            directory.toString(),
-        )
+    // 游戏崩溃时优先读取 crash report：启动器输出里混着大量 INFO/WARN，
+    // 在其中扫关键词会把普通网络警告误判成崩溃原因（例如 TLS）。
+    val crashReport = readCrashReport(text)
+    val evidence = crashReport ?: text
+    val memoryMatch = OUT_OF_MEMORY.find(evidence)
+    val matched =
+        FAILURE_PATTERNS.firstNotNullOfOrNull { (pattern, titleKey, suggestionKey) ->
+            evidence.lineSequence().firstOrNull { pattern.containsMatchIn(it) }?.let { line ->
+                Triple(line, titleKey, suggestionKey)
+            }
+        }
+    val jvmFatal = crashReport == null && JVM_FATAL_ERROR.containsMatchIn(text)
+    return when {
+        memoryMatch != null ->
+            issue(
+                "diagA2.launchDiagnostics.memoryTitle",
+                "diagA2.launchDiagnostics.memorySuggestion",
+                memoryMatch.value,
+                directory,
+            )
+        jvmFatal -> genericIssue(text, directory)
+        matched != null -> issue(matched.second, matched.third, matched.first, directory)
+        else -> genericIssue(text, directory)
     }
-    return LaunchIssue(
-        "游戏启动失败或异常退出",
-        "尚未确定原因，可导出诊断包查看完整日志。",
+}
+
+private fun issue(
+    titleKey: String,
+    suggestionKey: String,
+    evidence: String,
+    directory: Path,
+): LaunchIssue =
+    LaunchIssue(
+        I18n.t(titleKey),
+        I18n.t(suggestionKey),
+        redactSecrets(evidence).take(EVIDENCE_MAX_LENGTH),
+        directory.toString(),
+    )
+
+/** 从游戏输出里找到崩溃报告路径并读取；缺失、越界或不是普通文件时返回 null。 */
+private fun readCrashReport(text: String): String? =
+    runCatching {
+        val path =
+            CRASH_REPORT_REFERENCE
+                .find(text)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return null
+        val file = Path.of(path)
+        if (
+            !file.isRegularFile() ||
+            Files.isSymbolicLink(file) ||
+            file.fileSize() > CRASH_REPORT_MAX_BYTES
+        ) {
+            return null
+        }
+        file.readText()
+    }.getOrNull()
+
+private fun genericIssue(
+    text: String,
+    directory: Path,
+): LaunchIssue =
+    LaunchIssue(
+        I18n.t("diagA2.launchDiagnostics.genericTitle"),
+        I18n.t("diagA2.launchDiagnostics.genericSuggestion"),
         redactSecrets(
             text
                 .lineSequence()
@@ -144,7 +217,6 @@ internal fun diagnoseGameFailure(
         ).take(EVIDENCE_MAX_LENGTH),
         directory.toString(),
     )
-}
 
 internal class LaunchSession(
     private val store: LauncherStore,
@@ -173,7 +245,7 @@ internal class LaunchSession(
     fun stage(name: String) {
         metadata["stage"] = name
         writeJson(directory.resolve("session.json"), metadata)
-        store.log("启动准备：$name")
+        store.log(I18n.t("diagA2.launchDiagnostics.stageLog", name))
     }
 
     fun clean(text: String): String =
@@ -181,7 +253,7 @@ internal class LaunchSession(
             (extraSecrets + secret)
                 .filter { it.length > MIN_REDACTED_SECRET_LENGTH }
                 .sortedByDescending { it.length }
-                .fold(text) { current, value -> current.replace(value, "[已隐藏]") },
+                .fold(text) { current, value -> current.replace(value, I18n.t("core.advancedLaunchSettings.18")) },
         )
 
     init {
@@ -312,7 +384,7 @@ internal fun exportDiagnosticBundle(
     val root = store.dataDirectory.toAbsolutePath().normalize()
     val target = destination.toAbsolutePath().normalize()
     val sessions = root.resolve("logs/games")
-    require(!target.startsWith(sessions)) { "请将诊断包保存到游戏日志目录外" }
+    require(!target.startsWith(sessions)) { I18n.t("diagA2.launchDiagnostics.bundleOutsideLogs") }
     val files = mutableListOf(store.directories.launcherLog, store.directories.previousLog)
     if (sessions.isDirectory()) {
         Files.list(sessions).use { entries ->
