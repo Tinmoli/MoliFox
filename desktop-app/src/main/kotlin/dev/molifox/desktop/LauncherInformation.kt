@@ -161,7 +161,7 @@ fun LauncherAboutPanel(actions: UiActions) {
             FoxMark(Modifier.size(46.dp))
             Spacer(Modifier.width(14.dp))
             Column {
-                Text("MoliFox", style = MaterialTheme.typography.titleLarge)
+                Text(MoliFoxIdentity.NAME, style = MaterialTheme.typography.titleLarge)
                 MutedText("$LAUNCHER_VERSION · Minecraft Java Edition Launcher")
             }
         }
@@ -213,7 +213,7 @@ fun LauncherAboutPanel(actions: UiActions) {
         Modal(name, strings.t("settings.about.legal.title"), 760.dp, { document = null }) {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
                 Text(
-                    "MoliFox — Minecraft Launcher",
+                    MoliFoxIdentity.NAME,
                     style = MaterialTheme.typography.titleSmall,
                 )
                 MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors")

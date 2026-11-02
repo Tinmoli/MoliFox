@@ -16,6 +16,9 @@ import java.util.Properties
  * 运行时读资源。取不到时为空串，用户仍可在设置里填写自定义 UUID。
  */
 object MoliFoxIdentity {
+    /** 完整产品名：只用于关于页、用户协议和可执行文件属性，日常界面仍用简称 MoliFox。 */
+    const val NAME = "MoliFox Launcher"
+
     val MICROSOFT_CLIENT_ID: String = loadClientId()
 
     const val REPOSITORY = "https://github.com/Tinmoli/MoliFox"

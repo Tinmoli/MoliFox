@@ -1,11 +1,11 @@
-# MoliFox User Agreement and Disclaimer
+# MoliFox Launcher User Agreement and Disclaimer
 
 - Agreement version: `2026-11-02.1`
 - Effective date: 2026-11-02
-- Scope: every MoliFox launcher release published by this project; the platforms, architectures and versions covered are those listed in each release note
+- Scope: every MoliFox Launcher release published by this project; the platforms, architectures and versions covered are those listed in each release note
 - This document ships with the package and can be read offline in the app under Settings → About → User Agreement
 
-> Welcome to the MoliFox launcher (the "Software"). The Software is provided as open source by Tinmoli (the "Developer").
+> Welcome to MoliFox Launcher (the "Software"). The Software is provided as open source by Tinmoli (the "Developer").
 >
 > Please read this Agreement before use, especially the information about privacy, usage risks and responsibility. Click "Accept" to continue, or exit the launcher if you do not agree.
 >

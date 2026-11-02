@@ -415,6 +415,7 @@ fun nativeCompiler(name: String) = mingwDirectory?.let { file("$it/$name.exe").a
 val windowsResource =
     tasks.register("prepareWindowsResource") {
         dependsOn("portableJar")
+        inputs.property("launcherVersion", project.version.toString())
         outputs.file(nativeBuildDirectory.map { it.file("molifox.rc") })
         doLast {
             val output = nativeBuildDirectory.get().file("molifox.rc").asFile
@@ -428,7 +429,51 @@ val windowsResource =
                     .asFile
                     .absolutePath
                     .replace('\\', '/')
-            output.writeText("1 ICON \"$icon\"\n101 RCDATA \"$payload\"\n")
+            val version = project.version.toString()
+            val numericVersion =
+                (version.split('.', '-').mapNotNull(String::toIntOrNull) + List(4) { 0 })
+                    .take(4)
+                    .joinToString(",")
+            // 资源管理器「属性 → 详细信息」读取的是 VERSIONINFO；只放图标和载荷时这些字段全为空。
+            // 字符串保持 ASCII，避免 windres 在不同代码页下把版权符号编成乱码。
+            output.writeText(
+                buildString {
+                    appendLine("1 ICON \"$icon\"")
+                    appendLine("101 RCDATA \"$payload\"")
+                    appendLine()
+                    appendLine("1 VERSIONINFO")
+                    appendLine("FILEVERSION $numericVersion")
+                    appendLine("PRODUCTVERSION $numericVersion")
+                    appendLine("FILEFLAGSMASK 0x3fL")
+                    appendLine("FILEFLAGS 0x0L")
+                    appendLine("FILEOS 0x40004L")
+                    appendLine("FILETYPE 0x1L")
+                    appendLine("FILESUBTYPE 0x0L")
+                    appendLine("BEGIN")
+                    appendLine("  BLOCK \"StringFileInfo\"")
+                    appendLine("  BEGIN")
+                    appendLine("    BLOCK \"040904b0\"")
+                    appendLine("    BEGIN")
+                    appendLine("      VALUE \"CompanyName\", \"Tinmoli\"")
+                    appendLine("      VALUE \"FileDescription\", \"MoliFox Launcher\"")
+                    appendLine("      VALUE \"FileVersion\", \"$version\"")
+                    appendLine("      VALUE \"InternalName\", \"MoliFox\"")
+                    appendLine(
+                        "      VALUE \"LegalCopyright\", " +
+                            "\"Copyright (c) 2026 Tinmoli. Licensed under GPL-3.0-only.\"",
+                    )
+                    appendLine("      VALUE \"OriginalFilename\", \"MoliFox.exe\"")
+                    appendLine("      VALUE \"ProductName\", \"MoliFox Launcher\"")
+                    appendLine("      VALUE \"ProductVersion\", \"$version\"")
+                    appendLine("    END")
+                    appendLine("  END")
+                    appendLine("  BLOCK \"VarFileInfo\"")
+                    appendLine("  BEGIN")
+                    appendLine("    VALUE \"Translation\", 0x409, 1200")
+                    appendLine("  END")
+                    appendLine("END")
+                },
+            )
         }
     }
 
@@ -439,9 +484,12 @@ val compileWindowsResource =
             layout.buildDirectory.file("portable/MoliFox.jar"),
             rootProject.file("assets/icons/app/icon.ico"),
         )
+        inputs.file(nativeBuildDirectory.map { it.file("molifox.rc") })
         outputs.file(nativeBuildDirectory.map { it.file("resource.o") })
         commandLine(
             nativeCompiler("windres"),
+            "-c",
+            "65001",
             nativeBuildDirectory.get().file("molifox.rc").asFile,
             "-O",
             "coff",

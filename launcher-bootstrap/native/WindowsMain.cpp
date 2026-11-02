@@ -209,7 +209,7 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring route(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength) route.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     check(session.handle != nullptr, "Open network connection");
     WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
     HttpHandle connection{WinHttpConnect(session, host.c_str(), components.nPort, 0)};
@@ -466,7 +466,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.4.2.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox-0.4.3.jar";
         // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
         if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
             auto pending = temporary.path / L"launcher-payload.part";

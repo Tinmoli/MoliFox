@@ -12,7 +12,7 @@ plugins {
 
 allprojects {
     group = "dev.molifox"
-    version = "0.4.2"
+    version = "0.4.3"
 }
 
 subprojects { apply(plugin = "org.jetbrains.kotlinx.kover") }
