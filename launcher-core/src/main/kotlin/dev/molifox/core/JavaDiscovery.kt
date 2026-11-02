@@ -6,23 +6,42 @@
 package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.isRegularFile
+
+private const val MAX_JAVA_PROBE_CONCURRENCY = 2
+private const val MAX_JAVA_PROBE_OUTPUT_BYTES = 64 * 1024
+private const val JAVA_PROBE_TIMEOUT_SECONDS = 10L
+private const val JAVA_PROBE_STOP_TIMEOUT_SECONDS = 2L
+
+private fun stopJavaVersionProbe(process: Process) {
+    val descendants = process.descendants().use { it.toList() }
+    descendants.asReversed().forEach { child ->
+        if (child.isAlive) child.destroyForcibly()
+    }
+    if (process.isAlive) process.destroyForcibly()
+    check(process.waitFor(JAVA_PROBE_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        I18n.t("networkB1.javaDiscovery.probeTimeout")
+    }
+}
 
 /** 探测候选路径并构建 [JavaRuntime]；结果不缓存，由调用方决定何时重探。 */
 internal class JavaDiscovery(
     private val store: LauncherStore,
 ) {
     private val collector = JavaCandidateCollector(store)
+    private val probeSlots = Semaphore(MAX_JAVA_PROBE_CONCURRENCY)
 
     fun runtimeIndex() = JavaRuntimeIndex(store.dataDirectory.resolve("runtimes"), store.platform.javaExecutable)
 
@@ -50,30 +69,47 @@ internal class JavaDiscovery(
 
     private suspend fun runJavaVersionProbe(executable: Path): JavaProbe? =
         withContext(Dispatchers.IO) {
-            runCatching {
-                // 用参数列表而不是拼接命令行：路径里的空格、中文和引号都原样传给子进程。
-                val process =
-                    ProcessBuilder(
-                        executable.toString(),
-                        "-XshowSettings:properties",
-                        "-version",
-                    ).redirectErrorStream(true)
-                        .start()
-                try {
-                    val output =
-                        withTimeout(10_000) {
-                            runInterruptible(Dispatchers.IO) {
-                                process.inputStream.bufferedReader().readText()
-                            }
-                        }
-                    check(process.waitFor(2, TimeUnit.SECONDS)) {
-                        I18n.t("networkB1.javaDiscovery.probeTimeout")
+            probeSlots.withPermit {
+                runCatching {
+                    // 用参数列表而不是拼接命令行，保留合法路径中的空格和中文。
+                    val process =
+                        ProcessBuilder(
+                            executable.toString(),
+                            "-XshowSettings:properties",
+                            "-version",
+                        ).redirectErrorStream(true)
+                            .start()
+                    try {
+                        readJavaVersionOutput(process)?.let(::parseJavaProbe)
+                    } finally {
+                        stopJavaVersionProbe(process)
                     }
-                    parseJavaProbe(output)
-                } finally {
-                    if (process.isAlive) process.destroyForcibly()
+                }.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
+                }.getOrNull()
+            }
+        }
+
+    private suspend fun readJavaVersionOutput(process: Process): String? =
+        coroutineScope {
+            val output =
+                async(Dispatchers.IO) {
+                    process.inputStream.use { it.readNBytes(MAX_JAVA_PROBE_OUTPUT_BYTES + 1) }
                 }
-            }.getOrNull()
+            try {
+                val exited =
+                    runInterruptible(Dispatchers.IO) {
+                        process.waitFor(JAVA_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    }
+                if (exited) {
+                    output.await().takeIf { it.size <= MAX_JAVA_PROBE_OUTPUT_BYTES }?.toString(Charsets.UTF_8)
+                } else {
+                    null
+                }
+            } finally {
+                // 先终止进程再等待结构化子协程退出，避免读输出的协程等待 EOF 导致超时失效。
+                stopJavaVersionProbe(process)
+            }
         }
 
     /** 只探测真实存在的候选；并发探测不改变候选顺序。 */

@@ -110,6 +110,9 @@ fun ColumnScope.SettingsPage(
             throw cancelled
         } catch (error: IOException) {
             detectionError = error.message ?: strings.t("settings.java.detectionFailed")
+        } catch (error: IllegalArgumentException) {
+            actions.controller.store.log("Java discovery failed: ${error.message}", true)
+            detectionError = strings.t("settings.java.detectionFailed")
         } catch (error: IllegalStateException) {
             detectionError = error.message ?: strings.t("settings.java.detectionFailed")
         } finally {

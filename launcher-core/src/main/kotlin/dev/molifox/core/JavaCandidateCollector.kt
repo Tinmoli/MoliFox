@@ -5,6 +5,7 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.platform.javaDiscoveryEnvironments
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -78,9 +79,6 @@ internal class JavaCandidateCollector(
         return discovered
     }
 
-    private fun runtimeIndex() =
-        JavaRuntimeIndex(store.dataDirectory.resolve("runtimes"), store.platform.javaExecutable)
-
     /** 显式路径；用户添加/选择过的路径即使失效也保留，标为「路径不存在」而不是悄悄消失。 */
     private fun collectExplicit(discovered: MutableMap<String, JavaCandidate>) {
         val selected =
@@ -118,7 +116,7 @@ internal class JavaCandidateCollector(
     }
 
     private fun collectBundled(discovered: MutableMap<String, JavaCandidate>) {
-        val index = runtimeIndex()
+        val index = JavaRuntimeIndex(store.dataDirectory.resolve("runtimes"), store.platform.javaExecutable)
         index.available().sortedByDescending { it.major }.forEach { entry ->
             index.executable(entry)?.let {
                 offer(
@@ -131,36 +129,51 @@ internal class JavaCandidateCollector(
     }
 
     private fun collectSystem(discovered: MutableMap<String, JavaCandidate>) {
-        // JAVA_HOME 与当前运行的 JVM；JAVA_HOME 可能直接指向 JDK，也可能指向其中的 jre/。
-        System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() }?.let { home ->
-            javaHomeExecutables(home).forEach {
-                offer(discovered, it, JavaCandidateSpec(JavaRuntimeSource.System, null, 2))
+        val environments =
+            javaDiscoveryEnvironments(store.platform.osName == "windows") { source, failure ->
+                store.log("Java environment source unavailable [$source]: ${failure.message}", true)
+            }
+        environments.forEach { collectEnvironment(discovered, it) }
+        System.getProperty("java.home")?.takeIf { it.isNotBlank() }?.let {
+            javaHomeExecutables(it, emptyMap()).forEach { executable ->
+                offer(discovered, executable, JavaCandidateSpec(JavaRuntimeSource.System, null, 2))
             }
         }
-        System.getProperty("java.home")?.takeIf { it.isNotBlank() }?.let {
-            val executable = Path.of(it, "bin", store.platform.javaExecutable).toString()
-            offer(discovered, executable, JavaCandidateSpec(JavaRuntimeSource.System, null, 2))
+        environments.forEach { collectSearchPath(discovered, it) }
+        // 常见安装目录；不枚举磁盘根目录。
+        commonRoots().flatMap { candidates(it) }.forEach {
+            offer(discovered, it, JavaCandidateSpec(JavaRuntimeSource.System, null, JAVA_COMMON_ROOT_PRIORITY))
         }
-        // PATH
-        System
-            .getenv("PATH")
+    }
+
+    private fun collectEnvironment(
+        discovered: MutableMap<String, JavaCandidate>,
+        environment: Map<String, String>,
+    ) {
+        for (name in listOf("JAVA_HOME", "JDK_HOME", "JRE_HOME")) {
+            environment[name]?.takeIf { it.isNotBlank() }?.let { home ->
+                javaHomeExecutables(home, environment).forEach {
+                    offer(discovered, it, JavaCandidateSpec(JavaRuntimeSource.System, null, 2))
+                }
+            }
+        }
+    }
+
+    private fun collectSearchPath(
+        discovered: MutableMap<String, JavaCandidate>,
+        environment: Map<String, String>,
+    ) {
+        environment["PATH"]
             ?.split(File.pathSeparator)
             ?.filter { it.isNotBlank() }
             ?.forEach { entry ->
+                val directory = store.javaDiscoveryPath(entry, "PATH", environment) ?: return@forEach
                 offer(
                     discovered,
-                    Path.of(entry.trim('"'), store.platform.javaExecutable).toString(),
+                    directory.resolve(store.platform.javaExecutable).toString(),
                     JavaCandidateSpec(JavaRuntimeSource.System, null, JAVA_PATH_PRIORITY),
                 )
             }
-        // 常见安装目录
-        commonRoots().flatMap { candidates(it) }.forEach {
-            offer(
-                discovered,
-                it,
-                JavaCandidateSpec(JavaRuntimeSource.System, null, JAVA_COMMON_ROOT_PRIORITY),
-            )
-        }
     }
 
     private fun offer(
@@ -168,6 +181,8 @@ internal class JavaCandidateCollector(
         path: String,
         spec: JavaCandidateSpec,
     ) {
+        val windows = store.platform.osName == "windows"
+        if (discovered.values.any { it.path.equals(path, ignoreCase = windows) }) return
         val resolved = resolveJavaPath(store, path) ?: return
         // 不存在的路径只对用户显式添加的条目保留，避免 PATH 里的死链接堆进列表。
         if (!resolved.exists && !spec.keepInvalid) return
@@ -185,8 +200,11 @@ internal class JavaCandidateCollector(
     }
 
     /** JAVA_HOME 既可能指向 JDK 根目录，也可能指向 JDK 内的 jre/ 子目录；两种都试。 */
-    private fun javaHomeExecutables(home: String): List<String> {
-        val root = runCatching { Path.of(home.trim('"')) }.getOrNull() ?: return emptyList()
+    private fun javaHomeExecutables(
+        home: String,
+        environment: Map<String, String>,
+    ): List<String> {
+        val root = store.javaDiscoveryPath(home, "Java home", environment) ?: return emptyList()
         return listOf(root, root.resolve("jre")).map {
             it.resolve("bin").resolve(store.platform.javaExecutable).toString()
         }
@@ -213,12 +231,17 @@ internal class JavaCandidateCollector(
         val roots = mutableListOf<Path>()
         if (store.platform.osName == "windows") {
             val programFiles = System.getenv("ProgramFiles") ?: "C:\\Program Files"
+            val programFilesPath = store.javaDiscoveryPath(programFiles, "ProgramFiles")
             listOf("Java", "Eclipse Adoptium", "Microsoft", "Zulu", "Amazon Corretto", "BellSoft")
-                .forEach { roots.add(Path.of(programFiles, it)) }
-            System.getenv("ProgramFiles(x86)")?.let { roots.add(Path.of(it, "Java")) }
-            System.getenv("APPDATA")?.let { roots.add(Path.of(it, ".minecraft/runtime")) }
+                .forEach { vendor -> programFilesPath?.resolve(vendor)?.let(roots::add) }
+            System.getenv("ProgramFiles(x86)")?.let {
+                store.javaDiscoveryPath(it, "ProgramFiles(x86)")?.resolve("Java")?.let(roots::add)
+            }
+            System.getenv("APPDATA")?.let {
+                store.javaDiscoveryPath(it, "APPDATA")?.resolve(".minecraft/runtime")?.let(roots::add)
+            }
             System.getenv("LOCALAPPDATA")?.let {
-                roots.add(Path.of(it, "Programs", "Eclipse Adoptium"))
+                store.javaDiscoveryPath(it, "LOCALAPPDATA")?.resolve("Programs/Eclipse Adoptium")?.let(roots::add)
             }
             roots.addAll(windowsJavaHomes())
         } else {
@@ -226,8 +249,10 @@ internal class JavaCandidateCollector(
                 listOf("/usr/lib/jvm", "/usr/java", "/opt/java", "/opt/jdk", "/opt/zulu")
                     .map { Path.of(it) },
             )
-            roots.add(Path.of(System.getProperty("user.home"), ".jdks"))
-            roots.add(Path.of(System.getProperty("user.home"), ".minecraft/runtime"))
+            val userHome = System.getProperty("user.home")?.let { store.javaDiscoveryPath(it, "user.home") }
+            userHome?.resolve(".jdks")?.let(roots::add)
+            userHome?.resolve(".minecraft/runtime")?.let(roots::add)
+            userHome?.resolve(".sdkman/candidates/java")?.let(roots::add)
         }
         return roots
     }
@@ -263,7 +288,7 @@ internal class JavaCandidateCollector(
                                 "JavaHome",
                             )
                         }.getOrNull()
-                            ?.let { paths.add(Path.of(it)) }
+                            ?.let { home -> store.javaDiscoveryPath(home, "Java registry")?.let(paths::add) }
                     }
                 }
             }
