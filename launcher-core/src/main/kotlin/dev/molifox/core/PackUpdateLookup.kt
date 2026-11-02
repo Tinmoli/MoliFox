@@ -15,24 +15,26 @@ internal suspend fun loadPackVersions(
     project: RemoteModProject,
     folder: PackFolder,
     instance: GameInstance,
-): Result<List<RemoteModVersion>> =
-    packSourceAttempt { source.versions(project, folder, instance) }
+): Result<List<RemoteModVersion>> = packSourceAttempt { source.versions(project, folder, instance) }
 
 /** 更新内容源共用相同的可恢复异常；取消与其他异常仍由调用链处理。 */
-internal suspend fun <T> packSourceAttempt(block: suspend () -> T): Result<T> =
-    try {
-        Result.success(block())
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: IOException) {
-        Result.failure(error)
-    } catch (error: IllegalArgumentException) {
-        Result.failure(error)
-    } catch (error: IllegalStateException) {
-        Result.failure(error)
-    } catch (error: JsonParseException) {
-        Result.failure(error)
-    }
+internal suspend fun <T> packSourceAttempt(block: suspend () -> T): Result<T> {
+    val result =
+        try {
+            Result.success(block())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: IOException) {
+            Result.failure(error)
+        } catch (error: IllegalArgumentException) {
+            Result.failure(error)
+        } catch (error: IllegalStateException) {
+            Result.failure(error)
+        } catch (error: JsonParseException) {
+            Result.failure(error)
+        }
+    return result
+}
 
 /** 名称匹配时，项目版本里与本地文件同名的那个版本号；找不到时为空串。 */
 internal fun sameNamePackVersion(

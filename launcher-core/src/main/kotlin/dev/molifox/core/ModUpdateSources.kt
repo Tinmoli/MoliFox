@@ -87,14 +87,16 @@ internal class ModrinthModUpdateSource(
         files: List<LocalModFile>,
         instance: GameInstance,
         allowPrerelease: Boolean,
-    ): Map<String, RemoteModVersion> =
-        network.latestModrinthFiles(
+    ): Map<String, RemoteModVersion> {
+        val hashes = files.map { it.filename to it.sha512 }
+        return network.latestModrinthFiles(
             api,
-            files.map { it.filename to it.sha512 },
+            hashes,
             instance.gameVersion,
             if (instance.loader == LoaderType.Vanilla) "" else instance.loader.name.lowercase(),
             allowPrerelease,
         )
+    }
 
     override suspend fun projectBySlug(
         slug: String,

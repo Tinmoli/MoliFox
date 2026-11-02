@@ -5,8 +5,8 @@
 
 package dev.molifox.core
 
-import com.google.gson.JsonObject
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
@@ -60,7 +60,17 @@ class GitHubUpdater
 
         suspend fun check(manual: Boolean = true) {
             if (!checkLock.tryLock()) {
-                if (manual) notifyPendingCheck()
+                if (manual) {
+                    // 手动检查复用正在进行的请求结果，避免丢弃点击或重复请求。
+                    checkLock.withLock {
+                        val update = store.state.value.update
+                        if (update.error != null) {
+                            store.notify(update.error)
+                        } else if (update.checked) {
+                            store.notify(update.release.updateNotification(update.available))
+                        }
+                    }
+                }
                 return
             }
             store.updateState { it.copy(update = it.update.copy(checking = true, error = null)) }
@@ -86,12 +96,13 @@ class GitHubUpdater
         }
 
         private suspend fun latestRelease(): LauncherRelease? {
-            val releases = network.gitHubReleaseList(
-                "$api/releases?per_page=100",
-                store.data.settings.gitHubSourceOptions(),
-            ) { list ->
-                selectRelease(list)?.let { isNewer(it.version) } == true
-            }
+            val releases =
+                network.gitHubReleaseList(
+                    "$api/releases?per_page=100",
+                    store.data.settings.gitHubSourceOptions(),
+                ) { list ->
+                    selectRelease(list)?.let { isNewer(it.version) } == true
+                }
             return selectRelease(releases)
         }
 
@@ -102,10 +113,7 @@ class GitHubUpdater
                         val release = item.asJsonObject
                         if (
                             release.get("draft")?.asBoolean == true ||
-                            (!store.data.settings.allowBetaUpdates && (
-                                release.get("prerelease")?.asBoolean == true ||
-                                    VersionNumber.parse(release.string("tag_name"))?.qualifier?.isNotEmpty() == true
-                            ))
+                            (!store.data.settings.allowBetaUpdates && isPrereleaseRelease(release))
                         ) {
                             null
                         } else {
@@ -139,32 +147,7 @@ class GitHubUpdater
                         ),
                 )
             }
-            if (manual || available) notifyRelease(release, available)
-        }
-
-        /** 手动检查复用正在进行的请求结果，避免静默丢弃点击或重复请求。 */
-        private suspend fun notifyPendingCheck() {
-            checkLock.withLock {
-                val update = store.state.value.update
-                if (update.error != null) {
-                    store.notify(update.error)
-                } else if (update.checked) {
-                    notifyRelease(update.release, update.available)
-                }
-            }
-        }
-
-        private fun notifyRelease(
-            release: LauncherRelease?,
-            available: Boolean,
-        ) {
-            store.notify(
-                when {
-                    release == null -> I18n.t("core.gitHubUpdater.3")
-                    available -> I18n.t("core.gitHubUpdater.4", release.version)
-                    else -> I18n.t("core.gitHubUpdater.5", LAUNCHER_VERSION)
-                },
-            )
+            if (manual || available) store.notify(release.updateNotification(available))
         }
 
         private fun isNewer(version: String): Boolean =
@@ -196,11 +179,12 @@ class GitHubUpdater
                     else -> ""
                 }
             val normalizedVersion = version.removePrefix("v")
-            val versioned = when (store.platform.osName) {
-                "windows" -> "MoliFox-$normalizedVersion-windows-x86_64.exe"
-                "linux" -> "MoliFox-$normalizedVersion-linux-x86_64.run"
-                else -> ""
-            }
+            val versioned =
+                when (store.platform.osName) {
+                    "windows" -> "MoliFox-$normalizedVersion-windows-x86_64.exe"
+                    "linux" -> "MoliFox-$normalizedVersion-linux-x86_64.run"
+                    else -> ""
+                }
             val asset = releaseAssetOf(json, listOf(versioned, name))
             return LauncherRelease(
                 version,
@@ -209,7 +193,8 @@ class GitHubUpdater
                 json.string("published_at"),
                 page,
                 asset,
-                json.get("prerelease")?.asBoolean == true || VersionNumber.parse(version)?.qualifier?.isNotEmpty() == true,
+                json.get("prerelease")?.asBoolean == true ||
+                    VersionNumber.parse(version)?.qualifier?.isNotEmpty() == true,
             )
         }
 
@@ -224,7 +209,8 @@ class GitHubUpdater
                 ?.filter {
                     it.string("name") in names &&
                         store.platform.architecture == "x64"
-                }?.minByOrNull { names.indexOf(it.string("name")) }?.let {
+                }?.minByOrNull { names.indexOf(it.string("name")) }
+                ?.let {
                     val url = it.string("browser_download_url")
                     requireValidDownloadUrl(url)
                     val digest = it.string("digest").removePrefix("sha256:")
@@ -318,6 +304,23 @@ class GitHubUpdater
             }
         }
     }
+
+private fun isPrereleaseRelease(release: JsonObject): Boolean {
+    val preview =
+        release.get("prerelease")?.asBoolean == true ||
+            VersionNumber.parse(release.string("tag_name"))?.qualifier?.isNotEmpty() == true
+    return preview
+}
+
+private fun LauncherRelease?.updateNotification(available: Boolean): String {
+    val message =
+        when {
+            this == null -> I18n.t("core.gitHubUpdater.3")
+            available -> I18n.t("core.gitHubUpdater.4", version)
+            else -> I18n.t("core.gitHubUpdater.5", LAUNCHER_VERSION)
+        }
+    return message
+}
 
 internal data class VersionNumber(
     val numbers: List<Int>,

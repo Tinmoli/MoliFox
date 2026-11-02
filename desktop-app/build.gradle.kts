@@ -166,7 +166,11 @@ fun nativeRuntimeConfiguration(platform: String): Configuration =
         isCanBeConsumed = false
         isTransitive = false
         defaultDependencies {
-            add(project.dependencies.create("org.jetbrains.skiko:skiko-awt-runtime-$platform-x64:${skikoAwtVersion.get()}"))
+            add(
+                project.dependencies.create(
+                    "org.jetbrains.skiko:skiko-awt-runtime-$platform-x64:" + skikoAwtVersion.get(),
+                ),
+            )
         }
     }
 
@@ -404,7 +408,9 @@ val prepareLinuxRuntime =
         doLast {
             val output = linuxManifestFile.get().asFile
             output.parentFile.mkdirs()
-            output.writeText(manifestJson(platformRuntimeEntries(linuxRuntimeNative, "linux-x64"), "linux-x64"))
+            output.writeText(
+                manifestJson(platformRuntimeEntries(linuxRuntimeNative, "linux-x64"), "linux-x64"),
+            )
         }
     }
 
@@ -507,13 +513,14 @@ tasks.register("verifyDesktopPackages") {
                     }
                 }
                 // 用户协议随包发布：四种界面语言各一份，缺任何一份都会让对应语言的阅读页空白。
-                for (agreement in
+                val agreements =
                     listOf(
                         "AGREEMENT.md",
                         "AGREEMENT.en-US.md",
                         "AGREEMENT.zh-TW.md",
                         "AGREEMENT.zh-HK.md",
-                    )) {
+                    )
+                for (agreement in agreements) {
                     check(zip.getEntry("META-INF/molifox/$agreement") != null) {
                         "$platform 包缺少用户协议 $agreement"
                     }

@@ -802,14 +802,16 @@ internal class ModrinthPackUpdateSource(
         folder: PackFolder,
         instance: GameInstance,
         allowPrerelease: Boolean,
-    ): Map<String, RemoteModVersion> =
-        network.latestModrinthFiles(
+    ): Map<String, RemoteModVersion> {
+        val hashes = files.map { it.filename to it.sha512 }
+        return network.latestModrinthFiles(
             api,
-            files.map { it.filename to it.sha512 },
+            hashes,
             if (folder == PackFolder.ResourcePacks) instance.gameVersion else "",
             "",
             allowPrerelease,
         )
+    }
 
     override suspend fun search(
         name: String,
