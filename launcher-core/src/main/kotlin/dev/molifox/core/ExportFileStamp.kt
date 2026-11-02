@@ -11,7 +11,12 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
 
 /** 仅属于当前选择预览的文件信息；不读取内容，不写入缓存或归档。 */
-internal data class ExportFileStamp(val size: Long, val modified: FileTime, val created: FileTime, val fileKey: Any?) {
+internal data class ExportFileStamp(
+    val size: Long,
+    val modified: FileTime,
+    val created: FileTime,
+    val fileKey: Any?,
+) {
     companion object {
         fun read(path: Path): ExportFileStamp {
             val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
@@ -25,7 +30,10 @@ internal data class ExportFileStamp(val size: Long, val modified: FileTime, val 
     }
 }
 
-internal fun MrpackExportPlan.requireUnchangedExportFile(file: MrpackExportFile, source: Path) {
+internal fun MrpackExportPlan.requireUnchangedExportFile(
+    file: MrpackExportFile,
+    source: Path,
+) {
     val expected = fileStamps[file.path] ?: return
     require(ExportFileStamp.read(source) == expected) {
         I18n.t("packsA2.packExport.fileChangedPreviewAgain", file.path)

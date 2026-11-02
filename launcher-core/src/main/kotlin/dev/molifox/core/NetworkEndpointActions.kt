@@ -84,12 +84,13 @@ internal abstract class NetworkTextActions(
             var lastError: Exception? = null
             for (candidate in orderedCandidates(url, sourceOverride ?: settings.source())) {
                 try {
-                    val text = execute(builder(candidate).build()).readCancellable { response ->
-                        if (!response.isSuccessful) {
-                            throw HttpStatusException(response.code, URI(url).host)
+                    val text =
+                        execute(builder(candidate).build()).readCancellable { response ->
+                            if (!response.isSuccessful) {
+                                throw HttpStatusException(response.code, URI(url).host)
+                            }
+                            response.body?.string() ?: error(I18n.t("core.networkEndpointActions.2"))
                         }
-                        response.body?.string() ?: error(I18n.t("core.networkEndpointActions.2"))
-                    }
                     return@withContext text
                 } catch (cancelled: CancellationException) {
                     throw cancelled

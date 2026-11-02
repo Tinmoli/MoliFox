@@ -7,8 +7,8 @@ import dev.molifox.core.gitHubSourceOptions
 import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.data.FileMultiplayerSettings
 import dev.molifox.multiplayer.domain.MultiplayerBackend
-import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.easytier.EasyTierCatalog
+import dev.molifox.multiplayer.easytier.EasyTierInstaller
 import dev.molifox.multiplayer.lobby.MachineIdStore
 import dev.molifox.multiplayer.lobby.PclLobbyBackend
 import kotlinx.coroutines.CoroutineScope
@@ -22,12 +22,19 @@ fun createDesktopMultiplayer(controller: LauncherController): MultiplayerBackend
     val report: (String, Boolean) -> Unit = { message, error -> log.report(message, error) }
     return PclLobbyBackend(
         settingsRepository = FileMultiplayerSettings(dataRoot.resolve("config/multiplayer.json")),
-        installer = EasyTierInstaller(dataRoot.resolve("runtimes"), report, packageProvider = {
-            EasyTierCatalog.current()?.let { pkg ->
-                pkg.copy(mirrors = gitHubDownloadCandidates(pkg.url, controller.store.data.settings.gitHubSourceOptions())
-                    .filterNot { it == pkg.url })
-            }
-        }),
+        installer =
+            EasyTierInstaller(dataRoot.resolve("runtimes"), report, packageProvider = {
+                EasyTierCatalog.current()?.let { pkg ->
+                    pkg.copy(
+                        mirrors =
+                            gitHubDownloadCandidates(
+                                pkg.url,
+                                controller.store.data.settings
+                                    .gitHubSourceOptions(),
+                            ).filterNot { it == pkg.url },
+                    )
+                }
+            }),
         machineIdStore = MachineIdStore(dataRoot.resolve("config/machine-id")),
         logger = report,
         playerName = { currentNickname(controller) },

@@ -77,10 +77,11 @@ internal abstract class LauncherContentActions(
     LauncherContentApi {
     override fun exportMrpack(request: PackExportRequest): String {
         requireIdle(request.instanceId)
-        val fixed = request.copy(
-            selectedEntries = request.selectedEntries.toSet(),
-            excludedPaths = request.excludedPaths.toSet(),
-        )
+        val fixed =
+            request.copy(
+                selectedEntries = request.selectedEntries.toSet(),
+                excludedPaths = request.excludedPaths.toSet(),
+            )
         return jobs.enqueue(
             I18n.t(
                 if (fixed.format.importable) "coreC.tasks.exportPack" else "coreC.tasks.exportFullBackup",

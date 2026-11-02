@@ -95,18 +95,18 @@ internal abstract class LauncherRuntimeActions(
             return
         }
         scope.launch(Dispatchers.IO) {
-        UpdateApplier(store)
-            .apply(downloaded)
-            .onSuccess {
-                store.log(I18n.t("miscA1.runtimeActions.replaceScriptCreated"))
-                // 桌面层注册了优雅退出（停联机/后台任务）；没有注册时退回直接退出进程。
-                val gracefulExit = core.exitHandler
-                if (gracefulExit != null) gracefulExit() else platform.exitLauncher()
-            }.onFailure { failure ->
-                val message = failure.message ?: I18n.t("miscA1.runtimeActions.autoUpdateFailed")
-                store.log(message, true)
-                store.notify(message)
-            }
+            UpdateApplier(store)
+                .apply(downloaded)
+                .onSuccess {
+                    store.log(I18n.t("miscA1.runtimeActions.replaceScriptCreated"))
+                    // 桌面层注册了优雅退出（停联机/后台任务）；没有注册时退回直接退出进程。
+                    val gracefulExit = core.exitHandler
+                    if (gracefulExit != null) gracefulExit() else platform.exitLauncher()
+                }.onFailure { failure ->
+                    val message = failure.message ?: I18n.t("miscA1.runtimeActions.autoUpdateFailed")
+                    store.log(message, true)
+                    store.notify(message)
+                }
         }
     }
 

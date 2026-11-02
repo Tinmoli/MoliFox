@@ -38,7 +38,8 @@ internal object LauncherBundlePath {
 
     /** 原生外壳进程；JVM 退出后它还要清理临时目录并退出，覆盖文件前必须等它一起结束。 */
     fun wrapperPid(): Long? =
-        System.getenv("MOLIFOX_WRAPPER_PID")
+        System
+            .getenv("MOLIFOX_WRAPPER_PID")
             ?.toLongOrNull()
             ?.takeIf { it != ProcessHandle.current().pid() }
 
@@ -76,9 +77,15 @@ internal class UpdateApplier(
                 I18n.t("networkB2.updateApplier.sameFile")
             }
             require(!Files.isSameFile(target, downloaded)) { I18n.t("networkB2.updateApplier.sameFile") }
-            val asset = requireNotNull(store.state.value.update.release?.asset) { I18n.t("core.gitHubUpdater.7") }
-            require(asset.sha256.isNotBlank() && Files.size(downloaded) == asset.size &&
-                digest(downloaded, "SHA-256").equals(asset.sha256, true)) { I18n.t("core.gitHubUpdater.8") }
+            val asset =
+                requireNotNull(
+                    store.state.value.update.release
+                        ?.asset,
+                ) { I18n.t("core.gitHubUpdater.7") }
+            require(
+                asset.sha256.isNotBlank() && Files.size(downloaded) == asset.size &&
+                    digest(downloaded, "SHA-256").equals(asset.sha256, true),
+            ) { I18n.t("core.gitHubUpdater.8") }
             val staged = target.resolveSibling(".${target.fileName}.update-${UUID.randomUUID()}")
             try {
                 Files.copy(downloaded, staged)
@@ -119,7 +126,8 @@ internal class UpdateApplier(
                 // 不使用裸命令名：部分机器 PATH 首位是应用执行别名，ProcessBuilder 会拿到拒绝访问。
                 val systemRoot = System.getenv("SystemRoot") ?: "C:\\Windows"
                 val powershell =
-                    Path.of(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+                    Path
+                        .of(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
                         .takeIf(Files::isRegularFile)
                         ?.toString()
                         ?: "powershell.exe"
@@ -145,5 +153,4 @@ internal class UpdateApplier(
             .redirectOutput(ProcessBuilder.Redirect.appendTo(script.resolveSibling("${script.fileName}.log").toFile()))
             .start()
     }
-
 }

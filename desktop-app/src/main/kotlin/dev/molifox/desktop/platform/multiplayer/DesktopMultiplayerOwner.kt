@@ -34,15 +34,17 @@ class DesktopMultiplayerOwner(
                 ownedBackend ?: createBackend().also { ownedBackend = it }
             }
 
-    suspend fun close() = withContext(NonCancellable) {
-        closeMutex.withLock {
-            val backend = synchronized(lock) {
-                closed = true
-                ownedBackend
+    suspend fun close() =
+        withContext(NonCancellable) {
+            closeMutex.withLock {
+                val backend =
+                    synchronized(lock) {
+                        closed = true
+                        ownedBackend
+                    }
+                // 关闭失败仍保留所有权，最终清理可重试；并发调用等待同一次释放完成。
+                backend?.close()
+                synchronized(lock) { ownedBackend = null }
             }
-            // 关闭失败仍保留所有权，最终清理可重试；并发调用等待同一次释放完成。
-            backend?.close()
-            synchronized(lock) { ownedBackend = null }
         }
-    }
 }

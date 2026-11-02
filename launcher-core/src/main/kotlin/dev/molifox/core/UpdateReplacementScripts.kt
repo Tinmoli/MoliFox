@@ -4,8 +4,16 @@ package dev.molifox.core
 import java.nio.file.Path
 
 internal object UpdateReplacementScripts {
-    fun windows(target: Path, staged: Path, pids: List<Long>, sha256: String): String {
-        val waits = pids.joinToString("\n") { "while (Get-Process -Id $it -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }" }
+    fun windows(
+        target: Path,
+        staged: Path,
+        pids: List<Long>,
+        sha256: String,
+    ): String {
+        val waits =
+            pids.joinToString("\n") {
+                "while (Get-Process -Id $it -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }"
+            }
         return """
             ${'$'}ErrorActionPreference = 'Stop'
             ${'$'}target = '${ps(target)}'
@@ -33,10 +41,16 @@ internal object UpdateReplacementScripts {
             } finally {
                 if (Test-Path -LiteralPath ${'$'}staged) { Remove-Item -LiteralPath ${'$'}staged -Force }
             }
-        """.trimIndent()
+            """.trimIndent()
     }
 
-    fun linux(target: Path, staged: Path, pids: List<Long>, sha256: String): String = """
+    fun linux(
+        target: Path,
+        staged: Path,
+        pids: List<Long>,
+        sha256: String,
+    ): String =
+        """
         #!/bin/sh
         set -eu
         target='${sh(target)}'
@@ -53,7 +67,7 @@ internal object UpdateReplacementScripts {
         cd -- "${'$'}(dirname -- "${'$'}target")"
         setsid "${'$'}target" </dev/null &
         rm -f -- "${'$'}0"
-    """.trimIndent() + "\n"
+        """.trimIndent() + "\n"
 
     private fun ps(path: Path): String = path.toAbsolutePath().toString().replace("'", "''")
 

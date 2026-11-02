@@ -61,12 +61,13 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
             } catch (failure: IOException) {
                 return Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure))
             }
-        val ownership = try {
-            bindOwnedChild(process)
-        } catch (failure: IOException) {
-            process.destroyForcibly().waitFor()
-            return Result.failure(failure)
-        }
+        val ownership =
+            try {
+                bindOwnedChild(process)
+            } catch (failure: IOException) {
+                process.destroyForcibly().waitFor()
+                return Result.failure(failure)
+            }
         val reader =
             Thread({ drainOutput(process, onOutput) }, "easytier-core-log").apply {
                 isDaemon = true

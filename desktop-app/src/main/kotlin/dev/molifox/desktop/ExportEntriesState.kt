@@ -73,9 +73,10 @@ internal fun ExportEntriesSection(
                     action = {
                         Text(
                             if (expanded) strings.t("dialogs.export.collapse") else strings.t("dialogs.export.expand"),
-                            modifier = Modifier
-                                .clickable { expanded = !expanded }
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            modifier =
+                                Modifier
+                                    .clickable { expanded = !expanded }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.primary,
                         )

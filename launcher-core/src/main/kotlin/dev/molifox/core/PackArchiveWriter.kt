@@ -52,7 +52,10 @@ internal class PackArchiveWriter(
         progress("packsA2.packExport.progressExportingFile", currentFile)
     }
 
-    private suspend fun writeEntry(name: String, bytes: ByteArray) {
+    private suspend fun writeEntry(
+        name: String,
+        bytes: ByteArray,
+    ) {
         context.checkCancelled()
         zip.putNextEntry(ZipEntry(name))
         zip.write(bytes)
@@ -60,7 +63,10 @@ internal class PackArchiveWriter(
         written++
     }
 
-    private fun progress(key: String, name: String) {
+    private fun progress(
+        key: String,
+        name: String,
+    ) {
         val total = layout.totalEntries
         val fraction = ((copiedBytes + written) / maxOf(1.0, totalWork)).toFloat() * EXPORT_WRITE_PROGRESS_END
         context.progress(fraction, I18n.t(key, name, written + 1, total))

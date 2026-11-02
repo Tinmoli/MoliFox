@@ -28,12 +28,15 @@ fun bindOwnedChild(process: Process): AutoCloseable {
         Memory(144).use { limits ->
             limits.clear()
             limits.setInt(16, 0x2000)
-            val configured = kernel.getFunction("SetInformationJobObject")
-                .invokeInt(arrayOf(job, 9, limits, limits.size().toInt()))
+            val configured =
+                kernel
+                    .getFunction("SetInformationJobObject")
+                    .invokeInt(arrayOf(job, 9, limits, limits.size().toInt()))
             if (configured == 0) throw IOException("SetInformationJobObject failed: ${Native.getLastError()}")
         }
-        val child = Kernel32.INSTANCE.OpenProcess(0x0101, false, process.pid().toInt())
-            ?: throw IOException("OpenProcess failed: ${Native.getLastError()}")
+        val child =
+            Kernel32.INSTANCE.OpenProcess(0x0101, false, process.pid().toInt())
+                ?: throw IOException("OpenProcess failed: ${Native.getLastError()}")
         try {
             val assigned = kernel.getFunction("AssignProcessToJobObject").invokeInt(arrayOf(job, child))
             if (assigned == 0) throw IOException("AssignProcessToJobObject failed: ${Native.getLastError()}")
@@ -48,7 +51,8 @@ fun bindOwnedChild(process: Process): AutoCloseable {
 }
 
 // JVM 不向管道写数据；正常关闭或被强杀都会产生 EOF，无需轮询父 PID。
-private val LINUX_GUARD = """
+private val LINUX_GUARD =
+    """
     child=
     watcher=
     cleanup() {
@@ -69,4 +73,4 @@ private val LINUX_GUARD = """
     kill "${'$'}watcher" 2>/dev/null || :
     wait "${'$'}watcher" 2>/dev/null || :
     exit "${'$'}result"
-""".trimIndent()
+    """.trimIndent()

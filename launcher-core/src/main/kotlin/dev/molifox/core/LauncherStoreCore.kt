@@ -179,7 +179,8 @@ internal class LauncherStoreCore(
             autoCheckUpdates = if (raw.has("autoCheckUpdates")) settings.autoCheckUpdates else true,
             // 旧配置没有协议版本：视为未同意，启动时重新询问；已同意过的版本原样保留。
             agreementVersion = raw.string("agreementVersion"),
-            githubSource = raw.string("githubSource").takeIf { key -> GitHubSource.entries.any { it.key == key } } ?: "auto",
+            githubSource =
+                raw.string("githubSource").takeIf { key -> GitHubSource.entries.any { it.key == key } } ?: "auto",
             githubCustomProxy = raw.string("githubCustomProxy"),
             isolateVersions = isolateVersions,
             gameLanguageFollowsLauncher = gameLanguageFollows,

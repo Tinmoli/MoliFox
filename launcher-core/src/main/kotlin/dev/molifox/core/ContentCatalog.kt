@@ -98,16 +98,20 @@ internal fun JsonObject.adoptContentSource(source: ContentSource) {
     )
 }
 
-private fun JsonObject.toContentHit(projectId: String, kind: String): ContentHit = ContentHit(
-    projectId,
-    string("slug"),
-    string("title"),
-    string("description"),
-    string("author"),
-    get("downloads")?.asLong ?: 0,
-    kind,
-    string("icon_url").takeIf { it.isNotBlank() },
-)
+private fun JsonObject.toContentHit(
+    projectId: String,
+    kind: String,
+): ContentHit =
+    ContentHit(
+        projectId,
+        string("slug"),
+        string("title"),
+        string("description"),
+        string("author"),
+        get("downloads")?.asLong ?: 0,
+        kind,
+        string("icon_url").takeIf { it.isNotBlank() },
+    )
 
 internal fun verifyContentSource(
     store: LauncherStore,

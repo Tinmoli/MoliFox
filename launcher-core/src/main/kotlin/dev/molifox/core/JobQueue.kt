@@ -106,7 +106,10 @@ class JobContext
 
         /** 计划大小用于展示；网络首回调仍需单独建立断点基线。 */
         @Synchronized
-        internal fun planTransfer(key: String, total: Long) {
+        internal fun planTransfer(
+            key: String,
+            total: Long,
+        ) {
             transfers[key] = Triple(0L, total.coerceAtLeast(0), false)
             observedTransfers.remove(key)
         }

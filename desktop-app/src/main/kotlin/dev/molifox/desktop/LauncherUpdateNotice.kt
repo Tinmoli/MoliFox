@@ -19,7 +19,10 @@ import dev.molifox.core.LAUNCHER_VERSION
 import dev.molifox.core.LauncherUpdateState
 
 @Composable
-internal fun LauncherUpdateNotice(update: LauncherUpdateState, actions: UiActions) {
+internal fun LauncherUpdateNotice(
+    update: LauncherUpdateState,
+    actions: UiActions,
+) {
     var dismissed by remember { mutableStateOf<Long?>(null) }
     val release = update.release ?: return
     if (!update.available || update.checking || dismissed == update.promptSerial) return
@@ -30,7 +33,11 @@ internal fun LauncherUpdateNotice(update: LauncherUpdateState, actions: UiAction
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(strings.t("settings.update.versions", LAUNCHER_VERSION, release.version))
-                Text(strings.t(if (release.prerelease) "settings.update.channel.beta" else "settings.update.channel.stable"))
+                Text(
+                    strings.t(
+                        if (release.prerelease) "settings.update.channel.beta" else "settings.update.channel.stable",
+                    ),
+                )
                 ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
                     MarkdownText(release.notes.ifBlank { strings.t("settings.update.noNotes") })
                 }

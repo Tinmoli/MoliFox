@@ -308,15 +308,22 @@ private suspend fun orderedSources(
     now: Long,
 ): List<String> {
     val candidates = (listOf(pkg.url) + pkg.mirrors).distinct()
-    cache.order?.takeIf { now - cache.rankedAt < RANKING_TTL_MILLIS && it.toSet() == candidates.toSet() }?.let { cached ->
-        logger(I18n.t("multiplayerB.easyTierInstaller.reuseRanking", cached.joinToString()), false)
-        return cached
-    }
+    cache.order
+        ?.takeIf {
+            now - cache.rankedAt < RANKING_TTL_MILLIS && it.toSet() == candidates.toSet()
+        }?.let { cached ->
+            logger(I18n.t("multiplayerB.easyTierInstaller.reuseRanking", cached.joinToString()), false)
+            return cached
+        }
     val measured =
         coroutineScope {
-            candidates.map { source -> async(Dispatchers.IO) {
-                probe.measureSpeed(source)?.let { source to it }
-            } }.awaitAll().filterNotNull()
+            candidates
+                .map { source ->
+                    async(Dispatchers.IO) {
+                        probe.measureSpeed(source)?.let { source to it }
+                    }
+                }.awaitAll()
+                .filterNotNull()
         }
     measured.forEach { (source, speed) ->
         logger(I18n.t("multiplayerB.easyTierInstaller.speedMeasured", speed / KIB, source), false)

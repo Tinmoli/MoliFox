@@ -8,8 +8,14 @@ private const val TRANSFER_RATE_WINDOW_NANOS = 2_000_000_000L
 private const val NANOS_PER_SECOND = 1_000_000_000.0
 
 /** 用时间加权的近期字节计算速度，文件完成不会把采样窗口缩到几毫秒。 */
-internal class TransferRate(private val clock: () -> Long = System::nanoTime) {
-    private class Sample(val end: Long, val elapsed: Long, val bytes: Long)
+internal class TransferRate(
+    private val clock: () -> Long = System::nanoTime,
+) {
+    private class Sample(
+        val end: Long,
+        val elapsed: Long,
+        val bytes: Long,
+    )
 
     private val samples = ArrayDeque<Sample>()
     private var start = clock()

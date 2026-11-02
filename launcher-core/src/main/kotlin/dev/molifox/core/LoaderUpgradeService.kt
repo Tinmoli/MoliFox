@@ -200,20 +200,21 @@ internal suspend fun LoaderProfileFetcher.fetchLoaderProfile(
     context: JobContext,
     from: Float,
     to: Float,
-): JsonObject = when (instance.loader) {
-    LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
+): JsonObject =
+    when (instance.loader) {
+        LoaderType.Vanilla -> error(I18n.t("networkB2.loaderUpgradeService.vanillaNoLoader"))
 
-    LoaderType.Fabric,
-    LoaderType.Quilt,
-    LoaderType.LegacyFabric,
-    -> fetchFabricProfile(instance, context, from, to)
+        LoaderType.Fabric,
+        LoaderType.Quilt,
+        LoaderType.LegacyFabric,
+        -> fetchFabricProfile(instance, context, from, to)
 
-    LoaderType.Forge,
-    LoaderType.NeoForge,
-    LoaderType.Cleanroom,
-    -> fetchForgeProfile(instance, base, context, from, to)
+        LoaderType.Forge,
+        LoaderType.NeoForge,
+        LoaderType.Cleanroom,
+        -> fetchForgeProfile(instance, base, context, from, to)
 
-    LoaderType.OptiFine -> optiFine.fetchProfile(instance, base, context, from, to)
+        LoaderType.OptiFine -> optiFine.fetchProfile(instance, base, context, from, to)
 
-    LoaderType.LiteLoader -> liteLoader.fetchProfile(instance, context, from, to)
-}
+        LoaderType.LiteLoader -> liteLoader.fetchProfile(instance, context, from, to)
+    }

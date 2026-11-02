@@ -10,7 +10,11 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 
-internal fun requireUpdateDigest(temporary: Path, sha512: String, sha1: String) {
+internal fun requireUpdateDigest(
+    temporary: Path,
+    sha512: String,
+    sha1: String,
+) {
     val (expected, algorithm) =
         when {
             sha512.isNotBlank() -> sha512 to "SHA-512"

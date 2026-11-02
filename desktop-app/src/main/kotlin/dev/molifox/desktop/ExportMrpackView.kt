@@ -17,7 +17,12 @@ private const val MAX_EXPORT_NAME_LENGTH = 200
 private const val MAX_EXPORT_VERSION_LENGTH = 100
 
 /** 导出对话框的派生状态：路径、名称、校验结果与文件计数都在这里计算。 */
-internal class ExportMrpackView(target: String, format: PackExportFormat, version: String, name: String) {
+internal class ExportMrpackView(
+    target: String,
+    format: PackExportFormat,
+    version: String,
+    name: String,
+) {
     val destination: Path? = runCatching { Path.of(target.trim().trim('"').trim()) }.getOrNull()
 
     val fileName: String = destination?.fileName?.toString().orEmpty()

@@ -24,7 +24,9 @@ internal suspend fun collectExportScan(
     onError: (String?) -> Unit,
 ) {
     try {
-        actions.controller.content.exportEntries(instanceId).collect { onScan(it) }
+        actions.controller.content
+            .exportEntries(instanceId)
+            .collect { onScan(it) }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: IOException) {

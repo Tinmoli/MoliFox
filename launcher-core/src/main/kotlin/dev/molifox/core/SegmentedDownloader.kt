@@ -46,7 +46,10 @@ private const val HTTP_PARTIAL_CONTENT = 206
 internal const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
 private const val SEGMENT_COUNT_LINE = 4
 
-private fun ownedSegment(file: Path, count: Int): Boolean {
+private fun ownedSegment(
+    file: Path,
+    count: Int,
+): Boolean {
     val name = file.fileName.toString()
     val index = name.removeSuffix(".part").toIntOrNull() ?: return false
     return index in 0 until count && name == "$index.part" &&
@@ -102,14 +105,18 @@ internal class SegmentedDownloader(
         private const val MINIMUM_SEGMENT_SIZE = 4L * 1024 * 1024
         private const val MARKER = "molifox-segments-v1"
 
-        fun segmentCount(size: Long, configured: Int): Int = if (size < MINIMUM_FILE_SIZE || configured < 2) {
-            1
-        } else {
-            minOf(
-                configured.coerceAtMost(MAX_DOWNLOAD_SEGMENTS),
-                (size / MINIMUM_SEGMENT_SIZE).coerceAtMost(MAX_DOWNLOAD_SEGMENTS.toLong()).toInt(),
-            )
-        }
+        fun segmentCount(
+            size: Long,
+            configured: Int,
+        ): Int =
+            if (size < MINIMUM_FILE_SIZE || configured < 2) {
+                1
+            } else {
+                minOf(
+                    configured.coerceAtMost(MAX_DOWNLOAD_SEGMENTS),
+                    (size / MINIMUM_SEGMENT_SIZE).coerceAtMost(MAX_DOWNLOAD_SEGMENTS.toLong()).toInt(),
+                )
+            }
 
         fun directory(target: Path): Path = target.resolveSibling("${target.fileName}.parts")
 
@@ -126,7 +133,12 @@ internal class SegmentedDownloader(
             }
             val identity = marker.readText()
             if (!identity.startsWith("$MARKER\n")) return
-            val count = identity.lineSequence().drop(SEGMENT_COUNT_LINE).firstOrNull()?.toIntOrNull() ?: return
+            val count =
+                identity
+                    .lineSequence()
+                    .drop(SEGMENT_COUNT_LINE)
+                    .firstOrNull()
+                    ?.toIntOrNull() ?: return
             if (count !in 2..MAX_DOWNLOAD_SEGMENTS) return
             folder
                 .listDirectoryEntries()

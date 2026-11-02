@@ -35,7 +35,11 @@ internal fun taskResourcesForInstances(
     }
 
 /** 保留调用方的原 ID 键；只读查询可以传入已解析快照，不改变任务隔离语义。 */
-internal fun taskResourcesForInstance(store: LauncherStore, id: String, instance: GameInstance): Set<String> =
+internal fun taskResourcesForInstance(
+    store: LauncherStore,
+    id: String,
+    instance: GameInstance,
+): Set<String> =
     buildSet {
         add("instance:$id")
         add("files:${taskPathKey(store.gamePath(instance))}")

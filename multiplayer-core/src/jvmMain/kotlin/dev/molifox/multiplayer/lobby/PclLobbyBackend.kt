@@ -286,15 +286,16 @@ class PclLobbyBackend(
             }
         }
 
-    override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
-        closed = true
-        scope.cancel()
-        try {
-            scanner.close()
-        } finally {
-            commandMutex.withLock { coordinator.close() }
+    override suspend fun close() =
+        withContext(NonCancellable + Dispatchers.IO) {
+            closed = true
+            scope.cancel()
+            try {
+                scanner.close()
+            } finally {
+                commandMutex.withLock { coordinator.close() }
+            }
         }
-    }
 
     private companion object {
         const val DEFAULT_SCAN_CHECK_INTERVAL_MILLIS = 5_000L

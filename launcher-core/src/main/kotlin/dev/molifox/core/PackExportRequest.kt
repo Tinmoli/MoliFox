@@ -16,15 +16,19 @@ data class PackExportRequest(
     val options: PackExportOptions = PackExportOptions(),
 )
 
-internal class ExportPreparation(val request: PackExportRequest, val context: JobContext?)
+internal class ExportPreparation(
+    val request: PackExportRequest,
+    val context: JobContext?,
+)
 
 internal suspend fun ContentService.prepareRequestedExport(
     request: PackExportRequest,
     context: JobContext? = null,
-): MrpackExportPlan = MrpackExporter(core.store, core.network, core.api, core.curseForge).preview(
-    request.instanceId,
-    request.metadata,
-    resolveDownloads = request.format == PackExportFormat.Modrinth && request.options.remoteResources,
-    includeLogs = request.format == PackExportFormat.Backup && request.options.includeLogs,
-    preparation = ExportPreparation(request, context),
-)
+): MrpackExportPlan =
+    MrpackExporter(core.store, core.network, core.api, core.curseForge).preview(
+        request.instanceId,
+        request.metadata,
+        resolveDownloads = request.format == PackExportFormat.Modrinth && request.options.remoteResources,
+        includeLogs = request.format == PackExportFormat.Backup && request.options.includeLogs,
+        preparation = ExportPreparation(request, context),
+    )

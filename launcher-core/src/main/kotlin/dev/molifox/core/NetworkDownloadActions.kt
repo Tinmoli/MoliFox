@@ -144,11 +144,12 @@ internal abstract class NetworkSessionActions(
         block: suspend () -> T,
     ): T {
         val key = taskPathKey(target)
-        val entry = checkNotNull(
-            downloadLocks.compute(key) { _, current ->
-                (current ?: TargetTransferLock()).also { it.users++ }
-            },
-        )
+        val entry =
+            checkNotNull(
+                downloadLocks.compute(key) { _, current ->
+                    (current ?: TargetTransferLock()).also { it.users++ }
+                },
+            )
         try {
             return entry.mutex.withLock { block() }
         } finally {

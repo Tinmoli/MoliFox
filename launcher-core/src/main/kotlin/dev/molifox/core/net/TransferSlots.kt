@@ -10,11 +10,16 @@ import kotlinx.coroutines.flow.first
 import kotlin.coroutines.coroutineContext
 
 /** 同一客户端的所有任务/来源共用文件上限；降低设置后先等待已有传输收尾。 */
-internal class TransferSlots(private val configuredLimit: () -> Int) {
+internal class TransferSlots(
+    private val configuredLimit: () -> Int,
+) {
     private val changes = MutableStateFlow(0L)
     private var active = 0
 
-    suspend fun <T> run(taskLimit: Int, block: suspend () -> T): T {
+    suspend fun <T> run(
+        taskLimit: Int,
+        block: suspend () -> T,
+    ): T {
         while (true) {
             coroutineContext.ensureActive()
             val revision = changes.value

@@ -1,8 +1,8 @@
 // EasyTier sidecar 的版本、平台与官方发布包信息：只描述下载与校验，不联网、不做安装。
 package dev.molifox.multiplayer.easytier
 
-import dev.molifox.core.i18n.I18n
 import dev.molifox.core.gitHubDownloadCandidates
+import dev.molifox.core.i18n.I18n
 
 /** 一个平台的 EasyTier 官方发布包；[rootPrefix] 是压缩包内文件的公共目录前缀。 */
 data class EasyTierPackage(

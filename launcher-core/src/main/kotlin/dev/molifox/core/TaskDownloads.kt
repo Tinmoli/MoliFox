@@ -15,7 +15,9 @@ import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 
-internal class TransferTrafficContext(val task: JobContext) : AbstractCoroutineContextElement(Key) {
+internal class TransferTrafficContext(
+    val task: JobContext,
+) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<TransferTrafficContext>
 }
 

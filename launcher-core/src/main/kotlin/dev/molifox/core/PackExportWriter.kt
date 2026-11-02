@@ -41,7 +41,12 @@ internal class ExportScanState(
     private var lastProgress = 0L
 
     fun select(preparation: ExportPreparation?) {
-        selectedEntries = preparation?.request?.selectedEntries?.map { it.lowercase(Locale.ROOT) }?.toSet()
+        selectedEntries =
+            preparation
+                ?.request
+                ?.selectedEntries
+                ?.map { it.lowercase(Locale.ROOT) }
+                ?.toSet()
         excludedPaths = preparation?.request?.excludedPaths.orEmpty()
         context = preparation?.context
     }
@@ -201,10 +206,11 @@ private suspend fun writePayloadEntry(
     plan.requireUnchangedExportFile(file, source)
     val deferred = file.sha1.isEmpty() && file.sha512.isEmpty() && file.path in plan.fileStamps
     zip.putNextEntry(ZipEntry(archivePath))
-    val hashes = hashExportFile(source) { bytes, count ->
-        zip.write(bytes, 0, count)
-        copied(count)
-    }
+    val hashes =
+        hashExportFile(source) { bytes, count ->
+            zip.write(bytes, 0, count)
+            copied(count)
+        }
     require(hashes.size == file.size && (deferred || hashes == ExportHashes(file.size, file.sha1, file.sha512))) {
         I18n.t("packsA2.packExport.fileChangedPreviewAgain", file.path)
     }

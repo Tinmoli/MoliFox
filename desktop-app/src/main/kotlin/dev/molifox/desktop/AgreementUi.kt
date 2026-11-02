@@ -45,29 +45,32 @@ internal const val AGREEMENT_VERSION = "2026-11-02.1"
 private const val AGREEMENT_RESOURCE_ROOT = "/META-INF/molifox/"
 
 /** 四种语言各一份正文；其他语言使用英文，资源缺失时再回落到简体中文。 */
-internal fun agreementResourceName(languageTag: String): String = when (languageTag) {
-    "zh-CN" -> "AGREEMENT.md"
-    "zh-TW" -> "AGREEMENT.zh-TW.md"
-    "zh-HK" -> "AGREEMENT.zh-HK.md"
-    else -> "AGREEMENT.en-US.md"
-}
+internal fun agreementResourceName(languageTag: String): String =
+    when (languageTag) {
+        "zh-CN" -> "AGREEMENT.md"
+        "zh-TW" -> "AGREEMENT.zh-TW.md"
+        "zh-HK" -> "AGREEMENT.zh-HK.md"
+        else -> "AGREEMENT.en-US.md"
+    }
 
 internal object AgreementCatalog {
     private val cache = mutableMapOf<String, String>()
 
     /** 读取指定语言的协议正文；读不到时返回空串，由调用方显示缺文提示。 */
-    fun load(languageTag: String): String = synchronized(cache) {
-        cache.getOrPut(languageTag) {
-            loadResource(agreementResourceName(languageTag))
-                ?: loadResource("AGREEMENT.md")
-                ?: ""
+    fun load(languageTag: String): String =
+        synchronized(cache) {
+            cache.getOrPut(languageTag) {
+                loadResource(agreementResourceName(languageTag))
+                    ?: loadResource("AGREEMENT.md")
+                    ?: ""
+            }
         }
-    }
 
-    private fun loadResource(name: String): String? = javaClass
-        .getResourceAsStream(AGREEMENT_RESOURCE_ROOT + name)
-        ?.bufferedReader(Charsets.UTF_8)
-        ?.use { it.readText() }
+    private fun loadResource(name: String): String? =
+        javaClass
+            .getResourceAsStream(AGREEMENT_RESOURCE_ROOT + name)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
 }
 
 /** 首次启动的协议门：小窗口，拒绝即退出，旁边查看正文；同意后写入协议版本。 */
@@ -155,9 +158,10 @@ internal fun UiActions.acceptAgreement() {
     agreementError = null
     run {
         try {
-            val error = withContext(Dispatchers.IO) {
-                applySetting(this@acceptAgreement) { it.copy(agreementVersion = AGREEMENT_VERSION) }
-            }
+            val error =
+                withContext(Dispatchers.IO) {
+                    applySetting(this@acceptAgreement) { it.copy(agreementVersion = AGREEMENT_VERSION) }
+                }
             withContext(Dispatchers.Swing) {
                 agreementError =
                     if (controller.store.data.settings.agreementVersion == AGREEMENT_VERSION) {
