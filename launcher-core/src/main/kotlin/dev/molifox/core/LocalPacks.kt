@@ -293,6 +293,25 @@ class LocalPackStore internal constructor(
         }
     }
 
+    /** 同目录重命名；zip 保留扩展名，文件夹不追加扩展名，来源登记与文件移动保持一致。 */
+    fun rename(
+        instanceId: String,
+        folder: PackFolder,
+        filename: String,
+        newName: String,
+    ): String {
+        val source = safePath(store.instancePath(instanceId).resolve(folder.directory), safeFilename(filename))
+        val directory = source.isDirectory(LinkOption.NOFOLLOW_LINKS)
+        return renameInstalledContent(
+            store,
+            instanceId,
+            folder.directory,
+            filename,
+            newName,
+            if (directory) RenameContentKind.DirectoryPack else RenameContentKind.ZipPack,
+        )
+    }
+
     /** 递归复制文件夹：跳过符号链接/目录联接与越界路径，空目录也会建出来。 */
     private fun copyTree(
         source: Path,

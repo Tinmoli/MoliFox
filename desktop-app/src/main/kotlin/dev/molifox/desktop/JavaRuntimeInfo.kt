@@ -14,7 +14,7 @@ import androidx.compose.ui.text.TextStyle
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.JavaRuntimeSource
 import dev.molifox.core.i18n.I18n
-import java.nio.file.Path
+import dev.molifox.core.sameNormalizedPath
 import kotlin.math.max
 
 private const val JAVA_X86_BITS = 32
@@ -119,15 +119,7 @@ internal fun sameJavaPath(
     left: String,
     right: String,
     ignoreCase: Boolean,
-): Boolean {
-    if (left.isBlank() || right.isBlank()) return false
-    if (left.equals(right, ignoreCase)) return true
-    return runCatching {
-        val a = Path.of(left).toAbsolutePath().normalize()
-        val b = Path.of(right).toAbsolutePath().normalize()
-        a.toString().equals(b.toString(), ignoreCase)
-    }.getOrDefault(false)
-}
+): Boolean = sameNormalizedPath(left, right, ignoreCase)
 
 /** 从左侧省略路径，保留最后的目录段与文件名；文件名本身放不下时按可用宽度截断。 */
 internal fun leftEllipsizedPath(

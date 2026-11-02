@@ -22,11 +22,13 @@
 #include <string>
 #include <vector>
 #include "miniz/miniz.h"
+#include "NativeMessages.h"
 
 namespace fs = std::filesystem;
 static HWND preparationWindow = nullptr;
 static HWND statusLabel = nullptr;
 static bool cancelled = false;
+static const NativeMessages* messages = &nativeMessagesenUS;
 
 static std::wstring wide(const std::string& value) {
     int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
@@ -40,6 +42,24 @@ static std::string utf8(const std::wstring& value) {
     std::string result(size, 0);
     WideCharToMultiByte(CP_UTF8, 0, value.data(), (int)value.size(), result.data(), size, nullptr, nullptr);
     return result;
+}
+
+/** 设置里明确选择的语言优先；auto 或首次启动时跟随 Windows 区域语言。 */
+static void selectNativeMessages(const fs::path& data) {
+    std::string language;
+    try {
+        std::ifstream input(data / L"config/launcher.json", std::ios::binary);
+        std::string settings((std::istreambuf_iterator<char>(input)), {});
+        std::smatch match;
+        if (std::regex_search(settings, match, std::regex("\\\"language\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""))) language = match[1];
+    } catch (...) {}
+    if (language.empty() || language == "auto") {
+        wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+        if (GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH)) language = utf8(locale);
+    }
+    if (language.rfind("zh-CN", 0) == 0 || language.rfind("zh-SG", 0) == 0) messages = &nativeMessageszhCN;
+    else if (language.rfind("zh-TW", 0) == 0 || language.rfind("zh-HK", 0) == 0 || language.rfind("zh-MO", 0) == 0) messages = &nativeMessageszhTW;
+    else messages = &nativeMessagesenUS;
 }
 
 static void check(bool success, const char* action) {
@@ -70,7 +90,7 @@ static void showStatus(const wchar_t* text) {
         type.hIcon = LoadIconW(type.hInstance, MAKEINTRESOURCEW(1));
         type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&type);
-        preparationWindow = CreateWindowExW(0, type.lpszClassName, L"MoliFox · 准备启动", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        preparationWindow = CreateWindowExW(0, type.lpszClassName, messages->preparationTitle, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             (GetSystemMetrics(SM_CXSCREEN) - 520) / 2, (GetSystemMetrics(SM_CYSCREEN) - 180) / 2, 520, 180, nullptr, nullptr, type.hInstance, nullptr);
         statusLabel = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE, 24, 28, 465, 75, preparationWindow, nullptr, type.hInstance, nullptr);
         SendMessageW(statusLabel, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
@@ -189,7 +209,7 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring route(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength) route.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     check(session.handle != nullptr, "Open network connection");
     WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
     HttpHandle connection{WinHttpConnect(session, host.c_str(), components.nPort, 0)};
@@ -331,20 +351,15 @@ static void extractRuntime(const fs::path& archive, const fs::path& destination)
 
 /** 缺少系统 Java 时先征求同意；下载 Java 属于网络与磁盘操作，不能静默执行。 */
 static bool confirmJavaDownload() {
-    const auto text =
-        L"没有找到可用的 Java 17 或更高版本。\n\n"
-        L"是否从 Eclipse Temurin 官方源下载 Java 21 JRE？\n"
-        L"下载约 40–60 MB，保存在启动器旁边的 MoliFox\\runtimes\\ 文件夹中，不会修改系统环境变量。\n\n"
-        L"选择「否」将退出。你可以先自行安装 Java 17 或更高版本，然后重新启动 MoliFox。";
     return MessageBoxW(
                nullptr,
-               text,
-               L"MoliFox · 需要 Java",
+               messages->javaRequiredMessage,
+               messages->javaRequiredTitle,
                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
 
 static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
-    showStatus(L"首次启动：正在获取 Java 21 运行环境。\n文件会保存在旁边的 MoliFox 文件夹中。");
+    showStatus(messages->javaPreparing);
     auto metadata = download(L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse");
     auto start = metadata.find("\"package\"");
     if (start == std::string::npos) throw std::runtime_error("No compatible Java runtime was returned");
@@ -354,7 +369,7 @@ static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     auto archive = data / L"cache/downloads/java/java21.zip.part";
     download(wide(jsonString(package, "link")), archive);
     check(sha256(archive) == checksum, "Verify downloaded Java SHA-256");
-    showStatus(L"正在解压 Java 运行环境……");
+    showStatus(messages->javaExtracting);
     auto staging = temporary / L"java-extract";
     fs::create_directories(staging);
     extractRuntime(archive, staging);
@@ -395,17 +410,17 @@ struct RunTemporaryDirectory {
 
 // 原生环境尚未准备好时使用系统任务对话框，技术错误折叠显示。
 static void showStartupFailure(const std::wstring& details, const fs::path& log) {
-    const auto location = L"日志位置：" + log.wstring() + L"\n可将日志提供给开发者定位问题。";
+    const auto location = std::wstring(messages->logLocation) + L" " + log.wstring() + L"\n" + messages->provideLog;
     TASKDIALOGCONFIG configuration{};
     configuration.cbSize = sizeof(configuration);
     configuration.dwFlags = TDF_SIZE_TO_CONTENT | TDF_ALLOW_DIALOG_CANCELLATION;
     configuration.dwCommonButtons = TDCBF_CLOSE_BUTTON;
-    configuration.pszWindowTitle = L"MoliFox · 遇到问题";
-    configuration.pszMainInstruction = L"MoliFox 暂时无法启动";
+    configuration.pszWindowTitle = messages->startupWindowTitle;
+    configuration.pszMainInstruction = messages->startupInstruction;
     configuration.pszContent = location.c_str();
     configuration.pszExpandedInformation = details.c_str();
-    configuration.pszExpandedControlText = L"查看技术详情";
-    configuration.pszCollapsedControlText = L"收起技术详情";
+    configuration.pszExpandedControlText = messages->showDetails;
+    configuration.pszCollapsedControlText = messages->hideDetails;
     // 部分环境仍加载旧版公共控件，禁止把新 API 固定写入 EXE 导入表。
     const auto controls = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     using ShowTaskDialog = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
@@ -434,6 +449,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         data = directory / L"MoliFox";
         fs::create_directories(data / L"dependencies/launcher"); fs::create_directories(data / L"cache/downloads/java");
         fs::create_directories(data / L"logs"); fs::create_directories(data / L"runtimes");
+        selectNativeMessages(data);
         RunTemporaryDirectory temporary(data);
         SetCurrentDirectoryW(directory.c_str());
         SetEnvironmentVariableW(L"MOLIFOX_DATA_DIR", data.c_str());
@@ -448,7 +464,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.4.1.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox-0.4.2.jar";
         // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
         if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
             auto pending = temporary.path / L"launcher-payload.part";
@@ -460,8 +476,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             if (!confirmJavaDownload()) {
                 MessageBoxW(
                     nullptr,
-                    L"已取消下载 Java，MoliFox 不会启动。\n请先安装 Java 17 或更高版本，然后重新启动。",
-                    L"MoliFox · 需要 Java",
+                    messages->javaDownloadCancelled,
+                    messages->javaRequiredTitle,
                     MB_OK | MB_ICONINFORMATION);
                 return 2;
             }

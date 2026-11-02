@@ -72,7 +72,11 @@ data class ModUpdateItem(
     /** 是否可以由用户显式应用；无法确认、多候选名称匹配或缺少下载地址时为 false。 */
     val applicable: Boolean = false,
     val warning: String = "",
-)
+) {
+    /** 批量更新只能应用已确认、可下载且不是名称推测匹配的项目。 */
+    val batchApplicable: Boolean
+        get() = status == ModUpdateStatus.Updatable && applicable && !possibleMatch
+}
 
 data class ModUpdateReport(
     val instanceId: String,
@@ -88,6 +92,9 @@ data class ModUpdateReport(
 
     val unknown
         get() = items.count { it.status == ModUpdateStatus.Unknown }
+
+    fun batchItems(filenames: Set<String>): List<ModUpdateItem> =
+        items.filter { it.filename in filenames && it.batchApplicable }
 }
 
 /** 一个已安装 JAR 的本地信息；SHA-512 与声明一起按路径 + 大小 + 修改时间缓存。 */

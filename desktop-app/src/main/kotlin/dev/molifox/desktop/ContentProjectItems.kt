@@ -28,7 +28,6 @@ import dev.molifox.desktop.platform.dialogs.PickRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
-import java.nio.file.Files
 import java.nio.file.Path
 
 /** 模组/资源包/光影/数据包/世界：先让用户确认安装位置，再把确认结果交给对话框。 */
@@ -36,6 +35,8 @@ internal fun contentDownload(
     actions: UiActions,
     hit: ContentHit,
     version: ContentVersion,
+    instanceId: String?,
+    worldName: String,
     defaultDestination: Path?,
     instanceRoot: Path?,
     onDestination: (Path) -> Unit,
@@ -57,7 +58,7 @@ internal fun contentDownload(
         return
     }
     actions.run {
-        chooseContentDirectory(actions, hit, defaultDestination, instanceRoot) { picked ->
+        chooseContentDirectory(actions, hit, instanceId, worldName, defaultDestination, instanceRoot) { picked ->
             onDestination(picked)
             if (hit.type == "datapack") onConfirmDatapack() else onInstallVersion()
         }
@@ -68,12 +69,20 @@ internal fun contentDownload(
 private suspend fun chooseContentDirectory(
     actions: UiActions,
     hit: ContentHit,
+    instanceId: String?,
+    worldName: String,
     defaultDestination: Path?,
     instanceRoot: Path?,
     onPicked: (Path) -> Unit,
 ) {
-    val directory = defaultDestination
-    directory?.let { runCatching { Files.createDirectories(it) } }
+    val directory =
+        if (instanceId == null) {
+            defaultDestination
+        } else {
+            runCatching {
+                actions.controller.content.ensureContentDestination(instanceId, hit.type, worldName)
+            }.getOrNull() ?: defaultDestination
+        }
     val picked =
         actions
             .choose(

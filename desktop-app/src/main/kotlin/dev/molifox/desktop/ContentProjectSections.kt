@@ -319,6 +319,8 @@ internal fun ContentProjectFooter(
                     actions = actions,
                     hit = hit,
                     version = version,
+                    instanceId = target?.id,
+                    worldName = ui.worldName,
                     defaultDestination = defaultDestination,
                     instanceRoot = instanceRoot,
                     onDestination = { ui.destination = it },

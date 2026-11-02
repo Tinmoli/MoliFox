@@ -51,6 +51,19 @@ internal interface LauncherSaveApi {
         saveName: String,
     ): Boolean
 
+    /** 批量删除存档；全部名称先校验，再逐项移入回收站。 */
+    fun deleteSaves(
+        instanceId: String,
+        saveNames: List<String>,
+    ): Boolean
+
+    /** 重命名一个存档目录或 zip；不覆盖同名项。 */
+    fun renameSave(
+        instanceId: String,
+        saveName: String,
+        newName: String,
+    ): String
+
     /** 在后台任务里导入外部存档（`.zip` 或世界文件夹）；重名加序号，无效输入不写盘。 */
     fun importSave(
         instanceId: String,
@@ -140,6 +153,23 @@ internal abstract class LauncherSaveActions(
     ): Boolean {
         requireIdle(instanceId)
         return saves.deleteSave(instanceId, saveName)
+    }
+
+    override fun deleteSaves(
+        instanceId: String,
+        saveNames: List<String>,
+    ): Boolean {
+        requireIdle(instanceId)
+        return saveNames.distinct().map { saves.deleteSave(instanceId, it) }.all { it }
+    }
+
+    override fun renameSave(
+        instanceId: String,
+        saveName: String,
+        newName: String,
+    ): String {
+        requireIdle(instanceId)
+        return renameStoredSave(store, instanceId, saveName, newName)
     }
 
     /** 在后台任务里导入外部存档（`.zip` 或世界文件夹）；重名加序号，无效输入不写盘。 */

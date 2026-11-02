@@ -95,13 +95,7 @@ internal fun rememberHomeFilesPresent(
                 if (target == null) {
                     true
                 } else {
-                    withContext(Dispatchers.IO) {
-                        instanceFilesPresent(
-                            actions.controller.store,
-                            actions.controller.platform,
-                            target,
-                        )
-                    }
+                    actions.controller.instanceFilesPresent(target.id)
                 }
         }
     return present

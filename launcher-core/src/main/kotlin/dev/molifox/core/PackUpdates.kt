@@ -117,7 +117,11 @@ data class PackUpdateItem(
     val size: Long = 0,
     val modified: Long = 0,
     val warning: String = "",
-)
+) {
+    /** 批量更新只能应用已确认、可下载且不是名称推测匹配的项目。 */
+    val batchApplicable: Boolean
+        get() = status == PackUpdateStatus.Updatable && applicable && !possibleMatch
+}
 
 data class PackUpdateReport(
     val instanceId: String,
@@ -134,6 +138,11 @@ data class PackUpdateReport(
 
     /** 该目录里「没找到更新」的数量：已是最新 + 无法确认。 */
     fun unchanged(folder: PackFolder): Int = latest(folder) + unknown(folder)
+
+    fun batchItems(
+        folder: PackFolder,
+        filenames: Set<String>,
+    ): List<PackUpdateItem> = items(folder).filter { it.filename in filenames && it.batchApplicable }
 }
 
 /** 一个已安装资源包/光影的本地信息；SHA-512 按路径 + 大小 + 修改时间缓存。 */

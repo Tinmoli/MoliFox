@@ -35,10 +35,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URLClassLoader
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.time.LocalDateTime
@@ -73,7 +71,7 @@ data class RuntimeDependency(
 /**
  * `MoliFox.jar` 内 `/molifox-runtime.json` 的内容。
  *
- * [version] 是“应用版本-依赖列表哈希”：任何一个依赖的坐标或校验值变化都会得到新的缓存目录， 因此旧缓存不会被误用，也不需要额外的失效逻辑。
+ * [version] 只由依赖列表哈希决定；单纯更新启动器不会使已校验的依赖失效。
  */
 data class RuntimeManifest(
     val version: String,
@@ -202,7 +200,7 @@ private fun prepareRuntime(
 ) {
     configureProcessEnvironment(data)
     val manifest = readManifest()
-    val cache = data.resolve("runtime").resolve(manifest.version)
+    val cache = runtimeCacheDirectory(data)
     val marker = cache.resolve("ready.marker")
     log(
         I18n.t(
@@ -213,16 +211,16 @@ private fun prepareRuntime(
         ),
     )
     log(I18n.t("bootstrapB.startup.cacheDirectory", cache))
-    if (
-        Files.isRegularFile(marker) &&
-        manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
-    ) {
-        // ready.marker 表示“已逐字节校验过”：这里只确认真实存在，不再重复计算哈希。
-        log(I18n.t("bootstrapB.startup.alreadyReady"))
+    if (runtimeCacheReady(data, cache, marker, manifest)) {
         launchUi(manifest, cache)
         return
     }
     Files.createDirectories(cache)
+    migrateLegacyRuntime(data, cache, manifest.dependencies)
+    if (runtimeCacheReady(data, cache, marker, manifest)) {
+        launchUi(manifest, cache)
+        return
+    }
     val installer = RuntimeInstaller(cache, manifest.dependencies)
     val window = BootstrapWindow(installer)
     onWindowCreated(window)
@@ -231,11 +229,8 @@ private fun prepareRuntime(
     awaitInstallation(preparationJob, manifest, installer, window)
     // 全部文件已校验完成，写入标记；下次启动直接进界面。
     window.markVerifying()
-    Files.writeString(
-        marker,
-        "version=${manifest.version}\nverified=${LocalDateTime.now()}\n" +
-            "files=${manifest.dependencies.size}\n",
-    )
+    writeRuntimeMarker(marker, manifest)
+    cleanupRuntimeCache(data, cache, manifest.dependencies)
     window.close()
     log(I18n.t("bootstrapB.startup.preparationDone"))
     launchUi(manifest, cache)
@@ -359,12 +354,14 @@ private class RuntimeInstaller(
         active[dependency.filename] = 0L
         try {
             return when {
-                isCached(target, dependency) -> {
+                isRuntimeDependencyCached(target, dependency) -> {
                     verified[dependency.filename] = dependency.size
                     log(I18n.t("bootstrapB.download.reused", dependency.filename))
                     null
                 }
+
                 mirrorOrder.isEmpty() -> I18n.t("bootstrap.bootstrapMain.1")
+
                 else -> downloadWithRetries(dependency, target)
             }
         } finally {
@@ -390,7 +387,7 @@ private class RuntimeInstaller(
                 if (completed == null) {
                     throw IOException(I18n.t("bootstrap.bootstrapMain.3", FILE_TIMEOUT_MILLIS / MILLIS_PER_SECOND))
                 }
-                moveIntoPlace(part, target)
+                moveRuntimeIntoPlace(part, target)
                 verified[dependency.filename] = dependency.size
                 log(I18n.t("bootstrapB.download.completed", dependency.filename, current.name))
                 return null
@@ -494,14 +491,6 @@ private class RuntimeInstaller(
             active[dependency.filename] = written
         }
         return written
-    }
-
-    private fun isCached(
-        target: Path,
-        dependency: RuntimeDependency,
-    ): Boolean {
-        if (!Files.isRegularFile(target) || Files.size(target) != dependency.size) return false
-        return sha256Of(target).equals(dependency.sha256, ignoreCase = true)
     }
 }
 
@@ -913,21 +902,5 @@ private fun validateResponse(
     val declared = connection.contentLengthLong
     if (declared > 0 && declared != dependency.size) {
         throw IOException(I18n.t("bootstrap.bootstrapMain.23", declared))
-    }
-}
-
-private fun moveIntoPlace(
-    part: Path,
-    target: Path,
-) {
-    try {
-        Files.move(
-            part,
-            target,
-            StandardCopyOption.REPLACE_EXISTING,
-            StandardCopyOption.ATOMIC_MOVE,
-        )
-    } catch (_: AtomicMoveNotSupportedException) {
-        Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
     }
 }

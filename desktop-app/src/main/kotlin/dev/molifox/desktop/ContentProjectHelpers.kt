@@ -22,26 +22,14 @@ internal fun contentChannelTitle(channel: String) =
     }
 
 /** 资源类型对应的实例内目录名；与核心安装事务接受的三个目录保持一致。 */
-internal fun contentFolderForType(type: String): String =
-    when (type) {
-        "resourcepack" -> "resourcepacks"
-        "shader" -> "shaderpacks"
-        "datapack" -> "datapacks"
-        "world" -> "saves"
-        else -> "mods"
-    }
+internal fun contentFolderForType(type: String): String = dev.molifox.core.contentFolderForType(type)
 
 /** 默认下载目标：模组 / 资源包 / 光影落在实例内容目录，数据包落在所选存档的 datapacks。 显示给用户的就是最终会被写入的路径。 */
 internal fun contentDestination(
     instanceRoot: Path,
     type: String,
     worldName: String = "",
-): Path =
-    if (type == "datapack") {
-        instanceRoot.resolve("saves").resolve(worldName).resolve("datapacks")
-    } else {
-        instanceRoot.resolve(contentFolderForType(type))
-    }
+): Path = dev.molifox.core.contentDestination(instanceRoot, type, worldName)
 
 /**
  * 用户确认的文件夹 → 实例内的资源子目录名（mods / resourcepacks / shaderpacks）。 不在实例内、或者不是这三个目录之一时返回
@@ -50,14 +38,7 @@ internal fun contentDestination(
 internal fun contentFolderOf(
     instanceRoot: Path?,
     destination: Path?,
-): String? {
-    if (instanceRoot == null || destination == null) return null
-    val root = runCatching { instanceRoot.toAbsolutePath().normalize() }.getOrNull() ?: return null
-    val target = runCatching { destination.toAbsolutePath().normalize() }.getOrNull() ?: return null
-    val relative = runCatching { root.relativize(target) }.getOrNull() ?: return null
-    if (relative.nameCount != 1) return null
-    return relative.toString().takeIf { it in setOf("mods", "resourcepacks", "shaderpacks") }
-}
+): String? = dev.molifox.core.contentFolderOf(instanceRoot, destination)
 
 /** 下载目标默认值：有实例时是它的内容目录，数据包则落到所选存档的 datapacks。 */
 internal fun contentDefaultDestination(

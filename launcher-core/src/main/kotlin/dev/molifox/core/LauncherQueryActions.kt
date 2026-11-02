@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.nio.file.Files
 import java.nio.file.Path
 
 /** 界面列表需要的只读查询：模组图标、服务器状态与实例目录体积。 */
@@ -19,6 +20,8 @@ internal interface LauncherQueryApi {
     suspend fun serverStatus(address: String): ServerStatus?
 
     suspend fun instanceDirectorySize(id: String): Long?
+
+    suspend fun instanceFilesPresent(id: String): Boolean
 }
 
 /** 实现由 [LauncherController] 委托调用；方法体与原实现一致。 */
@@ -52,5 +55,17 @@ internal abstract class LauncherQueryActions(
                     taskContext.ensureActive()
                 }.onFailure { store.log(I18n.t("miscA1.queryActions.directorySizeFailed", it.message), true) }
                 .getOrNull()
+        }
+
+    override suspend fun instanceFilesPresent(id: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val instance = store.instanceOrNull(id) ?: return@withContext false
+            runCatching {
+                val root = store.minecraftRoot(instance)
+                val profile = VersionResolver(root, platform).resolve(instance.versionId)
+                Files.isRegularFile(
+                    root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar"),
+                )
+            }.getOrDefault(false)
         }
 }

@@ -54,57 +54,50 @@ internal fun InstanceMods(
     var refresh by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var updatesOpen by remember { mutableStateOf(false) }
     var jarInJarOpen by remember { mutableStateOf(false) }
     var detailMod by remember { mutableStateOf<ModFile?>(null) }
-    var deletingMod by remember { mutableStateOf<ModFile?>(null) }
+    var deletingMods by remember { mutableStateOf<List<ModFile>>(emptyList()) }
+    var renamingMod by remember { mutableStateOf<ModFile?>(null) }
     var chip by remember(instance.id) { mutableStateOf(ContentChip.All) }
     val checking = updates.modsChecking
     val updateReport = updates.mods
     val updateError = updates.modsError
     val checkScope = rememberCoroutineScope()
     // 本次页面发起的更新任务；完成/失败后刷新列表并更新报告。
-    var applyingJob by remember(instance.id) { mutableStateOf<Pair<String, ModUpdateItem>?>(null) }
+    var applyingJob by remember(instance.id) { mutableStateOf<Pair<String, List<ModUpdateItem>>?>(null) }
     var confirmingUpdate by remember { mutableStateOf<ModUpdateItem?>(null) }
     val liveState by actions.controller.state.collectAsState()
     // 检查只读网络与 JAR 声明：自动检查由页面发起，手动重查只取消它自己的请求。
     val startCheck: () -> Unit = { updates.checkMods(checkScope) }
-    val startUpdate: (ModUpdateItem) -> Unit = { item ->
-        updates.modsError = null
-        runCatching { actions.controller.updateMod(instance.id, item) }
-            .onSuccess { job -> applyingJob = job to item }
-            .onFailure { failure -> updates.modsError = failure.message }
+    val startUpdate: (List<ModUpdateItem>) -> Unit = { items ->
+        applyingJob = startModUpdates(actions, instance.id, items, updates)
     }
     ModsDialogs(
-        updatesOpen = updatesOpen,
         jarInJarOpen = jarInJarOpen,
         instance = instance,
         actions = actions,
         mods = mods,
         detailMod = detailMod,
         confirmingUpdate = confirmingUpdate,
-        deletingMod = deletingMod,
-        onCloseUpdates = {
-            updatesOpen = false
-            refresh++
-        },
+        deletingMods = deletingMods,
+        renamingMod = renamingMod,
         onCloseJarInJar = { jarInJarOpen = false },
         onCloseDetail = { detailMod = null },
         onConfirmUpdate = { item ->
             confirmingUpdate = null
-            startUpdate(item)
+            startUpdate(listOf(item))
         },
         onDismissConfirm = { confirmingUpdate = null },
-        onDeleteMod = { mod ->
-            val filename = mod.filename
-            deletingMod = null
-            actions.run {
-                actions.controller.requireIdle(instance.id)
-                actions.controller.content.deleteMod(instance.id, filename)
-                withContext(Dispatchers.Swing) { refresh++ }
-            }
+        onDeleteMods = { targets ->
+            deletingMods = emptyList()
+            deleteMods(actions, instance.id, targets) { refresh++ }
         },
-        onDismissDelete = { deletingMod = null },
+        onDismissDelete = { deletingMods = emptyList() },
+        onRenameMod = { mod, newName ->
+            renamingMod = null
+            renameMod(actions, instance.id, mod, newName) { refresh++ }
+        },
+        onDismissRename = { renamingMod = null },
     )
     LaunchedEffect(instance.id, refresh, liveState.jobs.map { it.status }) {
         loading = true
@@ -176,7 +169,9 @@ internal fun InstanceMods(
             instanceBusy = busy,
             onCheckUpdates = { updates.checkAll(checkScope, refresh = true) },
             onOpenJarInJar = { jarInJarOpen = true },
-            onOpenUpdates = { updatesOpen = true },
+            onUpdateAll = {
+                startUpdate(updateReport?.batchItems(activeNames).orEmpty())
+            },
         )
         ModsThinProgress(checking)
         ModsErrorRow(
@@ -221,11 +216,7 @@ internal fun InstanceMods(
             },
             onDetail = { mod -> detailMod = mod },
             onUpdate = { _, item ->
-                if (item.possibleMatch) {
-                    confirmingUpdate = item
-                } else {
-                    startUpdate(item)
-                }
+                requestModUpdate(item, { confirmingUpdate = it }, startUpdate)
             },
             onToggle = { mod ->
                 actions.run {
@@ -234,10 +225,92 @@ internal fun InstanceMods(
                     withContext(Dispatchers.Swing) { refresh++ }
                 }
             },
-            onDelete = { mod -> deletingMod = mod },
+            onRename = { mod -> renamingMod = mod },
+            onOpenFolder = { actions.run { actions.controller.openFolder(instance.id, "mods") } },
+            onUpdateSelection = { selected ->
+                startUpdate(updateReport?.batchItems(selected.mapTo(HashSet()) { it.filename }).orEmpty())
+            },
+            onEnableSelection = { selected, enabled ->
+                setModsEnabled(actions, instance.id, selected, enabled) { refresh++ }
+            },
+            onDelete = { selected -> deletingMods = selected },
             modifier = Modifier.weight(1f),
         )
         ModsCountFooter(loading, mods)
+    }
+}
+
+private fun startModUpdates(
+    actions: UiActions,
+    instanceId: String,
+    items: List<ModUpdateItem>,
+    updates: InstanceUpdateCenter,
+): Pair<String, List<ModUpdateItem>>? {
+    if (items.isEmpty()) return null
+    updates.modsError = null
+    return runCatching {
+        if (items.size == 1) {
+            actions.controller.updateMod(instanceId, items.single())
+        } else {
+            actions.controller.updateMods(instanceId, items)
+        }
+    }.fold(
+        onSuccess = { job -> job to items },
+        onFailure = { failure ->
+            updates.modsError = failure.message
+            null
+        },
+    )
+}
+
+private fun requestModUpdate(
+    item: ModUpdateItem,
+    onConfirm: (ModUpdateItem) -> Unit,
+    onStart: (List<ModUpdateItem>) -> Unit,
+) {
+    if (item.possibleMatch) onConfirm(item) else onStart(listOf(item))
+}
+
+private fun deleteMods(
+    actions: UiActions,
+    instanceId: String,
+    targets: List<ModFile>,
+    onRefresh: () -> Unit,
+) {
+    actions.run {
+        actions.controller.requireIdle(instanceId)
+        targets.forEach { mod -> actions.controller.content.deleteMod(instanceId, mod.filename) }
+        withContext(Dispatchers.Swing) { onRefresh() }
+    }
+}
+
+private fun renameMod(
+    actions: UiActions,
+    instanceId: String,
+    mod: ModFile,
+    newName: String,
+    onRefresh: () -> Unit,
+) {
+    actions.run {
+        actions.controller.requireIdle(instanceId)
+        actions.controller.content.renameMod(instanceId, mod.filename, newName)
+        withContext(Dispatchers.Swing) { onRefresh() }
+    }
+}
+
+private fun setModsEnabled(
+    actions: UiActions,
+    instanceId: String,
+    selected: List<ModFile>,
+    enabled: Boolean,
+    onRefresh: () -> Unit,
+) {
+    actions.run {
+        actions.controller.requireIdle(instanceId)
+        selected.filter { it.enabled != enabled }.forEach { mod ->
+            actions.controller.content.toggleMod(instanceId, mod.filename)
+        }
+        withContext(Dispatchers.Swing) { onRefresh() }
     }
 }
 
@@ -269,19 +342,18 @@ private class ModUpdateJobOutcome(
 /** 只有结束状态才产生结果；完成时把旧文件对应的报告项改为已是最新。 */
 private fun modUpdateJobOutcome(
     job: DownloadJob,
-    pending: Pair<String, ModUpdateItem>,
+    pending: Pair<String, List<ModUpdateItem>>,
     report: ModUpdateReport?,
 ): ModUpdateJobOutcome? =
     when (job.status) {
         JobStatus.Completed ->
             ModUpdateJobOutcome(
-                if (pending.second.candidate != null) {
-                    completeModUpdateReport(report, pending.second)
-                } else {
-                    null
+                pending.second.fold(report) { current, item ->
+                    if (item.candidate != null) completeModUpdateReport(current, item) else current
                 },
                 null,
             )
+
         JobStatus.Failed, JobStatus.Cancelled ->
             ModUpdateJobOutcome(
                 null,
@@ -292,6 +364,7 @@ private fun modUpdateJobOutcome(
                         tr("deskD.mods.updateFailed")
                     },
             )
+
         else -> null
     }
 

@@ -185,6 +185,15 @@ class InstanceIcons(
             if (instance.iconStyle == InstanceIconStyle.Auto) existingTexture(instance) else null
         }
 
+    /** 给界面解码使用的受限字节读取；路径解析与文件访问不泄漏到 UI。 */
+    suspend fun textureBytes(instance: GameInstance): ByteArray? =
+        withContext(Dispatchers.IO) {
+            val file = texture(instance) ?: return@withContext null
+            Files.newInputStream(file).use { input ->
+                input.readNBytes(MAX_ICON_BYTES.toInt() + 1).takeIf { it.size <= MAX_ICON_BYTES }
+            }
+        }
+
     internal suspend fun exportImage(instance: GameInstance): ByteArray? {
         val file = texture(instance) ?: return null
         return java.io.ByteArrayOutputStream().use { output ->

@@ -18,7 +18,7 @@ import java.util.UUID
 import kotlin.jvm.Transient
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
-const val LAUNCHER_VERSION = "0.4.1"
+const val LAUNCHER_VERSION = "0.4.2"
 
 enum class LoaderType {
     Vanilla,

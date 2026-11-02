@@ -132,6 +132,8 @@ internal class LauncherControllerCore(
 
     val screenshots = ScreenshotManager(store)
 
+    val appearance = FileAppearanceAssetService(dataDirectory)
+
     val content = ContentService(store, network, installer)
 
     val tools = InstanceTools(store)

@@ -5,7 +5,11 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
+import kotlin.io.path.createDirectories
 
 /**
  * 内容服务入口：搜索、计划、整合包与导出各自独立，本类只持有同一份会话状态。
@@ -19,6 +23,7 @@ class ContentService
     ) : ContentSearchApi by core.actions,
         ContentPackDownloadApi by core.actions,
         ContentLocalApi by core.actions,
+        ContentRenameApi by core.actions,
         ContentPackImportApi by core.actions,
         ContentPackUpgradeApi by core.actions,
         ContentExportApi by core.actions {
@@ -39,6 +44,15 @@ class ContentService
         // 资源包与光影的更新：与模组同样的内容源与镜像设置；检查只读，应用更新时才下载。
         val packUpdates: PackUpdateService
             get() = core.packUpdates
+
+        suspend fun ensureContentDestination(
+            instanceId: String,
+            type: String,
+            worldName: String = "",
+        ): Path =
+            withContext(Dispatchers.IO) {
+                contentDestination(core.store.instancePath(instanceId), type, worldName).createDirectories()
+            }
 
         suspend fun installContent(
             hit: ContentHit,

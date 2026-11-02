@@ -8,6 +8,7 @@ package dev.molifox.desktop
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -51,6 +53,8 @@ internal fun PackRow(
     iconRevision: Int,
     readIcon: suspend (java.nio.file.Path) -> ByteArray?,
     onIconFailure: (Throwable) -> Unit,
+    onDetail: () -> Unit,
+    onUpdate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -98,6 +102,7 @@ internal fun PackRow(
             Modifier
                 .fillMaxWidth()
                 .hoverHighlight(shape, alpha = .04f)
+                .clickable(onClick = onDetail)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -150,6 +155,14 @@ internal fun PackRow(
                 )
             }
             Spacer(Modifier.width(8.dp))
+            if (update?.status == PackUpdateStatus.Updatable && update.applicable && !update.possibleMatch) {
+                RowIconAction(
+                    Icons.Outlined.SystemUpdateAlt,
+                    strings.t("content.menu.update"),
+                    enabled = !busy,
+                    onClick = onUpdate,
+                )
+            }
             RowIconAction(
                 Icons.Outlined.DeleteOutline,
                 strings.t("deskC.row.trashMessage", entry.filename),

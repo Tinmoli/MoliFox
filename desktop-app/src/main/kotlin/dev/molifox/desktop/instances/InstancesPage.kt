@@ -144,7 +144,7 @@ fun ColumnScope.InstancesPage(
         produceState<String?>(null, directory?.path, probeToken) {
             value = null
             if (directory != null) {
-                value = withContext(Dispatchers.IO) { probeGameDirectory(directory) }
+                value = withContext(Dispatchers.IO) { probeGameDirectory(actions.controller.directories, directory) }
             }
         }
     // 安装 / 修复任务运行中且列表为空时视为读取中，不额外造一个假的加载状态。

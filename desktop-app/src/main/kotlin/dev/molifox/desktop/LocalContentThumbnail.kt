@@ -25,15 +25,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.dp
 import dev.molifox.core.localContentIcon
+import dev.molifox.core.localContentIconStamp
 import dev.molifox.core.shaderPackIcon
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.nio.file.Files
 import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
-
-/** 图标来源的「修改时间 + 大小」合成一个签名时使用的乘数。 */
-private const val STAMP_HASH_MULTIPLIER = 31
 
 /**
  * 内容自带的图标（世界的 `icon.png` / 资源包的 `pack.png` / 光影包的预览图）。
@@ -145,7 +142,7 @@ internal object LocalIconCache {
         shader: Boolean,
     ): ImageBitmap? {
         val key = key(path, world, shader)
-        val stamp = iconStamp(path, world)
+        val stamp = localContentIconStamp(path, world)
         synchronized(entries) { entries[key] }?.let { entry ->
             if (entry.stamp == stamp) return entry.image
         }
@@ -153,25 +150,6 @@ internal object LocalIconCache {
         synchronized(entries) { entries[key] = Entry(stamp, image) }
         return image
     }
-
-    /** 图标来源的「大小 + 修改时间」；不存在或读不到时用 -1 表示。 */
-    private fun iconStamp(
-        path: Path,
-        world: Boolean,
-    ): Long =
-        runCatching {
-            val target =
-                if (world &&
-                    Files.isDirectory(path)
-                ) {
-                    path.resolve("icon.png")
-                } else {
-                    path
-                }
-            val modified = Files.getLastModifiedTime(target).toMillis()
-            val size = if (Files.isRegularFile(target)) Files.size(target) else 0L
-            modified * STAMP_HASH_MULTIPLIER + size
-        }.getOrDefault(-1L)
 }
 
 /** 光影包行的内置占位图标：没有预览图或预览图无法解码时使用。 */

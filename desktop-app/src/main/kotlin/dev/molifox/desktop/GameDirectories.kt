@@ -121,6 +121,9 @@ fun GameDirectoryControls(
     }
     removing?.let { directory ->
         AlertDialog(
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(dismissOnClickOutside = false),
             onDismissRequest = { removing = null },
             title = { Text(strings.t("settings.game.directory.remove.title", directory.name)) },
             text = { Text(strings.t("settings.game.directory.remove.detail")) },

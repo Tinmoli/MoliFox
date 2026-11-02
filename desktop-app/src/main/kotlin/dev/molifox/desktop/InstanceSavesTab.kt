@@ -59,12 +59,13 @@ internal fun InstanceSavesTab(
     var actionError by remember(instance.id) { mutableStateOf<String?>(null) }
     // 本次页面发起的后台任务；结束时用它刷新列表并显示失败原因。
     var watchingJob by remember(instance.id) { mutableStateOf<String?>(null) }
-    var deleting by remember { mutableStateOf<SaveEntry?>(null) }
+    var deleting by remember { mutableStateOf<List<SaveEntry>>(emptyList()) }
     var deletingBackup by remember { mutableStateOf<SaveBackupInfo?>(null) }
     // 开启「恢复时替换原世界」后，恢复会替换同名世界；执行前单独确认。
     var replacing by remember { mutableStateOf<SaveBackupInfo?>(null) }
     var copying by remember { mutableStateOf<SaveEntry?>(null) }
     var detailed by remember { mutableStateOf<SaveEntry?>(null) }
+    var renaming by remember { mutableStateOf<SaveEntry?>(null) }
     val liveState by actions.controller.state.collectAsState()
     val busy = actions.controller.isInstanceBusy(instance.id)
     val running = actions.controller.game.isRunning(instance.id)
@@ -140,64 +141,6 @@ internal fun InstanceSavesTab(
                 ) { actions.controller.importSave(instance.id, dropped.single()) }
         }
     }
-    deleting?.let { entry ->
-        SaveTrashDialog(
-            title = strings.t("pages.saves.trash.title"),
-            message = strings.t("pages.saves.trash.message", entry.name),
-            onDismiss = { deleting = null },
-            onConfirm = {
-                deleting = null
-                actionError = null
-                trashEntry(
-                    actions = actions,
-                    message = strings.t("pages.saves.trash.failed", entry.name),
-                    onError = { actionError = it },
-                    onRefresh = { refresh++ },
-                ) { actions.controller.deleteSave(instance.id, entry.name) }
-            },
-        )
-    }
-    deletingBackup?.let { backup ->
-        SaveTrashDialog(
-            title = strings.t("pages.saves.backup.delete.title"),
-            message =
-                strings.t(
-                    "pages.saves.backup.delete.message",
-                    backup.saveName,
-                    formatSaveTime(backup.createdAt),
-                ),
-            onDismiss = { deletingBackup = null },
-            onConfirm = {
-                deletingBackup = null
-                actionError = null
-                trashEntry(
-                    actions = actions,
-                    message = strings.t("pages.saves.backup.delete.failed"),
-                    onError = { actionError = it },
-                    onRefresh = { refresh++ },
-                ) { actions.controller.deleteSaveBackup(instance.id, backup.id) }
-            },
-        )
-    }
-    replacing?.let { backup ->
-        ReplaceSaveDialog(
-            backup = backup,
-            onDismiss = { replacing = null },
-            onConfirm = {
-                replacing = null
-                startRestore(backup)
-            },
-        )
-    }
-    copying?.let { entry ->
-        CopySaveDialog(
-            instance = instance,
-            saveName = entry.name,
-            actions = actions,
-            onDismiss = { copying = null },
-            onStarted = { jobId -> watchingJob = jobId },
-        )
-    }
     val ui =
         SavesUiState(
             saves = saves,
@@ -222,6 +165,7 @@ internal fun InstanceSavesTab(
             onDetails = { detailed = it },
             onBackup = startBackup,
             onCopy = { copying = it },
+            onRename = { renaming = it },
             onDelete = { deleting = it },
             onDeleteBackup = { deletingBackup = it },
             onRestore = startRestore,
@@ -247,16 +191,27 @@ internal fun InstanceSavesTab(
     ) {
         SavesTabSections(ui, callbacks)
     }
-    detailed?.let { entry ->
-        SaveDetailsDialog(
-            instance = instance,
-            entry = entry,
-            actions = actions,
-            canEdit = canManage,
-            onDismiss = { detailed = null },
-            onSaved = { refresh++ },
-        )
-    }
+    SaveDialogs(
+        instance = instance,
+        actions = actions,
+        deleting = deleting,
+        renaming = renaming,
+        deletingBackup = deletingBackup,
+        replacing = replacing,
+        copying = copying,
+        detailed = detailed,
+        canManage = canManage,
+        onRestore = startRestore,
+        onWatchJob = { watchingJob = it },
+        onError = { actionError = it },
+        onRefresh = { refresh++ },
+        onDismissDeleting = { deleting = emptyList() },
+        onDismissRenaming = { renaming = null },
+        onDismissBackup = { deletingBackup = null },
+        onDismissReplacing = { replacing = null },
+        onDismissCopying = { copying = null },
+        onDismissDetails = { detailed = null },
+    )
 }
 
 /** 游戏运行 / 任务占用时给出的操作提示；两者互斥，运行状态优先。 */
@@ -363,7 +318,7 @@ private fun startSaveJob(
 }
 
 /** 把存档或备份移入回收站；未移入时给出具体原因，无论结果都刷新列表。 */
-private fun trashEntry(
+internal fun trashEntry(
     actions: UiActions,
     message: String,
     onError: (String) -> Unit,
@@ -381,7 +336,7 @@ private fun trashEntry(
 
 /** 移入回收站的确认框；存档与备份共用同一套文案结构。 */
 @Composable
-private fun SaveTrashDialog(
+internal fun SaveTrashDialog(
     title: String,
     message: String,
     onDismiss: () -> Unit,
@@ -389,6 +344,9 @@ private fun SaveTrashDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
@@ -405,13 +363,16 @@ private fun SaveTrashDialog(
 
 /** 用备份替换原世界的确认框；替换前会先备份当前世界。 */
 @Composable
-private fun ReplaceSaveDialog(
+internal fun ReplaceSaveDialog(
     backup: SaveBackupInfo,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("pages.saves.replace.title")) },
         text = { Text(strings.t("pages.saves.replace.message", backup.saveName)) },

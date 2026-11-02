@@ -23,6 +23,7 @@ import kotlin.io.path.name
 
 private const val MAX_CONTENT_RECORD_BYTES = 8 * 1024 * 1024
 private const val MAX_CONTENT_ICON_DIMENSION = 2048
+private const val CONTENT_ICON_STAMP_MULTIPLIER = 31
 
 /** WebP 容器头：RIFF 头、WEBP 标记、块名与各块内的宽高偏移。 */
 private const val WEBP_MIN_HEADER_BYTES = 30
@@ -183,6 +184,18 @@ internal class InstalledContentIcons(
         }
     }
 }
+
+/** 图标来源的大小与修改时间签名；不存在或不可读时返回 -1。 */
+fun localContentIconStamp(
+    path: Path,
+    world: Boolean,
+): Long =
+    runCatching {
+        val target = if (world && Files.isDirectory(path)) path.resolve("icon.png") else path
+        val modified = Files.getLastModifiedTime(target).toMillis()
+        val size = if (Files.isRegularFile(target)) Files.size(target) else 0L
+        modified * CONTENT_ICON_STAMP_MULTIPLIER + size
+    }.getOrDefault(-1L)
 
 /**
  * 读取图片像素尺寸。ImageIO 覆盖 PNG / JPEG / GIF，但读不了 Modrinth 图标常用的 WebP，

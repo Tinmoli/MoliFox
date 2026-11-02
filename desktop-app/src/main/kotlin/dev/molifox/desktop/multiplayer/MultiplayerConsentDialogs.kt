@@ -36,6 +36,9 @@ internal fun MultiplayerTermsDialog(
     val strings = LocalStrings.current
     var checked by remember { mutableStateOf(false) }
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDecline,
         title = { Text(strings.t("dialogs.mp.consent.startTitle")) },
         text = {

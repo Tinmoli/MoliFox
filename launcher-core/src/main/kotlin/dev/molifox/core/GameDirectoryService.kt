@@ -6,7 +6,21 @@
 package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
+import java.nio.file.Files
 import java.nio.file.Path
+
+enum class GameDirectoryStatus {
+    Ready,
+    Missing,
+    NotDirectory,
+    NotReadable,
+    Invalid,
+}
+
+data class GameDirectoryProbe(
+    val status: GameDirectoryStatus,
+    val detail: String = "",
+)
 
 /** Register standard Minecraft roots by reference; shared assets and user data stay in place. */
 class GameDirectoryService(
@@ -14,6 +28,20 @@ class GameDirectoryService(
 ) {
     private val scanner = GameDirectoryScanner(store)
     private val registry = GameDirectoryRegistry(store)
+
+    /** 只读探测已登记目录，不扫描版本也不修改启动器状态。 */
+    fun probe(directory: GameDirectory): GameDirectoryProbe =
+        runCatching {
+            val path = Path.of(directory.path)
+            val status =
+                when {
+                    !Files.exists(path) -> GameDirectoryStatus.Missing
+                    !Files.isDirectory(path) -> GameDirectoryStatus.NotDirectory
+                    !Files.isReadable(path) -> GameDirectoryStatus.NotReadable
+                    else -> GameDirectoryStatus.Ready
+                }
+            GameDirectoryProbe(status)
+        }.getOrElse { GameDirectoryProbe(GameDirectoryStatus.Invalid, it.message.orEmpty()) }
 
     /** Repair metadata saved by older builds without rescanning/removing or copying instances. */
     fun refreshVersionMetadata() {

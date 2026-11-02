@@ -401,6 +401,9 @@ private fun DeleteDatapackDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("pages.saves.trash.title")) },
         text = { Text(strings.t("saveA1.datapackPanel.trashMessage", entry.name)) },

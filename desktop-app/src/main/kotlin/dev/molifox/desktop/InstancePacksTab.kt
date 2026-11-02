@@ -19,11 +19,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -50,10 +54,8 @@ import dev.molifox.core.LocalPackEntry
 import dev.molifox.core.PackFolder
 import dev.molifox.core.PackUpdateItem
 import dev.molifox.core.PackUpdateStatus
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.job
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -83,7 +85,9 @@ internal fun InstancePackTab(
     var error by remember(instance.id, folder) { mutableStateOf<String?>(null) }
     var actionError by remember(instance.id, folder) { mutableStateOf<String?>(null) }
     var chip by remember(instance.id, folder) { mutableStateOf(ContentChip.All) }
-    var deleting by remember { mutableStateOf<LocalPackEntry?>(null) }
+    var deleting by remember { mutableStateOf<List<LocalPackEntry>>(emptyList()) }
+    var renaming by remember { mutableStateOf<LocalPackEntry?>(null) }
+    var detailed by remember { mutableStateOf<LocalPackEntry?>(null) }
     var watchingJob by remember(instance.id, folder) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val liveState by actions.controller.state.collectAsState()
@@ -94,25 +98,19 @@ internal fun InstancePackTab(
     val visibleItems = visiblePackItems(entries, reportItems)
     val itemsByFile = reportItems.associateBy { it.filename }
     val updatable = visibleItems.count { it.status == PackUpdateStatus.Updatable }
+    val actionable = visibleItems.filter { it.batchApplicable }
     val uncertain = visibleItems.count { it.status == PackUpdateStatus.Unknown }
     val statusText = packStatusText(checking, report != null, updatable, uncertain)
     LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.id + ":" + it.status }) {
         loading = true
         error = null
-        try {
-            entries =
-                withContext(Dispatchers.IO) { actions.controller.listPacks(instance.id, folder) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: IllegalStateException) {
-            entries = emptyList()
-            error = failure.message
-        } catch (failure: IllegalArgumentException) {
-            entries = emptyList()
-            error = failure.message
-        } finally {
-            loading = false
-        }
+        loadPackEntries(actions, instance.id, folder)
+            .onSuccess { entries = it }
+            .onFailure { failure ->
+                entries = emptyList()
+                error = failure.message
+            }
+        loading = false
     }
     // 导入与删除都是任务中心里的后台任务；结束后刷新列表，失败原因留在工具行下方。
     LaunchedEffect(watchingJob, liveState.jobs.map { it.id + ":" + it.status }) {
@@ -125,29 +123,23 @@ internal fun InstancePackTab(
         )
     }
     val startImport: (List<Path>) -> Unit = { chosen ->
-        actionError = null
-        if (chosen.isNotEmpty()) {
-            try {
-                watchingJob = actions.controller.importPacks(instance.id, folder, chosen)
-            } catch (failure: IllegalStateException) {
-                actionError = failure.message ?: strings.t("deskC.import.failed")
-            } catch (failure: IllegalArgumentException) {
-                actionError = failure.message ?: strings.t("deskC.import.failed")
-            }
-        }
+        startPackImport(actions, instance.id, folder, chosen, { watchingJob = it }) { actionError = it }
     }
-    deleting?.let { entry ->
-        PackDeleteDialog(
-            entry = entry,
-            folder = folder,
-            instanceId = instance.id,
-            actions = actions,
-            updates = updates,
-            onError = { actionError = it },
-            onDismiss = { deleting = null },
-            onRefresh = { refresh++ },
-        )
-    }
+    PackDialogs(
+        deleting = deleting,
+        renaming = renaming,
+        detailed = detailed,
+        folder = folder,
+        instance = instance,
+        actions = actions,
+        updates = updates,
+        itemsByFile = itemsByFile,
+        onDismissDelete = { deleting = emptyList() },
+        onDismissRename = { renaming = null },
+        onDismissDetail = { detailed = null },
+        onError = { actionError = it },
+        onRefresh = { refresh++ },
+    )
     Column(
         modifier
             .fillMaxHeight()
@@ -203,6 +195,14 @@ internal fun InstancePackTab(
                 visible = listOf(ContentChip.All, ContentChip.Updatable, ContentChip.NoUpdate),
             ) { chip = it }
             PackStatusLabel(statusText, updatable)
+            TextButton(
+                {
+                    watchingJob = actions.controller.updatePacks(instance.id, actionable)
+                },
+                enabled = !busy && !checking && actionable.isNotEmpty(),
+            ) {
+                Text(strings.t("pages.updateBatch.oneClick.count", actionable.size), fontSize = 12.sp)
+            }
         }
         if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         PackUpdateErrorRow(updates, busy, checking, scope)
@@ -228,6 +228,12 @@ internal fun InstancePackTab(
                 query = ""
                 chip = ContentChip.All
             },
+            onDetail = { detailed = it },
+            onRename = { renaming = it },
+            onUpdate = { targets ->
+                updateSelectedPacks(actions, instance.id, actionable, targets)?.let { watchingJob = it }
+            },
+            onOpenFolder = { actions.run { actions.controller.openFolder(instance.id, folder.directory) } },
             onDelete = { deleting = it },
         )
         Text(
@@ -318,36 +324,43 @@ private suspend fun deletePackEntry(
     updates: InstanceUpdateCenter,
     instanceId: String,
     folder: PackFolder,
-    entry: LocalPackEntry,
+    entries: List<LocalPackEntry>,
     onError: (String) -> Unit,
     onRefresh: () -> Unit,
 ) {
     var reported = false
     actions.controller.requireIdle(instanceId)
     val removed =
-        runCatching { actions.controller.deletePack(instanceId, folder, entry.filename) }
-            .getOrElse { failure ->
-                withContext(Dispatchers.Swing) { onError(failure.message ?: tr("deskC.delete.failed")) }
-                reported = true
-                false
+        runCatching {
+            entries.forEach { entry ->
+                check(actions.controller.content.deletePack(instanceId, folder, entry.filename)) {
+                    tr("contentA1.local.deleteSourceMissing")
+                }
             }
+            true
+        }.getOrElse { failure ->
+            withContext(Dispatchers.Swing) { onError(failure.message ?: tr("deskC.delete.failed")) }
+            reported = true
+            false
+        }
     withContext(Dispatchers.Swing) {
         if (!removed && !reported) {
             onError(
                 tr(
                     "deskC.delete.notMoved",
-                    entry.filename,
+                    entries.joinToString { it.filename },
                 ),
             )
         }
         // 报告里的旧条目同步移除，避免「N 项可更新」把已删除的文件算进去。
         if (removed) {
+            val filenames = entries.map { it.filename }.toSet()
             updates.packs?.let { current ->
                 updates.packs =
                     current.copy(
                         items =
                             current.items.filterNot {
-                                it.folder == folder && it.filename == entry.filename
+                                it.folder == folder && it.filename in filenames
                             },
                     )
             }
@@ -419,8 +432,8 @@ private fun PackUpdateErrorRow(
 
 /** 删除确认对话框；确认后删除，取消只关闭弹窗。 */
 @Composable
-private fun PackDeleteDialog(
-    entry: LocalPackEntry,
+internal fun PackDeleteDialog(
+    entries: List<LocalPackEntry>,
     folder: PackFolder,
     instanceId: String,
     actions: UiActions,
@@ -431,9 +444,19 @@ private fun PackDeleteDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("deskC.deleteDialog.title")) },
-        text = { Text(strings.t("deskC.deleteDialog.message", entry.filename)) },
+        text = {
+            Text(
+                strings.t(
+                    if (entries.size == 1) "deskC.deleteDialog.message" else "deskC.deleteDialog.batchMessage",
+                    if (entries.size == 1) entries.single().filename else entries.size,
+                ),
+            )
+        },
         confirmButton = {
             TextButton({
                 onDismiss()
@@ -444,7 +467,7 @@ private fun PackDeleteDialog(
                         updates,
                         instanceId,
                         folder,
-                        entry,
+                        entries,
                         { onError(it) },
                         onRefresh,
                     )
@@ -479,11 +502,16 @@ private fun ColumnScope.PackContentArea(
     instanceId: String,
     onRetry: () -> Unit,
     onClearFilters: () -> Unit,
-    onDelete: (LocalPackEntry) -> Unit,
+    onDetail: (LocalPackEntry) -> Unit,
+    onRename: (LocalPackEntry) -> Unit,
+    onUpdate: (List<LocalPackEntry>) -> Unit,
+    onOpenFolder: () -> Unit,
+    onDelete: (List<LocalPackEntry>) -> Unit,
 ) {
     val strings = LocalStrings.current
     when {
         ui.loading && ui.entries.isEmpty() -> ListSkeleton()
+
         ui.error != null ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -494,6 +522,7 @@ private fun ColumnScope.PackContentArea(
                     TextButton(onRetry) { Text(strings.t("deskC.list.retry")) }
                 }
             }
+
         ui.entries.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -506,6 +535,7 @@ private fun ColumnScope.PackContentArea(
                     },
                 )
             }
+
         ui.filtered.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -526,34 +556,89 @@ private fun ColumnScope.PackContentArea(
                     }
                 }
             }
-        else ->
+
+        else -> {
+            val selection = remember { ManagedSelection() }
+            val keys = ui.filtered.map { it.filename }
+            LaunchedEffect(keys) { selection.retain(keys) }
+            SelectionBar(selection, keys)
             LazyColumn(
-                Modifier.weight(1f).fillMaxWidth(),
+                Modifier.weight(1f).fillMaxWidth().dragSelectRows(selection, keys),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(ui.filtered, key = { it.filename }) { entry ->
-                    PackRow(
-                        entry = entry,
-                        folder = ui.folder,
-                        update = ui.itemsByFile[entry.filename],
-                        busy = ui.busy,
-                        iconRevision = ui.iconRevision,
-                        readIcon = { path ->
-                            actions.controller.content.packIcon(
-                                instanceId,
-                                path,
-                                ui.folder,
+                    ManagedItemMenu(
+                        key = entry.filename,
+                        selection = selection,
+                        actions = {
+                            val selected =
+                                ui.filtered.filter { it.filename in selection.selected }.ifEmpty {
+                                    listOf(
+                                        entry,
+                                    )
+                                }
+                            packMenuActions(
+                                selected,
+                                ui.busy,
+                                ui.itemsByFile,
+                                onDetail,
+                                onRename,
+                                onUpdate,
+                                onOpenFolder,
+                                onDelete,
                             )
                         },
-                        onIconFailure = {
-                            actions.controller.store.log(
-                                strings.t("deskC.icon.decodeFailed", it.message),
-                                true,
-                            )
-                        },
-                        onDelete = { onDelete(entry) },
-                    )
+                    ) {
+                        PackRow(
+                            entry = entry,
+                            folder = ui.folder,
+                            update = ui.itemsByFile[entry.filename],
+                            busy = ui.busy,
+                            iconRevision = ui.iconRevision,
+                            readIcon = { path -> actions.controller.content.packIcon(instanceId, path, ui.folder) },
+                            onIconFailure = {
+                                actions.controller.store.log(strings.t("deskC.icon.decodeFailed", it.message), true)
+                            },
+                            onDetail = { onDetail(entry) },
+                            onUpdate = { onUpdate(listOf(entry)) },
+                            onDelete = { onDelete(listOf(entry)) },
+                        )
+                    }
                 }
             }
+        }
     }
+}
+
+private fun packMenuActions(
+    selected: List<LocalPackEntry>,
+    busy: Boolean,
+    updates: Map<String, PackUpdateItem>,
+    onDetail: (LocalPackEntry) -> Unit,
+    onRename: (LocalPackEntry) -> Unit,
+    onUpdate: (List<LocalPackEntry>) -> Unit,
+    onOpenFolder: () -> Unit,
+    onDelete: (List<LocalPackEntry>) -> Unit,
+): List<ManagedAction> {
+    val canUpdate =
+        selected.any {
+            updates[it.filename]?.batchApplicable == true
+        }
+    return listOf(
+        ManagedAction(
+            tr("content.menu.details"),
+            Icons.Outlined.Info,
+            selected.size == 1,
+        ) { onDetail(selected.single()) },
+        ManagedAction(
+            tr("content.menu.update"),
+            Icons.Outlined.SystemUpdateAlt,
+            !busy && canUpdate,
+        ) { onUpdate(selected) },
+        ManagedAction(tr("content.menu.rename"), Icons.Outlined.DriveFileRenameOutline, !busy && selected.size == 1) {
+            onRename(selected.single())
+        },
+        ManagedAction(tr("content.menu.openFolder"), Icons.Outlined.FolderOpen) { onOpenFolder() },
+        ManagedAction(tr("content.menu.delete"), Icons.Outlined.DeleteOutline, !busy) { onDelete(selected) },
+    )
 }

@@ -39,8 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.i18n.I18n
-import dev.molifox.core.importAppearanceFont
-import dev.molifox.core.removeAppearanceFont
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -122,7 +120,7 @@ private fun FontFamilySection(
                             .firstOrNull()
                     if (source != null) {
                         val imported =
-                            importAppearanceFont(actions.controller.store.dataDirectory, source)
+                            actions.controller.appearance.importFont(source)
                         apply {
                             it.copy(
                                 fontChoice = "file:" + imported.path,
@@ -198,7 +196,7 @@ private fun ImportedFontsSection(
                                             } ?: "",
                                     )
                                 }
-                                removeAppearanceFont(actions.controller.store.dataDirectory, font)
+                                actions.controller.appearance.removeFont(font)
                             }
                         },
                     )

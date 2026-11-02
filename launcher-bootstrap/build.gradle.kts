@@ -12,8 +12,15 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+sourceSets.test { kotlin.srcDirs(rootProject.file("tests/launcher-bootstrap/test/kotlin")) }
+
 dependencies {
     implementation(project(":launcher-core"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("com.google.code.gson:gson:2.13.2")
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
+
+tasks.test { useJUnitPlatform() }

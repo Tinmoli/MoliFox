@@ -91,6 +91,9 @@ class LauncherController
         val screenshots: ScreenshotManager
             get() = core.screenshots
 
+        val appearance: AppearanceAssetService
+            get() = core.appearance
+
         val content: ContentService
             get() = core.content
 

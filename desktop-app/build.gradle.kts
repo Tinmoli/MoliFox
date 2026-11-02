@@ -8,6 +8,7 @@ import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.Properties
 import java.util.zip.ZipFile
 
 plugins {
@@ -72,11 +73,8 @@ fun sha256Of(file: File): String {
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-/** 清单版本号 = 应用版本 + 依赖列表哈希；坐标或校验值一变就换新的缓存目录。 */
-fun manifestVersion(
-    base: String,
-    entries: List<RuntimeEntry>,
-): String {
+/** 清单版本只取决于运行依赖；单纯升级启动器不会让全部依赖失效。 */
+fun manifestVersion(entries: List<RuntimeEntry>): String {
     val canonical =
         entries.sortedWith(compareBy({ it.group }, { it.artifact }, { it.version })).joinToString(
             "\n",
@@ -84,7 +82,7 @@ fun manifestVersion(
             "${it.group}:${it.artifact}:${it.version}:${it.sha256}"
         }
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
-    return "$base-" + digest.joinToString("") { "%02x".format(it) }.take(16)
+    return "runtime-" + digest.joinToString("") { "%02x".format(it) }.take(16)
 }
 
 /** 生成 /molifox-runtime.json 的正文；[platform] 只给 Linux 包区分原生库用。 */
@@ -105,7 +103,7 @@ fun manifestJson(
         }
     val json =
         linkedMapOf<String, Any>(
-            "version" to manifestVersion(project.version.toString(), entries),
+            "version" to manifestVersion(entries),
             "dependencies" to dependencies,
         )
     if (platform != null) json["platform"] = platform
@@ -296,6 +294,119 @@ tasks.register<Jar>("portableJar") {
     }
 }
 
+val nativeMessageFields =
+    listOf(
+        "preparationTitle",
+        "javaRequiredTitle",
+        "javaRequiredMessage",
+        "javaDownloadCancelled",
+        "javaPreparing",
+        "javaExtracting",
+        "startupWindowTitle",
+        "startupInstruction",
+        "logLocation",
+        "provideLog",
+        "showDetails",
+        "hideDetails",
+        "shaMissing",
+        "bundleIncomplete",
+        "httpsRequired",
+        "downloadToolMissing",
+        "downloadButton",
+        "exitButton",
+        "terminalPrompt",
+        "javaCancelled",
+        "archUnsupported",
+        "javaPreparingLinux",
+        "checksumMissing",
+        "checksumFailed",
+        "runtimeUnusable",
+    )
+val nativeMessageLanguages = listOf("en-US", "zh-CN", "zh-TW")
+val nativeMessageDirectory = layout.buildDirectory.dir("generated/native-i18n")
+val nativeMessageHeader = nativeMessageDirectory.map { it.file("NativeMessages.h") }
+val nativeMessageShell = nativeMessageDirectory.map { it.file("NativeMessages.sh") }
+
+fun nativeCppText(value: String): String =
+    value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\r", "")
+        .replace("\n", "\\n")
+
+fun nativeShellText(value: String): String = value.replace("'", "'\"'\"'")
+
+val generateNativeMessages =
+    tasks.register("generateNativeMessages") {
+        val sources =
+            nativeMessageLanguages.map { language ->
+                rootProject.file("launcher-core/src/main/resources/i18n/$language/bootstrap.properties")
+            }
+        inputs.files(sources)
+        outputs.files(nativeMessageHeader, nativeMessageShell)
+        doLast {
+            val messages =
+                nativeMessageLanguages.associateWith { language ->
+                    Properties().apply {
+                        sources[nativeMessageLanguages.indexOf(language)].reader(Charsets.UTF_8).use { load(it) }
+                    }
+                }
+            val header = nativeMessageHeader.get().asFile
+            header.parentFile.mkdirs()
+            header.writeText(
+                buildString {
+                    appendLine("#pragma once")
+                    appendLine("struct NativeMessages {")
+                    nativeMessageFields.forEach { appendLine("    const wchar_t* $it;") }
+                    appendLine("};")
+                    nativeMessageLanguages.forEach { language ->
+                        val symbol = language.replace("-", "")
+                        appendLine("static const NativeMessages nativeMessages$symbol = {")
+                        nativeMessageFields.forEach { field ->
+                            val value =
+                                messages.getValue(language).getProperty("native.$field")
+                                    ?: error("Missing native.$field in $language/bootstrap.properties")
+                            appendLine("    L\"${nativeCppText(value)}\",")
+                        }
+                        appendLine("};")
+                    }
+                },
+                Charsets.UTF_8,
+            )
+            val shell = nativeMessageShell.get().asFile
+            shell.writeText(
+                buildString {
+                    appendLine("nativeLanguage=")
+                    appendLine("if [ -f \"\$data/config/launcher.json\" ]; then")
+                    appendLine(
+                        "    nativeLanguage=$(sed -n 's/^[[:space:]]*\"language\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' \"\$data/config/launcher.json\" | head -n 1)",
+                    )
+                    appendLine("fi")
+                    appendLine("case \"\$nativeLanguage\" in")
+                    appendLine("    zh-CN|zh-TW|zh-HK|en-US) ;;")
+                    appendLine(
+                        "    *) case \"\${LC_ALL:-\${LC_MESSAGES:-\${LANG:-}}}\" in zh_CN*|zh_SG*) nativeLanguage=zh-CN ;; zh_TW*|zh_HK*|zh_MO*) nativeLanguage=zh-TW ;; *) nativeLanguage=en-US ;; esac ;; ",
+                    )
+                    appendLine("esac")
+                    appendLine("[ \"\$nativeLanguage\" = zh-HK ] && nativeLanguage=zh-TW")
+                    appendLine("case \"\$nativeLanguage\" in")
+                    nativeMessageLanguages.forEach { language ->
+                        appendLine("$language)")
+                        nativeMessageFields.forEach { field ->
+                            val value =
+                                messages.getValue(language).getProperty("native.$field")
+                                    ?: error("Missing native.$field in $language/bootstrap.properties")
+                            appendLine("    $field='${nativeShellText(value)}'")
+                        }
+                        appendLine("    ;;")
+                    }
+                    appendLine("esac")
+                },
+                Charsets.UTF_8,
+            )
+        }
+    }
+
 val nativeBuildDirectory = layout.buildDirectory.dir("portable/native")
 val mingwDirectory = providers.environmentVariable("MOLIFOX_MINGW_BIN").orNull
 
@@ -348,9 +459,10 @@ val linuxPackageName = "MoliFox-${project.version}-linux-x86_64.run"
 
 tasks.register<Exec>("portableWindows") {
     group = "distribution"
-    dependsOn(compileWindowsResource)
+    dependsOn(compileWindowsResource, generateNativeMessages)
     inputs.file(rootProject.file("launcher-bootstrap/native/WindowsMain.cpp"))
     inputs.file(rootProject.file("launcher-bootstrap/native/WindowsUpdate.h"))
+    inputs.file(nativeMessageHeader)
     inputs.dir(rootProject.file("launcher-bootstrap/native/miniz"))
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
@@ -367,6 +479,8 @@ tasks.register<Exec>("portableWindows") {
         "-x",
         "c++",
         rootProject.file("launcher-bootstrap/native/WindowsMain.cpp"),
+        "-I",
+        nativeMessageDirectory.get().asFile,
         "-x",
         "none",
         nativeBuildDirectory.get().file("resource.o").asFile,
@@ -444,9 +558,10 @@ tasks.register<Jar>("portableLinuxJar") {
 
 tasks.register("portableLinux") {
     group = "distribution"
-    dependsOn("portableLinuxJar")
+    dependsOn("portableLinuxJar", generateNativeMessages)
     val payload = layout.buildDirectory.file("portable/linux/MoliFox-linux.jar")
     inputs.file(rootProject.file("launcher-bootstrap/native/LinuxMain.sh"))
+    inputs.file(nativeMessageShell)
     inputs.file(payload)
     outputs.file(rootProject.file("dist/$linuxPackageName"))
     outputs.file(rootProject.file("build/validation/linux-package.sha256"))
@@ -460,6 +575,7 @@ tasks.register("portableLinux") {
                 .replace("\r\n", "\n")
                 .replace("@VERSION@", project.version.toString())
                 .replace("@PAYLOAD_SHA256@", digest)
+                .replace("@NATIVE_MESSAGES@", nativeMessageShell.get().asFile.readText())
         val output = rootProject.file("dist/$linuxPackageName")
         output.outputStream().buffered().use { destination ->
             destination.write(header.toByteArray(Charsets.UTF_8))

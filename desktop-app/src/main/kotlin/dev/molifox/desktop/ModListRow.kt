@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -201,7 +202,12 @@ internal fun ModRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 if (updateItem != null && updateItem.applicable) {
-                    RowTextAction(strings.t("deskA.row.update"), enabled = !busy, onClick = onUpdate)
+                    RowIconAction(
+                        Icons.Outlined.SystemUpdateAlt,
+                        strings.t("deskA.row.update"),
+                        enabled = !busy,
+                        onClick = onUpdate,
+                    )
                 }
                 CompactSwitch(mod.enabled, { onToggle() }, enabled = !busy)
                 RowIconAction(

@@ -90,7 +90,8 @@ private const val SCHEMATIC_MAX_BYTES = 256L * 1024 * 1024
 internal abstract class ContentLocalActions(
     core: ContentServiceCore,
 ) : ContentPackDownloadActions(core),
-    ContentLocalApi {
+    ContentLocalApi,
+    ContentRenameApi by ContentRenameActions(core) {
     override suspend fun packIcon(
         id: String,
         path: Path,

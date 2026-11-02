@@ -6,10 +6,11 @@
 package dev.molifox.desktop.instances
 
 import dev.molifox.core.GameDirectory
+import dev.molifox.core.GameDirectoryProbe
+import dev.molifox.core.GameDirectoryService
+import dev.molifox.core.GameDirectoryStatus
 import dev.molifox.core.GameInstance
 import dev.molifox.desktop.tr
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 
@@ -88,13 +89,19 @@ private fun versionSegments(version: String): List<Int> =
         .map { it.takeWhile { char -> char.isDigit() }.toIntOrNull() ?: 0 }
 
 /** 只读地检查目录是否还存在、是否为文件夹、是否可读；在 IO 线程调用。 */
-internal fun probeGameDirectory(directory: GameDirectory): String =
-    runCatching {
-        val path = Path.of(directory.path)
-        when {
-            !Files.exists(path) -> tr("pages.instance.dir.missing", directory.path)
-            !Files.isDirectory(path) -> tr("pages.instance.dir.notFolder", directory.path)
-            !Files.isReadable(path) -> tr("pages.instance.dir.notReadable", directory.path)
-            else -> ""
-        }
-    }.getOrElse { tr("pages.instance.dir.unreadable", it.message ?: directory.path) }
+internal fun probeGameDirectory(
+    directories: GameDirectoryService,
+    directory: GameDirectory,
+): String = directoryProbeText(directories.probe(directory), directory.path)
+
+private fun directoryProbeText(
+    probe: GameDirectoryProbe,
+    path: String,
+): String =
+    when (probe.status) {
+        GameDirectoryStatus.Ready -> ""
+        GameDirectoryStatus.Missing -> tr("pages.instance.dir.missing", path)
+        GameDirectoryStatus.NotDirectory -> tr("pages.instance.dir.notFolder", path)
+        GameDirectoryStatus.NotReadable -> tr("pages.instance.dir.notReadable", path)
+        GameDirectoryStatus.Invalid -> tr("pages.instance.dir.unreadable", probe.detail.ifBlank { path })
+    }

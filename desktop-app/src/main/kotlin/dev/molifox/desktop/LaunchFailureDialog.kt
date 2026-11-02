@@ -31,6 +31,9 @@ internal fun LaunchFailureDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(issue.title, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
         text = {

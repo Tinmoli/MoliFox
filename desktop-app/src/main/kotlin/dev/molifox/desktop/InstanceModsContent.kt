@@ -6,6 +6,7 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,13 +16,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,7 +53,7 @@ internal fun ModsStatusBar(
     instanceBusy: Boolean,
     onCheckUpdates: () -> Unit,
     onOpenJarInJar: () -> Unit,
-    onOpenUpdates: () -> Unit,
+    onUpdateAll: () -> Unit,
 ) {
     val strings = LocalStrings.current
     Row(
@@ -95,10 +104,10 @@ internal fun ModsStatusBar(
             Text(strings.t("deskD.mods.jarInJar"), fontSize = 12.sp)
         }
         TextButton(
-            { onOpenUpdates() },
-            enabled = !instanceBusy,
+            { onUpdateAll() },
+            enabled = !instanceBusy && !checking && updateCount > 0,
         ) {
-            Text(strings.t("deskD.mods.versionManagement"), fontSize = 12.sp)
+            Text(strings.t("pages.updateBatch.oneClick.count", updateCount), fontSize = 12.sp)
         }
     }
 }
@@ -192,18 +201,24 @@ internal fun ModsListBody(
     onDetail: (ModFile) -> Unit,
     onUpdate: (ModFile, ModUpdateItem) -> Unit,
     onToggle: (ModFile) -> Unit,
-    onDelete: (ModFile) -> Unit,
+    onRename: (ModFile) -> Unit,
+    onOpenFolder: () -> Unit,
+    onUpdateSelection: (List<ModFile>) -> Unit,
+    onEnableSelection: (List<ModFile>, Boolean) -> Unit,
+    onDelete: (List<ModFile>) -> Unit,
     modifier: Modifier,
 ) {
     val strings = LocalStrings.current
     when {
         loading && mods.isEmpty() -> ListSkeleton()
+
         error != null ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(strings.t("deskD.mods.listLoadFailed"), error.orEmpty(), Icons.Outlined.CloudOff) {
                     TextButton(onRetry) { Text(strings.t("deskD.mods.retry")) }
                 }
             }
+
         mods.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -214,30 +229,99 @@ internal fun ModsListBody(
                     PrimaryButton(strings.t("deskD.mods.download"), Icons.Outlined.Add, onClick = onDiscover)
                 }
             }
+
         filtered.isEmpty() -> ModsNoMatchState(chip, query, onClearFilter)
-        else ->
-            LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(filtered, key = { it.filename }) { mod ->
-                    ModRow(
-                        mod,
-                        jar = modsDirectory?.resolve(mod.filename),
-                        readIcon = readIcon,
-                        onIconFailure = onIconFailure,
-                        modifier = Modifier.animateItem(),
-                        update = reportByFile[mod.filename],
-                        busy = busy || applying,
-                        onDetail = { onDetail(mod) },
-                        onUpdate = {
-                            reportByFile[mod.filename]?.let { item ->
-                                onUpdate(mod, item)
-                            }
-                        },
-                        onToggle = { onToggle(mod) },
-                        onDelete = { onDelete(mod) },
-                    )
+
+        else -> {
+            val selection = remember { ManagedSelection() }
+            val keys = filtered.map { it.filename }
+            LaunchedEffect(keys) { selection.retain(keys) }
+            Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SelectionBar(selection, keys)
+                LazyColumn(
+                    Modifier.weight(1f).dragSelectRows(selection, keys),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(filtered, key = { it.filename }) { mod ->
+                        ManagedItemMenu(
+                            key = mod.filename,
+                            selection = selection,
+                            actions = {
+                                val selected = filtered.filter { it.filename in selection.selected }
+                                modMenuActions(
+                                    mod,
+                                    selected,
+                                    busy || applying,
+                                    reportByFile,
+                                    onDetail,
+                                    onUpdateSelection,
+                                    onRename,
+                                    onEnableSelection,
+                                    onOpenFolder,
+                                    onDelete,
+                                )
+                            },
+                        ) {
+                            ModRow(
+                                mod,
+                                jar = modsDirectory?.resolve(mod.filename),
+                                readIcon = readIcon,
+                                onIconFailure = onIconFailure,
+                                modifier = Modifier.animateItem(),
+                                update = reportByFile[mod.filename],
+                                busy = busy || applying,
+                                onDetail = { onDetail(mod) },
+                                onUpdate = {
+                                    reportByFile[mod.filename]?.let { item -> onUpdate(mod, item) }
+                                },
+                                onToggle = { onToggle(mod) },
+                                onDelete = { onDelete(listOf(mod)) },
+                            )
+                        }
+                    }
                 }
             }
+        }
     }
+}
+
+private fun modMenuActions(
+    mod: ModFile,
+    selected: List<ModFile>,
+    busy: Boolean,
+    report: Map<String, ModUpdateItem>,
+    onDetail: (ModFile) -> Unit,
+    onUpdate: (List<ModFile>) -> Unit,
+    onRename: (ModFile) -> Unit,
+    onSetEnabled: (List<ModFile>, Boolean) -> Unit,
+    onOpenFolder: () -> Unit,
+    onDelete: (List<ModFile>) -> Unit,
+): List<ManagedAction> {
+    val targets = selected.ifEmpty { listOf(mod) }
+    val canUpdate = targets.any { report[it.filename]?.batchApplicable == true }
+    val enable = targets.any { !it.enabled }
+    return listOf(
+        ManagedAction(
+            tr("content.menu.details"),
+            Icons.Outlined.Info,
+            targets.size == 1,
+        ) { onDetail(targets.single()) },
+        ManagedAction(
+            tr("content.menu.update"),
+            Icons.Outlined.SystemUpdateAlt,
+            !busy && canUpdate,
+        ) { onUpdate(targets) },
+        ManagedAction(tr("content.menu.rename"), Icons.Outlined.DriveFileRenameOutline, !busy && targets.size == 1) {
+            onRename(targets.single())
+        },
+        ManagedAction(
+            tr(if (enable) "content.menu.enable" else "content.menu.disable"),
+            Icons.Outlined.PowerSettingsNew,
+            !busy,
+        ) { onSetEnabled(targets, enable) },
+        ManagedAction(tr("content.menu.openFolder"), Icons.Outlined.FolderOpen) { onOpenFolder() },
+        ManagedAction(tr("content.menu.delete"), Icons.Outlined.DeleteOutline, !busy) { onDelete(targets) },
+    )
 }
 
 /** 筛选后为空：区分「某个芯片下没有条目」与「关键词没有匹配」。 */
@@ -268,32 +352,30 @@ private fun ModsNoMatchState(
     }
 }
 
-/** 版本管理、项目详情、更新确认与删除确认：只显示当前需要的那个对话框。 */
+/** 依赖管理、项目详情、更新确认与删除确认：只显示当前需要的那个对话框。 */
 @Composable
 internal fun ModsDialogs(
-    updatesOpen: Boolean,
     jarInJarOpen: Boolean,
     instance: GameInstance,
     actions: UiActions,
     mods: List<ModFile>,
     detailMod: ModFile?,
     confirmingUpdate: ModUpdateItem?,
-    deletingMod: ModFile?,
-    onCloseUpdates: () -> Unit,
+    deletingMods: List<ModFile>,
+    renamingMod: ModFile?,
     onCloseJarInJar: () -> Unit,
     onCloseDetail: () -> Unit,
     onConfirmUpdate: (ModUpdateItem) -> Unit,
     onDismissConfirm: () -> Unit,
-    onDeleteMod: (ModFile) -> Unit,
+    onDeleteMods: (List<ModFile>) -> Unit,
     onDismissDelete: () -> Unit,
+    onRenameMod: (ModFile, String) -> Unit,
+    onDismissRename: () -> Unit,
 ) {
-    if (updatesOpen) {
-        ContentUpdatesDialog(instance.id, actions) { onCloseUpdates() }
-    }
     if (jarInJarOpen) {
         JarInJarDialog(instance, mods, actions) { onCloseJarInJar() }
     }
-    detailMod?.let { mod -> ModDetailsDialog(mod) { onCloseDetail() } }
+    detailMod?.let { mod -> ModDetailsDialog(mod, onDismiss = onCloseDetail) }
     // 名称搜索得到的匹配先确认来源项目，避免把同名模组替换掉。
     confirmingUpdate?.let { item ->
         ModUpdateConfirmation(
@@ -303,11 +385,19 @@ internal fun ModsDialogs(
         )
     }
     // 删除模组会从 mods 目录移入回收站，先确认再执行。
-    deletingMod?.let { mod ->
+    if (deletingMods.isNotEmpty()) {
         DeleteModConfirmation(
-            mod,
-            onConfirm = { onDeleteMod(mod) },
+            deletingMods,
+            onConfirm = { onDeleteMods(deletingMods) },
             onDismiss = onDismissDelete,
+        )
+    }
+    renamingMod?.let { mod ->
+        ContentRenameDialog(
+            title = tr("content.rename.modTitle"),
+            currentName = mod.filename,
+            onConfirm = { onRenameMod(mod, it) },
+            onDismiss = onDismissRename,
         )
     }
 }

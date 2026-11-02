@@ -527,6 +527,9 @@ private fun AuthlibRemoveDialog(
     val strings = LocalStrings.current
     val label = server.name.ifBlank { server.url }
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("dialogs.authlib.removeTitle", label)) },
         text = {

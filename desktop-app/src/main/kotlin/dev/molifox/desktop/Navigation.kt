@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.AppearanceAssetService
 import dev.molifox.core.LAUNCHER_VERSION
 import dev.molifox.core.LauncherState
 
@@ -161,6 +162,7 @@ private fun <T> stateSpec(): AnimationSpec<T> =
 fun AppHeader(
     navigation: DesktopNavigationState,
     state: LauncherState,
+    assets: AppearanceAssetService,
     onTitlebarDoubleClick: (() -> Unit)? = null,
     controls: @Composable RowScope.() -> Unit,
 ) {
@@ -197,7 +199,7 @@ fun AppHeader(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // 左上角品牌位：用户设置过自定义图标就显示自定义图片，否则用内置狐狸图。
-                    BrandMark(Modifier.size(22.dp))
+                    BrandMark(assets, Modifier.size(22.dp))
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text(

@@ -100,7 +100,7 @@ fun Modal(
     }
     Dialog(
         onDismissRequest = dismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false),
     ) {
         AnimatedVisibility(
             visible,

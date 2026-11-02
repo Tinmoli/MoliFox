@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -39,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -74,11 +76,15 @@ fun SimpleDropdown(
         }
     val fill by
         animateColorAsState(
-            controlBackground(hovered = hovered && enabled),
+            controlBackground(hovered = (hovered || expanded) && enabled),
             animation,
             label = "dropdownFill",
         )
-    val border by animateColorAsState(controlBorderColor(), animation, label = "dropdownBorder")
+    val border by animateColorAsState(
+        if (expanded) MaterialTheme.colorScheme.primary else controlBorderColor(),
+        animation,
+        label = "dropdownBorder",
+    )
     Box(modifier.onSizeChanged { anchorWidth = it.width }) {
         Row(
             Modifier
@@ -104,14 +110,20 @@ fun SimpleDropdown(
             Icon(
                 Icons.Outlined.ExpandMore,
                 null,
-                Modifier.size(16.dp),
+                Modifier.size(16.dp).rotate(if (expanded) 180f else 0f),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         DropdownMenu(
             expanded,
             { expanded = false },
-            modifier = Modifier.width(popupWidth).heightIn(max = 320.dp),
+            modifier =
+                Modifier
+                    .width(popupWidth)
+                    .heightIn(max = 320.dp)
+                    .clip(RoundedCornerShape(Metrics.cardRadius))
+                    .border(1.dp, hairline(), RoundedCornerShape(Metrics.cardRadius))
+                    .background(MaterialTheme.colorScheme.surface),
         ) {
             values.forEach { (id, label) ->
                 val selected = id == value
@@ -135,10 +147,20 @@ fun SimpleDropdown(
                         expanded = false
                     },
                     modifier =
-                        Modifier.background(
+                        Modifier.padding(horizontal = 4.dp).height(36.dp).clip(RoundedCornerShape(6.dp)).background(
                             if (selected) selectedRowBackground() else Color.Transparent,
                         ),
                     contentPadding = PaddingValues(horizontal = 12.dp),
+                    trailingIcon = {
+                        if (selected) {
+                            Icon(
+                                Icons.Outlined.Check,
+                                null,
+                                Modifier.size(16.dp),
+                                MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    },
                 )
             }
         }

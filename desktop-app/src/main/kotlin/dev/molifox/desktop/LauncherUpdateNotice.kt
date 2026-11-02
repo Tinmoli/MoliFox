@@ -28,6 +28,9 @@ internal fun LauncherUpdateNotice(
     if (!update.available || update.checking || dismissed == update.promptSerial) return
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = { dismissed = update.promptSerial },
         title = { Text(strings.t("settings.update.available", release.version)) },
         text = {

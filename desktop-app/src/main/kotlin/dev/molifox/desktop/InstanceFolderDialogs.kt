@@ -127,6 +127,9 @@ internal fun SchematicRenameDialog(
             else -> error
         }
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("dialogs.folder.rename")) },
         text = {
@@ -168,6 +171,9 @@ internal fun SchematicDeleteDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("dialogs.folder.trashTitle")) },
         text = {

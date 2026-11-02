@@ -21,7 +21,7 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 
-private const val MAX_SKIN_DOWNLOAD_BYTES = 1024 * 1024
+internal const val SKIN_SERVICE_MAX_BYTES = 1024 * 1024
 
 data class MinecraftSkinProfile(
     val name: String,
@@ -121,7 +121,7 @@ class SkinService
                 validateUploadSkin(file, entry.variant)
                 val bytes = Files.newInputStream(file).use { it.readNBytes(1024 * 1024 + 1) }
                 require(
-                    bytes.size <= MAX_SKIN_DOWNLOAD_BYTES &&
+                    bytes.size <= SKIN_SERVICE_MAX_BYTES &&
                         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
                             "%02x".format(it)
                         } == entry.sha256,

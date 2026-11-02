@@ -12,10 +12,7 @@ import dev.molifox.core.AccountType
 import dev.molifox.core.LibrarySkin
 import dev.molifox.core.SkinService
 import dev.molifox.core.SkinVariant
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.withContext
-import java.nio.file.Files
+import dev.molifox.core.textureBytes
 import kotlin.io.path.nameWithoutExtension
 import org.jetbrains.skia.Image as SkiaImage
 
@@ -25,17 +22,8 @@ internal suspend fun loadSkinBitmap(
     account: Account,
     selectedId: String?,
 ): ImageBitmap? {
-    val file =
-        if (selectedId != null) {
-            service.library.texture(selectedId)
-        } else {
-            service.texture(account)
-        }
-    return file?.let {
-        withContext(Dispatchers.IO) {
-            SkiaImage.makeFromEncoded(Files.readAllBytes(it)).toComposeImageBitmap()
-        }
-    }
+    val bytes = service.textureBytes(account, selectedId) ?: return null
+    return SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
 }
 
 /** 选择 PNG 导入皮肤库并组装提示语；离线账户同时设置本地预览。返回 null 表示取消了选择。 */

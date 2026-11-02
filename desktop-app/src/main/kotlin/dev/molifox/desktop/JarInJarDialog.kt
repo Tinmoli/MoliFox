@@ -3,7 +3,7 @@
 
 // 负责模组页「嵌入依赖」只读弹窗的骨架：固定头部、可滚动正文与固定底部关闭按钮；
 // 不下载、不安装，也不会改动模组文件。问题区在 JarInJarDialogIssues.kt，
-// 内嵌模组分组在 JarInJarDialogEmbedded.kt，搜索规则在 JarInJarDialogFilters.kt。
+// 只展示模组依赖、冲突与警告；搜索规则在 JarInJarDialogFilters.kt。
 
 package dev.molifox.desktop
 
@@ -35,7 +35,6 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.JarInJarAnalyzer
 import dev.molifox.core.JarInJarConflictPair
 import dev.molifox.core.JarInJarDependencyRow
-import dev.molifox.core.JarInJarHost
 import dev.molifox.core.JarInJarReport
 import dev.molifox.core.JarInJarWarning
 import dev.molifox.core.ModFile
@@ -210,10 +209,6 @@ private fun JarInJarSections(
         visible = true
         JarInJarDependencySection(data.rows)
     }
-    if (data.hosts.isNotEmpty()) {
-        visible = true
-        JarInJarEmbeddedSection(data.hosts, query, data.indexedPaths)
-    }
     if (!visible) MutedText(if (query.isBlank()) strings.t("dialogs.jar.none") else strings.t("dialogs.jar.noMatch"))
 }
 
@@ -222,8 +217,6 @@ private class SectionData(
     val warnings: List<JarInJarWarning>,
     val conflicts: List<JarInJarConflictPair>,
     val rows: List<JarInJarDependencyRow>,
-    val hosts: List<JarInJarHost>,
-    val indexedPaths: Set<String>,
 )
 
 private fun filteredSections(
@@ -239,21 +232,12 @@ private fun filteredSections(
             report.conflicts.filter {
                 matches(query, it.targetId, it.target, it.declarer, it.declarerHost, it.targetHost)
             },
-        rows = report.rows.filter { matchesDependencyRow(it, query) },
-        hosts =
-            report.hosts
-                .filter { matchesHostOrNode(it, query) }
-                .filter { it.embedded.isNotEmpty() },
-        indexedPaths =
-            report.rows
-                .filter { it.embedded }
-                .map(::embeddedIndexKey)
-                .toSet(),
+        rows = report.rows.filter { !it.embedded && matchesDependencyRow(it, query) },
     )
 
 private fun summaryText(report: JarInJarReport): String =
     buildString {
-        append(tr("dialogs.jar.summary", report.hosts.size, report.embeddedCount))
+        append(tr("dialogs.jar.summary", report.hosts.size, report.rows.count { !it.embedded }))
         if (report.pendingCount > 0) append(tr("dialogs.jar.pendingSuffix", report.pendingCount))
         if (report.conflicts.isNotEmpty()) append(tr("dialogs.jar.conflictSuffix", report.conflicts.size))
     }

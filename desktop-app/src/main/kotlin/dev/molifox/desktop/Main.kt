@@ -347,7 +347,7 @@ private fun ApplicationScope.LauncherApplication(
     ) {
         val stored = launcherState.data.settings.brandIconPath
         if (stored.isBlank()) return@LaunchedEffect
-        val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
+        val problem = withContext(Dispatchers.IO) { controller.appearance.brandIconProblem(stored) }
         if (problem != null) {
             controller.store.log(I18n.t("desktop.startup.brandIconUnavailable", problem))
         }
@@ -534,13 +534,14 @@ private fun FrameWindowScope.LauncherRoot(
                     },
                 ),
         ) {
-            LauncherBackdrop(launcherState.data.settings)
+            LauncherBackdrop(launcherState.data.settings, controller.appearance)
             Column(Modifier.fillMaxSize()) {
                 // 标题栏固定在顶部，双击拖动区切换最大化（拖动逻辑不变）。
                 WindowDraggableArea {
                     AppHeader(
                         actions.navigation,
                         launcherState,
+                        controller.appearance,
                         onTitlebarDoubleClick = toggleMaximize,
                     ) {
                         val tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -594,6 +595,9 @@ private fun FrameWindowScope.LauncherRoot(
         }
         if (confirmExit) {
             AlertDialog(
+                properties =
+                    androidx.compose.ui.window
+                        .DialogProperties(dismissOnClickOutside = false),
                 onDismissRequest = onDismissConfirmExit,
                 title = { Text(strings.t("exit.title")) },
                 text = {

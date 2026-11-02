@@ -36,11 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.i18n.Strings
-import dev.molifox.core.importAppearanceBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
-import java.nio.file.Files
 
 /** 界面主题：浅色 / 深色 / 跟随系统三张预览卡。 */
 @Composable
@@ -202,7 +200,7 @@ internal fun BrandIconSection(
                     .border(1.dp, hairline(), RoundedCornerShape(Metrics.innerRadius)),
                 contentAlignment = Alignment.Center,
             ) {
-                BrandMark(Modifier.size(24.dp))
+                BrandMark(actions.controller.appearance, Modifier.size(24.dp))
             }
             SecondaryButton({
                 brandError = null
@@ -215,7 +213,7 @@ internal fun BrandIconSection(
                             ).firstOrNull() ?: return@run
                     val result =
                         runCatching {
-                            importBrandIcon(actions.controller.store.dataDirectory, source)
+                            actions.controller.appearance.importBrandIcon(source)
                         }
                     withContext(Dispatchers.Swing) {
                         val imported = result.getOrNull()
@@ -249,7 +247,7 @@ internal fun BrandIconSection(
                                 brandIconRevision = System.currentTimeMillis(),
                             )
                         }
-                        removeBrandIcon(actions.controller.store.dataDirectory, stored)
+                        actions.controller.appearance.removeBrandIcon(stored)
                     }
                 }) { Text(strings.t("settings.appearance.brand.reset")) }
             }
@@ -431,10 +429,7 @@ internal fun BackgroundImageSection(
                             ).firstOrNull()
                     if (source != null) {
                         val imported =
-                            importAppearanceBackground(
-                                actions.controller.store.dataDirectory,
-                                source,
-                            )
+                            actions.controller.appearance.importBackground(source)
                         applySetting(actions) {
                             it.copy(
                                 backgroundPath = imported.toString(),
@@ -525,11 +520,7 @@ internal fun BackgroundImageSection(
                 onConfirm = {
                     actions.run {
                         applySetting(actions) { it.copy(backgroundPath = "") }
-                        Files.deleteIfExists(
-                            actions.controller.store.directories.backgrounds.resolve(
-                                "background.img",
-                            ),
-                        )
+                        actions.controller.appearance.removeBackground()
                     }
                     removing = false
                 },

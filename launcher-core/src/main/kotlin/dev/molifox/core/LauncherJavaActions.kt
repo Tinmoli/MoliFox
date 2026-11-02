@@ -8,7 +8,6 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.nio.file.Path
 import kotlin.io.path.name
 
 /** Java 提示、安装、选择与移除。 */
@@ -165,37 +164,31 @@ internal abstract class LauncherJavaActions(
         perform {
             requireIdle()
 
-            fun samePath(
-                left: String,
-                right: String,
-            ): Boolean {
-                if (left.isBlank() || right.isBlank()) return false
-                return runCatching {
-                    val a = Path.of(left).toAbsolutePath().normalize()
-                    val b = Path.of(right).toAbsolutePath().normalize()
-                    a.toString().equals(b.toString(), ignoreCase = platform.osName == "windows")
-                }.getOrDefault(false)
-            }
-
             fun forgetPath() {
                 store.mutate { data ->
                     data.copy(
                         settings =
                             data.settings.copy(
                                 javaPath =
-                                    if (samePath(data.settings.javaPath, runtime.path)) {
+                                    if (
+                                        sameNormalizedPath(
+                                            data.settings.javaPath,
+                                            runtime.path,
+                                            platform.osName == "windows",
+                                        )
+                                    ) {
                                         ""
                                     } else {
                                         data.settings.javaPath
                                     },
                                 customJavaPaths =
                                     data.settings.customJavaPaths.filterNot {
-                                        samePath(it, runtime.path)
+                                        sameNormalizedPath(it, runtime.path, platform.osName == "windows")
                                     },
                             ),
                         instances =
                             data.instances.map {
-                                if (samePath(it.javaPath, runtime.path)) {
+                                if (sameNormalizedPath(it.javaPath, runtime.path, platform.osName == "windows")) {
                                     it.copy(javaPath = "")
                                 } else {
                                     it

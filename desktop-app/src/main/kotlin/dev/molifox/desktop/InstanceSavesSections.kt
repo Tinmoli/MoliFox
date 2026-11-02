@@ -11,8 +11,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SearchOff
@@ -21,7 +26,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,7 +62,8 @@ internal class SavesCallbacks(
     val onDetails: (SaveEntry) -> Unit,
     val onBackup: (SaveEntry) -> Unit,
     val onCopy: (SaveEntry) -> Unit,
-    val onDelete: (SaveEntry) -> Unit,
+    val onRename: (SaveEntry) -> Unit,
+    val onDelete: (List<SaveEntry>) -> Unit,
     val onDeleteBackup: (SaveBackupInfo) -> Unit,
     val onRestore: (SaveBackupInfo) -> Unit,
     val onReplaceRestore: (SaveBackupInfo) -> Unit,
@@ -173,6 +181,7 @@ private fun SavesContentSection(
                     Icons.Outlined.Save,
                 )
             }
+
         filtered.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -185,25 +194,82 @@ private fun SavesContentSection(
                     }
                 }
             }
+
         else ->
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                filtered.forEach { entry ->
-                    key(entry.name) {
-                        SaveRow(
-                            entry = entry,
-                            canManage = ui.canManage,
-                            canCopy = ui.canCopy,
-                            onDetails = { callbacks.onDetails(entry) },
-                            onBackup = { callbacks.onBackup(entry) },
-                            onCopy = { callbacks.onCopy(entry) },
-                            onDelete = { callbacks.onDelete(entry) },
-                        )
+            run {
+                val selection = remember { ManagedSelection() }
+                val keys = filtered.map { it.name }
+                LaunchedEffect(keys) { selection.retain(keys) }
+                SelectionBar(selection, keys)
+                Column(
+                    Modifier.dragSelectRows(selection, keys),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    filtered.forEach { entry ->
+                        key(entry.name) {
+                            ManagedItemMenu(
+                                key = entry.name,
+                                selection = selection,
+                                actions = {
+                                    val selected =
+                                        filtered.filter { it.name in selection.selected }.ifEmpty {
+                                            listOf(
+                                                entry,
+                                            )
+                                        }
+                                    saveMenuActions(ui, callbacks, selected)
+                                },
+                            ) {
+                                SaveRow(
+                                    entry = entry,
+                                    canManage = ui.canManage,
+                                    canCopy = ui.canCopy,
+                                    onDetails = { callbacks.onDetails(entry) },
+                                    onBackup = { callbacks.onBackup(entry) },
+                                    onCopy = { callbacks.onCopy(entry) },
+                                    onDelete = { callbacks.onDelete(listOf(entry)) },
+                                )
+                            }
+                        }
                     }
                 }
             }
     }
     RestoreReplaceSetting(ui, callbacks)
     SaveBackupsPanel(ui, callbacks)
+}
+
+private fun saveMenuActions(
+    ui: SavesUiState,
+    callbacks: SavesCallbacks,
+    selected: List<SaveEntry>,
+): List<ManagedAction> {
+    val single = selected.singleOrNull()
+    val canView = single?.let { it.hasLevelDat && !it.name.endsWith(".zip", true) } == true
+    return listOf(
+        ManagedAction(tr("content.menu.details"), Icons.Outlined.Info, canView) {
+            single?.let(callbacks.onDetails)
+        },
+        ManagedAction(tr("saveC.row.backup"), Icons.Outlined.Archive, ui.canManage && single != null) {
+            single?.let(callbacks.onBackup)
+        },
+        ManagedAction(tr("saveC.row.copyTo"), Icons.Outlined.ContentCopy, ui.canCopy && single != null) {
+            single?.let(callbacks.onCopy)
+        },
+        ManagedAction(
+            tr("content.menu.rename"),
+            Icons.Outlined.DriveFileRenameOutline,
+            ui.canManage && single != null,
+        ) {
+            single?.let(callbacks.onRename)
+        },
+        ManagedAction(tr("content.menu.openFolder"), Icons.Outlined.FolderOpen) { callbacks.onOpenFolder() },
+        ManagedAction(
+            tr("content.menu.delete"),
+            Icons.Outlined.DeleteOutline,
+            ui.canManage,
+        ) { callbacks.onDelete(selected) },
+    )
 }
 
 /** 「恢复时替换原世界」开关；切换立即写入实例配置。 */

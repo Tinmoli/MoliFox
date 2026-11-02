@@ -39,7 +39,6 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.nio.file.Files
 import org.jetbrains.skia.Image as SkiaImage
 
 @Composable
@@ -59,10 +58,10 @@ fun InstanceArtwork(
         ) {
             value =
                 try {
-                    actions.controller.icons.texture(instance)?.let { file ->
+                    actions.controller.icons.textureBytes(instance)?.let { bytes ->
                         withContext(Dispatchers.IO) {
                             SkiaImage
-                                .makeFromEncoded(Files.readAllBytes(file))
+                                .makeFromEncoded(bytes)
                                 .toComposeImageBitmap()
                         }
                     }

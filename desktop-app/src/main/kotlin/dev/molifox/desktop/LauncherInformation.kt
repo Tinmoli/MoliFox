@@ -129,6 +129,9 @@ private fun LauncherReleaseDetails(
         )
         if (confirmInstall) {
             AlertDialog(
+                properties =
+                    androidx.compose.ui.window
+                        .DialogProperties(dismissOnClickOutside = false),
                 onDismissRequest = { confirmInstall = false },
                 title = { Text(strings.t("settings.update.confirm.title")) },
                 text = {

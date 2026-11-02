@@ -303,6 +303,9 @@ fun TaskCenterDialog(
     }
     cancelling?.let { job ->
         AlertDialog(
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(dismissOnClickOutside = false),
             onDismissRequest = { cancelling = null },
             title = { Text(strings.t("pages.tasks.cancel.title")) },
             text = { Text(strings.t("pages.tasks.cancel.message", job.title)) },

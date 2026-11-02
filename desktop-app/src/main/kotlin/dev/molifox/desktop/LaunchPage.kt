@@ -53,11 +53,7 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.GameLaunchTarget
 import dev.molifox.core.JobStatus
 import dev.molifox.core.LauncherState
-import dev.molifox.core.LauncherStore
 import dev.molifox.core.LauncherTaskKind
-import dev.molifox.core.PlatformServices
-import dev.molifox.core.VersionResolver
-import java.nio.file.Files
 
 /** 开始页：左栏是账户摘要与撑满列高的「当前游戏」卡（信息在上、启动按钮与「实例管理 / 版本设置」贴底）， 右栏是可折叠的世界 / 服务器面板。 */
 @Composable
@@ -360,20 +356,3 @@ internal fun LaunchActionButton(
         )
     }
 }
-
-/**
- * 版本文件是否仍在磁盘上：`versions/<id>/<id>.json` 能解析，且客户端 jar 存在。
- * 手动选目录后原文件被移动或删除时，登记记录仍然存在，这个检查用于区分「已安装」和「其实没有文件」。
- */
-internal fun instanceFilesPresent(
-    store: LauncherStore,
-    platform: PlatformServices,
-    instance: GameInstance,
-): Boolean =
-    runCatching {
-        val root = store.minecraftRoot(instance)
-        val profile = VersionResolver(root, platform).resolve(instance.versionId)
-        Files.isRegularFile(
-            root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar"),
-        )
-    }.getOrDefault(false)

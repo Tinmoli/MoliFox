@@ -43,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameScreenshot
-import dev.molifox.core.importAppearanceBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
@@ -260,10 +259,7 @@ internal fun ScreenshotPreviewDialog(
                         val source = actions.controller.screenshots.resolve(shot)
                         val imported =
                             withContext(Dispatchers.IO) {
-                                importAppearanceBackground(
-                                    actions.controller.store.dataDirectory,
-                                    source,
-                                )
+                                actions.controller.appearance.importBackground(source)
                             }
                         actions.controller.saveSettings(
                             actions.controller.store.data.settings.copy(

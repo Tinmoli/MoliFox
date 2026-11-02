@@ -52,6 +52,9 @@ internal fun InstanceRenameDialog(
                 .toString()
         }.getOrDefault(instance.gameDirectoryName)
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("dialogs.rename.title")) },
         text = {

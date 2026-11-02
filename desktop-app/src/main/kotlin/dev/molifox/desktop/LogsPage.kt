@@ -143,6 +143,9 @@ internal fun ColumnScope.LogsPage(
 
     if (confirmClear) {
         AlertDialog(
+            properties =
+                androidx.compose.ui.window
+                    .DialogProperties(dismissOnClickOutside = false),
             onDismissRequest = { confirmClear = false },
             title = { Text(strings.t("pages.logs.clear.title")) },
             text = { Text(strings.t("pages.logs.clear.message")) },

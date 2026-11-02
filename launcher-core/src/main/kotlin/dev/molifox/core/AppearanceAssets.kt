@@ -25,6 +25,11 @@ import kotlin.io.path.reader
 private const val MAX_BACKGROUND_FILE_BYTES = 12L * 1024 * 1024
 private const val MAX_BACKGROUND_PIXELS = 20_000_000
 private const val MAX_FONT_FILE_BYTES = 32L * 1024 * 1024
+private const val MAX_BRAND_ICON_BYTES = 2L * 1024 * 1024
+private const val MIN_BRAND_ICON_EDGE = 16
+private const val MAX_BRAND_ICON_EDGE = 1024
+private const val BRAND_ICON_PNG = "brand-icon.png"
+private const val BRAND_ICON_JPEG = "brand-icon.jpg"
 
 /** Keep a single validated background copy in portable launcher storage. */
 fun importAppearanceBackground(
@@ -116,5 +121,141 @@ fun removeAppearanceFont(
     // A manually edited record never authorizes removal of a font outside our storage.
     if (file.parent == directory && file.name.matches(Regex("[a-f0-9]{24}\\.font"))) {
         Files.deleteIfExists(file)
+    }
+}
+
+/** UI 无关的外观资源边界：校验、复制、删除和读取都由 core 负责。 */
+interface AppearanceAssetService {
+    fun importBackground(source: Path): Path
+
+    fun removeBackground()
+
+    fun readBackground(path: String): ByteArray?
+
+    fun importFont(source: Path): LauncherFont
+
+    fun removeFont(font: LauncherFont)
+
+    fun importBrandIcon(source: Path): Path
+
+    fun removeBrandIcon(stored: String)
+
+    fun readBrandIcon(path: String): ByteArray?
+
+    fun brandIconProblem(path: String): String?
+}
+
+internal class FileAppearanceAssetService(
+    private val dataDirectory: Path,
+) : AppearanceAssetService {
+    override fun importBackground(source: Path): Path = importAppearanceBackground(dataDirectory, source)
+
+    override fun removeBackground() {
+        Files.deleteIfExists(LauncherDirectories(dataDirectory).backgrounds.resolve("background.img"))
+    }
+
+    override fun readBackground(path: String): ByteArray? = readAppearanceBytes(path, MAX_BACKGROUND_FILE_BYTES)
+
+    override fun importFont(source: Path): LauncherFont = importAppearanceFont(dataDirectory, source)
+
+    override fun removeFont(font: LauncherFont) = removeAppearanceFont(dataDirectory, font)
+
+    override fun importBrandIcon(source: Path): Path {
+        require(source.isRegularFile()) {
+            I18n.t("dialogs.brandIcon.invalidFormat")
+        }
+        require(source.fileSize() in 1..MAX_BRAND_ICON_BYTES) { I18n.t("dialogs.brandIcon.tooLarge") }
+        val format = validateBrandIcon(source)
+        val directory =
+            dataDirectory
+                .resolve("appearance/branding")
+                .toAbsolutePath()
+                .normalize()
+                .createDirectories()
+        val target = directory.resolve(if (format == "png") BRAND_ICON_PNG else BRAND_ICON_JPEG)
+        val temporary = Files.createTempFile(directory, "brand-", ".tmp")
+        try {
+            Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING)
+            moveAppearanceAsset(temporary, target)
+        } finally {
+            temporary.deleteIfExists()
+        }
+        val obsolete = directory.resolve(if (format == "png") BRAND_ICON_JPEG else BRAND_ICON_PNG)
+        runCatching { obsolete.deleteIfExists() }
+        return target
+    }
+
+    override fun removeBrandIcon(stored: String) {
+        if (stored.isBlank()) return
+        runCatching {
+            val directory = dataDirectory.resolve("appearance/branding").toAbsolutePath().normalize()
+            val file = Path.of(stored).toAbsolutePath().normalize()
+            if (file.parent == directory && file.name in setOf(BRAND_ICON_PNG, BRAND_ICON_JPEG)) {
+                file.deleteIfExists()
+            }
+        }
+    }
+
+    override fun readBrandIcon(path: String): ByteArray? = readAppearanceBytes(path, MAX_BRAND_ICON_BYTES)
+
+    override fun brandIconProblem(path: String): String? {
+        if (path.isBlank()) return null
+        return runCatching {
+            val file = Path.of(path)
+            require(file.isRegularFile()) { I18n.t("dialogs.brandIcon.fileMissing") }
+            require(file.fileSize() in 1..MAX_BRAND_ICON_BYTES) { I18n.t("dialogs.brandIcon.sizeAbnormal") }
+            val image = ImageIO.read(file.toFile()) ?: error(I18n.t("dialogs.brandIcon.decodeFailed"))
+            require(image.width in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+                I18n.t("dialogs.brandIcon.dimensionAbnormal")
+            }
+            require(image.height in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+                I18n.t("dialogs.brandIcon.dimensionAbnormal")
+            }
+            null
+        }.getOrElse { failure -> failure.message ?: failure.javaClass.simpleName }
+    }
+}
+
+private fun validateBrandIcon(source: Path): String =
+    ImageIO.createImageInputStream(source.toFile()).use { input ->
+        require(input != null) { I18n.t("dialogs.brandIcon.unreadable") }
+        val readers = ImageIO.getImageReaders(input)
+        require(readers.hasNext()) { I18n.t("dialogs.brandIcon.invalidFormat") }
+        val reader = readers.next()
+        try {
+            reader.input = input
+            val format = reader.formatName.lowercase()
+            require(format in setOf("png", "jpeg", "jpg")) { I18n.t("dialogs.brandIcon.invalidFormat") }
+            require(reader.getWidth(0) in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+                I18n.t("dialogs.brandIcon.sizeRange")
+            }
+            require(reader.getHeight(0) in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+                I18n.t("dialogs.brandIcon.sizeRange")
+            }
+            require(reader.read(0) != null) { I18n.t("dialogs.brandIcon.corrupted") }
+            format
+        } finally {
+            reader.dispose()
+        }
+    }
+
+private fun readAppearanceBytes(
+    stored: String,
+    maximumBytes: Long,
+): ByteArray? =
+    runCatching {
+        val file = Path.of(stored)
+        if (!file.isRegularFile() || file.fileSize() !in 1..maximumBytes) return@runCatching null
+        Files.readAllBytes(file)
+    }.getOrNull()
+
+private fun moveAppearanceAsset(
+    source: Path,
+    target: Path,
+) {
+    try {
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+        Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
     }
 }

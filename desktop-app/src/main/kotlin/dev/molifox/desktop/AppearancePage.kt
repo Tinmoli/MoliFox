@@ -57,13 +57,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.AppearanceAssetService
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import java.nio.file.Files
-import java.nio.file.Path
 import org.jetbrains.skia.Image as SkiaImage
 
 private const val WINDOW_BACKGROUND_ALPHA = .82f
@@ -78,7 +77,10 @@ private val previewDarkLine = Color(0xFF3A343A)
 
 /** 窗口背景：无背景图时铺平面底色，有图时按浓度叠加。 */
 @Composable
-fun LauncherBackdrop(settings: LauncherSettings) {
+fun LauncherBackdrop(
+    settings: LauncherSettings,
+    assets: AppearanceAssetService,
+) {
     var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     val base = MaterialTheme.colorScheme.background
     LaunchedEffect(settings.backgroundPath, settings.backgroundRevision) {
@@ -87,11 +89,9 @@ fun LauncherBackdrop(settings: LauncherSettings) {
                 null
             } else {
                 withContext(Dispatchers.IO) {
-                    runCatching {
-                        val file = Path.of(settings.backgroundPath)
-                        require(Files.size(file) <= 12L * 1024 * 1024)
-                        SkiaImage.makeFromEncoded(Files.readAllBytes(file)).toComposeImageBitmap()
-                    }.getOrNull()
+                    assets.readBackground(settings.backgroundPath)?.let { bytes ->
+                        runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
+                    }
                 }
             }
     }

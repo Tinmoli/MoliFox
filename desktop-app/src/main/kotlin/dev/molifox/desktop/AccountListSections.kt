@@ -163,6 +163,9 @@ internal fun RemoveAccountDialog(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("dialogs.account.deleteTitle", account.name)) },
         text = { Text(strings.t("dialogs.account.deleteMessage")) },

@@ -7,6 +7,7 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,7 +19,10 @@ import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -62,7 +66,13 @@ internal fun SaveRow(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)),
     ) {
         Row(
-            Modifier.fillMaxWidth().hoverHighlight(shape, alpha = .04f).padding(horizontal = 10.dp),
+            Modifier
+                .fillMaxWidth()
+                .hoverHighlight(shape, alpha = .04f)
+                .clickable(
+                    enabled = entry.hasLevelDat && !entry.name.endsWith(".zip", true),
+                    onClick = onDetails,
+                ).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -94,13 +104,14 @@ internal fun SaveRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                RowTextAction(
+                RowIconAction(
+                    Icons.Outlined.Info,
                     tr("saveC.row.details"),
                     enabled = entry.hasLevelDat && !entry.name.endsWith(".zip", true),
                     onClick = onDetails,
                 )
-                RowTextAction(tr("saveC.row.backup"), enabled = canManage, onClick = onBackup)
-                RowTextAction(tr("saveC.row.copyTo"), enabled = canCopy, onClick = onCopy)
+                RowIconAction(Icons.Outlined.Archive, tr("saveC.row.backup"), enabled = canManage, onClick = onBackup)
+                RowIconAction(Icons.Outlined.ContentCopy, tr("saveC.row.copyTo"), enabled = canCopy, onClick = onCopy)
                 RowIconAction(
                     Icons.Outlined.DeleteOutline,
                     tr("saveC.row.trash", entry.name),
@@ -162,7 +173,12 @@ internal fun SaveBackupRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            RowTextAction(tr("saveC.backup.restore"), enabled = !busy && backup.restorable, onClick = onRestore)
+            RowIconAction(
+                Icons.Outlined.Restore,
+                tr("saveC.backup.restore"),
+                enabled = !busy && backup.restorable,
+                onClick = onRestore,
+            )
             RowIconAction(
                 Icons.Outlined.DeleteOutline,
                 tr("saveC.backup.trash"),

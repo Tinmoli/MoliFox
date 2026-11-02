@@ -21,6 +21,9 @@ internal fun ModUpdateConfirmation(
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("pages.mods.confirm.title")) },
         text = {
@@ -47,19 +50,29 @@ internal fun ModUpdateConfirmation(
 
 @Composable
 internal fun DeleteModConfirmation(
-    mod: ModFile,
+    mods: List<ModFile>,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
     AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
         onDismissRequest = onDismiss,
         title = { Text(strings.t("pages.mods.delete.title")) },
         text = {
             Text(
                 strings.t(
-                    "pages.mods.delete.message",
-                    mod.metadata.title.ifBlank { mod.filename.removeSuffix(".disabled") },
+                    if (mods.size == 1) "pages.mods.delete.message" else "pages.mods.delete.batchMessage",
+                    if (mods.size == 1) {
+                        mods
+                            .single()
+                            .metadata.title
+                            .ifBlank { mods.single().filename.removeSuffix(".disabled") }
+                    } else {
+                        mods.size
+                    },
                 ),
             )
         },
