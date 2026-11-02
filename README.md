@@ -2,9 +2,8 @@
 
 <img src="assets/icons/app/icon.png" alt="MoliFox 图标" width="104" />
 
-# MoliFox · 茉狐
+# MoliFox Launcher 
 
-**Minecraft Java 版启动器**
 
 <p>
   <img alt="支持平台：Windows 与 Linux x86_64" src="https://img.shields.io/badge/Windows%20%7C%20Linux-x86__64-ec8eaa?style=flat-square" />
