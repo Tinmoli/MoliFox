@@ -47,6 +47,7 @@ fun bindOwnedChild(process: Process): AutoCloseable {
     return AutoCloseable { Kernel32.INSTANCE.CloseHandle(job) }
 }
 
+// JVM 不向管道写数据；正常关闭或被强杀都会产生 EOF，无需轮询父 PID。
 private val LINUX_GUARD = """
     child=
     watcher=
@@ -61,7 +62,6 @@ private val LINUX_GUARD = """
     trap 'cleanup; exit' HUP INT TERM
     "${'$'}@" </dev/null &
     child=${'$'}!
-    # JVM 不向这条管道写数据；正常关闭或被强杀都会产生 EOF，无需轮询父 PID。
     (read -r ignored || :; kill -KILL "${'$'}child" 2>/dev/null || :) <&0 &
     watcher=${'$'}!
     wait "${'$'}child"
