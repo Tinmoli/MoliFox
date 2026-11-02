@@ -11,6 +11,7 @@ import java.io.IOException
 
 private const val JOB_LIMIT_INFORMATION_BYTES = 144L
 private const val JOB_LIMIT_FLAGS_OFFSET = 16L
+private const val JOB_LIMIT_KILL_ON_CLOSE = 0x2000
 private const val EXTENDED_JOB_INFORMATION_CLASS = 9
 
 /** Linux 通过专属 stdin 管道感知 JVM 消失；核心不继承该管道，避免 EOF 被其它子进程延迟。 */
@@ -31,7 +32,7 @@ fun bindOwnedChild(process: Process): AutoCloseable {
         // 本项目仅交付 x86_64；EXTENDED_LIMIT_INFORMATION 为 144 字节，LimitFlags 位于 16。
         Memory(JOB_LIMIT_INFORMATION_BYTES).use { limits ->
             limits.clear()
-            limits.setInt(JOB_LIMIT_FLAGS_OFFSET, 0x2000)
+            limits.setInt(JOB_LIMIT_FLAGS_OFFSET, JOB_LIMIT_KILL_ON_CLOSE)
             val configured =
                 kernel
                     .getFunction("SetInformationJobObject")
