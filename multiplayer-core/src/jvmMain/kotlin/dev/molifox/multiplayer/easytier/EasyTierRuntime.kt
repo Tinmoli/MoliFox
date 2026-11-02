@@ -81,6 +81,17 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
             handle.stop()
             return Result.failure(failure)
         }
+        observeExit(process, ownership, reader, shutdownHook, onExit)
+        return Result.success(handle)
+    }
+
+    private fun observeExit(
+        process: Process,
+        ownership: AutoCloseable,
+        reader: Thread,
+        shutdownHook: Thread,
+        onExit: (Int) -> Unit,
+    ) {
         process.onExit().thenAccept { finished ->
             ownership.close()
             // JVM 进入关闭阶段时不能再移除 hook；此时 hook 的幂等 stop 负责兜底。
@@ -91,7 +102,6 @@ class JavaProcessLauncher : EasyTierProcessLauncher {
             runCatching { reader.join(READER_JOIN_MILLIS) }
             onExit(finished.exitValue())
         }
-        return Result.success(handle)
     }
 
     private fun drainOutput(
