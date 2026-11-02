@@ -457,6 +457,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         SetEnvironmentVariableW(L"MOLIFOX_BUNDLE_PATH", executable);
         // JVM 侧据此监视原生外壳；外壳被任务管理器强杀时，JVM 与联机核心不能继续留在后台。
         SetEnvironmentVariableW(L"MOLIFOX_WRAPPER_PID", std::to_wstring(GetCurrentProcessId()).c_str());
+        // 更新成功后会删除旧版本副本；上次中断留下的也在这里清掉，避免目录里堆积 .previous。
+        launcherUpdate::removePrevious(fs::path(executable));
         SetEnvironmentVariableW(L"TEMP", temporary.path.c_str());
         SetEnvironmentVariableW(L"TMP", temporary.path.c_str());
         auto resource = FindResourceW(instance, MAKEINTRESOURCEW(101), RT_RCDATA);

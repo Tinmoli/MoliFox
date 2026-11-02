@@ -453,9 +453,9 @@ val compileWindowsResource =
 // miniz.h 会随压缩 API 一起禁用归档写入，只声明压缩开关。
 val windowsNativeDefinitions = listOf("-DMINIZ_NO_DEFLATE_APIS")
 
-// 发布文件名带上版本与目标平台，避免不同系统的包互相覆盖。
-val windowsPackageName = "MoliFox-${project.version}-windows-x86_64.exe"
-val linuxPackageName = "MoliFox-${project.version}-linux-x86_64.run"
+// 发布包只带启动器名：版本写在包内与 release 里，同目录更新时文件名保持不变。
+val windowsPackageName = "MoliFox.exe"
+val linuxPackageName = "MoliFox.run"
 
 tasks.register<Exec>("portableWindows") {
     group = "distribution"

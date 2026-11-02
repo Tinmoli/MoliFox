@@ -4,6 +4,8 @@
 namespace launcherUpdate {
 constexpr DWORD processWaitMillis = 120000;
 constexpr int replaceAttempts = 30;
+// 更新后的启动器统一用这个名字；只有旧发布名（带版本与平台段）会被迁移过来。
+constexpr wchar_t canonicalName[] = L"MoliFox.exe";
 
 struct WaitingProcesses {
     std::vector<HANDLE> handles;
@@ -108,6 +110,28 @@ static void replace(const fs::path& target, const fs::path& staged) {
     }
 }
 
+// 旧的发布名带版本与平台段，更新成功后统一迁移成固定名；用户自己改的名字保持不动。
+static bool isLegacyReleaseName(const fs::path& target) {
+    static const std::wregex pattern(L"MoliFox-[0-9].*-windows-x86_64\\.exe", std::regex::icase);
+    return std::regex_match(target.filename().wstring(), pattern);
+}
+
+// 更新已生效后旧版本不再需要回滚副本；启动成功即删除，避免目录里堆积 .previous。
+static void removePrevious(const fs::path& target) {
+    std::error_code ignored;
+    fs::remove(fs::path(target.wstring() + L".previous"), ignored);
+}
+
+static fs::path migrateLegacyName(const fs::path& target) {
+    if (!isLegacyReleaseName(target)) return target;
+    auto canonical = target.parent_path() / canonicalName;
+    std::error_code ignored;
+    fs::remove(canonical, ignored);
+    if (ignored) return target;
+    if (!MoveFileExW(target.c_str(), canonical.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return target;
+    return canonical;
+}
+
 static void restart(const fs::path& target) {
     auto command = quote(target.wstring());
     STARTUPINFOW startup{sizeof(STARTUPINFOW)};
@@ -144,7 +168,10 @@ static int apply(const std::vector<std::wstring>& arguments) {
         check(sha256(staged) == expected && sha256(target) == original, "Verify update files after launcher exit");
         saveBackup(target, staged);
         replace(target, staged);
-        restart(target);
+        auto updated = migrateLegacyName(target);
+        restart(updated);
+        removePrevious(target);
+        removePrevious(updated);
         return 0;
     } catch (const std::exception& error) {
         // 更新助手的标准错误已重定向到本次更新日志，不启动 JVM 或额外窗口。

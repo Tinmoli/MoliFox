@@ -72,8 +72,20 @@ if [ "${1:-}" = '--molifox-apply-update' ]; then
     cp -p -- "$target" "$pendingBackup"
     mv -f -- "$pendingBackup" "$backup"
     mv -f -- "$staged" "$target"
+    updated=$target
+    case "${target##*/}" in
+        MoliFox-[0-9]*-linux-x86_64.run)
+            # 旧发布名带版本与平台段：更新成功后迁移成固定名，用户自己改的名字保持不动。
+            canonical="$parent/MoliFox.run"
+            if [ "$target" != "$canonical" ] && rm -f -- "$canonical" 2>/dev/null; then
+                if mv -f -- "$target" "$canonical" 2>/dev/null; then updated=$canonical; fi
+            fi
+            ;;
+    esac
     cd -- "$parent"
-    setsid sh "$target" </dev/null &
+    setsid sh "$updated" </dev/null &
+    # 新版本已经起来，旧版本副本没有回滚价值了，不再留着。
+    rm -f -- "$backup"
     exit 0
 fi
 
@@ -85,6 +97,8 @@ mkdir -p "$data/dependencies/launcher" "$data/cache/tmp" "$data/cache/downloads/
 export MOLIFOX_DATA_DIR="$data"
 export MOLIFOX_BUNDLE_PATH="$0"
 export MOLIFOX_WRAPPER_PID=$$
+# 更新成功后旧版本副本会被删除；上次中断留下的也在这里清掉，避免目录里堆积 .previous。
+rm -f -- "$0.previous" 2>/dev/null || true
 runTemporary=$(mktemp -d "$data/cache/tmp/session-XXXXXX")
 export TMPDIR="$runTemporary"
 export XDG_CACHE_HOME="$data/cache"

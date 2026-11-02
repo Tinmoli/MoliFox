@@ -173,11 +173,12 @@ class GitHubUpdater
             require(page.startsWith("${MoliFoxIdentity.RELEASES}/tag/")) {
                 I18n.t("networkB1.gitHubUpdater.invalidReleasePage")
             }
-            val name =
+            // 新 release 只发固定名；旧包可能还在同名回退上，所以把历史名也留在候选里。
+            val fixedNames =
                 when (store.platform.osName) {
-                    "windows" -> "MoliFox.exe"
-                    "linux" -> "MoliFox-linux-x64.run"
-                    else -> ""
+                    "windows" -> listOf("MoliFox.exe")
+                    "linux" -> listOf("MoliFox.run", "MoliFox-linux-x64.run")
+                    else -> emptyList()
                 }
             val normalizedVersion = version.removePrefix("v")
             val versioned =
@@ -186,7 +187,7 @@ class GitHubUpdater
                     "linux" -> "MoliFox-$normalizedVersion-linux-x86_64.run"
                     else -> ""
                 }
-            val asset = releaseAssetOf(json, listOf(versioned, name))
+            val asset = releaseAssetOf(json, listOf(versioned) + fixedNames)
             return LauncherRelease(
                 version,
                 json.string("name").ifBlank { version },

@@ -2,12 +2,11 @@
 
 <img src="assets/icons/app/icon.png" alt="MoliFox 图标" width="104" />
 
-# MoliFox Launcher 
-
+# MoliFox Launcher
 
 <p>
   <img alt="支持平台：Windows 与 Linux x86_64" src="https://img.shields.io/badge/Windows%20%7C%20Linux-x86__64-ec8eaa?style=flat-square" />
-  <img alt="当前版本：0.4.1" src="https://img.shields.io/badge/version-0.4.1-f2b66d?style=flat-square" />
+  <img alt="当前版本：0.4.1" src="https://img.shields.io/badge/version-0.4.2-f2b66d?style=flat-square" />
   <a href="LICENSE"><img alt="许可证：GPL-3.0-only" src="https://img.shields.io/badge/license-GPL--3.0--only-6a8caa?style=flat-square" /></a>
 </p>
 
