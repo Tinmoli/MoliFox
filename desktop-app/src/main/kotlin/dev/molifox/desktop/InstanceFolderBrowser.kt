@@ -14,7 +14,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,19 +28,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,6 +64,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
@@ -93,6 +93,7 @@ internal fun InstanceFolderBrowser(
     importExtensions: List<String> = emptyList(),
     importLabel: String = "",
     allowDelete: Boolean = false,
+    multiSelect: Boolean = false,
 ) {
     var entries by remember { mutableStateOf<List<FolderEntry>>(emptyList()) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -108,6 +109,13 @@ internal fun InstanceFolderBrowser(
     var renamingEntry by remember(instance.id, folder, subPath) {
         mutableStateOf<FolderEntry?>(null)
     }
+    // 选区只在原理图这类支持多选的目录启用，切换目录层时整体重置，避免跨目录残留。
+    val selection =
+        remember(instance.id, folder, subPath) {
+            if (multiSelect) ManagedSelection() else null
+        }
+    var deletingSelected by remember(instance.id, folder, subPath) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     val busy = actions.controller.isInstanceBusy(instance.id)
     val strings = LocalStrings.current
     val liveState by actions.controller.state.collectAsState()
@@ -121,6 +129,10 @@ internal fun InstanceFolderBrowser(
         } else {
             subPath.fold(root) { path, segment -> path.resolve(segment) }
         }
+    val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
+    // 选区用文件名作稳定键：同一目录内文件名唯一，跨目录切换会重建选区。
+    val keys = filtered.map { it.path.name }
+    LaunchedEffect(keys) { selection?.retain(keys) }
     LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.status }, directory) {
         loading = true
         error = null
@@ -143,84 +155,41 @@ internal fun InstanceFolderBrowser(
         onDismissRename = { renamingEntry = null },
         onChanged = { refresh++ },
     )
-    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ContentToolbar(
-            leading = {
-                if (subPath.isNotEmpty()) {
-                    ToolbarIconAction(
-                        Icons.Outlined.ArrowUpward,
-                        strings.t("pages.folder.back"),
-                    ) {
-                        subPath = subPath.dropLast(1)
-                        query = ""
-                    }
-                }
-            },
-            flexible = {
-                ToolbarSearchField(
-                    query,
-                    { query = it },
-                    strings.t("pages.folder.search.placeholder"),
-                )
-            },
-            importAction =
-                ToolbarAction(
-                    importLabel.ifBlank { strings.t("pages.folder.import") },
-                    icon = Icons.Outlined.FileDownload,
-                    enabled = !busy,
-                ) {
-                    actions.run {
-                        val chosen =
-                            actions.choose(
-                                importLabel.ifBlank { strings.t("pages.folder.chooseFiles") },
-                                multiple = true,
-                                extensions = importExtensions,
-                            )
-                        if (chosen.isNotEmpty()) {
-                            actions.controller.content.importSchematics(instance.id, chosen)
-                            withContext(Dispatchers.Swing) { refresh++ }
-                        }
-                    }
-                },
-            refresh =
-                ToolbarAction(
-                    strings.t("pages.folder.refresh"),
-                    icon = Icons.Outlined.Refresh,
-                    enabled = !busy,
-                ) { refresh++ },
-            openFolder =
-                ToolbarAction(strings.t("pages.folder.open"), icon = Icons.Outlined.FolderOpen) {
-                    actions.run { actions.controller.openFolder(instance.id, folder) }
-                },
+    if (deletingSelected) {
+        FolderBatchDeleteConfirmation(
+            selection = selection,
+            filtered = filtered,
+            subPath = subPath,
+            instance = instance,
+            actions = actions,
+            onDismiss = { deletingSelected = false },
+            onDelete = { refresh++ },
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                directory.toString(),
-                modifier = Modifier.weight(1f),
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (allowDelete) {
-                Text(
-                    strings.t("pages.folder.hint.contextMenu"),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f),
-                )
-            }
-        }
+    }
+    Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        FolderToolbar(
+            instance = instance,
+            actions = actions,
+            folder = folder,
+            subPath = subPath,
+            importLabel = importLabel,
+            importExtensions = importExtensions,
+            busy = busy,
+            query = query,
+            onBack = {
+                subPath = subPath.dropLast(1)
+                query = ""
+            },
+            onQuery = { query = it },
+            onRefresh = { refresh++ },
+        )
+        FolderLocationRow(directory, allowDelete, multiSelect)
         if (loading && entries.isNotEmpty()) {
             LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
         }
-        val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
         // 空目录文案区分「目录本身为空」和「子目录为空」。
         val emptyFolderTitle =
-            if (subPath.isEmpty()) {
-                strings.t("pages.folder.empty.root")
-            } else {
-                strings.t("pages.folder.empty.sub")
-            }
+            strings.t(if (subPath.isEmpty()) "pages.folder.empty.root" else "pages.folder.empty.sub")
         val list: @Composable () -> Unit = {
             FolderEntryList(
                 entries = entries,
@@ -230,6 +199,9 @@ internal fun InstanceFolderBrowser(
                 emptyFolderTitle = emptyFolderTitle,
                 allowDelete = allowDelete,
                 busy = busy,
+                selection = selection,
+                listState = listState,
+                onToggleSelect = { entry -> selection?.toggle(entry.path.name) },
                 onOpen = { entry ->
                     if (entry.isDirectory) {
                         subPath = subPath + entry.path.name
@@ -238,8 +210,24 @@ internal fun InstanceFolderBrowser(
                 },
                 onDelete = { entry -> deletingEntry = entry },
                 onRename = { entry -> renamingEntry = entry },
+                onReveal = { entry ->
+                    actions.run { actions.controller.platform.openFolder(revealTargetOf(entry, directory)) }
+                },
                 onRetry = { refresh++ },
                 onClearSearch = { query = "" },
+            )
+        }
+        if (selection != null) {
+            FolderSelectionActions(
+                selection = selection,
+                keys = keys,
+                busy = busy,
+                onReveal = {
+                    firstSelectedEntry(filtered, selection)?.let { entry ->
+                        actions.run { actions.controller.platform.openFolder(revealTargetOf(entry, directory)) }
+                    }
+                },
+                onDelete = { deletingSelected = true },
             )
         }
         AnimatedFolderContent(subPath, list)
@@ -289,15 +277,20 @@ private fun FolderEntryList(
     emptyFolderTitle: String,
     allowDelete: Boolean,
     busy: Boolean,
+    selection: ManagedSelection?,
+    listState: LazyListState,
+    onToggleSelect: (FolderEntry) -> Unit,
     onOpen: (FolderEntry) -> Unit,
     onDelete: (FolderEntry) -> Unit,
     onRename: (FolderEntry) -> Unit,
+    onReveal: (FolderEntry) -> Unit,
     onRetry: () -> Unit,
     onClearSearch: () -> Unit,
 ) {
     val strings = LocalStrings.current
     when {
         loading && entries.isEmpty() -> ListSkeleton()
+
         error != null ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -308,6 +301,7 @@ private fun FolderEntryList(
                     TextButton(onRetry) { Text(strings.t("pages.folder.error.retry")) }
                 }
             }
+
         entries.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -316,6 +310,7 @@ private fun FolderEntryList(
                     Icons.Outlined.FolderOpen,
                 )
             }
+
         filtered.isEmpty() ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(
@@ -328,19 +323,43 @@ private fun FolderEntryList(
                     }
                 }
             }
+
         else ->
             LazyColumn(
-                Modifier.fillMaxSize(),
+                Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (selection == null) {
+                            Modifier
+                        } else {
+                            Modifier.dragSelectRows(selection, filtered.map { it.path.name })
+                        },
+                    ),
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(filtered, key = { it.path.toString() }) { entry ->
                     FolderRow(
                         entry,
-                        modifier = Modifier.animateItem(),
+                        modifier =
+                            Modifier.animateItem().then(
+                                if (selection == null) {
+                                    Modifier
+                                } else {
+                                    Modifier.onGloballyPositioned { coordinates ->
+                                        selection.bounds[entry.path.name] = coordinates.boundsInWindow()
+                                    }
+                                },
+                            ),
+                        selected = selection != null && entry.path.name in selection.selected,
+                        selectionActive = selection?.active == true,
+                        toggleOnClick = selection != null,
                         allowDelete = allowDelete,
                         onOpen = { onOpen(entry) },
+                        onToggleSelect = { onToggleSelect(entry) },
                         onDelete = { onDelete(entry) },
                         onRename = { onRename(entry) },
+                        onReveal = { onReveal(entry) },
                         busy = busy,
                     )
                 }
@@ -352,11 +371,16 @@ private fun FolderEntryList(
 private fun FolderRow(
     entry: FolderEntry,
     modifier: Modifier,
+    selected: Boolean,
+    selectionActive: Boolean,
+    toggleOnClick: Boolean,
     allowDelete: Boolean,
-    busy: Boolean,
     onOpen: () -> Unit,
+    onToggleSelect: () -> Unit,
     onDelete: () -> Unit,
     onRename: () -> Unit,
+    onReveal: () -> Unit,
+    busy: Boolean,
 ) {
     val shape = RoundedCornerShape(Metrics.cardRadius)
     val strings = LocalStrings.current
@@ -375,19 +399,28 @@ private fun FolderRow(
                     ) { menuOffset = it },
                 ).pressScale(),
             shape = shape,
-            color = MaterialTheme.colorScheme.surface,
+            color = if (selected) selectedRowBackground() else MaterialTheme.colorScheme.surface,
             border =
                 BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f),
+                    if (selected) 1.5.dp else 1.dp,
+                    if (selected) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = .85f)
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)
+                    },
                 ),
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .hoverHighlight(shape, alpha = .04f)
-                    .then(if (entry.isDirectory) Modifier.clickable(onClick = onOpen) else Modifier)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .folderRowClick(
+                        isDirectory = entry.isDirectory,
+                        selectionActive = selectionActive,
+                        toggleOnClick = toggleOnClick,
+                        onOpen = onOpen,
+                        onToggleSelect = onToggleSelect,
+                    ).padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -450,12 +483,13 @@ private fun FolderRow(
             busy = busy,
             onDismiss = { menuOffset = null },
             onRename = onRename,
+            onReveal = onReveal,
             onDelete = onDelete,
         )
     }
 }
 
-/** 右键菜单：只负责展开状态与指针位置，条目的重命名/删除由调用方处理。 */
+/** 右键菜单：只负责展开状态与指针位置，条目的打开位置/重命名/删除由调用方处理。 */
 @Composable
 private fun FolderEntryContextMenu(
     expanded: Boolean,
@@ -463,6 +497,7 @@ private fun FolderEntryContextMenu(
     busy: Boolean,
     onDismiss: () -> Unit,
     onRename: () -> Unit,
+    onReveal: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -471,6 +506,14 @@ private fun FolderEntryContextMenu(
         onDismissRequest = onDismiss,
         offset = offset,
     ) {
+        DropdownMenuItem(
+            text = { Text(strings.t("content.menu.openFolder"), fontSize = 13.sp) },
+            onClick = {
+                onDismiss()
+                onReveal()
+            },
+            enabled = !busy,
+        )
         DropdownMenuItem(
             text = { Text(strings.t("pages.folder.menu.rename"), fontSize = 13.sp) },
             onClick = {
@@ -569,4 +612,65 @@ internal fun ListSkeleton() {
             }
         }
     }
+}
+
+/** 多选栏：在文件管理器里定位首个选中条目，或一次把选中的条目移入回收站。 */
+@Composable
+private fun FolderSelectionActions(
+    selection: ManagedSelection,
+    keys: List<String>,
+    busy: Boolean,
+    onReveal: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    SelectionActionBar(
+        selection = selection,
+        keys = keys,
+        actions =
+            listOf(
+                ManagedAction(
+                    strings.t("content.menu.openFolder"),
+                    Icons.Outlined.FolderOpen,
+                ) { onReveal() },
+                ManagedAction(
+                    strings.t("content.menu.delete"),
+                    Icons.Outlined.DeleteOutline,
+                    enabled = !busy,
+                ) { onDelete() },
+            ),
+    )
+}
+
+/** 批量删除确认：一次移入回收站，条目数量在文案里说明。 */
+@Composable
+private fun FolderBatchDeleteConfirmation(
+    selection: ManagedSelection?,
+    filtered: List<FolderEntry>,
+    subPath: List<String>,
+    instance: GameInstance,
+    actions: UiActions,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    if (selection == null) return
+    SchematicBatchDeleteDialog(
+        count = selection.selected.size,
+        onDismiss = onDismiss,
+        onConfirm = {
+            onDismiss()
+            val chosen = filtered.filter { it.path.name in selection.selected }
+            selection.clear()
+            actions.run {
+                actions.controller.requireIdle(instance.id)
+                chosen.forEach { entry ->
+                    actions.controller.content.deleteSchematicEntry(
+                        instance.id,
+                        schematicRelativePath(entry, subPath),
+                    )
+                }
+                withContext(Dispatchers.Swing) { onDelete() }
+            }
+        },
+    )
 }

@@ -57,10 +57,17 @@ class LobbyGuestSession(
     private val forwarderFactory: (EasyTierCli) -> VirtualPortForwarder =
         ::EasyTierCliPortForwarder,
     private val localForwardFactory: (Int) -> LocalPortForward = { target ->
-        LocalPortForward(target)
+        LocalPortForward(
+            targetPort = target,
+            onError = { failure -> logger(failure.message.orEmpty(), true) },
+        )
     },
     private val broadcastFactory: (String, Int) -> MinecraftLanBroadcast = { description, port ->
-        MinecraftLanBroadcast(description, port)
+        MinecraftLanBroadcast(
+            description = description,
+            localPort = port,
+            onError = { failure -> logger(failure.message.orEmpty(), true) },
+        )
     },
     private val motdFactory: (String) -> String = { host -> I18n.t("multiplayer.lobbyGuestSession.1", host) },
 ) : LobbyGuestSessionApi {

@@ -210,21 +210,9 @@ fun LauncherAboutPanel(actions: UiActions) {
     }
     document?.let { name ->
         val text = remember(name) { BundledLegalDocuments.load(name) }
-        Modal(name, strings.t("settings.about.legal.title"), 760.dp, { document = null }) {
+        // 许可全文只放正文，标题行、版权与说明都不再重复出现在正文里。
+        Modal(name, "", 760.dp, { document = null }) {
             ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
-                Text(
-                    MoliFoxIdentity.NAME,
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                MutedText("Copyright (C) 2026 Tinmoli and MoliFox Contributors")
-                MutedText(
-                    if (name == "LICENSE") {
-                        strings.t("settings.about.legal.gpl")
-                    } else {
-                        strings.t("settings.about.legal.notice")
-                    },
-                )
-                Text("", style = MaterialTheme.typography.bodySmall)
                 androidx.compose.foundation.text.selection.SelectionContainer {
                     Text(text, style = MaterialTheme.typography.bodySmall)
                 }

@@ -38,7 +38,7 @@ internal class ContentDependencyResolver(
     private val batch: ContentPlanBatch,
     private val store: LauncherStore,
     private val api: String,
-    private val backend: ContentBackend,
+    backend: ContentBackend,
 ) {
     private val initial =
         batch.requests.filter { it.versionId.isNotBlank() }.associate { it.hit.id to it.versionId }

@@ -1,0 +1,17 @@
+config:
+  validation: true
+  warningsAsErrors: true
+
+style:
+  UnusedImport:
+    active: true
+  UnusedParameter:
+    active: true
+    allowedNames: 'ignored|expected|serialVersionUID|_'
+  UnusedPrivateFunction:
+    active: true
+  UnusedPrivateProperty:
+    active: true
+    allowedNames: 'ignored|expected|serialVersionUID'
+  UnusedVariable:
+    active: true

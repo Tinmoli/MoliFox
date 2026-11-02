@@ -51,8 +51,8 @@ class PclLobbyBackend(
     private val installer: EasyTierInstaller,
     private val machineIdStore: MachineIdStore,
     private val logger: (message: String, error: Boolean) -> Unit,
-    private val playerName: () -> String,
-    private val runtimeFactory: (Path, Path) -> EasyTierNode = { core, cli ->
+    playerName: () -> String,
+    runtimeFactory: (Path, Path) -> EasyTierNode = { core, cli ->
         EasyTierRuntime(core, cli, logger)
     },
     discoveryFactory: LanDiscoveryFactory = LanDiscoveryFactory.DEFAULT,

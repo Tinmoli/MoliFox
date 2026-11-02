@@ -30,6 +30,42 @@ private const val HTTP_MAX_SUCCESS = 299
 private const val HTTP_UNAUTHORIZED = 401
 private const val HTTP_FORBIDDEN = 403
 private const val HTTP_NOT_FOUND = 404
+private const val MAX_AUTHLIB_RESPONSE_BYTES = 1024 * 1024
+private val authlibJsonMediaType = "application/json".toMediaType()
+
+private data class HttpResult(
+    val code: Int,
+    val body: String?,
+)
+
+private fun createAuthlibRequest(
+    url: String,
+    body: JsonObject?,
+): Request =
+    try {
+        Request
+            .Builder()
+            .url(url)
+            .header("User-Agent", "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)")
+            .header("Accept", "application/json")
+            .apply {
+                if (body == null) get() else post(body.toString().toRequestBody(authlibJsonMediaType))
+            }.build()
+    } catch (_: IllegalArgumentException) {
+        throw AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
+    }
+
+private fun readAuthlibResponse(response: Response): HttpResult =
+    response.use {
+        val bytes = it.body?.byteStream()?.readNBytes(MAX_AUTHLIB_RESPONSE_BYTES + 1) ?: ByteArray(0)
+        if (bytes.size > MAX_AUTHLIB_RESPONSE_BYTES) {
+            throw AuthlibException(
+                AuthlibError.InvalidResponse,
+                I18n.t("core.authlibAccounts.9"),
+            )
+        }
+        HttpResult(it.code, bytes.toString(Charsets.UTF_8))
+    }
 
 /** 外置认证（authlib-injector / Yggdrasil）失败类别；界面据此区分提示，不必解析文案。 */
 enum class AuthlibError {
@@ -326,34 +362,11 @@ class AuthlibClient(
         return AuthlibProfile(id.lowercase(), name)
     }
 
-    private data class HttpResult(
-        val code: Int,
-        val body: String?,
-    )
-
     private suspend fun request(
         url: String,
         body: JsonObject?,
     ): HttpResult {
-        val request =
-            try {
-                Request
-                    .Builder()
-                    .url(url)
-                    .header(
-                        "User-Agent",
-                        "MoliFox/$LAUNCHER_VERSION (Minecraft Java Edition launcher)",
-                    ).header("Accept", "application/json")
-                    .apply {
-                        if (body == null) {
-                            get()
-                        } else {
-                            post(body.toString().toRequestBody(jsonMediaType))
-                        }
-                    }.build()
-            } catch (_: IllegalArgumentException) {
-                throw invalidServer()
-            }
+        val request = createAuthlibRequest(url, body)
         return suspendCancellableCoroutine { continuation ->
             val call = http.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
@@ -374,18 +387,7 @@ class AuthlibClient(
                     ) {
                         val result =
                             try {
-                                response.use {
-                                    val bytes =
-                                        it.body?.byteStream()?.readNBytes(MAX_RESPONSE_BYTES + 1)
-                                            ?: ByteArray(0)
-                                    if (bytes.size > MAX_RESPONSE_BYTES) {
-                                        throw AuthlibException(
-                                            AuthlibError.InvalidResponse,
-                                            I18n.t("core.authlibAccounts.9"),
-                                        )
-                                    }
-                                    HttpResult(it.code, bytes.toString(Charsets.UTF_8))
-                                }
+                                readAuthlibResponse(response)
                             } catch (error: AuthlibException) {
                                 if (continuation.isActive) {
                                     continuation.resumeWith(Result.failure(error))
@@ -405,9 +407,6 @@ class AuthlibClient(
     }
 
     private companion object {
-        val jsonMediaType = "application/json".toMediaType()
-        const val MAX_RESPONSE_BYTES = 1024 * 1024
-
         fun invalidServer() = AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
 
         fun notYggdrasil() = AuthlibException(AuthlibError.NotYggdrasil, I18n.t("core.authlibClient.5"))

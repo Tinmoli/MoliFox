@@ -8,7 +8,6 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlin.io.path.name
 
 /** Java 提示、安装、选择与移除。 */
 internal interface LauncherJavaApi {

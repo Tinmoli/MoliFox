@@ -44,7 +44,10 @@ class LobbyHostSession(
     private val tuning: EasyTierTuning = EasyTierTuning(),
     private val probe: MinecraftWorldProbe = TcpMinecraftWorldProbe(),
     private val serverFactory: (ScaffoldingPlayer) -> ScaffoldingServer = { host ->
-        ScaffoldingServer(hostProfile = host)
+        ScaffoldingServer(
+            hostProfile = host,
+            onError = { failure -> logger(failure.message.orEmpty(), true) },
+        )
     },
     private val watchdogIntervalMillis: Long = DEFAULT_WATCHDOG_INTERVAL_MILLIS,
 ) : LobbyHostSessionApi {
@@ -87,6 +90,7 @@ class LobbyHostSession(
                 scaffoldingPort,
                 world.port,
                 extraRelays,
+                tuning,
             )
         runtime.start(request, ::onRuntimeExit).getOrElse { failure ->
             throw IOException(I18n.t("multiplayer.easyTierRuntime.1", failure.message), failure)

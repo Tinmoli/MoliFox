@@ -40,18 +40,18 @@ internal const val MANAGED_PROFILE_MARKER = "molifoxManaged"
  */
 class MinecraftInstaller(
     private val store: LauncherStore,
-    private val network: NetworkClient,
-    private val java: JavaService,
+    network: NetworkClient,
+    java: JavaService,
     // official 端点可注入以便测试；bmclapi 分支固定使用镜像地址。
-    private val manifestUrl: String = versionManifestUrl("official"),
-    private val assetBaseUrl: String = "https://resources.download.minecraft.net",
+    manifestUrl: String = versionManifestUrl("official"),
+    assetBaseUrl: String = "https://resources.download.minecraft.net",
     // 加载器元数据端点同样可注入：安装流程会先合成完整配置再落盘，离线测试用本地服务验证这条路径。
-    private val fabricMetaBase: String = "https://meta.fabricmc.net",
-    private val quiltMetaBase: String = "https://meta.quiltmc.org",
-    private val legacyFabricMetaBase: String = "https://meta.legacyfabric.net",
+    fabricMetaBase: String = "https://meta.fabricmc.net",
+    quiltMetaBase: String = "https://meta.quiltmc.org",
+    legacyFabricMetaBase: String = "https://meta.legacyfabric.net",
     // Forge 系加载器列表用的 Maven 根地址；默认就是官方地址，测试可指向本地服务。
-    private val forgeMavenBase: String = "https://maven.minecraftforge.net",
-    private val neoforgeMavenBase: String = "https://maven.neoforged.net",
+    forgeMavenBase: String = "https://maven.minecraftforge.net",
+    neoforgeMavenBase: String = "https://maven.neoforged.net",
 ) {
     private val catalog =
         MinecraftVersionCatalog(

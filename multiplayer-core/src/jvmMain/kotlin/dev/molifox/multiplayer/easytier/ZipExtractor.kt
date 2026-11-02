@@ -19,6 +19,7 @@ data class ZipLimits(
 private const val MAX_ENTRIES = 256
 private const val MAX_FILE_BYTES = 256L * 1024 * 1024
 private const val MAX_TOTAL_BYTES = 1024L * 1024 * 1024
+private const val MAX_RELATIVE_PATH_LENGTH = 4096
 
 /** 解包结果：写出的文件数与总字节数。 */
 data class ZipExtractResult(
@@ -40,6 +41,8 @@ object ZipExtractor {
     private const val PARENT = ".."
     private const val CURRENT = "."
     private val DRIVE_PREFIX = Regex("^[A-Za-z]:")
+    private val WINDOWS_RESERVED_NAME =
+        Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?")
 
     /**
      * 把 [archive] 解包到 [destination]。
@@ -55,6 +58,7 @@ object ZipExtractor {
     ): ZipExtractResult {
         Files.createDirectories(destination)
         val root = destination.toAbsolutePath().normalize()
+        require(!Files.isSymbolicLink(root)) { I18n.t("multiplayerB.zipExtractor.entryOutside", root) }
         val prefix = rootPrefix?.split(SEPARATOR)?.filter { it.isNotEmpty() }.orEmpty()
         val seen = HashSet<String>()
         var files = 0
@@ -83,12 +87,27 @@ object ZipExtractor {
     ): String? {
         val normalized = name.replace(WINDOWS_SEPARATOR, SEPARATOR)
         val segments = normalized.split(SEPARATOR).filter { it.isNotEmpty() }
-        require(normalized.isNotEmpty() && !normalized.startsWith(SEPARATOR)) {
+        require(
+            normalized.isNotEmpty() &&
+                normalized.length < MAX_RELATIVE_PATH_LENGTH &&
+                '\u0000' !in normalized &&
+                !normalized.startsWith(SEPARATOR),
+        ) {
             I18n.t("multiplayer.zipExtractor.5", name)
         }
         require(!DRIVE_PREFIX.containsMatchIn(normalized)) { I18n.t("multiplayer.zipExtractor.5", name) }
         require(segments.none { it == PARENT || it == CURRENT }) {
             I18n.t("multiplayer.zipExtractor.6", name)
+        }
+        require(
+            segments.none { segment ->
+                ':' in segment ||
+                    segment.endsWith('.') ||
+                    segment.endsWith(' ') ||
+                    WINDOWS_RESERVED_NAME.matches(segment)
+            },
+        ) {
+            I18n.t("multiplayer.zipExtractor.5", name)
         }
         val insidePrefix = prefix.isEmpty() || segments.take(prefix.size) == prefix
         val relative = segments.drop(prefix.size)
@@ -107,6 +126,13 @@ object ZipExtractor {
         val target = root.resolve(relative).normalize()
         require(target.startsWith(root) && target != root) {
             I18n.t("multiplayerB.zipExtractor.entryOutside", relative)
+        }
+        var current = root
+        relative.split(SEPARATOR).forEach { segment ->
+            current = current.resolve(segment)
+            require(!Files.isSymbolicLink(current)) {
+                I18n.t("multiplayerB.zipExtractor.entryOutside", relative)
+            }
         }
         return target
     }

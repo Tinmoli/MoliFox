@@ -10,8 +10,8 @@ import kotlinx.coroutines.CoroutineScope
 
 class AccountService(
     private val store: LauncherStore,
-    private val network: NetworkClient,
-    private val scope: CoroutineScope,
+    network: NetworkClient,
+    scope: CoroutineScope,
     internal val authlibClient: AuthlibClient = AuthlibClient(network),
     servers: AuthlibServerApi = AuthlibServers(store, authlibClient),
 ) : AuthlibServerApi by servers {

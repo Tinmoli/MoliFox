@@ -200,8 +200,20 @@ private fun SavesContentSection(
                 val selection = remember { ManagedSelection() }
                 val keys = filtered.map { it.name }
                 LaunchedEffect(keys) { selection.retain(keys) }
-                SelectionBar(selection, keys)
+                val selectedSaves = filtered.filter { it.name in selection.selected }
+                SelectionActionBar(
+                    selection,
+                    keys,
+                    listOf(
+                        ManagedAction(
+                            strings.t("content.menu.delete"),
+                            Icons.Outlined.DeleteOutline,
+                            ui.canManage,
+                        ) { callbacks.onDelete(selectedSaves) },
+                    ),
+                )
                 Column(
+                    // 拖动多选时滚轮仍可滚动，滚动后按指针位置续选。
                     Modifier.dragSelectRows(selection, keys),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -224,6 +236,16 @@ private fun SavesContentSection(
                                     entry = entry,
                                     canManage = ui.canManage,
                                     canCopy = ui.canCopy,
+                                    // 已有选区时单击行改为切换选中，ⓘ 按钮仍打开详情。
+                                    onRowClick = {
+                                        if (selection.active) {
+                                            selection.toggle(
+                                                entry.name,
+                                            )
+                                        } else {
+                                            callbacks.onDetails(entry)
+                                        }
+                                    },
                                     onDetails = { callbacks.onDetails(entry) },
                                     onBackup = { callbacks.onBackup(entry) },
                                     onCopy = { callbacks.onCopy(entry) },

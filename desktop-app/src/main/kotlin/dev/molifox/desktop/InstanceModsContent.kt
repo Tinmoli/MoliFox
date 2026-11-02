@@ -6,31 +6,22 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.SearchOff
-import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -232,96 +223,26 @@ internal fun ModsListBody(
 
         filtered.isEmpty() -> ModsNoMatchState(chip, query, onClearFilter)
 
-        else -> {
-            val selection = remember { ManagedSelection() }
-            val keys = filtered.map { it.filename }
-            LaunchedEffect(keys) { selection.retain(keys) }
-            Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SelectionBar(selection, keys)
-                LazyColumn(
-                    Modifier.weight(1f).dragSelectRows(selection, keys),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(filtered, key = { it.filename }) { mod ->
-                        ManagedItemMenu(
-                            key = mod.filename,
-                            selection = selection,
-                            actions = {
-                                val selected = filtered.filter { it.filename in selection.selected }
-                                modMenuActions(
-                                    mod,
-                                    selected,
-                                    busy || applying,
-                                    reportByFile,
-                                    onDetail,
-                                    onUpdateSelection,
-                                    onRename,
-                                    onEnableSelection,
-                                    onOpenFolder,
-                                    onDelete,
-                                )
-                            },
-                        ) {
-                            ModRow(
-                                mod,
-                                jar = modsDirectory?.resolve(mod.filename),
-                                readIcon = readIcon,
-                                onIconFailure = onIconFailure,
-                                modifier = Modifier.animateItem(),
-                                update = reportByFile[mod.filename],
-                                busy = busy || applying,
-                                onDetail = { onDetail(mod) },
-                                onUpdate = {
-                                    reportByFile[mod.filename]?.let { item -> onUpdate(mod, item) }
-                                },
-                                onToggle = { onToggle(mod) },
-                                onDelete = { onDelete(listOf(mod)) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        else ->
+            ModsLoadedList(
+                filtered = filtered,
+                busy = busy,
+                applying = applying,
+                reportByFile = reportByFile,
+                modsDirectory = modsDirectory,
+                readIcon = readIcon,
+                onIconFailure = onIconFailure,
+                onDetail = onDetail,
+                onUpdate = onUpdate,
+                onToggle = onToggle,
+                onRename = onRename,
+                onOpenFolder = onOpenFolder,
+                onUpdateSelection = onUpdateSelection,
+                onEnableSelection = onEnableSelection,
+                onDelete = onDelete,
+                modifier = modifier,
+            )
     }
-}
-
-private fun modMenuActions(
-    mod: ModFile,
-    selected: List<ModFile>,
-    busy: Boolean,
-    report: Map<String, ModUpdateItem>,
-    onDetail: (ModFile) -> Unit,
-    onUpdate: (List<ModFile>) -> Unit,
-    onRename: (ModFile) -> Unit,
-    onSetEnabled: (List<ModFile>, Boolean) -> Unit,
-    onOpenFolder: () -> Unit,
-    onDelete: (List<ModFile>) -> Unit,
-): List<ManagedAction> {
-    val targets = selected.ifEmpty { listOf(mod) }
-    val canUpdate = targets.any { report[it.filename]?.batchApplicable == true }
-    val enable = targets.any { !it.enabled }
-    return listOf(
-        ManagedAction(
-            tr("content.menu.details"),
-            Icons.Outlined.Info,
-            targets.size == 1,
-        ) { onDetail(targets.single()) },
-        ManagedAction(
-            tr("content.menu.update"),
-            Icons.Outlined.SystemUpdateAlt,
-            !busy && canUpdate,
-        ) { onUpdate(targets) },
-        ManagedAction(tr("content.menu.rename"), Icons.Outlined.DriveFileRenameOutline, !busy && targets.size == 1) {
-            onRename(targets.single())
-        },
-        ManagedAction(
-            tr(if (enable) "content.menu.enable" else "content.menu.disable"),
-            Icons.Outlined.PowerSettingsNew,
-            !busy,
-        ) { onSetEnabled(targets, enable) },
-        ManagedAction(tr("content.menu.openFolder"), Icons.Outlined.FolderOpen) { onOpenFolder() },
-        ManagedAction(tr("content.menu.delete"), Icons.Outlined.DeleteOutline, !busy) { onDelete(targets) },
-    )
 }
 
 /** 筛选后为空：区分「某个芯片下没有条目」与「关键词没有匹配」。 */
@@ -375,7 +296,7 @@ internal fun ModsDialogs(
     if (jarInJarOpen) {
         JarInJarDialog(instance, mods, actions) { onCloseJarInJar() }
     }
-    detailMod?.let { mod -> ModDetailsDialog(mod, onDismiss = onCloseDetail) }
+    detailMod?.let { mod -> ModDetailDialogHost(mod, instance, actions, onCloseDetail) }
     // 名称搜索得到的匹配先确认来源项目，避免把同名模组替换掉。
     confirmingUpdate?.let { item ->
         ModUpdateConfirmation(

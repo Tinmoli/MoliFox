@@ -8,13 +8,18 @@ package dev.molifox.desktop
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,16 +32,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import dev.molifox.core.SaveBackupInfo
 import dev.molifox.core.SaveEntry
+import kotlinx.coroutines.delay
 import kotlin.io.path.name
 
 private const val SAVE_ZIP_SUFFIX_CHARS = 4
@@ -57,6 +70,8 @@ internal fun SaveRow(
     onBackup: () -> Unit,
     onCopy: () -> Unit,
     onDelete: () -> Unit,
+    /** 行主体点击；默认与详情一致，多选激活时由调用方改成切换选中。 */
+    onRowClick: () -> Unit = onDetails,
 ) {
     val shape = RoundedCornerShape(Metrics.innerRadius)
     Surface(
@@ -71,12 +86,19 @@ internal fun SaveRow(
                 .hoverHighlight(shape, alpha = .04f)
                 .clickable(
                     enabled = entry.hasLevelDat && !entry.name.endsWith(".zip", true),
-                    onClick = onDetails,
+                    onClick = onRowClick,
                 ).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            LocalContentThumbnail(entry.path, world = true)
+            SaveThumbnailHoverCard(
+                entry = entry,
+                canCopy = canCopy,
+                canManage = canManage,
+                onDetails = onDetails,
+                onCopy = onCopy,
+                onDelete = onDelete,
+            )
             Column(Modifier.weight(1f)) {
                 Text(
                     entry.name,
@@ -209,3 +231,92 @@ internal fun formatSaveSize(bytes: Long): String =
         bytes >= SAVE_KIB_BYTES -> "%.1f KB".format(bytes / SAVE_KIB_DIVISOR)
         else -> bytes.toString() + " B"
     }
+
+/** 存档缩略图：悬停 250ms 后浮出详情卡片，可直接复制或删除；移入卡片不会收起。 */
+@Composable
+private fun SaveThumbnailHoverCard(
+    entry: SaveEntry,
+    canCopy: Boolean,
+    canManage: Boolean,
+    onDetails: () -> Unit,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    val anchorSource = remember { MutableInteractionSource() }
+    val cardSource = remember { MutableInteractionSource() }
+    val anchorHovered by anchorSource.collectIsHoveredAsState()
+    val cardHovered by cardSource.collectIsHoveredAsState()
+    var shown by remember(entry.path) { mutableStateOf(false) }
+    LaunchedEffect(anchorHovered, cardHovered) {
+        if (anchorHovered || cardHovered) {
+            if (!shown) {
+                delay(250)
+                shown = true
+            }
+        } else {
+            delay(200)
+            shown = false
+        }
+    }
+    Box {
+        Box(Modifier.hoverable(anchorSource)) { LocalContentThumbnail(entry.path, world = true) }
+        if (shown) {
+            Popup(alignment = Alignment.TopStart, offset = IntOffset(0, 40)) {
+                Surface(
+                    Modifier.width(250.dp).hoverable(cardSource),
+                    shape = RoundedCornerShape(Metrics.cardRadius),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .7f)),
+                    shadowElevation = 10.dp,
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            entry.name,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            tr("saveC.row.meta", formatSaveSize(entry.size), formatSaveTime(entry.lastModified)),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (!entry.hasLevelDat) {
+                            Text(
+                                tr("saveC.row.maybeInvalid"),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = .85f),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            TextButton({
+                                shown = false
+                                onDetails()
+                            }) {
+                                Text(strings.t("saveC.row.details"), fontSize = 12.sp)
+                            }
+                            if (canCopy) {
+                                TextButton({
+                                    shown = false
+                                    onCopy()
+                                }) {
+                                    Text(strings.t("saveC.row.copyTo"), fontSize = 12.sp)
+                                }
+                            }
+                            if (canManage) {
+                                TextButton({
+                                    shown = false
+                                    onDelete()
+                                }) {
+                                    Text(strings.t("content.menu.delete"), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

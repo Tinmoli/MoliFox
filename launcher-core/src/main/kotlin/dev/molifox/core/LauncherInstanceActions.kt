@@ -140,7 +140,7 @@ internal abstract class LauncherInstanceActions(
     ): GameInstance {
         requireIdle(instanceId)
         val oldFolder = store.instance(instanceId).instanceFolderName()
-        val renamed = renamer.rename(instanceId, newName)
+        renamer.rename(instanceId, newName)
         // 设置表按目录名索引：目录改名后把隔离、Java、图标、收藏和最近游玩搬到新键。
         store.renameInstanceSettings(oldFolder, newName)
         store.refreshInstances()

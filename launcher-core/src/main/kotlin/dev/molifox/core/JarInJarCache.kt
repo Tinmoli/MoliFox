@@ -13,7 +13,7 @@ private const val DISABLED_SUFFIX = ".disabled"
 
 /** 指纹命中条件：同一归一化路径 + 文件大小 + 修改时间。 */
 internal class JarInJarCache(
-    private val capacity: Int = CACHE_CAPACITY,
+    capacity: Int = CACHE_CAPACITY,
 ) {
     private class Entry(
         val size: Long,

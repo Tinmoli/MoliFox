@@ -43,7 +43,7 @@ internal fun artifactProblem(artifact: DownloadArtifact): String? =
     }.getOrElse { I18n.t("core.gameFileVerifier.6", it.message) }
 
 internal class GameFileVerifier(
-    private val network: NetworkClient,
+    network: NetworkClient,
     private val concurrency: Int,
     private val verifyHashes: Boolean = true,
     private val progress: InstallProgress? = null,

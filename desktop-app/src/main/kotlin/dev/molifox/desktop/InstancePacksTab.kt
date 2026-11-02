@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CloudOff
@@ -559,11 +560,29 @@ private fun ColumnScope.PackContentArea(
 
         else -> {
             val selection = remember { ManagedSelection() }
+            val listState = rememberLazyListState()
             val keys = ui.filtered.map { it.filename }
             LaunchedEffect(keys) { selection.retain(keys) }
-            SelectionBar(selection, keys)
+            val selectedPacks = ui.filtered.filter { it.filename in selection.selected }
+            SelectionActionBar(
+                selection,
+                keys,
+                listOf(
+                    ManagedAction(
+                        strings.t("content.menu.update"),
+                        Icons.Outlined.SystemUpdateAlt,
+                        !ui.busy && selectedPacks.any { ui.itemsByFile[it.filename]?.batchApplicable == true },
+                    ) { onUpdate(selectedPacks) },
+                    ManagedAction(
+                        strings.t("content.menu.delete"),
+                        Icons.Outlined.DeleteOutline,
+                        !ui.busy,
+                    ) { onDelete(selectedPacks) },
+                ),
+            )
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth().dragSelectRows(selection, keys),
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(ui.filtered, key = { it.filename }) { entry ->
@@ -599,7 +618,8 @@ private fun ColumnScope.PackContentArea(
                             onIconFailure = {
                                 actions.controller.store.log(strings.t("deskC.icon.decodeFailed", it.message), true)
                             },
-                            onDetail = { onDetail(entry) },
+                            // 已有选区时单击行改为切换选中，避免误开详情页。
+                            onDetail = { if (selection.active) selection.toggle(entry.filename) else onDetail(entry) },
                             onUpdate = { onUpdate(listOf(entry)) },
                             onDelete = { onDelete(listOf(entry)) },
                         )

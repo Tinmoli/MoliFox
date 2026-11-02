@@ -5,9 +5,15 @@
 
 package dev.molifox.core
 
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.google.gson.JsonParseException
 import dev.molifox.core.i18n.I18n
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
 
@@ -167,6 +173,17 @@ class ContentCatalog
     ) {
         private val encyclopedia = EncyclopediaLinks(network)
 
+        /** 百科条目页：项目自己声明的地址优先，否则按项目名解析一次并缓存。 */
+        private suspend fun encyclopediaFor(
+            hit: ContentHit,
+            project: JsonObject,
+        ): String? {
+            val declared = project.string("wiki_url")
+            // 私有内容服务的项目名称不发送给第三方百科。
+            val publicApi = runCatching { java.net.URI(api).host == "api.modrinth.com" }.getOrDefault(false)
+            return if (publicApi) encyclopedia.resolve(hit, declared) else directEncyclopediaUrl(declared)
+        }
+
         /** Lazy changelog loading avoids one extra request per version in a large project. */
         suspend fun browse(projectId: String): ContentDetails {
             val project = backend.project(projectId)
@@ -185,18 +202,42 @@ class ContentCatalog
                 project.string("body").take(MAX_PROJECT_DESCRIPTION_CHARS),
                 project.obj("license").string("id"),
                 versions,
-                contentLinks(
-                    hit,
-                    project,
-                    // 私有内容服务的项目名称不发送给第三方百科。
-                    if (java.net.URI(api).host == "api.modrinth.com") {
-                        encyclopedia.resolve(hit, project.string("wiki_url"))
-                    } else {
-                        directEncyclopediaUrl(project.string("wiki_url"))
-                    },
-                ),
+                contentLinks(hit, project, encyclopediaFor(hit, project)),
             )
         }
+
+        /**
+         * 按文件 SHA-512 指纹认定项目：本地 jar 大多不带项目声明，只有指纹能对上下载页。
+         *
+         * 离线、镜像地址或未收录的项目一律返回 null，由调用方退回名称搜索。
+         */
+        suspend fun projectIdByHash(file: Path): String? =
+            withContext(Dispatchers.IO) {
+                val body =
+                    JsonObject().apply {
+                        add("hashes", gson.toJsonTree(listOf(digest(file, "SHA-512"))))
+                        addProperty("algorithm", "sha512")
+                    }
+                val response =
+                    try {
+                        network.post("$api/version_files", body)
+                    } catch (_: IOException) {
+                        return@withContext null
+                    } catch (_: JsonParseException) {
+                        return@withContext null
+                    } catch (_: IllegalStateException) {
+                        return@withContext null
+                    }
+                response
+                    .entrySet()
+                    .firstNotNullOfOrNull { (_, value) ->
+                        value
+                            .takeIf(JsonElement::isJsonObject)
+                            ?.asJsonObject
+                            ?.string("project_id")
+                            ?.takeIf { it.isNotBlank() }
+                    }
+            }
 
         suspend fun browseVersion(
             projectId: String,
@@ -256,6 +297,8 @@ class ContentCatalog
                 project.string("body").take(MAX_PROJECT_DESCRIPTION_CHARS),
                 project.obj("license").string("id"),
                 versions,
+                // 与下载页同一套链接；百科页按项目名查一次并缓存，尽量给到条目页而不是搜索页。
+                contentLinks(hit, project, encyclopediaFor(hit, project)),
             )
         }
 

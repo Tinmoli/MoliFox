@@ -16,7 +16,6 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
-import kotlin.io.path.walk
 
 private const val RUNTIME_64_BITS = 64
 private const val RUNTIME_32_BITS = 32
@@ -108,7 +107,7 @@ internal class JavaRuntimeIndex(
                         !Files.isSymbolicLink(it) &&
                         !it.fileName.toString().startsWith(".")
                 }.mapNotNull { directory ->
-                    val executable = executable(directory) ?: return@mapNotNull null
+                    executable(directory) ?: return@mapNotNull null
                     val release = readJavaRelease(directory)
                     val version = release["JAVA_VERSION"].orEmpty()
                     val major =

@@ -102,7 +102,7 @@ internal fun SchematicEntryDialogs(
     }
 }
 
-private fun schematicRelativePath(
+internal fun schematicRelativePath(
     entry: FolderEntry,
     subPath: List<String>,
 ): String = (subPath + entry.path.name).joinToString("/")
@@ -185,6 +185,30 @@ internal fun SchematicDeleteDialog(
                 },
             )
         },
+        confirmButton = {
+            TextButton(onConfirm) {
+                Text(strings.t("dialogs.folder.trashConfirm"), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+    )
+}
+
+/** 多选删除确认：条目数量在文案里说明，避免逐个弹窗。 */
+@Composable
+internal fun SchematicBatchDeleteDialog(
+    count: Int,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
+        onDismissRequest = onDismiss,
+        title = { Text(strings.t("dialogs.folder.trashTitle")) },
+        text = { Text(strings.t("dialogs.folder.trashManyMessage", count)) },
         confirmButton = {
             TextButton(onConfirm) {
                 Text(strings.t("dialogs.folder.trashConfirm"), color = MaterialTheme.colorScheme.error)

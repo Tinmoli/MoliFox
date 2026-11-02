@@ -29,7 +29,7 @@ private const val HTTP_FORBIDDEN_STATUS = 403
 
 internal class MicrosoftLogin(
     private val store: LauncherStore,
-    private val network: NetworkClient,
+    private val network: NetworkPayloadApi,
     private val vault: TokenVault,
     private val scope: CoroutineScope,
 ) {
@@ -49,8 +49,11 @@ internal class MicrosoftLogin(
                 "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
                 mapOf("client_id" to clientId, "scope" to "XboxLive.signin offline_access"),
             )
-        check(!data.has("error")) {
-            I18n.t("core.microsoftLogin.2", data.string("error_description", data.string("error")))
+        if (data.has("error")) {
+            val code = data.string("error")
+            val description = data.string("error_description")
+            store.log("Microsoft device authorization failed ($code): $description", true)
+            error(I18n.t("core.microsoftLogin.2", code))
         }
         val deviceCode = data.string("device_code")
         val expiresAt =
@@ -102,20 +105,17 @@ internal class MicrosoftLogin(
         scope.launch(Dispatchers.IO) {
             try {
                 awaitToken(clientId, deviceCode, expiresAt, initialInterval)
-            } catch (_: CancellationException) {
+            } catch (cancelled: CancellationException) {
                 store.log(I18n.t("miscA2.microsoftLogin.cancelled"))
+                throw cancelled
             } catch (failure: IOException) {
-                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
-                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
+                reportPollingFailure(store, failure)
             } catch (failure: IllegalArgumentException) {
-                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
-                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
+                reportPollingFailure(store, failure)
             } catch (failure: IllegalStateException) {
-                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
-                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
+                reportPollingFailure(store, failure)
             } catch (failure: JsonParseException) {
-                store.log(failure.message ?: I18n.t("core.microsoftLogin.6"), true)
-                store.notify(failure.message ?: I18n.t("core.microsoftLogin.6"), LauncherNoticeKind.LoginEnded)
+                reportPollingFailure(store, failure)
             }
         }
 
@@ -183,15 +183,9 @@ internal class MicrosoftLogin(
 
     /** Xbox Live → XSTS → Minecraft 服务，换到可直接启动游戏的档案凭据。 */
     private suspend fun exchange(microsoftToken: String): GameCredentials {
-        val xbox = authenticateXbox(microsoftToken)
-        val xsts = authorizeXsts(xbox)
-        val userHash =
-            xsts
-                .obj("DisplayClaims")
-                .array("xui")[0]
-                .asJsonObject
-                .string("uhs")
-        val login = loginWithXbox(userHash, xsts)
+        val xboxToken = authenticateXbox(microsoftToken)
+        val xsts = authorizeXsts(xboxToken)
+        val login = loginWithXbox(xsts)
         val token = login.string("access_token")
         val profile =
             network.authorizedJson("https://api.minecraftservices.com/minecraft/profile", token)
@@ -215,7 +209,7 @@ internal class MicrosoftLogin(
         )
     }
 
-    private suspend fun authenticateXbox(microsoftToken: String): JsonObject {
+    private suspend fun authenticateXbox(microsoftToken: String): String {
         val xboxBody =
             JsonObject().apply {
                 add(
@@ -229,10 +223,10 @@ internal class MicrosoftLogin(
                 addProperty("RelyingParty", "http://auth.xboxlive.com")
                 addProperty("TokenType", "JWT")
             }
-        return network.post("https://user.auth.xboxlive.com/user/authenticate", xboxBody)
+        return network.post("https://user.auth.xboxlive.com/user/authenticate", xboxBody).string("Token")
     }
 
-    private suspend fun authorizeXsts(xbox: JsonObject): JsonObject {
+    private suspend fun authorizeXsts(xboxToken: String): XstsAuthorization {
         val xstsBody =
             JsonObject().apply {
                 add(
@@ -243,37 +237,34 @@ internal class MicrosoftLogin(
                             "UserTokens",
                             com.google.gson
                                 .JsonArray()
-                                .apply { add(xbox.string("Token")) },
+                                .apply { add(xboxToken) },
                         )
                     },
                 )
                 addProperty("RelyingParty", "rp://api.minecraftservices.com/")
                 addProperty("TokenType", "JWT")
             }
-        return try {
-            network.post("https://xsts.auth.xboxlive.com/xsts/authorize", xstsBody)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: IOException) {
-            error(I18n.t("core.microsoftLogin.11"))
-        } catch (_: IllegalArgumentException) {
-            error(I18n.t("core.microsoftLogin.11"))
-        } catch (_: IllegalStateException) {
-            error(I18n.t("core.microsoftLogin.11"))
-        } catch (_: JsonParseException) {
-            error(I18n.t("core.microsoftLogin.11"))
-        }
+        val response =
+            runCatching {
+                network.post("https://xsts.auth.xboxlive.com/xsts/authorize", xstsBody)
+            }.getOrElse(::throwXstsFailure)
+        return XstsAuthorization(
+            token = response.string("Token"),
+            userHash =
+                response
+                    .obj("DisplayClaims")
+                    .array("xui")[0]
+                    .asJsonObject
+                    .string("uhs"),
+        )
     }
 
-    private suspend fun loginWithXbox(
-        userHash: String,
-        xsts: JsonObject,
-    ): JsonObject =
+    private suspend fun loginWithXbox(xsts: XstsAuthorization): JsonObject =
         try {
             network.post(
                 "https://api.minecraftservices.com/authentication/login_with_xbox",
                 JsonObject().apply {
-                    addProperty("identityToken", "XBL3.0 x=$userHash;${xsts.string("Token")}")
+                    addProperty("identityToken", "XBL3.0 x=${xsts.userHash};${xsts.token}")
                 },
             )
         } catch (failure: ServiceHttpException) {
@@ -313,3 +304,30 @@ internal class MicrosoftLogin(
         }
     }
 }
+
+private data class XstsAuthorization(
+    val token: String,
+    val userHash: String,
+)
+
+private fun reportPollingFailure(
+    store: LauncherStore,
+    failure: Exception,
+) {
+    val message = I18n.t("core.microsoftLogin.6")
+    store.log(failure.message?.takeIf(String::isNotBlank) ?: message, true)
+    store.notify(message, LauncherNoticeKind.LoginEnded)
+}
+
+private fun throwXstsFailure(failure: Throwable): Nothing =
+    throw if (failure.isExpectedLoginFailure()) {
+        IllegalStateException(I18n.t("core.microsoftLogin.11"), failure)
+    } else {
+        failure
+    }
+
+private fun Throwable.isExpectedLoginFailure(): Boolean =
+    this is IOException ||
+        this is IllegalArgumentException ||
+        this is IllegalStateException ||
+        this is JsonParseException

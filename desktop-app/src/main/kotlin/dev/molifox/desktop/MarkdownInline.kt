@@ -49,7 +49,7 @@ internal fun buildInlineMarkup(
 ): InlineMarkup = InlineRenderer(palette).render(source)
 
 private class InlineRenderer(
-    private val palette: MarkdownPalette,
+    palette: MarkdownPalette,
 ) {
     private val builder = AnnotatedString.Builder()
     private val links = mutableListOf<InlineLink>()

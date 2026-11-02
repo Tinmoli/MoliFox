@@ -20,7 +20,7 @@ import java.security.cert.CertificateException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 
-/** 默认总尝试次数（含首次）：首次 + 2 次重试。 */
+/** 默认总尝试次数（含首次）：首次 + 4 次重试。 */
 private const val DEFAULT_DOWNLOAD_ATTEMPT_COUNT = 5
 
 /** 分段下载的默认分段数。 */
@@ -162,7 +162,7 @@ class NetworkClient
         }
 
         companion object {
-            /** 默认总尝试次数（含首次）：首次 + 2 次重试；重试沿用已有 `.part`。 */
+            /** 默认总尝试次数（含首次）：首次 + 4 次重试；重试沿用已有 `.part`。 */
             const val DEFAULT_DOWNLOAD_ATTEMPTS = DEFAULT_DOWNLOAD_ATTEMPT_COUNT
 
             /** 探测用的短超时：慢就当作不可用，不能拖住真正的下载。 */

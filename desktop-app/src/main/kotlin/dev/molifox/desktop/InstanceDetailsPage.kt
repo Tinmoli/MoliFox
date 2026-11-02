@@ -377,6 +377,7 @@ private fun RowScope.InstanceTabContent(
                                 actions.run { actions.controller.selectInstance(instance.id) }
                                 navigate(Page.Discover)
                             }
+
                         2 ->
                             InstancePackTab(
                                 instance,
@@ -385,6 +386,7 @@ private fun RowScope.InstanceTabContent(
                                 PackFolder.ResourcePacks,
                                 Modifier.weight(1f),
                             )
+
                         3 ->
                             InstancePackTab(
                                 instance,
@@ -393,7 +395,9 @@ private fun RowScope.InstanceTabContent(
                                 PackFolder.ShaderPacks,
                                 Modifier.weight(1f),
                             )
+
                         4 -> InstanceSavesTab(instance, actions, Modifier.weight(1f))
+
                         5 ->
                             InstanceFolderBrowser(
                                 instance,
@@ -409,7 +413,9 @@ private fun RowScope.InstanceTabContent(
                                     ),
                                 importLabel = strings.t("pages.instance.details.importSchematic"),
                                 allowDelete = true,
+                                multiSelect = true,
                             )
+
                         else ->
                             InstanceSettingsTab(
                                 instance = instance,

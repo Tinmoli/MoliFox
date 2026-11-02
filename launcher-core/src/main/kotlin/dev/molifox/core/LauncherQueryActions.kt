@@ -22,6 +22,11 @@ internal interface LauncherQueryApi {
     suspend fun instanceDirectorySize(id: String): Long?
 
     suspend fun instanceFilesPresent(id: String): Boolean
+
+    suspend fun jarInJarReport(
+        id: String,
+        mods: List<ModFile>,
+    ): JarInJarReport
 }
 
 /** 实现由 [LauncherController] 委托调用；方法体与原实现一致。 */
@@ -29,6 +34,8 @@ internal abstract class LauncherQueryActions(
     core: LauncherControllerCore,
 ) : LauncherDatapackActions(core),
     LauncherQueryApi {
+    private val jarInJarAnalyzer = JarInJarAnalyzer()
+
     override suspend fun modIconBytes(jar: Path): ByteArray? =
         withContext(Dispatchers.IO) {
             readModIcon(jar)
@@ -67,5 +74,21 @@ internal abstract class LauncherQueryActions(
                     root.resolve("versions").resolve(profile.jarId).resolve(profile.jarId + ".jar"),
                 )
             }.getOrDefault(false)
+        }
+
+    override suspend fun jarInJarReport(
+        id: String,
+        mods: List<ModFile>,
+    ): JarInJarReport =
+        withContext(Dispatchers.IO) {
+            val instance = store.instance(id)
+            jarInJarAnalyzer.analyze(
+                instanceId = instance.id,
+                gameVersion = instance.gameVersion,
+                loader = instance.loader,
+                mods = mods,
+                modsDirectory = store.instancePath(instance.id).resolve("mods"),
+                temporaryDirectory = store.temporaryDirectory,
+            )
         }
 }

@@ -66,13 +66,14 @@ class TokenVault
             }
             // 先封装再建目录：密钥不可用时不会留下半成品目录。
             val envelope = protection.seal(id, bytes)
-            createStorageDirectory(folder)
+            createCredentialDirectory(folder)
             val temporary = target.resolveSibling(".${target.name}-${UUID.randomUUID()}.tmp")
             try {
+                createPrivateCredentialFile(temporary)
                 Files.writeString(
                     temporary,
                     gson.toJson(envelope),
-                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.TRUNCATE_EXISTING,
                     StandardOpenOption.WRITE,
                 )
                 try {
@@ -85,6 +86,7 @@ class TokenVault
                 } catch (_: AtomicMoveNotSupportedException) {
                     Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
                 }
+                restrictCredentialFile(target)
                 memory[id] = token
                 warnPlainStorageOnce()
             } finally {
@@ -149,7 +151,9 @@ class TokenVault
         private fun warnPlainStorageOnce() {
             if (protection.protectsAtRest || warnedPlainStorage) return
             warnedPlainStorage = true
-            store.log(I18n.t("miscA2.tokenVault.plainStorageNotice", folder), false)
+            val message = I18n.t("miscA2.tokenVault.plainStorageNotice", folder)
+            store.log(message, false)
+            store.notify(message)
         }
     }
 

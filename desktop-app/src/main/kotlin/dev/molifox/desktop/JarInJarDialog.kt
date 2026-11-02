@@ -32,9 +32,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
-import dev.molifox.core.JarInJarAnalyzer
 import dev.molifox.core.JarInJarConflictPair
 import dev.molifox.core.JarInJarDependencyRow
+import dev.molifox.core.JarInJarHost
 import dev.molifox.core.JarInJarReport
 import dev.molifox.core.JarInJarWarning
 import dev.molifox.core.ModFile
@@ -46,7 +46,7 @@ private const val BODY_MAX_HEIGHT_DP = 380
 
 private const val DIALOG_WIDTH_DP = 660
 
-/** 只读诊断：扫描结果按会话缓存在 [JarInJarAnalyzer] 内，关闭弹窗不会改动任何文件。 */
+/** 只读诊断：扫描和缓存由 core 管理，关闭弹窗不会改动任何文件。 */
 @Composable
 internal fun JarInJarDialog(
     instance: GameInstance,
@@ -60,7 +60,6 @@ internal fun JarInJarDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
-    val analyzer = remember(instance.id) { JarInJarAnalyzer() }
     val busy =
         actions.controller.game.isRunning(instance.id) ||
             actions.controller.isInstanceBusy(instance.id)
@@ -71,7 +70,7 @@ internal fun JarInJarDialog(
         if (busy) {
             error = tr("dialogs.jar.busyNotice")
         } else {
-            val outcome = runScan(actions, instance, mods, analyzer)
+            val outcome = runScan(actions, instance, mods)
             report = outcome.report
             error = outcome.message
         }
@@ -105,27 +104,9 @@ private suspend fun runScan(
     actions: UiActions,
     instance: GameInstance,
     mods: List<ModFile>,
-    analyzer: JarInJarAnalyzer,
-): ScanOutcome {
-    val modsDirectory =
-        runCatching {
-            actions.controller.store
-                .instancePath(instance.id)
-                .resolve("mods")
-        }.getOrNull()
-            ?: return ScanOutcome(message = tr("dialogs.jar.noModsFolder"))
-    return try {
-        ScanOutcome(
-            report =
-                analyzer.analyze(
-                    instanceId = instance.id,
-                    gameVersion = instance.gameVersion,
-                    loader = instance.loader,
-                    mods = mods,
-                    modsDirectory = modsDirectory,
-                    temporaryDirectory = actions.controller.store.temporaryDirectory,
-                ),
-        )
+): ScanOutcome =
+    try {
+        ScanOutcome(report = actions.controller.jarInJarReport(instance.id, mods))
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: IOException) {
@@ -135,7 +116,6 @@ private suspend fun runScan(
     } catch (failure: IllegalStateException) {
         failureOutcome(failure)
     }
-}
 
 private fun failureOutcome(failure: Exception): ScanOutcome =
     ScanOutcome(message = failure.message?.takeIf(String::isNotBlank) ?: tr("dialogs.jar.readFailure"))
@@ -205,25 +185,32 @@ private fun JarInJarSections(
         visible = true
         JarInJarConflictSection(data.conflicts)
     }
-    if (data.rows.isNotEmpty()) {
+    if (data.hosts.isNotEmpty()) {
         visible = true
-        JarInJarDependencySection(data.rows)
+        JarInJarDependencySection(data.hosts, data.rows, query)
     }
     if (!visible) MutedText(if (query.isBlank()) strings.t("dialogs.jar.none") else strings.t("dialogs.jar.noMatch"))
 }
 
-/** 搜索命中的四个分区数据；搜索为空时等价于报告全集，只是内嵌宿主要求确有内嵌。 */
+/** 搜索命中的四个分区数据；搜索为空时等价于报告全集，依赖区按宿主模组折叠展示。 */
 private class SectionData(
     val warnings: List<JarInJarWarning>,
     val conflicts: List<JarInJarConflictPair>,
+    val hosts: List<JarInJarHost>,
     val rows: List<JarInJarDependencyRow>,
 )
 
 private fun filteredSections(
     report: JarInJarReport,
     query: String,
-): SectionData =
-    SectionData(
+): SectionData {
+    val rows = report.rows.filter { matchesDependencyRow(it, query) }
+    val hosts =
+        report.hosts.filter { host ->
+            matches(query, host.filename, host.displayName, host.modId) ||
+                rows.any { it.hostFilename == host.filename }
+        }
+    return SectionData(
         warnings =
             report.warnings.filter {
                 matches(query, it.dependencyId, it.declarer, it.hostFilename, it.constraint)
@@ -232,8 +219,10 @@ private fun filteredSections(
             report.conflicts.filter {
                 matches(query, it.targetId, it.target, it.declarer, it.declarerHost, it.targetHost)
             },
-        rows = report.rows.filter { !it.embedded && matchesDependencyRow(it, query) },
+        hosts = hosts,
+        rows = rows,
     )
+}
 
 private fun summaryText(report: JarInJarReport): String =
     buildString {

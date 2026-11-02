@@ -1,4 +1,4 @@
-// 解析 easytier-cli 的 peer JSON，并按 PCL CE 的硬约定定位房主节点。
+// 解析 easytier-cli 的 peer JSON，并按 MoliFox 自有主机名前缀定位房主节点。
 package dev.molifox.multiplayer.easytier
 
 import com.google.gson.JsonElement
@@ -27,7 +27,7 @@ data class EasyTierHost(
 
 /** peer 列表解析与房主定位；纯函数，便于用固定 JSON 向量测试。 */
 object EasyTierPeers {
-    /** PCL CE 房主 hostname 前缀；互通硬约定，不能改。 */
+    /** MoliFox 房主 hostname 前缀；刻意与其它启动器分离，避免错误加入不兼容房间。 */
     const val HOST_HOSTNAME_PREFIX = "MoliFox-server-"
 
     private const val FIELD_HOSTNAME = "hostname"

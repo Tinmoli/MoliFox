@@ -11,9 +11,12 @@ import com.sun.jna.platform.win32.Crypt32Util
 import dev.molifox.core.i18n.I18n
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -22,7 +25,6 @@ import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
@@ -50,6 +52,9 @@ private const val DPAPI_PROTECTION = "molifox-dpapi-aesgcm-v1"
 
 /** 非 Windows 平台信封保护标识：不加密，仅保持文件结构一致。 */
 private const val PLAIN_PROTECTION = "molifox-plaintext-v1"
+
+private val CREDENTIAL_DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
+private val CREDENTIAL_FILE_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
 
 /**
  * 凭据目录：[LauncherDirectories] 之外的位置，避免便携数据被整体复制后带走凭据。
@@ -82,6 +87,45 @@ internal fun defaultCredentialProtection(
     } else {
         PlainCredentialProtection()
     }
+
+/** POSIX 平台显式限制凭据目录为 0700；不支持 POSIX 属性的文件系统保持原行为。 */
+internal fun createCredentialDirectory(path: Path) {
+    Files.createDirectories(path)
+    restrictPosixPermissions(path, CREDENTIAL_DIRECTORY_PERMISSIONS)
+}
+
+/** 以 0600 创建凭据临时文件，避免写入到改权限之间出现可读窗口。 */
+internal fun createPrivateCredentialFile(path: Path) {
+    val supportsPosix =
+        Files.getFileAttributeView(
+            path,
+            PosixFileAttributeView::class.java,
+            LinkOption.NOFOLLOW_LINKS,
+        ) != null
+    if (supportsPosix) {
+        Files.createFile(path, PosixFilePermissions.asFileAttribute(CREDENTIAL_FILE_PERMISSIONS))
+    } else {
+        Files.createFile(path)
+    }
+}
+
+/** 原子替换后再次收紧权限，兼容已有凭据和不保留属性的文件系统。 */
+internal fun restrictCredentialFile(path: Path) {
+    restrictPosixPermissions(path, CREDENTIAL_FILE_PERMISSIONS)
+}
+
+private fun restrictPosixPermissions(
+    path: Path,
+    permissions: Set<java.nio.file.attribute.PosixFilePermission>,
+) {
+    val view =
+        Files.getFileAttributeView(
+            path,
+            PosixFileAttributeView::class.java,
+            LinkOption.NOFOLLOW_LINKS,
+        ) ?: return
+    view.setPermissions(permissions)
+}
 
 /** 把明文封装成可落盘的 JSON 信封；实现决定是否真正加密。 */
 internal interface CredentialProtection {
@@ -191,10 +235,11 @@ internal class DpapiKeyProtection(
     }
 
     private fun writeAtomically(bytes: ByteArray) {
-        keyFile.parent.createDirectories()
+        createCredentialDirectory(keyFile.parent)
         val temporary = keyFile.resolveSibling(".${keyFile.name}-${UUID.randomUUID()}.tmp")
         try {
-            Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            createPrivateCredentialFile(temporary)
+            Files.write(temporary, bytes, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
             try {
                 Files.move(
                     temporary,
@@ -205,6 +250,7 @@ internal class DpapiKeyProtection(
             } catch (_: AtomicMoveNotSupportedException) {
                 Files.move(temporary, keyFile, StandardCopyOption.REPLACE_EXISTING)
             }
+            restrictCredentialFile(keyFile)
         } finally {
             temporary.deleteIfExists()
         }

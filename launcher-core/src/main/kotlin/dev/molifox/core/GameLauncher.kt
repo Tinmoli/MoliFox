@@ -514,7 +514,7 @@ private class LaunchCommandAssembler(
 class LaunchPlanner(
     private val store: LauncherStore,
     /** 外置认证账户需要的 authlib-injector；离线与微软账户不会使用。 */
-    private val authlibInjector: AuthlibInjector? = null,
+    authlibInjector: AuthlibInjector? = null,
 ) {
     private val parameterResolver = LaunchParameterResolver(store)
     private val commandAssembler = LaunchCommandAssembler(store, authlibInjector)
@@ -1119,7 +1119,7 @@ class GameLauncher(
     private val installer: MinecraftInstaller,
     private val java: JavaService,
     private val accounts: AccountService,
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
 ) {
     private val processes = ConcurrentHashMap<String, Pair<String, Process>>()
     private val runners = ConcurrentHashMap<String, LaunchCommandRunner>()

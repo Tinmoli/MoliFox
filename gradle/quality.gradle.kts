@@ -190,8 +190,107 @@ fun registerDetektTask(
 registerDetektTask("detekt", false)
 registerDetektTask("detektBaseline", true)
 
+data class DetektUnusedModule(
+    val taskSuffix: String,
+    val projectPath: String,
+    val compileTask: String,
+    val runtimeConfiguration: String,
+    val sourcePaths: List<String>,
+    val classPaths: List<String>,
+)
+
+val detektUnusedModules =
+    listOf(
+        DetektUnusedModule(
+            taskSuffix = "LauncherCore",
+            projectPath = ":launcher-core",
+            compileTask = ":launcher-core:classes",
+            runtimeConfiguration = "runtimeClasspath",
+            sourcePaths = listOf("launcher-core/src/main/kotlin"),
+            classPaths = listOf("classes/kotlin/main", "classes/java/main"),
+        ),
+        DetektUnusedModule(
+            taskSuffix = "DesktopApp",
+            projectPath = ":desktop-app",
+            compileTask = ":desktop-app:classes",
+            runtimeConfiguration = "runtimeClasspath",
+            sourcePaths = listOf("desktop-app/src/main/kotlin"),
+            classPaths = listOf("classes/kotlin/main", "classes/java/main"),
+        ),
+        DetektUnusedModule(
+            taskSuffix = "LauncherBootstrap",
+            projectPath = ":launcher-bootstrap",
+            compileTask = ":launcher-bootstrap:classes",
+            runtimeConfiguration = "runtimeClasspath",
+            sourcePaths = listOf("launcher-bootstrap/src/main/kotlin"),
+            classPaths = listOf("classes/kotlin/main", "classes/java/main"),
+        ),
+        DetektUnusedModule(
+            taskSuffix = "MultiplayerCore",
+            projectPath = ":multiplayer-core",
+            compileTask = ":multiplayer-core:jvmMainClasses",
+            runtimeConfiguration = "jvmRuntimeClasspath",
+            sourcePaths =
+                listOf(
+                    "multiplayer-core/src/commonMain/kotlin",
+                    "multiplayer-core/src/jvmMain/kotlin",
+                ),
+            classPaths = listOf("classes/kotlin/jvm/main", "classes/java/jvmMain"),
+        ),
+    )
+
+val detektUnusedTasks =
+    detektUnusedModules.map { module ->
+        val target = project(module.projectPath)
+        tasks.register<JavaExec>("detektUnused${module.taskSuffix}") {
+            group = "verification"
+            description = "Find newly introduced unused production code in ${module.projectPath}"
+            dependsOn(module.compileTask)
+            classpath = if (localDetektJar.isPresent) files(localDetektJar.get()) else detektClasspath
+            mainClass.set("dev.detekt.cli.Main")
+            workingDir(projectDir)
+            inputs.files(module.sourcePaths.map(::file), file("config/detekt-unused.yml"))
+            doFirst {
+                val reports = qualityReports.get().asFile.apply { mkdirs() }
+                val analysisClasspath =
+                    files(
+                        target.configurations.getByName(module.runtimeConfiguration),
+                        module.classPaths.map { target.layout.buildDirectory.dir(it) },
+                    ).filter(File::exists)
+                args =
+                    listOf(
+                        "--input",
+                        module.sourcePaths.joinToString(File.pathSeparator),
+                        "--config",
+                        file("config/detekt-unused.yml").absolutePath,
+                        "--disable-default-rulesets",
+                        "--analysis-mode",
+                        "full",
+                        "--classpath",
+                        analysisClasspath.joinToString(File.pathSeparator) { it.absolutePath },
+                        "--jdk-home",
+                        System.getProperty("java.home"),
+                        "--jvm-target",
+                        "17",
+                        "--base-path",
+                        projectDir.absolutePath,
+                        "--fail-on-severity",
+                        "Warning",
+                        "--report",
+                        "sarif:${reports.resolve("detekt-unused-${module.taskSuffix}.sarif")}",
+                    )
+            }
+        }
+    }
+
+tasks.register("detektUnused") {
+    group = "verification"
+    description = "Run full-analysis unused-code checks per production module"
+    dependsOn(detektUnusedTasks)
+}
+
 tasks.register("qualityCheck") {
     group = "verification"
     description = "Run Kotlin formatting and static analysis"
-    dependsOn("ktlintCheck", "detekt", styleToolTest)
+    dependsOn("ktlintCheck", "detekt", "detektUnused", styleToolTest)
 }

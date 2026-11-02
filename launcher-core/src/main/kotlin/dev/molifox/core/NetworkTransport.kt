@@ -40,6 +40,10 @@ private const val RETRY_DELAY_STEP_MILLIS = 250L
 /** 测速只读响应开头的一小段，并把纳秒换算成毫秒。 */
 private const val PROBE_READ_BYTES = 48
 private const val NANOS_PER_MILLI = 1_000_000L
+private const val MIN_REQUEST_TIMEOUT_SECONDS = 10
+private const val MAX_REQUEST_TIMEOUT_SECONDS = 180
+private const val DEFAULT_REQUEST_TIMEOUT_SECONDS = 45
+private const val MAX_CONNECT_TIMEOUT_SECONDS = 30
 
 /** 网络客户端的全部配置来源：设置改动通过 lambda 在每次请求时读取。 */
 internal class NetworkClientSettings(
@@ -64,6 +68,45 @@ private fun requestLimit(settings: NetworkClientSettings): Int {
     val files = settings.maxConcurrent().coerceIn(1, MAX_DOWNLOAD_THREADS)
     val segments = settings.downloadSegments().coerceIn(1, MAX_DOWNLOAD_SEGMENTS)
     return files * segments
+}
+
+private fun configureRequestLimits(
+    client: OkHttpClient,
+    settings: NetworkClientSettings,
+) {
+    val limit = requestLimit(settings)
+    if (client.dispatcher.maxRequests != limit) client.dispatcher.maxRequests = limit
+    if (client.dispatcher.maxRequestsPerHost != limit) client.dispatcher.maxRequestsPerHost = limit
+}
+
+private fun NetworkClientSettings.boundedRequestTimeout(): Int =
+    requestTimeoutSeconds().coerceIn(MIN_REQUEST_TIMEOUT_SECONDS, MAX_REQUEST_TIMEOUT_SECONDS)
+
+private data class NetworkClientVariants(
+    val regular: OkHttpClient,
+    val noRedirect: OkHttpClient,
+    val direct: OkHttpClient,
+    val directNoRedirect: OkHttpClient,
+) {
+    fun configured(
+        timeout: Int,
+        redirects: Boolean,
+        directConnection: Boolean,
+    ): OkHttpClient {
+        val base =
+            when {
+                directConnection && redirects -> direct
+                directConnection -> directNoRedirect
+                redirects -> regular
+                else -> noRedirect
+            }
+        if (timeout == DEFAULT_REQUEST_TIMEOUT_SECONDS) return base
+        return base
+            .newBuilder()
+            .connectTimeout(minOf(timeout, MAX_CONNECT_TIMEOUT_SECONDS).toLong(), TimeUnit.SECONDS)
+            .readTimeout(timeout.toLong(), TimeUnit.SECONDS)
+            .build()
+    }
 }
 
 /** 请求执行：连接池、超时、重试与中文错误翻译。 */
@@ -129,6 +172,9 @@ internal class NetworkTransport(
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
+    }
+    private val clientVariants by lazy {
+        NetworkClientVariants(client, noRedirectClient, directClient, directNoRedirectClient)
     }
 
     private fun selectProxy(uri: URI?): List<Proxy> {
@@ -233,32 +279,10 @@ internal class NetworkTransport(
         request: Request,
         redirects: Boolean,
         direct: Boolean = false,
-    ): Response =
-        suspendCancellableCoroutine { continuation ->
-            // 文件和分段已有独立上限；HTTP 队列不能再把同主机请求固定压成 32 路。
-            val limit = requestLimit(settings)
-            if (client.dispatcher.maxRequests != limit) client.dispatcher.maxRequests = limit
-            if (client.dispatcher.maxRequestsPerHost != limit) client.dispatcher.maxRequestsPerHost = limit
-            val timeout = settings.requestTimeoutSeconds().coerceIn(10, 180)
-            val base =
-                when {
-                    direct && redirects -> directClient
-                    direct -> directNoRedirectClient
-                    redirects -> client
-                    else -> noRedirectClient
-                }
-            val configured =
-                base.let {
-                    if (timeout == 45) {
-                        it
-                    } else {
-                        it
-                            .newBuilder()
-                            .connectTimeout(minOf(timeout, 30).toLong(), TimeUnit.SECONDS)
-                            .readTimeout(timeout.toLong(), TimeUnit.SECONDS)
-                            .build()
-                    }
-                }
+    ): Response {
+        configureRequestLimits(client, settings)
+        val configured = clientVariants.configured(settings.boundedRequestTimeout(), redirects, direct)
+        return suspendCancellableCoroutine { continuation ->
             val call = configured.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(
@@ -293,7 +317,9 @@ internal class NetworkTransport(
                 },
             )
         }
+    }
 
+    /** 文件与分段已有独立上限；HTTP 队列只跟随当前设置，不额外压低同主机请求。 */
     private fun proxyRoute(request: Request): String {
         val proxy = proxiedRoute(request) ?: return I18n.t("networkA.transport.direct")
         val label =

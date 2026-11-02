@@ -124,7 +124,7 @@ fun interface LanDiscoveryFactory {
 
 /** 把真实 [MinecraftLanDiscovery] 适配成后端依赖的接口。 */
 internal class MinecraftLanDiscoveryAdapter(
-    private val onError: (Throwable) -> Unit,
+    onError: (Throwable) -> Unit,
 ) : LobbyWorldDiscovery {
     private val delegate = MinecraftLanDiscovery(onError = onError)
 

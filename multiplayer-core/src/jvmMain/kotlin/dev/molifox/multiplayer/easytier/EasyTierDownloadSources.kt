@@ -40,6 +40,8 @@ class HttpEasyTierSourceProbe(
     override suspend fun measureSpeed(url: String): Long? =
         runCatching {
             withHttpConnection(url) { connection ->
+                connection.connectTimeout = connectTimeoutMillis
+                connection.readTimeout = readTimeoutMillis
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("Range", "bytes=0-${sampleBytes - 1}")
                 connection.setRequestProperty("User-Agent", EASY_TIER_USER_AGENT)

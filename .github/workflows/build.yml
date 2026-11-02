@@ -1,11 +1,26 @@
 name: Build MoliFox
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - run: chmod +x gradlew
+      - name: Check source quality
+        run: >-
+          ./gradlew detekt detektUnused checkI18n checkNoHardcodedChinese
+          --no-daemon --console=plain
+          -Dorg.gradle.parallel=false --max-workers=1
   desktop:
     strategy:
       fail-fast: false

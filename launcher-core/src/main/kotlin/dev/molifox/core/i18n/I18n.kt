@@ -98,7 +98,7 @@ object I18n {
             val properties = Properties()
             InputStreamReader(stream, StandardCharsets.UTF_8).use(properties::load)
             for ((key, value) in properties) {
-                merged[key as String] = value as String
+                if (key is String && value is String) merged[key] = value
             }
         }
         return merged

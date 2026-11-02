@@ -90,27 +90,8 @@ private fun JarInJarConflictRow(conflict: JarInJarConflictPair) {
     }
 }
 
-/** 依赖关系：按已安装模组分组，列出各自声明的依赖及当前状态。 */
 @Composable
-internal fun JarInJarDependencySection(rows: List<JarInJarDependencyRow>) {
-    val strings = LocalStrings.current
-    Text(strings.t("dialogs.jar.dependencies"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-    rows
-        .groupBy { it.hostFilename + "|" + it.declarer }
-        .values
-        .forEach { declarerRows -> JarInJarDeclarerBlock(declarerRows) }
-}
-
-@Composable
-private fun JarInJarDeclarerBlock(rows: List<JarInJarDependencyRow>) {
-    val strings = LocalStrings.current
-    val first = rows.firstOrNull() ?: return
-    MutedText(strings.t("dialogs.jar.roleDeclaration", strings.t("dialogs.jar.host"), first.declarer))
-    rows.forEach { row -> JarInJarDependencyLine(row) }
-}
-
-@Composable
-private fun JarInJarDependencyLine(row: JarInJarDependencyRow) {
+internal fun JarInJarDependencyLine(row: JarInJarDependencyRow) {
     val strings = LocalStrings.current
     Row(
         Modifier.fillMaxWidth().padding(start = 8.dp),
