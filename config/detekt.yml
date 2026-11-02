@@ -6,6 +6,15 @@ config:
 Compose:
   active: true
 
+# 与 .editorconfig 的官方风格一致，覆盖包装器自带的 IntelliJ 默认值。
+ktlint:
+  code_style: 'ktlint_official'
+  ClassSignature:
+    forceMultilineWhenParameterCountGreaterOrEqualThan: '1'
+  FunctionSignature:
+    forceMultilineWhenParameterCountGreaterOrEqualThan: 2
+    functionBodyExpressionWrapping: 'multiline'
+
 naming:
   FunctionNaming:
     ignoreAnnotated: ['Composable']
