@@ -87,13 +87,12 @@ internal class UpdateApplier(
                     digest(downloaded, "SHA-256").equals(asset.sha256, true),
             ) { I18n.t("core.gitHubUpdater.8") }
             val staged = target.resolveSibling(".${target.fileName}.update-${UUID.randomUUID()}")
-            try {
+            runCatching {
                 Files.copy(downloaded, staged)
                 launch(writeScript(target, staged, asset.sha256.lowercase()))
-            } catch (failure: Exception) {
-                Files.deleteIfExists(staged)
-                throw failure
-            }
+            }.onFailure { failure ->
+                if (failure is Exception) Files.deleteIfExists(staged)
+            }.getOrThrow()
         }
 
     private fun writeScript(
