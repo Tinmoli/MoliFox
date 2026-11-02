@@ -1,4 +1,4 @@
-# 入库：源码、构建脚本、规则配置、项目资源和文档。测试源码只在本地保留，不入库。
+# 入库：源码、构建脚本、规则配置和项目资源。文档与测试源码只在本地保留，不入库。
 # 构建缓存、工具下载与生成文件
 /tools/
 .dev/
@@ -25,8 +25,7 @@ __pycache__/
 /data/
 .local-test/
 /tests/
-/docs/screenshots/
-/docs/ui-reference/
+/docs/
 *.log
 hs_err_pid*
 *.hprof
