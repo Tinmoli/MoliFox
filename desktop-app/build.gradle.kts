@@ -435,7 +435,18 @@ val windowsResource =
                     .take(4)
                     .joinToString(",")
             // 资源管理器「属性 → 详细信息」读取的是 VERSIONINFO；只放图标和载荷时这些字段全为空。
-            // 字符串保持 ASCII，避免 windres 在不同代码页下把版权符号编成乱码。
+            // 中文块在前，英文块兜底；字符串保持 ASCII，避免 windres 在不同代码页下把版权符号编成乱码。
+            val versionStrings =
+                listOf(
+                    "CompanyName" to "Tinmoli",
+                    "FileDescription" to "MoliFox Launcher",
+                    "FileVersion" to version,
+                    "InternalName" to "MoliFox",
+                    "LegalCopyright" to "Copyright (c) 2026 Tinmoli. Licensed under GPL-3.0-only.",
+                    "OriginalFilename" to "MoliFox.exe",
+                    "ProductName" to "MoliFox Launcher",
+                    "ProductVersion" to version,
+                )
             output.writeText(
                 buildString {
                     appendLine("1 ICON \"$icon\"")
@@ -452,24 +463,18 @@ val windowsResource =
                     appendLine("BEGIN")
                     appendLine("  BLOCK \"StringFileInfo\"")
                     appendLine("  BEGIN")
-                    appendLine("    BLOCK \"040904b0\"")
-                    appendLine("    BEGIN")
-                    appendLine("      VALUE \"CompanyName\", \"Tinmoli\"")
-                    appendLine("      VALUE \"FileDescription\", \"MoliFox Launcher\"")
-                    appendLine("      VALUE \"FileVersion\", \"$version\"")
-                    appendLine("      VALUE \"InternalName\", \"MoliFox\"")
-                    appendLine(
-                        "      VALUE \"LegalCopyright\", " +
-                            "\"Copyright (c) 2026 Tinmoli. Licensed under GPL-3.0-only.\"",
-                    )
-                    appendLine("      VALUE \"OriginalFilename\", \"MoliFox.exe\"")
-                    appendLine("      VALUE \"ProductName\", \"MoliFox Launcher\"")
-                    appendLine("      VALUE \"ProductVersion\", \"$version\"")
-                    appendLine("    END")
+                    for (block in listOf("080404b0", "040904b0")) {
+                        appendLine("    BLOCK \"$block\"")
+                        appendLine("    BEGIN")
+                        for ((key, value) in versionStrings) {
+                            appendLine("      VALUE \"$key\", \"$value\"")
+                        }
+                        appendLine("    END")
+                    }
                     appendLine("  END")
                     appendLine("  BLOCK \"VarFileInfo\"")
                     appendLine("  BEGIN")
-                    appendLine("    VALUE \"Translation\", 0x409, 1200")
+                    appendLine("    VALUE \"Translation\", 0x804, 1200, 0x409, 1200")
                     appendLine("  END")
                     appendLine("END")
                 },
