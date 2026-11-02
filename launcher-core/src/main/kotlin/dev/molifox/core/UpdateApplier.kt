@@ -10,6 +10,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isRegularFile
 
@@ -147,9 +148,37 @@ internal class UpdateApplier(
             } else {
                 listOf("setsid", "sh", script.toString())
             }
-        ProcessBuilder(command)
-            .redirectErrorStream(true)
-            .redirectOutput(ProcessBuilder.Redirect.appendTo(script.resolveSibling("${script.fileName}.log").toFile()))
-            .start()
+        val process =
+            ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(
+                    ProcessBuilder.Redirect.appendTo(script.resolveSibling("${script.fileName}.log").toFile()),
+                ).start()
+        awaitReady(process, script)
+    }
+
+    private fun awaitReady(
+        process: Process,
+        script: Path,
+    ) {
+        val ready = script.resolveSibling("${script.fileName}.ready")
+        try {
+            runCatching {
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(UPDATE_HELPER_START_SECONDS)
+                while (!Files.isRegularFile(ready)) {
+                    check(process.isAlive && System.nanoTime() < deadline) {
+                        I18n.t("settings.update.helperFailed", script.resolveSibling("${script.fileName}.log"))
+                    }
+                    process.waitFor(UPDATE_HELPER_POLL_MILLIS, TimeUnit.MILLISECONDS)
+                }
+            }.onFailure { failure ->
+                if (failure is Exception) process.destroyForcibly()
+            }.getOrThrow()
+        } finally {
+            Files.deleteIfExists(ready)
+        }
     }
 }
+
+private const val UPDATE_HELPER_START_SECONDS = 10L
+private const val UPDATE_HELPER_POLL_MILLIS = 50L

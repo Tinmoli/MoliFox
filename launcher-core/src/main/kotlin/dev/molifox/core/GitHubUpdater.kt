@@ -22,6 +22,7 @@ private const val MAX_RELEASE_NOTES_CHARS = 20_000
 private const val MAX_UPDATE_PACKAGE_BYTES = 512L * 1024 * 1024
 private const val RELEASE_HTTPS_PORT = 443
 private const val VERSION_QUALIFIER_GROUP = 4
+private const val UPDATE_DOWNLOAD_PROGRESS = 0.95f
 
 data class LauncherUpdateState(
     val checking: Boolean = false,
@@ -243,8 +244,9 @@ class GitHubUpdater
                 store.downloadDirectory.resolve("updates").resolve(safeFilename(release.version))
             createStorageDirectory(directory)
             val target = directory.resolve(asset.name)
-            context.progress(0f, I18n.t("core.gitHubUpdater.10", release.version))
+            context.progressImmediate(0f, I18n.t("core.gitHubUpdater.10", release.version))
             downloadReleaseAsset(asset, target, context)
+            context.progressImmediate(UPDATE_DOWNLOAD_PROGRESS, I18n.t("core.gitHubUpdater.11"))
             store.updateState {
                 it.copy(
                     update = it.update.copy(downloadedFile = target.toString()),
@@ -271,12 +273,15 @@ class GitHubUpdater
             var lastFailure: IOException? = null
             for (url in ordered) {
                 try {
-                    network.downloadAll(
-                        listOf(DownloadArtifact(url, target, asset.sha256, asset.size, "SHA-256")),
-                        1,
+                    network.downloadTracked(
                         context,
-                        I18n.t("core.gitHubUpdater.12"),
-                    )
+                        DownloadArtifact(url, target, asset.sha256, asset.size, "SHA-256"),
+                    ) { done, _ ->
+                        context.progress(
+                            (done.toDouble() / asset.size).coerceIn(0.0, 1.0).toFloat() * UPDATE_DOWNLOAD_PROGRESS,
+                            I18n.t("core.gitHubUpdater.12"),
+                        )
+                    }
                     return
                 } catch (failure: IOException) {
                     lastFailure = failure

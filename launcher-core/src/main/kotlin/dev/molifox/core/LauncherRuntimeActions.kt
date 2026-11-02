@@ -9,8 +9,10 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.writeText
 
 /** 更新检查、通用后台操作与日志导出。 */
@@ -50,6 +52,8 @@ internal abstract class LauncherRuntimeActions(
     core: LauncherControllerCore,
 ) : LauncherActionsBase(core),
     LauncherRuntimeApi {
+    private val applyingUpdate = AtomicBoolean()
+
     /** 界面在窗口尺寸变化时上报当前窗口大小，供「与启动器一样大」的游戏窗口模式使用。 */
     override fun reportLauncherWindowSize(
         widthPx: Int,
@@ -77,13 +81,25 @@ internal abstract class LauncherRuntimeActions(
 
     override fun downloadUpdate(): String {
         val release = requireNotNull(state.value.update.release) { I18n.t("miscA1.runtimeActions.checkUpdateFirst") }
-        return jobs.enqueue(
-            I18n.t("miscA1.task.updateLauncher", release.version),
-            setOf("launcher-update"),
-            kind = LauncherTaskKind.UpdateLauncher,
-        ) {
-            updater.download(release, this)
+        val id =
+            jobs.enqueue(
+                I18n.t("miscA1.task.updateLauncher", release.version),
+                setOf("launcher-update"),
+                kind = LauncherTaskKind.UpdateLauncher,
+            ) {
+                updater.download(release, this)
+            }
+        scope.launch {
+            // 等下载任务成功后再请求退出，避免正常更新被退出清理标记为取消。
+            val finished =
+                state
+                    .first { snapshot ->
+                        snapshot.jobs.none { it.id == id && it.status in setOf(JobStatus.Queued, JobStatus.Running) }
+                    }.jobs
+                    .firstOrNull { it.id == id }
+            if (finished?.status == JobStatus.Completed) applyDownloadedUpdate()
         }
+        return id
     }
 
     override fun applyDownloadedUpdate() {
@@ -94,6 +110,7 @@ internal abstract class LauncherRuntimeActions(
             store.notify(I18n.t("miscA1.runtimeActions.downloadUpdateFirst"))
             return
         }
+        if (!applyingUpdate.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
             UpdateApplier(store)
                 .apply(downloaded)
@@ -103,6 +120,7 @@ internal abstract class LauncherRuntimeActions(
                     val gracefulExit = core.exitHandler
                     if (gracefulExit != null) gracefulExit() else platform.exitLauncher()
                 }.onFailure { failure ->
+                    applyingUpdate.set(false)
                     val message = failure.message ?: I18n.t("miscA1.runtimeActions.autoUpdateFailed")
                     store.log(message, true)
                     store.notify(message)

@@ -19,6 +19,7 @@ internal object UpdateReplacementScripts {
             ${'$'}target = '${ps(target)}'
             ${'$'}staged = '${ps(staged)}'
             try {
+                [IO.File]::WriteAllText("${'$'}PSCommandPath.ready", 'ready')
                 $waits
                 if ((Get-FileHash -LiteralPath ${'$'}staged -Algorithm SHA256).Hash -ne '$sha256') { throw 'Update digest mismatch' }
                 ${'$'}replaced = ${'$'}false
@@ -40,6 +41,7 @@ internal object UpdateReplacementScripts {
                 exit 1
             } finally {
                 if (Test-Path -LiteralPath ${'$'}staged) { Remove-Item -LiteralPath ${'$'}staged -Force }
+                Remove-Item -LiteralPath "${'$'}PSCommandPath.ready" -Force -ErrorAction SilentlyContinue
             }
             """.trimIndent()
     }
@@ -55,7 +57,8 @@ internal object UpdateReplacementScripts {
         set -eu
         target='${sh(target)}'
         staged='${sh(staged)}'
-        trap 'rm -f -- "${'$'}staged"' 0
+        trap 'rm -f -- "${'$'}staged" "${'$'}0.ready"' 0
+        printf ready > "${'$'}0.ready"
         for pid in ${pids.joinToString(" ")}; do
             while kill -0 "${'$'}pid" 2>/dev/null; do sleep 1; done
         done
