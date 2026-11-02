@@ -109,7 +109,12 @@ class PclLobbyBackend(
                     current.copy(worlds = mergeWorlds(current.worlds, incoming))
                 }
             },
-            onPruned = { alive -> store.update { it.copy(worlds = alive) } },
+            onPruned = { inspected, alive ->
+                store.update { current ->
+                    // 探测期间若发现新世界，旧快照不得覆盖它；下一轮再校验最新列表。
+                    if (current.worlds == inspected) current.copy(worlds = alive) else current
+                }
+            },
         )
     private val coordinator =
         LobbyRoomCoordinator(

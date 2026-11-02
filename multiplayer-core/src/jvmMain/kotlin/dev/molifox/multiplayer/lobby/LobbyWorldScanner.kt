@@ -25,7 +25,7 @@ internal class LobbyWorldScanner(
     private val scanCheckIntervalMillis: Long,
     private val worldsProvider: () -> List<LanWorld>,
     private val onDiscovered: (List<LanWorld>) -> Unit,
-    private val onPruned: (List<LanWorld>) -> Unit,
+    private val onPruned: (List<LanWorld>, List<LanWorld>) -> Unit,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var discovery: LobbyWorldDiscovery? = null
@@ -55,7 +55,9 @@ internal class LobbyWorldScanner(
             scope.launch {
                 while (isActive) {
                     delay(scanCheckIntervalMillis)
-                    onPruned(worldsProvider().filter { probe.isAvailable(it.port) })
+                    val inspected = worldsProvider()
+                    val alive = inspected.filter { probe.isAvailable(it.port) }
+                    onPruned(inspected, alive)
                 }
             }
     }
