@@ -1,6 +1,82 @@
 #!/bin/sh
 set -eu
 
+# 更新助手先于运行目录创建、负载解包和 Java 探测，不依赖 JVM。
+if [ "${1:-}" = '--molifox-apply-update' ]; then
+    shift
+    updateFail() { printf 'Launcher update failed: %s\n' "$*" >&2; exit 1; }
+    [ "$#" -eq 5 ] || updateFail 'Invalid argument count'
+    target=$1 staged=$2 expected=$3 pids=$4 ready=$5
+    for path in "$target" "$staged" "$ready"; do
+        case "$path" in /*) ;; *) updateFail 'Absolute paths required' ;; esac
+    done
+    [ -f "$target" ] && [ ! -L "$target" ] && [ -f "$staged" ] && [ ! -L "$staged" ] || updateFail 'Invalid update files'
+    [ "$target" != "$staged" ] && [ ! "$target" -ef "$0" ] && [ ! "$staged" -ef "$0" ] || updateFail 'Distinct files required'
+    parent=$(CDPATH= cd -- "$(dirname -- "$target")" && pwd -P)
+    stagedParent=$(CDPATH= cd -- "$(dirname -- "$staged")" && pwd -P)
+    [ "$parent" = "$stagedParent" ] || updateFail 'Same-directory staging required'
+    prefix=".${target##*/}.update-"
+    case "${staged##*/}" in "$prefix"*) identifier=${staged##*/}; identifier=${identifier#"$prefix"} ;; *) updateFail 'Invalid staging name' ;; esac
+    case "$identifier" in ????????-????-????-????-????????????) ;; *) updateFail 'Invalid staging identifier' ;; esac
+    case "$identifier" in *[!0-9a-f-]*) updateFail 'Invalid staging identifier' ;; esac
+    [ "${ready##*/}" = "apply-$identifier.ready" ] && [ ! -e "$ready" ] && [ ! -L "$ready" ] || updateFail 'Invalid readiness path'
+    pendingBackup="$staged.backup"
+    [ ! -e "$pendingBackup" ] && [ ! -L "$pendingBackup" ] || updateFail 'Backup staging path already exists'
+    trap 'rm -f -- "$staged" "$ready" "$pendingBackup"' 0
+    [ "${#expected}" -eq 64 ] || updateFail 'Invalid digest'
+    case "$expected" in *[!0-9a-f]*) updateFail 'Invalid digest' ;; esac
+    for tool in sha256sum cp mv chmod setsid sleep; do command -v "$tool" >/dev/null || updateFail "Missing $tool"; done
+    updateHash() { value=$(sha256sum < "$1") || return 1; printf '%s' "${value%% *}"; }
+    [ "$(updateHash "$staged")" = "$expected" ] && [ "$(updateHash "$0")" = "$expected" ] || updateFail 'Digest mismatch before exit'
+    original=$(updateHash "$target")
+    [ -w "$target" ] && [ -w "$parent" ] || updateFail 'Launcher location is not writable'
+    chmod +x -- "$staged"
+    backup="$target.previous"
+    [ ! -L "$backup" ] && { [ ! -e "$backup" ] || [ -f "$backup" ]; } || updateFail 'Invalid backup file'
+    # 记录进程启动时间，避免 PID 复用或僵尸进程使助手永久等待。
+    updateProcess() {
+        [ -d "/proc/$1" ] || return 0
+        [ -r "/proc/$1/stat" ] || updateFail 'Cannot observe old process'
+        line=$(cat "/proc/$1/stat" 2>/dev/null) || { [ ! -d "/proc/$1" ] && return 0; updateFail 'Cannot read old process'; }
+        set -- ${line##*) }
+        [ "$#" -ge 20 ] || return 0
+        case "$1" in Z|X) return 0 ;; esac
+        printf '%s' "${20}"
+    }
+    case "$pids" in *[!0-9,]*) updateFail 'Invalid process list' ;; esac
+    oldIFS=$IFS; IFS=,; set -- $pids; IFS=$oldIFS
+    [ "$#" -le 2 ] || updateFail 'Too many old processes'
+    observed=
+    for pid do
+        [ -n "$pid" ] && [ "$pid" -gt 0 ] && [ "$pid" != "$$" ] || updateFail 'Invalid process ID'
+        started=$(updateProcess "$pid")
+        if [ -n "$started" ]; then observed="$observed $pid:$started"; fi
+    done
+    umask 077
+    (set -C; printf ready > "$ready")
+    attempt=0
+    while :; do
+        alive=false
+        for process in $observed; do
+            pid=${process%%:*}; started=${process#*:}
+            current=$(updateProcess "$pid") || updateFail 'Cannot observe old process'
+            if [ "$current" = "$started" ]; then alive=true; fi
+        done
+        [ "$alive" = true ] || break
+        [ "$attempt" -lt 120 ] || updateFail 'Timed out waiting for old launcher'
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    [ ! -L "$target" ] && [ ! -L "$staged" ] || updateFail 'Update paths changed'
+    [ "$(updateHash "$staged")" = "$expected" ] && [ "$(updateHash "$target")" = "$original" ] || updateFail 'Update files changed'
+    cp -p -- "$target" "$pendingBackup"
+    mv -f -- "$pendingBackup" "$backup"
+    mv -f -- "$staged" "$target"
+    cd -- "$parent"
+    setsid sh "$target" </dev/null &
+    exit 0
+fi
+
 # This header is joined with the platform-specific JAR by portableLinux.
 applicationDirectory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 data="$applicationDirectory/MoliFox"

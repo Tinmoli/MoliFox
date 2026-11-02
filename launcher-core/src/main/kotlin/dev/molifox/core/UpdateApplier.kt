@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责“下载完成后自动替换启动器并重启”：写一个等待本进程退出的脚本，再交给系统执行。
+// 已校验的新版分发文件在独立更新模式中等待旧进程、替换并重启。
 
 package dev.molifox.core
 
@@ -11,7 +11,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import kotlin.io.path.createDirectories
 import kotlin.io.path.isRegularFile
 
 /** 解析当前便携版启动器文件；开发环境（java -jar）返回 null，只允许手动更新。 */
@@ -55,7 +54,7 @@ internal object LauncherBundlePath {
     }
 }
 
-/** 生成跨平台替换脚本并启动；脚本负责等待进程退出、覆盖文件、重启新版本。 */
+/** 启动新版分发文件的更新模式；就绪后才允许桌面层退出旧程序。 */
 internal class UpdateApplier(
     private val store: LauncherStore,
     private val bundle: Path? = LauncherBundlePath.current(store.platform.osName),
@@ -67,7 +66,7 @@ internal class UpdateApplier(
             val target =
                 requireNotNull(bundle) {
                     I18n.t("networkB2.updateApplier.notPortable")
-                }
+                }.toAbsolutePath().normalize()
             require(downloaded.isRegularFile()) {
                 I18n.t("networkB2.updateApplier.updateMissing")
             }
@@ -87,87 +86,61 @@ internal class UpdateApplier(
                 asset.sha256.isNotBlank() && Files.size(downloaded) == asset.size &&
                     digest(downloaded, "SHA-256").equals(asset.sha256, true),
             ) { I18n.t("core.gitHubUpdater.8") }
-            val staged = target.resolveSibling(".${target.fileName}.update-${UUID.randomUUID()}")
+            val identifier = UUID.randomUUID()
+            val staged = target.resolveSibling(".${target.fileName}.update-$identifier")
             runCatching {
                 Files.copy(downloaded, staged)
-                launch(writeScript(target, staged, asset.sha256.lowercase()))
+                launch(downloaded, target, staged, asset.sha256.lowercase(), identifier)
             }.onFailure { failure ->
-                if (failure is Exception) Files.deleteIfExists(staged)
+                if (failure is Exception) {
+                    Files.deleteIfExists(staged)
+                    Files.deleteIfExists(staged.resolveSibling("${staged.fileName}.backup"))
+                }
             }.getOrThrow()
         }
 
-    private fun writeScript(
-        target: Path,
+    private fun launch(
         downloaded: Path,
+        target: Path,
+        staged: Path,
         sha256: String,
-    ): Path {
-        val directory =
-            store.downloadDirectory.resolve("updates").resolve("apply").also {
-                it.createDirectories()
-            }
-        val suffix = if (isWindows()) "ps1" else "sh"
-        val script = directory.resolve("apply-${UUID.randomUUID()}.$suffix")
-        Files.writeString(
-            script,
-            if (isWindows()) {
-                "\uFEFF" + UpdateReplacementScripts.windows(target, downloaded, listOfNotNull(pid, wrapperPid), sha256)
-            } else {
-                UpdateReplacementScripts.linux(target, downloaded, listOfNotNull(pid, wrapperPid), sha256)
-            },
-        )
-        return script
-    }
-
-    private fun isWindows(): Boolean = store.platform.osName == "windows"
-
-    private fun launch(script: Path) {
+        identifier: UUID,
+    ) {
+        val directory = store.downloadDirectory.resolve("updates/apply")
+        createStorageDirectory(directory)
+        val ready = directory.resolve("apply-$identifier.ready").toAbsolutePath()
+        val log = directory.resolve("apply-$identifier.log").toAbsolutePath()
+        val executable = downloaded.toAbsolutePath().normalize().toString()
+        val prefix = if (store.platform.osName == "windows") listOf(executable) else listOf("setsid", "sh", executable)
         val command =
-            if (isWindows()) {
-                // 不使用裸命令名：部分机器 PATH 首位是应用执行别名，ProcessBuilder 会拿到拒绝访问。
-                val systemRoot = System.getenv("SystemRoot") ?: "C:\\Windows"
-                val powershell =
-                    Path
-                        .of(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-                        .takeIf(Files::isRegularFile)
-                        ?.toString()
-                        ?: "powershell.exe"
-                // -File 在受策略限制的机器上可能直接以拒绝访问失败；用 -Command 调用同一脚本更稳。
-                val scriptCommand = "& '${script.toString().replace("'", "''")}'"
+            prefix +
                 listOf(
-                    powershell,
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-WindowStyle",
-                    "Hidden",
-                    // 默认 Restricted 策略会拒绝 .ps1；替换脚本由本进程生成并校验，显式放行。
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    scriptCommand,
+                    UPDATE_HELPER_MODE,
+                    target.toString(),
+                    staged.toString(),
+                    sha256,
+                    listOfNotNull(pid, wrapperPid).distinct().joinToString(","),
+                    ready.toString(),
                 )
-            } else {
-                listOf("setsid", "sh", script.toString())
-            }
         val process =
             ProcessBuilder(command)
                 .redirectErrorStream(true)
-                .redirectOutput(
-                    ProcessBuilder.Redirect.appendTo(script.resolveSibling("${script.fileName}.log").toFile()),
-                ).start()
-        awaitReady(process, script)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                .start()
+        awaitReady(process, ready, log)
     }
 
     private fun awaitReady(
         process: Process,
-        script: Path,
+        ready: Path,
+        log: Path,
     ) {
-        val ready = script.resolveSibling("${script.fileName}.ready")
         try {
             runCatching {
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(UPDATE_HELPER_START_SECONDS)
-                while (!Files.isRegularFile(ready)) {
+                while (!Files.isRegularFile(ready) || Files.readString(ready) != "ready") {
                     check(process.isAlive && System.nanoTime() < deadline) {
-                        I18n.t("settings.update.helperFailed", script.resolveSibling("${script.fileName}.log"))
+                        I18n.t("settings.update.helperFailed", log)
                     }
                     process.waitFor(UPDATE_HELPER_POLL_MILLIS, TimeUnit.MILLISECONDS)
                 }
@@ -180,5 +153,6 @@ internal class UpdateApplier(
     }
 }
 
+internal const val UPDATE_HELPER_MODE = "--molifox-apply-update"
 private const val UPDATE_HELPER_START_SECONDS = 10L
 private const val UPDATE_HELPER_POLL_MILLIS = 50L

@@ -11,9 +11,11 @@
 #include <winhttp.h>
 #include <bcrypt.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -147,6 +149,8 @@ static std::string sha256(const fs::path& path) {
     for (unsigned char value : digest) { result += hex[value >> 4]; result += hex[value & 15]; }
     return result;
 }
+
+#include "WindowsUpdate.h"
 
 /** 直接对内存中的内嵌负载求摘要，避免每次启动都把整包写到临时文件再删。 */
 static std::string sha256Bytes(const void* data, size_t size) {
@@ -416,6 +420,13 @@ static void showStartupFailure(const std::wstring& details, const fs::path& log)
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+    int count = 0;
+    auto values = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (values) {
+        std::vector<std::wstring> arguments(values, values + count);
+        LocalFree(values);
+        if (arguments.size() > 1 && arguments[1] == L"--molifox-apply-update") return launcherUpdate::apply(arguments);
+    }
     fs::path data;
     try {
         wchar_t executable[32768]; check(GetModuleFileNameW(nullptr, executable, 32768) != 0, "Locate launcher");

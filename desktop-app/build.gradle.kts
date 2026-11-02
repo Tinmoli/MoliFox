@@ -350,6 +350,7 @@ tasks.register<Exec>("portableWindows") {
     group = "distribution"
     dependsOn(compileWindowsResource)
     inputs.file(rootProject.file("launcher-bootstrap/native/WindowsMain.cpp"))
+    inputs.file(rootProject.file("launcher-bootstrap/native/WindowsUpdate.h"))
     inputs.dir(rootProject.file("launcher-bootstrap/native/miniz"))
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
@@ -378,6 +379,7 @@ tasks.register<Exec>("portableWindows") {
         "-lwinhttp",
         "-lbcrypt",
         "-lcomctl32",
+        "-lshell32",
         "-ladvapi32",
         "-o",
         rootProject.file("dist/$windowsPackageName"),
