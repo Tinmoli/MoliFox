@@ -271,7 +271,6 @@ private fun CurrentGameLaunchButton(
 ) {
     LaunchActionButton(
         progress = game.launchProgress,
-        running = game.running,
         // 没有实例时也让按钮可点：点击后给出原因并去安装页，而不是留下一个没有解释的灰按钮。
         enabled = !game.busy,
     ) {

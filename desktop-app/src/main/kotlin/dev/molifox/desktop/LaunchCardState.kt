@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.molifox.core.DownloadJob
 import dev.molifox.core.GameInstance
+import dev.molifox.core.GameLaunchTarget
 
 /**
  * 开始页的启动浮窗状态。
@@ -19,6 +20,8 @@ import dev.molifox.core.GameInstance
  * `LaunchPage` 的 `remember` 上， 离开页面即随组合释放（启动任务本身仍在任务队列里继续）。
  */
 class LaunchCardState {
+    var target by mutableStateOf<GameLaunchTarget?>(null)
+        private set
     var jobId by mutableStateOf<String?>(null)
         private set
 
@@ -47,6 +50,14 @@ class LaunchCardState {
         get() = jobId != null || localError != null
 
     fun begin(instance: GameInstance) {
+        begin(instance, null)
+    }
+
+    fun begin(
+        instance: GameInstance,
+        target: GameLaunchTarget?,
+    ) {
+        this.target = target
         jobId = null
         localError = null
         lastJob = null
@@ -73,6 +84,7 @@ class LaunchCardState {
     }
 
     fun clear() {
+        target = null
         jobId = null
         localError = null
         lastJob = null

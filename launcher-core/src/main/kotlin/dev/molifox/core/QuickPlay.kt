@@ -69,6 +69,19 @@ internal fun appendMissingQuickPlay(
     extra: List<String>,
 ): List<String> =
     buildList {
-        addAll(arguments)
-        extra.chunked(2).forEach { pair -> if (pair.first() !in arguments) addAll(pair) }
+        val overrides = extra.chunked(2).associate { it.first() to it.last() }
+        val modes = setOf("--quickPlaySingleplayer", "--quickPlayMultiplayer", "--quickPlayRealms")
+        val explicitTarget = overrides.keys.any { it in modes }
+        var index = 0
+        while (index < arguments.size) {
+            val argument = arguments[index]
+            val option = argument.substringBefore('=')
+            if (option in overrides || (explicitTarget && option in modes)) {
+                if ('=' !in argument && arguments.getOrNull(index + 1)?.startsWith("--") == false) index++
+            } else {
+                add(argument)
+            }
+            index++
+        }
+        addAll(extra)
     }

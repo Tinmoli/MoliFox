@@ -173,7 +173,11 @@ fun ColumnScope.HomePage(
                 callbacks =
                     HomeLaunchCardCallbacks(
                         onCancel = { launcher.cancel() },
-                        onRetry = { selected?.let { launcher.begin(it) } },
+                        onRetry = {
+                            state.data.instances
+                                .firstOrNull { it.id == launchCard.instanceId }
+                                ?.let { launcher.begin(it, launchCard.target) }
+                        },
                         onViewLogs = {
                             launchCard.clear()
                             navigate(Page.Downloads)
@@ -198,7 +202,7 @@ private class HomeLaunchHandlers(
         instance: GameInstance,
         target: GameLaunchTarget? = null,
     ) {
-        launchCard.begin(instance)
+        launchCard.begin(instance, target)
         actions.run { actions.controller.selectInstance(instance.id) }
         try {
             launchCard.attach(actions.controller.launch(instance.id, target))
@@ -322,7 +326,6 @@ private fun Entrance(
 @Composable
 internal fun LaunchActionButton(
     progress: Float?,
-    running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
@@ -344,10 +347,11 @@ internal fun LaunchActionButton(
             Spacer(Modifier.width(8.dp))
         }
         Text(
-            when {
-                progress != null -> strings.t("pages.launch.button.starting", (progress * 100).toInt())
-                running -> strings.t("pages.launch.button.again")
-                else -> strings.t("pages.launch.button.start")
+            // 游戏已在运行时仍显示「开始游戏」，只由启动进度决定是否显示「正在启动」。
+            if (progress != null) {
+                strings.t("pages.launch.button.starting", (progress * 100).toInt())
+            } else {
+                strings.t("pages.launch.button.start")
             },
             fontSize = 15.sp,
             lineHeight = 19.sp,

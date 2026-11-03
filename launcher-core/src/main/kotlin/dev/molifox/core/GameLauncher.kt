@@ -442,10 +442,11 @@ private class LaunchCommandAssembler(
                 runtime,
             )
         invocation += profile.mainClass
-        invocation += appendMissingQuickPlay(arguments.gameArguments, arguments.targetArguments)
-        invocation += windowArguments(parameters.options, arguments.gameArguments)
-        // 额外游戏参数最后追加，位于标准参数（宽度/高度/全屏）之后。
-        invocation += parameters.options.extraGameArgs
+        val gameArguments =
+            arguments.gameArguments + windowArguments(parameters.options, arguments.gameArguments) +
+                parameters.options.extraGameArgs
+        // 显式点击的服务器/存档是本次启动目标，不能被模板中的空值或旧值覆盖。
+        invocation += appendMissingQuickPlay(gameArguments, arguments.targetArguments)
         requireWindowsCommandLength(invocation, prepareFiles, platform, runtime.path)
         return LaunchPlan(
             selectExecutable(platform, runtime, parameters.advanced),
@@ -1255,6 +1256,7 @@ class GameLauncher(
                     target = target,
                 )
         run.session.prepared(plan, inputs.credentials)
+        logLaunchTarget(target)
         // 一行有效参数摘要，便于对照日志确认实例设置真的进入了命令；坏值回退单独记警告。
         plan.warnings.forEach { store.log(it, level = LogLevel.Warn) }
         if (plan.summary.isNotBlank()) store.log(redactSecrets(plan.summary))
@@ -1272,6 +1274,17 @@ class GameLauncher(
         context.checkCancelled()
         applyGameLanguage(store, run.instance)
         return PreparedLaunch(plan, inputs.runtime)
+    }
+
+    /** 服务器/存档直达来源只记一行，避免 `prepareLaunch` 被日志分支撑长。 */
+    private fun logLaunchTarget(target: GameLaunchTarget?) {
+        if (target == null) return
+        store.log(
+            I18n.t(
+                if (target.kind == EntryKind.Server) "core.launchTarget.server" else "core.launchTarget.world",
+                target.key,
+            ),
+        )
     }
 
     fun stop(instanceId: String? = null) {

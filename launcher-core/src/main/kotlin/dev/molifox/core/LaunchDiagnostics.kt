@@ -336,6 +336,11 @@ internal class LaunchSession(
         secret = credentials.accessToken
         extraSecrets = environmentSecrets(plan.environment)
         metadata["java"] = plan.executable
+        // 只记录直达目标，不写整条命令；完整参数可能包含账户令牌。
+        for (option in listOf("--quickPlayMultiplayer", "--quickPlaySingleplayer", "--server", "--port")) {
+            val index = plan.arguments.lastIndexOf(option)
+            if (index >= 0) metadata[option.removePrefix("--")] = plan.arguments.getOrNull(index + 1).orEmpty()
+        }
         // Do not persist arguments: @files and modded options may carry credentials.
         writeJson(directory.resolve("session.json"), metadata)
     }
