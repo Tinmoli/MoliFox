@@ -31,7 +31,7 @@ internal class GameActivityTracker(
 
     @Synchronized
     fun accept(line: String) {
-        val message = INFO_LINE.matchEntire(line)?.groupValues?.get(1) ?: return
+        val message = activityMessage(line) ?: return
         CONNECTING.matchEntire(message)?.let { match ->
             store.recentUsage.endSession(sessionId, true)
             pendingServer = null
@@ -101,9 +101,16 @@ internal class GameActivityTracker(
                 sameServerAddress(parseServerAddress(it.ip), parseServerAddress(address))
             }?.ip ?: address
 
+    /** 同时接受 Minecraft 旧式纯文本行和 [GameLogDecoder] 输出的 Log4j XML 事件。 */
+    private fun activityMessage(line: String): String? =
+        TIMESTAMPED_LINE.matchEntire(line)?.groupValues?.get(1)
+            ?: DECODED_LINE.matchEntire(line)?.groupValues?.get(1)
+
     private companion object {
         const val MAX_RECORD_BYTES = 128 * 1024
-        val INFO_LINE = Regex("^\\[[^\\]]+]\\s*\\[[^\\]]+/(?:INFO|WARN|ERROR)]\\s*:?\\s*(.*)$")
+        val TIMESTAMPED_LINE =
+            Regex("^\\[[^\\]]+]\\s*\\[[^\\]]+/(?:INFO|WARN|ERROR)]\\s*:?\\s*(.*)$")
+        val DECODED_LINE = Regex("^\\[[^\\]]+/(?:INFO|WARN|ERROR)]\\s*(.*)$")
         val CONNECTING = Regex("^Connecting to (.+), (\\d{1,5})$")
         val DISCONNECTED =
             Regex(

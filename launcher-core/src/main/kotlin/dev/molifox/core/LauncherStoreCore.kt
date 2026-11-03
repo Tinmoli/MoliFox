@@ -77,6 +77,7 @@ internal class LauncherStoreCore(
 
     init {
         directories.initialize()
+        prepareLogSession(directories)
         val defaults =
             LauncherData(
                 settings =

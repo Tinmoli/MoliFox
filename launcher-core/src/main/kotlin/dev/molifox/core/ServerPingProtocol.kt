@@ -22,6 +22,9 @@ private const val MAX_PACKET_BYTES = 2 * 1024 * 1024
 /** 旧版（0xFE）响应的字符数上限；协议本身用 unsigned short 表示长度。 */
 private const val MAX_LEGACY_CHARS = 32_768
 
+/** 防止服务端用异常大的 sample 数组占用界面和内存；原版列表本来也只返回少量样本。 */
+private const val MAX_PLAYER_SAMPLE = 100
+
 /** 旧版（0xFE）查询的请求包 ID 与响应包 ID。 */
 private const val LEGACY_PING_REQUEST_ID = 0xFE
 private const val LEGACY_PING_RESPONSE_ID = 0xFF
@@ -125,7 +128,7 @@ private fun readLegacyStatus(
     }
 }
 
-private fun statusFromJson(
+internal fun statusFromJson(
     json: String,
     latency: Int,
 ): ServerStatus? {
@@ -140,8 +143,26 @@ private fun statusFromJson(
         motd = parseMotd(obj.get("description")),
         version = version?.stringValue("name").orEmpty(),
         ping = latency,
+        playerSample = players?.playerSample().orEmpty(),
     )
 }
+
+private fun JsonObject.playerSample(): List<String> =
+    get("sample")
+        ?.takeIf { it.isJsonArray }
+        ?.asJsonArray
+        ?.asSequence()
+        ?.mapNotNull { entry ->
+            entry
+                .takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.stringValue("name")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        }?.distinct()
+        ?.take(MAX_PLAYER_SAMPLE)
+        ?.toList()
+        .orEmpty()
 
 private fun statusFromLegacy(
     text: String,

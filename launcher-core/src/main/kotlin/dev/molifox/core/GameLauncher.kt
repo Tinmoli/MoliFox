@@ -894,7 +894,7 @@ private class GameRunSupervisor(
                 .apply {
                     // The game may outlive the launcher. Never inherit its per-run UI temp
                     // directory, which the native launcher cleans after the UI process exits.
-                    val temporary = store.temporaryDirectory.toString()
+                    val temporary = runtimes.temporary(run.runtimeDirectory).toString()
                     environment()
                         .putAll(
                             mapOf(
@@ -942,6 +942,7 @@ private class GameRunSupervisor(
                 }
             val decoder =
                 GameLogDecoder { entry ->
+                    activity.accept(entry.message)
                     store.log(entry.message, error = entry.error, game = true)
                 }
             monitorGame(run, prepared, mark, process, activity, activityPoller, decoder)
@@ -961,7 +962,7 @@ private class GameRunSupervisor(
         var exitCode: Int? = null
         var postFailed = false
         try {
-            val exit = forwardGameOutput(process, run.session, activity, decoder)
+            val exit = forwardGameOutput(process, run.session, decoder)
             exitCode = exit
             store.log(I18n.t("miscA1.gameLauncher.exitedWithCode", exit), exit != 0)
             postFailed = runPostExitCommand(run, prepared.plan, exit)
@@ -986,18 +987,16 @@ private class GameRunSupervisor(
         }
     }
 
-    /** 读游戏输出：清理密钥后写入日志、活动记录与日志解码器，返回退出码。 */
+    /** 读游戏输出：清理密钥后写入会话并交给统一日志解码器，返回退出码。 */
     private fun forwardGameOutput(
         process: Process,
         session: LaunchSession,
-        activity: GameActivityTracker,
         decoder: GameLogDecoder,
     ): Int {
         process.inputStream.bufferedReader().useLines { lines ->
             lines.forEach { line ->
                 val cleaned = session.clean(line)
                 session.append(cleaned)
-                activity.accept(cleaned)
                 decoder.accept(cleaned)
             }
         }

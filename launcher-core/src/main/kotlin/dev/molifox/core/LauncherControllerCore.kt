@@ -182,6 +182,7 @@ internal class LauncherControllerCore(
         // 启动时以 versions/ 扫描为准重建实例列表。
         store.refreshInstances()
         store.log(I18n.t("miscA1.controllerCore.welcome", platform.osName, platform.architecture))
+        scope.launch { maintainLauncherStorage(store) }
         if (store.data.settings.autoCheckUpdates) scope.launch { updater.check(false) }
         actions.refreshJavaPrompt()
     }

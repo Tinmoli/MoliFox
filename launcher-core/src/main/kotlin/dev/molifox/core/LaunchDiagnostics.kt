@@ -11,7 +11,9 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.time.Instant
+import java.util.Comparator
 import java.util.UUID
+import java.util.zip.GZIPInputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.createDirectories
@@ -431,6 +433,15 @@ internal fun exportDiagnosticBundle(
     val sessions = root.resolve("logs/games")
     require(!target.startsWith(sessions)) { I18n.t("diagA2.launchDiagnostics.bundleOutsideLogs") }
     val files = mutableListOf(store.directories.launcherLog, store.directories.previousLog)
+    if (store.directories.archivedLogs.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
+        Files.list(store.directories.archivedLogs).use { entries ->
+            entries
+                .filter { it.name.endsWith(".log.gz") }
+                .sorted(Comparator.reverseOrder())
+                .limit(2)
+                .forEach(files::add)
+        }
+    }
     if (sessions.isDirectory()) {
         Files.list(sessions).use { entries ->
             entries
@@ -464,8 +475,16 @@ private fun writeBundleEntries(
         ) {
             continue
         }
-        zip.putNextEntry(ZipEntry(root.relativize(file).joinToString("/")))
-        zip.write(redactSecrets(file.readText()).toByteArray(Charsets.UTF_8))
+        val compressed = file.name.endsWith(".gz")
+        val entryName = root.relativize(file).joinToString("/").removeSuffix(".gz")
+        val text =
+            if (compressed) {
+                GZIPInputStream(Files.newInputStream(file)).bufferedReader().use { it.readText() }
+            } else {
+                file.readText()
+            }
+        zip.putNextEntry(ZipEntry(entryName))
+        zip.write(redactSecrets(text).toByteArray(Charsets.UTF_8))
         zip.closeEntry()
     }
 }

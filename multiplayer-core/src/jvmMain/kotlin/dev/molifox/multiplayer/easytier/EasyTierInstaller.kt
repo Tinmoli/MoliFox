@@ -34,7 +34,7 @@ interface EasyTierArchiveDownloader {
 }
 
 /**
- * EasyTier sidecar 安装器：目标目录 `<运行数据>/runtimes/easytier/<版本>/<平台>/`。
+ * EasyTier sidecar 安装器：目标目录固定为 `<运行数据>/runtimes/easytier/`。
  *
  * 规则：
  * - 已安装且必需文件齐全时不再下载。
@@ -56,9 +56,8 @@ class EasyTierInstaller(
         packageProvider()
             ?: throw IllegalStateException(EasyTierCatalog.unsupportedPlatformMessage())
 
-    /** 安装目录：`runtimes/easytier/<版本>/<平台>/`。 */
-    fun directory(pkg: EasyTierPackage = packageInfo()): Path =
-        runtimesRoot.resolve(RUNTIME_DIRECTORY).resolve(pkg.version).resolve(pkg.classifier)
+    /** 安装目录固定不带版本号；版本和平台写入 install.json，升级时整体替换。 */
+    fun directory(pkg: EasyTierPackage = packageInfo()): Path = pkg.let { runtimesRoot.resolve(RUNTIME_DIRECTORY) }
 
     /** 主程序（`easytier-core`），后续 backend 用它启动 sidecar。 */
     fun executable(pkg: EasyTierPackage = packageInfo()): Path = directory(pkg).resolve(pkg.coreFile)
@@ -69,7 +68,9 @@ class EasyTierInstaller(
     /** 检查本地安装是否可用：只校验必需文件存在且非空，不读网络。 */
     fun inspect(pkg: EasyTierPackage = packageInfo()): CoreStatus {
         val target = directory(pkg)
-        val installed = pkg.requiredFiles.all { name -> isUsableFile(target.resolve(name)) }
+        val installed =
+            pkg.requiredFiles.all { name -> isUsableFile(target.resolve(name)) } &&
+                metadataMatches(target, pkg)
         return CoreStatus(
             installed = installed,
             version = pkg.version,
@@ -92,7 +93,17 @@ class EasyTierInstaller(
                 Files.createDirectories(runtimesRoot)
                 val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
                 try {
-                    installInto(pkg, work, onProgress)
+                    val migrated = migrateLegacyStaging(pkg, work, directory(pkg))
+                    if (migrated == null) {
+                        installInto(pkg, work, onProgress)
+                    } else {
+                        moveIntoPlace(migrated, directory(pkg))
+                        val status = inspect(pkg)
+                        require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
+                        logger(I18n.t("multiplayer.easyTierInstaller.6", pkg.version, status.directory), false)
+                        onProgress(ONE)
+                        status
+                    }
                 } finally {
                     deleteRecursively(work, logger)
                 }
@@ -116,14 +127,16 @@ class EasyTierInstaller(
                 val pkg = packageInfo()
                 require(Files.isRegularFile(archive)) { I18n.t("multiplayer.easyTierInstaller.1", archive) }
                 logger(I18n.t("multiplayer.easyTierInstaller.2", archive), false)
+                Files.createDirectories(runtimesRoot)
                 val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
                 try {
                     verifyArchive(pkg, archive)
                     onProgress(null)
                     val staging = work.resolve(STAGING_DIRECTORY)
-                    ZipExtractor.extract(archive, staging, pkg.rootPrefix)
+                    extractRequiredFiles(pkg, archive, staging)
                     onProgress(SIXTY)
                     requireRequiredFiles(pkg, staging)
+                    writeMetadata(staging, pkg)
                     moveIntoPlace(staging, directory(pkg))
                     val status = inspect(pkg)
                     require(status.installed) { I18n.t("multiplayer.easyTierInstaller.3") }
@@ -147,8 +160,9 @@ class EasyTierInstaller(
         val archive = work.resolve(ARCHIVE_NAME)
         downloadVerified(pkg, archive, onProgress)
         val staging = work.resolve(STAGING_DIRECTORY)
-        ZipExtractor.extract(archive, staging, pkg.rootPrefix)
+        extractRequiredFiles(pkg, archive, staging)
         requireRequiredFiles(pkg, staging)
+        writeMetadata(staging, pkg)
         moveIntoPlace(staging, directory(pkg))
         val status = inspect(pkg)
         require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
@@ -234,11 +248,20 @@ class EasyTierInstaller(
         target: Path,
     ) {
         target.parent?.let { Files.createDirectories(it) }
-        deleteRecursively(target, logger)
-        runCatching { Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE) }
-            .recoverCatching { Files.move(staging, target) }
-            .getOrThrow()
+        val backup = target.resolveSibling(BACKUP_DIRECTORY)
+        deleteRecursively(backup, logger)
+        if (Files.exists(target)) Files.move(target, backup)
+        try {
+            runCatching { Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE) }
+                .recoverCatching { Files.move(staging, target) }
+                .getOrThrow()
+        } catch (failure: IOException) {
+            deleteRecursively(target, logger)
+            if (Files.exists(backup)) Files.move(backup, target)
+            throw failure
+        }
         applyExecutablePermissions(target, logger)
+        deleteRecursively(backup, logger)
     }
 }
 
@@ -385,9 +408,6 @@ private fun applyExecutablePermissions(
     }
 }
 
-private fun isUsableFile(file: Path): Boolean =
-    runCatching { Files.isRegularFile(file) && Files.size(file) > 0 }.getOrDefault(false)
-
 private fun sha256(file: Path): String {
     val digest = MessageDigest.getInstance("SHA-256")
     Files.newInputStream(file).use { input ->
@@ -423,6 +443,7 @@ private fun isWindows(): Boolean {
 
 private const val RUNTIME_DIRECTORY = "easytier"
 private const val WORK_PREFIX = "easytier-install-"
+private const val BACKUP_DIRECTORY = ".easytier-backup"
 private const val STAGING_DIRECTORY = "staging"
 private const val ARCHIVE_NAME = "easytier.zip"
 private const val ATTEMPTS = 3

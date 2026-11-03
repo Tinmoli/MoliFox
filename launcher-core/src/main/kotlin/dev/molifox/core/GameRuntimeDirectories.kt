@@ -33,6 +33,12 @@ internal class GameRuntimeDirectories(
         return root.resolve(id).apply { createStorageDirectory(this) }
     }
 
+    /** 每局游戏独占的系统临时目录，随该局运行目录一起回收。 */
+    fun temporary(directory: Path): Path {
+        require(directory.toAbsolutePath().normalize().parent == root)
+        return directory.resolve("tmp").apply { createStorageDirectory(this) }
+    }
+
     fun attach(
         directory: Path,
         process: Process,

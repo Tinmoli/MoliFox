@@ -36,6 +36,7 @@ class LauncherDirectories(
     val runtimes = this.root.resolve("runtimes")
     val dependencies = this.root.resolve("dependencies")
     val logs = this.root.resolve("logs")
+    val archivedLogs = logs.resolve("archive")
     val launcherLog = logs.resolve("launcher.log")
     val previousLog = logs.resolve("launcher.previous.log")
     val backups = this.root.resolve("backups")
@@ -62,6 +63,7 @@ class LauncherDirectories(
             runtimes,
             dependencies,
             logs,
+            archivedLogs,
             configurationBackups,
             packArchives,
             instanceBackups,

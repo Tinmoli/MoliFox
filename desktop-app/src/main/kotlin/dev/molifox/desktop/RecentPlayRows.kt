@@ -252,7 +252,26 @@ private fun RecentServerMetrics(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            Text("${status.players}/${status.maxPlayers}", fontSize = 11.sp, maxLines = 1)
+            val playerTooltip =
+                when {
+                    status.players == 0 -> strings.t("pages.recent.row.noPlayers")
+
+                    status.playerSample.isEmpty() -> strings.t("pages.recent.row.playersHidden")
+
+                    status.playerSample.size < status.players ->
+                        status.playerSample.joinToString("\n") +
+                            "\n" +
+                            strings.t(
+                                "pages.recent.row.playersPartial",
+                                status.playerSample.size,
+                                status.players,
+                            )
+
+                    else -> status.playerSample.joinToString("\n")
+                }
+            RecentTooltip(playerTooltip) {
+                Text("${status.players}/${status.maxPlayers}", fontSize = 11.sp, maxLines = 1)
+            }
             Spacer(Modifier.width(8.dp))
             val color =
                 when {

@@ -37,6 +37,8 @@ data class ServerStatus(
     val motd: List<MotdSegment>,
     val version: String,
     val ping: Int,
+    /** 服务端状态协议自愿公开的玩家名称样本；可能为空或少于实际在线人数。 */
+    val playerSample: List<String> = emptyList(),
 )
 
 /** 从 `servers.dat` 的 `ip` 字符串解析出的地址；[port] 缺省 [DEFAULT_SERVER_PORT]。 */

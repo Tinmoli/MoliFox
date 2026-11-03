@@ -55,6 +55,7 @@ object ZipExtractor {
         destination: Path,
         rootPrefix: String? = null,
         limits: ZipLimits = ZipLimits(),
+        includedFiles: Set<String>? = null,
     ): ZipExtractResult {
         Files.createDirectories(destination)
         val root = destination.toAbsolutePath().normalize()
@@ -67,7 +68,7 @@ object ZipExtractor {
             while (true) {
                 val entry = input.nextEntry ?: break
                 val relative = if (entry.isDirectory) null else relativeName(entry.name, prefix)
-                if (relative != null) {
+                if (relative != null && (includedFiles == null || relative in includedFiles)) {
                     require(seen.add(relative)) { I18n.t("multiplayer.zipExtractor.1", relative) }
                     require(files < limits.maxEntries) { I18n.t("multiplayer.zipExtractor.2", relative) }
                     bytes += copyEntry(input, resolveInside(root, relative), limits.maxFileBytes)

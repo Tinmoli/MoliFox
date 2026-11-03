@@ -209,7 +209,7 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring route(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength) route.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     check(session.handle != nullptr, "Open network connection");
     WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
     HttpHandle connection{WinHttpConnect(session, host.c_str(), components.nPort, 0)};
@@ -434,6 +434,23 @@ static void showStartupFailure(const std::wstring& details, const fs::path& log)
     if (controls) FreeLibrary(controls);
 }
 
+// 当前负载校验成功后才清理同目录旧版本；只删官方载荷命名，不接触用户改名的启动器 EXE。
+static void removeOldLauncherPayloads(const fs::path& directory, const fs::path& current) noexcept {
+    try {
+        std::error_code error;
+        for (const auto& entry : fs::directory_iterator(directory, error)) {
+            if (error) break;
+            const auto path = entry.path();
+            const auto name = path.filename().wstring();
+            const auto status = entry.symlink_status(error);
+            if (error) { error.clear(); continue; }
+            const bool officialPayload = name.rfind(L"MoliFox-", 0) == 0 && name.size() > 12 && name.substr(name.size() - 4) == L".jar";
+            if (path != current && officialPayload && fs::is_regular_file(status)) fs::remove(path, error);
+            error.clear();
+        }
+    } catch (...) { /* 旧载荷清理失败只占用磁盘，下次启动再试。 */ }
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     int count = 0;
     auto values = CommandLineToArgvW(GetCommandLineW(), &count);
@@ -466,13 +483,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.4.3.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox-0.4.4.jar";
         // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
         if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
             auto pending = temporary.path / L"launcher-payload.part";
             { std::ofstream output(pending, std::ios::binary | std::ios::trunc); output.write((const char*)bytes, size); check(output.good(), "Extract launcher payload"); }
             check(MoveFileExW(pending.c_str(), jar.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), "Install launcher payload");
         }
+        removeOldLauncherPayloads(jar.parent_path(), jar);
         auto java = findJava(data);
         if (java.empty()) {
             if (!confirmJavaDownload()) {

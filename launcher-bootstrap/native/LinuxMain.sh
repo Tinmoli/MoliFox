@@ -125,6 +125,12 @@ if ! verify "$payloadHash" "$jar"; then
     verify "$payloadHash" "$runTemporary/launcher-payload.part" || fail "$bundleIncomplete"
     mv -f "$runTemporary/launcher-payload.part" "$jar"
 fi
+# 当前载荷验证通过后只删除官方旧版 JAR；启动器 .run 的用户自定义文件名不参与匹配。
+for oldJar in "$data/dependencies/launcher"/MoliFox-*.jar; do
+    if [ "$oldJar" != "$jar" ] && [ -f "$oldJar" ] && [ ! -L "$oldJar" ]; then
+        rm -f -- "$oldJar" 2>/dev/null || true
+    fi
+done
 
 usableJava() {
     [ -x "$1" ] || return 1
