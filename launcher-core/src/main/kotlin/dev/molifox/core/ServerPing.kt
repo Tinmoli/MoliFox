@@ -8,6 +8,9 @@ package dev.molifox.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 /**
  * MOTD 的一段文字与它最终生效的样式。
@@ -125,14 +128,7 @@ suspend fun ping(
     val timeout = timeoutMillis.coerceIn(250L, 30_000L).toInt()
     return withContext(Dispatchers.IO) {
         try {
-            val startedAt = System.nanoTime()
-            modernPing(target, port, timeout)?.let {
-                return@withContext it
-            }
-            // 旧版兜底共用同一份总预算，避免两次 4 秒超时把一次查询拖到 8 秒以上。
-            val used = ((System.nanoTime() - startedAt) / 1_000_000L).toInt()
-            val remaining = timeout - used
-            if (remaining < MIN_TIMEOUT_MILLIS) null else legacyPing(target, port, remaining)
+            pingServerTargets(ServerAddress(target, port), serverSocketAddresses(target, port), timeout)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -149,8 +145,65 @@ suspend fun ping(
 suspend fun pingAddress(
     address: String,
     timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
+): ServerStatus? = queryServerAddress(address, timeoutMillis) { _, _ -> }
+
+internal suspend fun queryServerAddress(
+    address: String,
+    timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
+    log: (String, Boolean) -> Unit,
+): ServerStatus? =
+    withContext(Dispatchers.IO) {
+        val parsed = parseServerAddress(address) ?: return@withContext null
+        val target =
+            resolvePingTarget(parsed) { host ->
+                minecraftSrvResolver.resolve(host) { failure ->
+                    log("Server status SRV $host: ${failure.javaClass.simpleName}: ${failure.message}", true)
+                }
+            }
+        log("Server status $address -> ${target.host}:${target.port}", false)
+        try {
+            val connections = serverSocketAddresses(target.host, target.port)
+            val status =
+                pingServerTargets(target, connections, timeoutMillis.coerceIn(250L, 30_000L).toInt()) {
+                    log("Server status $address: $it", true)
+                }
+            if (status == null) log("Server status $address: no valid status response", true)
+            status
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: IOException) {
+            log("Server status DNS ${target.host}: ${failure.javaClass.simpleName}: ${failure.message}", true)
+            null
+        }
+    }
+
+private fun serverSocketAddresses(
+    host: String,
+    port: Int,
+): List<InetSocketAddress> = InetAddress.getAllByName(host).distinct().map { InetSocketAddress(it, port) }
+
+/** 多地址共享总预算；单个 IPv4/IPv6 不可达时，仍给其余地址留出机会。 */
+internal fun pingServerTargets(
+    target: ServerAddress,
+    connections: List<InetSocketAddress>,
+    timeoutMillis: Int,
+    log: (String) -> Unit = {},
 ): ServerStatus? {
-    val parsed = parseServerAddress(address) ?: return null
-    val target = resolvePingTarget(parsed)
-    return ping(target.host, target.port, timeoutMillis)
+    val deadline = System.nanoTime() + timeoutMillis * 1_000_000L
+    for ((index, connection) in connections.withIndex()) {
+        val remaining = ((deadline - System.nanoTime()) / 1_000_000L).toInt()
+        if (remaining <= 0) break
+        val budget = (remaining / (connections.size - index)).coerceAtLeast(1)
+        val started = System.nanoTime()
+        val report: (Exception) -> Unit = {
+            log("$connection: ${it.javaClass.simpleName}: ${it.message}")
+        }
+        var status = modernPing(target.host, target.port, budget, connection, report)
+        val legacyBudget = budget - ((System.nanoTime() - started) / 1_000_000L).toInt()
+        if (status == null && legacyBudget >= MIN_TIMEOUT_MILLIS) {
+            status = legacyPing(target.host, target.port, legacyBudget, connection, report)
+        }
+        if (status != null) return status
+    }
+    return null
 }

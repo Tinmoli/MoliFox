@@ -9,12 +9,14 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 
 /** 现代握手使用的协议号：0x7F 表示「未指定版本」，服务端仍会返回状态 JSON。 */
 private const val STATUS_PROTOCOL_VERSION = 0x7F
+private const val NANOS_PER_MILLISECOND = 1_000_000L
 
 /** 状态响应上限：正常只有几 KB，部分服务端会把整张 favicon 塞进来，留余量但不无限读。 */
 private const val MAX_PACKET_BYTES = 2 * 1024 * 1024
@@ -38,12 +40,17 @@ internal fun modernPing(
     host: String,
     port: Int,
     timeoutMillis: Int,
+    connection: InetSocketAddress? = null,
+    onFailure: (Exception) -> Unit = {},
 ): ServerStatus? {
     val socket = Socket()
     return try {
+        val connectingAt = System.nanoTime()
         socket.tcpNoDelay = true
         socket.soTimeout = timeoutMillis
-        socket.connect(InetSocketAddress(host, port), timeoutMillis)
+        socket.connect(connection ?: InetSocketAddress(host, port), timeoutMillis)
+        socket.soTimeout =
+            (timeoutMillis - (System.nanoTime() - connectingAt) / NANOS_PER_MILLISECOND).toInt().coerceAtLeast(1)
         val startedAt = System.nanoTime()
         val output = socket.getOutputStream()
         val handshake =
@@ -58,7 +65,11 @@ internal fun modernPing(
         output.writePacket(byteArrayOf(0x00))
         output.flush()
         readModernStatus(socket.getInputStream().buffered(), startedAt)
-    } catch (_: Exception) {
+    } catch (failure: IOException) {
+        onFailure(failure)
+        null
+    } catch (failure: IllegalArgumentException) {
+        onFailure(failure)
         null
     } finally {
         runCatching { socket.close() }
@@ -74,7 +85,7 @@ private fun readModernStatus(
     if (packetLength <= 0 || packetLength > MAX_PACKET_BYTES) return null
     val packet = ByteArrayInputStream(input.readFully(packetLength))
     val jsonLength = if (packet.readVarInt() == 0x00) packet.readVarInt() else 0
-    return if (jsonLength <= 0) {
+    return if (jsonLength <= 0 || jsonLength > packet.available()) {
         null
     } else {
         val json = String(packet.readFully(jsonLength), Charsets.UTF_8)
@@ -91,19 +102,28 @@ internal fun legacyPing(
     host: String,
     port: Int,
     timeoutMillis: Int,
+    connection: InetSocketAddress? = null,
+    onFailure: (Exception) -> Unit = {},
 ): ServerStatus? {
     val socket = Socket()
     return try {
+        val connectingAt = System.nanoTime()
         socket.tcpNoDelay = true
         socket.soTimeout = timeoutMillis
-        socket.connect(InetSocketAddress(host, port), timeoutMillis)
+        socket.connect(connection ?: InetSocketAddress(host, port), timeoutMillis)
+        socket.soTimeout =
+            (timeoutMillis - (System.nanoTime() - connectingAt) / NANOS_PER_MILLISECOND).toInt().coerceAtLeast(1)
         val startedAt = System.nanoTime()
         val output = socket.getOutputStream()
         output.write(LEGACY_PING_REQUEST_ID)
         output.write(0x01)
         output.flush()
         readLegacyStatus(socket.getInputStream(), startedAt)
-    } catch (_: Exception) {
+    } catch (failure: IOException) {
+        onFailure(failure)
+        null
+    } catch (failure: IllegalArgumentException) {
+        onFailure(failure)
         null
     } finally {
         runCatching { socket.close() }

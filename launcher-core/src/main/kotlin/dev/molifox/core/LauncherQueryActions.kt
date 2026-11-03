@@ -46,7 +46,7 @@ internal abstract class LauncherQueryActions(
 
     override suspend fun serverStatus(address: String): ServerStatus? =
         withContext(Dispatchers.IO) {
-            pingAddress(address)
+            queryServerAddress(address, log = store::log)
         }
 
     override suspend fun instanceDirectorySize(id: String): Long? =

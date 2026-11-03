@@ -5,9 +5,12 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 import java.util.Hashtable
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import javax.naming.NameNotFoundException
 import javax.naming.NamingException
 import javax.naming.directory.InitialDirContext
 
@@ -60,7 +63,7 @@ private fun parseSrvRecord(record: String): SrvRecord? {
 /**
  * 用 JNDI 自带的 DNS 提供者查询 SRV 记录。
  *
- * 只做 DNS 查询、不打开游戏连接；没有记录、超时或运行环境没有 DNS 支持时返回空列表，由调用方回退到原地址。
+ * 只做 DNS 查询、不打开游戏连接；确认没有记录时返回空列表。临时失败交给解析器记录，不作为缺失记录缓存。
  */
 internal fun querySrvRecords(host: String): List<String> {
     val environment =
@@ -71,14 +74,7 @@ internal fun querySrvRecords(host: String): List<String> {
             put("com.sun.jndi.dns.timeout.retries", "1")
             put("com.sun.jndi.dns.recursion", "1")
         }
-    val context =
-        try {
-            InitialDirContext(environment)
-        } catch (_: NamingException) {
-            return emptyList()
-        } catch (_: RuntimeException) {
-            return emptyList()
-        }
+    val context = InitialDirContext(environment)
     return try {
         val attributes = context.getAttributes(MINECRAFT_SRV_PREFIX + host, arrayOf("SRV"))
         attributes
@@ -86,12 +82,7 @@ internal fun querySrvRecords(host: String): List<String> {
             .asSequence()
             .flatMap { attribute -> attribute.all.asSequence().mapNotNull { it as? String } }
             .toList()
-    } catch (_: NamingException) {
-        emptyList()
-    } catch (_: RuntimeException) {
-        emptyList()
-    } catch (_: LinkageError) {
-        // 极简 JRE 可能没有 java.naming 模块；当作没有 SRV 记录，回退直连。
+    } catch (_: NameNotFoundException) {
         emptyList()
     } finally {
         runCatching { context.close() }
@@ -114,13 +105,35 @@ internal class SrvResolver(
 
     private val cache = ConcurrentHashMap<String, Entry>()
 
-    fun resolve(host: String): SrvTarget? {
+    fun resolve(host: String): SrvTarget? = resolve(host) {}
+
+    fun resolve(
+        host: String,
+        onFailure: (Throwable) -> Unit,
+    ): SrvTarget? {
         val key = host.lowercase(Locale.ROOT).trimEnd('.')
         val now = clock()
         cache[key]?.let { if (it.expiresAt > now) return it.target }
-        val target = selectSrvTarget(runCatching { query(key) }.getOrDefault(emptyList()))
-        val ttl = if (target != null) POSITIVE_CACHE_MILLIS else NEGATIVE_CACHE_MILLIS
-        cache[key] = Entry(target, now + ttl)
+        val records =
+            try {
+                query(key)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: NamingException) {
+                onFailure(failure)
+                null
+            } catch (failure: IOException) {
+                onFailure(failure)
+                null
+            } catch (failure: LinkageError) {
+                onFailure(failure)
+                null
+            }
+        val target = records?.let(::selectSrvTarget)
+        if (records != null) {
+            val ttl = if (target != null) POSITIVE_CACHE_MILLIS else NEGATIVE_CACHE_MILLIS
+            cache[key] = Entry(target, now + ttl)
+        }
         return target
     }
 
@@ -140,7 +153,14 @@ internal fun resolvePingTarget(
     resolveSrv: (String) -> SrvTarget? = minecraftSrvResolver::resolve,
 ): ServerAddress {
     if (address.port != DEFAULT_SERVER_PORT || address.host.isIpLiteral()) return address
-    val srv = runCatching { resolveSrv(address.host) }.getOrNull() ?: return address
+    val srv =
+        try {
+            resolveSrv(address.host)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return address
     return ServerAddress(srv.host, srv.port)
 }
 

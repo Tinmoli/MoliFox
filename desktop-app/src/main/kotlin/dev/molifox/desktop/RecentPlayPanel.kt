@@ -121,7 +121,7 @@ fun RecentPlayPanel(
         loading = loading,
         visible = visible,
         busy = busy,
-        refreshTick = refresh,
+        refreshTick = refresh + tick,
         callbacks = callbacks,
         modifier = modifier,
     )
@@ -130,7 +130,7 @@ fun RecentPlayPanel(
             items,
             kind,
             busy,
-            refresh,
+            refresh + tick,
             loading,
             callbacks,
             onRefresh = {

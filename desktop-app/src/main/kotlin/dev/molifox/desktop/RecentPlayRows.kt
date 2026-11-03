@@ -242,15 +242,7 @@ private fun RecentServerMetrics(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (status == null) {
-            Text(
-                if (snapshot == null) {
-                    strings.t("pages.recent.row.querying")
-                } else {
-                    strings.t("pages.recent.row.offline")
-                },
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            RecentServerUnavailable(snapshot == null)
         } else {
             val playerTooltip =
                 when {
@@ -307,6 +299,18 @@ private fun RecentServerMetrics(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RecentServerUnavailable(querying: Boolean) {
+    val strings = LocalStrings.current
+    RecentTooltip(strings.t(if (querying) "pages.recent.row.querying" else "pages.recent.row.unavailable")) {
+        Text(
+            strings.t(if (querying) "pages.recent.row.querying" else "pages.recent.row.offline"),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
