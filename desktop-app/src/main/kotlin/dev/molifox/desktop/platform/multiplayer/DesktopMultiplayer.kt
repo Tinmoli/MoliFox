@@ -16,30 +16,52 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
-fun createDesktopMultiplayer(controller: LauncherController): MultiplayerBackend {
+internal fun desktopMultiplayerFactory(controller: LauncherController): () -> MultiplayerBackend {
+    val installer =
+        desktopEasyTierInstaller(controller) { message, error ->
+            controller.store.log(message, error)
+        }
+    // 应用启动就做离线迁移，不需要进入联机页，也不启动发现服务或下载缺失的核心。
+    controller.scope.launch(Dispatchers.IO) {
+        installer.install(downloadMissing = false).onFailure {
+            controller.store.log("EasyTier startup migration failed: ${it.message}", true)
+        }
+    }
+    return { createDesktopMultiplayer(controller, installer) }
+}
+
+fun createDesktopMultiplayer(
+    controller: LauncherController,
+    localInstaller: EasyTierInstaller? = null,
+): MultiplayerBackend {
     val dataRoot = controller.store.dataDirectory
     val log = DesktopMultiplayerLog(controller.scope, controller)
     val report: (String, Boolean) -> Unit = { message, error -> log.report(message, error) }
     return PclLobbyBackend(
         settingsRepository = FileMultiplayerSettings(dataRoot.resolve("config/multiplayer.json")),
-        installer =
-            EasyTierInstaller(dataRoot.resolve("runtimes"), report, packageProvider = {
-                EasyTierCatalog.current()?.let { pkg ->
-                    pkg.copy(
-                        mirrors =
-                            gitHubDownloadCandidates(
-                                pkg.url,
-                                controller.store.data.settings
-                                    .gitHubSourceOptions(),
-                            ).filterNot { it == pkg.url },
-                    )
-                }
-            }),
+        installer = localInstaller ?: desktopEasyTierInstaller(controller, report),
         machineIdStore = MachineIdStore(dataRoot.resolve("config/machine-id")),
         logger = report,
         playerName = { currentNickname(controller) },
     )
 }
+
+private fun desktopEasyTierInstaller(
+    controller: LauncherController,
+    report: (String, Boolean) -> Unit,
+): EasyTierInstaller =
+    EasyTierInstaller(controller.store.directories.runtimes, report, packageProvider = {
+        EasyTierCatalog.current()?.let { pkg ->
+            pkg.copy(
+                mirrors =
+                    gitHubDownloadCandidates(
+                        pkg.url,
+                        controller.store.data.settings
+                            .gitHubSourceOptions(),
+                    ).filterNot { it == pkg.url },
+            )
+        }
+    })
 
 /** 异步写联机日志，避免在核心轮询线程里同步落盘。 */
 private class DesktopMultiplayerLog(

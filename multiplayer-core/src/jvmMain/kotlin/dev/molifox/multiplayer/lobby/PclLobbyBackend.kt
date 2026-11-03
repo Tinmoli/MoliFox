@@ -17,6 +17,7 @@ import dev.molifox.multiplayer.easytier.EasyTierNode
 import dev.molifox.multiplayer.easytier.EasyTierRuntime
 import dev.molifox.multiplayer.easytier.NatTester
 import dev.molifox.multiplayer.protocol.RoomCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -140,7 +141,12 @@ class PclLobbyBackend(
         runCatching {
             mutableSettings.value = settingsRepository.load()
             machineId = withContext(Dispatchers.IO) { machineIdStore.read() }
-            val status = withContext(Dispatchers.IO) { installer.inspect() }
+            val status =
+                installer.install(downloadMissing = false).getOrElse { failure ->
+                    if (failure is CancellationException) throw failure
+                    logger("EasyTier local migration failed: ${failure.message}", true)
+                    withContext(Dispatchers.IO) { installer.inspect() }
+                }
             store.update { it.copy(runtime = status) }
             scanner.sync(mutableSettings.value.enabled)
         }
@@ -159,7 +165,7 @@ class PclLobbyBackend(
     override suspend fun prepareRuntime(): Result<Unit> =
         startRuntimeInstall(I18n.t("multiplayer.pclLobbyBackend.1")) { onProgress ->
             installRunner?.invoke(onProgress)
-                ?: withContext(Dispatchers.IO) { installer.install(onProgress).getOrThrow() }
+                ?: withContext(Dispatchers.IO) { installer.install(onProgress = onProgress).getOrThrow() }
         }.await()
 
     override fun cancelRuntimeInstall() {

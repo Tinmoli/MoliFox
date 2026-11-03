@@ -21,6 +21,7 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 
 private const val RETAINED_LOG_ARCHIVES = 5
+private const val STALE_INSTALL_AGE_MILLIS = 24 * 60 * 60 * 1000L
 
 /** 启动早期先把上一会话日志移出活动文件，压缩工作稍后在 IO 协程完成。 */
 internal fun prepareLogSession(
@@ -94,7 +95,11 @@ private fun clearEasyTierWorkDirectories(runtimes: Path) {
     if (!runtimes.isDirectory(NOFOLLOW_LINKS)) return
     runtimes.listDirectoryEntries().forEach { child ->
         val name = child.fileName.toString()
-        if (name.startsWith("easytier-install-") || name == ".easytier-backup") {
+        val staleTransaction =
+            name.startsWith(".easytier-install-") &&
+                System.currentTimeMillis() - child.getLastModifiedTime(NOFOLLOW_LINKS).toMillis() >
+                STALE_INSTALL_AGE_MILLIS
+        if (name.startsWith("easytier-install-") || name == ".easytier-backup" || staleTransaction) {
             deleteTree(child, runtimes)
         }
     }

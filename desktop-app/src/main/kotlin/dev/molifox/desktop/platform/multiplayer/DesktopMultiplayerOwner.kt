@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 class DesktopMultiplayerOwner(
     private val createBackend: () -> MultiplayerBackend,
 ) {
-    constructor(controller: LauncherController) : this({ createDesktopMultiplayer(controller) })
+    constructor(controller: LauncherController) : this(desktopMultiplayerFactory(controller))
 
     private val lock = Any()
     private val closeMutex = Mutex()

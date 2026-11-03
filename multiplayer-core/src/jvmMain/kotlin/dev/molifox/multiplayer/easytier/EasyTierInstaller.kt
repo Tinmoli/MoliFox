@@ -9,13 +9,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
@@ -50,6 +51,7 @@ class EasyTierInstaller(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val rankingCache = SourceRankingCache()
+    private val installationMutex = Mutex()
 
     /** 当前平台的安装包信息；不支持的平台给出明确提示。 */
     fun packageInfo(): EasyTierPackage =
@@ -81,35 +83,43 @@ class EasyTierInstaller(
     }
 
     /** 下载并安装；[onProgress] 收到 0..1 的进度，未知时为 null。 */
-    suspend fun install(onProgress: (Float?) -> Unit = {}): Result<CoreStatus> =
+    suspend fun install(onProgress: (Float?) -> Unit = {}): Result<CoreStatus> = install(true, onProgress)
+
+    suspend fun install(
+        downloadMissing: Boolean,
+        onProgress: (Float?) -> Unit = {},
+    ): Result<CoreStatus> =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val pkg = packageInfo()
-                val current = inspect(pkg)
-                if (current.installed) {
-                    onProgress(ONE)
-                    return@runCatching current
-                }
-                Files.createDirectories(runtimesRoot)
-                val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
-                try {
-                    val migrated = migrateLegacyStaging(pkg, work, directory(pkg))
-                    if (migrated == null) {
-                        installInto(pkg, work, onProgress)
-                    } else {
-                        moveIntoPlace(migrated, directory(pkg))
-                        val status = inspect(pkg)
-                        require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
-                        logger(I18n.t("multiplayer.easyTierInstaller.6", pkg.version, status.directory), false)
+            installationMutex.withLock {
+                runCatching {
+                    val pkg = packageInfo()
+                    val current = inspect(pkg)
+                    if (current.installed) {
                         onProgress(ONE)
-                        status
+                        return@runCatching current
                     }
-                } finally {
-                    deleteRecursively(work, logger)
+                    Files.createDirectories(runtimesRoot)
+                    val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
+                    try {
+                        val migrated = migrateLegacyStaging(pkg, work, directory(pkg))
+                        if (migrated == null) {
+                            if (!downloadMissing) return@runCatching current
+                            installInto(pkg, work, onProgress)
+                        } else {
+                            moveIntoPlace(migrated, directory(pkg), logger)
+                            val status = inspect(pkg)
+                            require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
+                            logger(I18n.t("multiplayer.easyTierInstaller.6", pkg.version, status.directory), false)
+                            onProgress(ONE)
+                            status
+                        }
+                    } finally {
+                        deleteRecursively(work, logger)
+                    }
+                }.onFailure { failure ->
+                    // runCatching 会吞掉取消信号，这里恢复协程取消语义。
+                    if (failure is CancellationException) throw failure
                 }
-            }.onFailure { failure ->
-                // runCatching 会吞掉取消信号，这里恢复协程取消语义。
-                if (failure is CancellationException) throw failure
             }
         }
 
@@ -123,31 +133,33 @@ class EasyTierInstaller(
         onProgress: (Float?) -> Unit = {},
     ): Result<CoreStatus> =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val pkg = packageInfo()
-                require(Files.isRegularFile(archive)) { I18n.t("multiplayer.easyTierInstaller.1", archive) }
-                logger(I18n.t("multiplayer.easyTierInstaller.2", archive), false)
-                Files.createDirectories(runtimesRoot)
-                val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
-                try {
-                    verifyArchive(pkg, archive)
-                    onProgress(null)
-                    val staging = work.resolve(STAGING_DIRECTORY)
-                    extractRequiredFiles(pkg, archive, staging)
-                    onProgress(SIXTY)
-                    requireRequiredFiles(pkg, staging)
-                    writeMetadata(staging, pkg)
-                    moveIntoPlace(staging, directory(pkg))
-                    val status = inspect(pkg)
-                    require(status.installed) { I18n.t("multiplayer.easyTierInstaller.3") }
-                    logger(I18n.t("multiplayer.easyTierInstaller.4", pkg.version, status.directory), false)
-                    onProgress(ONE)
-                    status
-                } finally {
-                    deleteRecursively(work, logger)
+            installationMutex.withLock {
+                runCatching {
+                    val pkg = packageInfo()
+                    require(Files.isRegularFile(archive)) { I18n.t("multiplayer.easyTierInstaller.1", archive) }
+                    logger(I18n.t("multiplayer.easyTierInstaller.2", archive), false)
+                    Files.createDirectories(runtimesRoot)
+                    val work = Files.createTempDirectory(runtimesRoot, WORK_PREFIX)
+                    try {
+                        verifyArchive(pkg, archive)
+                        onProgress(null)
+                        val staging = work.resolve(STAGING_DIRECTORY)
+                        extractRequiredFiles(pkg, archive, staging)
+                        onProgress(SIXTY)
+                        requireRequiredFiles(pkg, staging)
+                        writeMetadata(staging, pkg)
+                        moveIntoPlace(staging, directory(pkg), logger)
+                        val status = inspect(pkg)
+                        require(status.installed) { I18n.t("multiplayer.easyTierInstaller.3") }
+                        logger(I18n.t("multiplayer.easyTierInstaller.4", pkg.version, status.directory), false)
+                        onProgress(ONE)
+                        status
+                    } finally {
+                        deleteRecursively(work, logger)
+                    }
+                }.onFailure { failure ->
+                    if (failure is CancellationException) throw failure
                 }
-            }.onFailure { failure ->
-                if (failure is CancellationException) throw failure
             }
         }
 
@@ -163,7 +175,7 @@ class EasyTierInstaller(
         extractRequiredFiles(pkg, archive, staging)
         requireRequiredFiles(pkg, staging)
         writeMetadata(staging, pkg)
-        moveIntoPlace(staging, directory(pkg))
+        moveIntoPlace(staging, directory(pkg), logger)
         val status = inspect(pkg)
         require(status.installed) { I18n.t("multiplayer.easyTierInstaller.5") }
         logger(I18n.t("multiplayer.easyTierInstaller.6", pkg.version, status.directory), false)
@@ -241,28 +253,6 @@ class EasyTierInstaller(
             )
             downloadFailure
         }
-
-    /** 解包结果整体替换目标目录，并补上 Linux 可执行权限。 */
-    private fun moveIntoPlace(
-        staging: Path,
-        target: Path,
-    ) {
-        target.parent?.let { Files.createDirectories(it) }
-        val backup = target.resolveSibling(BACKUP_DIRECTORY)
-        deleteRecursively(backup, logger)
-        if (Files.exists(target)) Files.move(target, backup)
-        try {
-            runCatching { Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE) }
-                .recoverCatching { Files.move(staging, target) }
-                .getOrThrow()
-        } catch (failure: IOException) {
-            deleteRecursively(target, logger)
-            if (Files.exists(backup)) Files.move(backup, target)
-            throw failure
-        }
-        applyExecutablePermissions(target, logger)
-        deleteRecursively(backup, logger)
-    }
 }
 
 /** 用 HTTP 下载安装包，按 64 KiB 上报进度。 */
@@ -386,7 +376,7 @@ private fun requireRequiredFiles(
 }
 
 /** Linux 上补可执行权限；Windows 忽略。 */
-private fun applyExecutablePermissions(
+internal fun applyExecutablePermissions(
     root: Path,
     logger: (message: String, error: Boolean) -> Unit,
 ) {
@@ -421,7 +411,7 @@ private fun sha256(file: Path): String {
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-private fun deleteRecursively(
+internal fun deleteRecursively(
     path: Path,
     logger: (message: String, error: Boolean) -> Unit,
 ) {
@@ -442,8 +432,7 @@ private fun isWindows(): Boolean {
 }
 
 private const val RUNTIME_DIRECTORY = "easytier"
-private const val WORK_PREFIX = "easytier-install-"
-private const val BACKUP_DIRECTORY = ".easytier-backup"
+private const val WORK_PREFIX = ".easytier-install-"
 private const val STAGING_DIRECTORY = "staging"
 private const val ARCHIVE_NAME = "easytier.zip"
 private const val ATTEMPTS = 3

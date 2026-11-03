@@ -30,7 +30,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.walk
 import kotlin.io.path.writeText
 
-private const val EVIDENCE_MAX_LENGTH = 1000
+internal const val EVIDENCE_MAX_LENGTH = 1000
 private const val MIN_REDACTED_SECRET_LENGTH = 5
 private const val RETAINED_SESSION_COUNT = 10L
 private const val OUTPUT_LOG_MAX_BYTES = 16L * 1024 * 1024
@@ -163,7 +163,7 @@ internal fun diagnoseGameFailure(
     // 游戏崩溃时优先读取 crash report：启动器输出里混着大量 INFO/WARN，
     // 在其中扫关键词会把普通网络警告误判成崩溃原因（例如 TLS）。
     val crashReport = readCrashReport(text)
-    val evidence = crashReport ?: text
+    val evidence = crashReport ?: selectFailureEvidence(text)
     // 启动器主动中止时，“启动中止：原因”那一行才是本次失败的原因，先按它判断。
     val aborted =
         if (crashReport == null) {
@@ -180,6 +180,7 @@ internal fun diagnoseGameFailure(
             if (line == null) null else Triple(line, titleKey, suggestionKey)
         }
     val jvmFatal = crashReport == null && JVM_FATAL_ERROR.containsMatchIn(text)
+    val fontFailure = if (aborted == null) diagnoseFontAssertion(evidence, directory) else null
     return when {
         memoryMatch != null ->
             issue(
@@ -191,6 +192,8 @@ internal fun diagnoseGameFailure(
 
         jvmFatal -> genericIssue(text, directory)
 
+        fontFailure != null -> fontFailure
+
         matched != null -> issue(matched.second, matched.third, matched.first, directory)
 
         aborted != null ->
@@ -201,7 +204,7 @@ internal fun diagnoseGameFailure(
                 directory,
             )
 
-        else -> genericIssue(text, directory)
+        else -> genericIssue(evidence, directory)
     }
 }
 
