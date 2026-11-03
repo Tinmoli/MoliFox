@@ -5,14 +5,13 @@
 
 package dev.molifox.core
 
+import dev.molifox.core.platform.systemDnsResolver
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
-import java.util.Hashtable
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import javax.naming.NameNotFoundException
-import javax.naming.NamingException
-import javax.naming.directory.InitialDirContext
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 
 /** SRV 解析结果：Minecraft 客户端实际连接的主机与端口。 */
 data class SrvTarget(
@@ -23,7 +22,6 @@ data class SrvTarget(
 /** SRV 查询名固定为 `_minecraft._tcp.<host>`（RFC 2782 的服务名约定）。 */
 internal const val MINECRAFT_SRV_PREFIX = "_minecraft._tcp."
 
-private const val SRV_LOOKUP_TIMEOUT_MILLIS = 1_500L
 private const val POSITIVE_CACHE_MILLIS = 5 * 60_000L
 private const val NEGATIVE_CACHE_MILLIS = 60_000L
 private const val MAX_PORT = 65535
@@ -60,33 +58,21 @@ private fun parseSrvRecord(record: String): SrvRecord? {
     return SrvRecord(priority, weight, port, target)
 }
 
-/**
- * 用 JNDI 自带的 DNS 提供者查询 SRV 记录。
- *
- * 只做 DNS 查询、不打开游戏连接；确认没有记录时返回空列表。临时失败交给解析器记录，不作为缺失记录缓存。
- */
-internal fun querySrvRecords(host: String): List<String> {
-    val environment =
-        Hashtable<String, String>().apply {
-            put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory")
-            put("java.naming.provider.url", "dns:")
-            put("com.sun.jndi.dns.timeout.initial", SRV_LOOKUP_TIMEOUT_MILLIS.toString())
-            put("com.sun.jndi.dns.timeout.retries", "1")
-            put("com.sun.jndi.dns.recursion", "1")
-        }
-    val context = InitialDirContext(environment)
-    return try {
-        val attributes = context.getAttributes(MINECRAFT_SRV_PREFIX + host, arrayOf("SRV"))
-        attributes
-            .getAll()
-            .asSequence()
-            .flatMap { attribute -> attribute.all.asSequence().mapNotNull { it as? String } }
-            .toList()
-    } catch (_: NameNotFoundException) {
-        emptyList()
-    } finally {
-        runCatching { context.close() }
-    }
+/** 只调用平台系统解析器；不自行选择公共 DNS 或通过命令行查询。 */
+internal fun querySrvRecords(host: String): List<String> = systemDnsResolver().querySrv(MINECRAFT_SRV_PREFIX + host)
+
+internal sealed interface SrvLookup {
+    data class Found(
+        val target: SrvTarget,
+    ) : SrvLookup
+
+    data object Absent : SrvLookup
+
+    data object Unavailable : SrvLookup
+
+    data class Failed(
+        val error: Throwable,
+    ) : SrvLookup
 }
 
 /**
@@ -99,42 +85,49 @@ internal class SrvResolver(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private class Entry(
-        val target: SrvTarget?,
+        val result: SrvLookup,
         val expiresAt: Long,
     )
 
     private val cache = ConcurrentHashMap<String, Entry>()
+    private val inFlight = ConcurrentHashMap<String, FutureTask<SrvLookup>>()
 
-    fun resolve(host: String): SrvTarget? = resolve(host) {}
-
-    fun resolve(
-        host: String,
-        onFailure: (Throwable) -> Unit,
-    ): SrvTarget? {
+    fun lookup(host: String): SrvLookup {
         val key = host.lowercase(Locale.ROOT).trimEnd('.')
-        val now = clock()
-        cache[key]?.let { if (it.expiresAt > now) return it.target }
-        val records =
+        cached(key)?.let { return it }
+        val candidate = FutureTask { cached(key) ?: load(key) }
+        val running = inFlight.putIfAbsent(key, candidate) ?: candidate
+        try {
+            if (running === candidate) candidate.run()
+            return running.get()
+        } catch (failure: ExecutionException) {
+            throw (failure.cause ?: failure)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw CancellationException("System DNS wait interrupted").apply { initCause(interrupted) }
+        } finally {
+            if (running === candidate) inFlight.remove(key, candidate)
+        }
+    }
+
+    private fun cached(key: String): SrvLookup? = cache[key]?.takeIf { it.expiresAt > clock() }?.result
+
+    private fun load(key: String): SrvLookup {
+        val result =
             try {
-                query(key)
+                classifySrvRecords(query(key))
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (failure: NamingException) {
-                onFailure(failure)
-                null
             } catch (failure: IOException) {
-                onFailure(failure)
-                null
+                SrvLookup.Failed(failure)
             } catch (failure: LinkageError) {
-                onFailure(failure)
-                null
+                SrvLookup.Failed(failure)
             }
-        val target = records?.let(::selectSrvTarget)
-        if (records != null) {
-            val ttl = if (target != null) POSITIVE_CACHE_MILLIS else NEGATIVE_CACHE_MILLIS
-            cache[key] = Entry(target, now + ttl)
+        if (result !is SrvLookup.Failed) {
+            val ttl = if (result is SrvLookup.Found) POSITIVE_CACHE_MILLIS else NEGATIVE_CACHE_MILLIS
+            cache[key] = Entry(result, clock() + ttl)
         }
-        return target
+        return result
     }
 
     fun clearCache() = cache.clear()
@@ -142,26 +135,38 @@ internal class SrvResolver(
 
 internal val minecraftSrvResolver = SrvResolver()
 
+internal fun classifySrvRecords(records: List<String>): SrvLookup {
+    selectSrvTarget(records)?.let { return SrvLookup.Found(it) }
+    return when {
+        records.isEmpty() -> SrvLookup.Absent
+
+        records.any {
+            it.trim().split(Regex("\\s+")).let { fields ->
+                fields.size == SRV_RECORD_MIN_FIELDS &&
+                    fields.last() == "."
+            }
+        } -> SrvLookup.Unavailable
+
+        else -> SrvLookup.Failed(IOException("System DNS returned malformed SRV records"))
+    }
+}
+
 /**
  * 决定 ping 真正连接的目标：
  * - 端口是 [DEFAULT_SERVER_PORT]（没有显式端口）且主机不是 IP 字面量时才查 SRV；
  * - 用户显式写了其他端口时按原样连接，和原版客户端一致；
- * - SRV 查询失败或没有记录时回退到解析出的地址。
+ * - 确认没有记录时回退原地址；查询失败或服务明确不可用时停止，不猜默认端口。
  */
 internal fun resolvePingTarget(
     address: ServerAddress,
-    resolveSrv: (String) -> SrvTarget? = minecraftSrvResolver::resolve,
-): ServerAddress {
+    resolveSrv: (String) -> SrvLookup = minecraftSrvResolver::lookup,
+): ServerAddress? {
     if (address.port != DEFAULT_SERVER_PORT || address.host.isIpLiteral()) return address
-    val srv =
-        try {
-            resolveSrv(address.host)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
-        } ?: return address
-    return ServerAddress(srv.host, srv.port)
+    return when (val result = resolveSrv(address.host)) {
+        is SrvLookup.Found -> ServerAddress(result.target.host, result.target.port)
+        SrvLookup.Absent -> address
+        else -> null
+    }
 }
 
 /** 只把点分 IPv4 与含冒号的 IPv6 当作字面量，避免对 IP 做无意义的 SRV 查询。 */

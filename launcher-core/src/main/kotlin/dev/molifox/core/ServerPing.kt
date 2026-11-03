@@ -140,7 +140,7 @@ suspend fun ping(
 /**
  * 直接查询 `servers.dat` 里那种 `host:port` 字符串；地址解析失败返回 null。
  *
- * 没有写端口（缺省 25565）且主机是域名时先查 `_minecraft._tcp` SRV 记录，用记录里的真实主机与端口连接； 查询失败、没有记录或用户显式写了其他端口时回退到原地址。
+ * 默认端口的域名先查 SRV，使用系统返回的真实主机和端口；只有确认无记录才按原地址连接。
  */
 suspend fun pingAddress(
     address: String,
@@ -156,10 +156,15 @@ internal suspend fun queryServerAddress(
         val parsed = parseServerAddress(address) ?: return@withContext null
         val target =
             resolvePingTarget(parsed) { host ->
-                minecraftSrvResolver.resolve(host) { failure ->
-                    log("Server status SRV $host: ${failure.javaClass.simpleName}: ${failure.message}", true)
+                minecraftSrvResolver.lookup(host).also { result ->
+                    if (result is SrvLookup.Failed) {
+                        log(
+                            "Server status SRV $host: ${result.error.stackTraceToString()}",
+                            true,
+                        )
+                    }
                 }
-            }
+            } ?: return@withContext null
         log("Server status $address -> ${target.host}:${target.port}", false)
         try {
             val connections = serverSocketAddresses(target.host, target.port)
