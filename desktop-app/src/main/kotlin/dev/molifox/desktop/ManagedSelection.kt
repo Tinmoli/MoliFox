@@ -47,6 +47,7 @@ internal class ManagedSelection {
 
     /** 拖动中最后一次指针的窗口坐标；滚动后按它重算选区。 */
     var dragPointer: Offset? = null
+    var dragInProgress by mutableStateOf(false)
     private var anchor: String? = null
     private var dragBase: Set<String> = emptySet()
     private var dragAnchor: String? = null
@@ -62,6 +63,7 @@ internal class ManagedSelection {
     fun clear() {
         selected = emptySet()
         anchor = null
+        endDrag()
     }
 
     fun all(keys: List<String>) {
@@ -101,6 +103,7 @@ internal class ManagedSelection {
         dragAnchor = key
         dragBase = selected
         dragSelects = key !in dragBase
+        dragInProgress = true
     }
 
     fun dragTo(
@@ -135,6 +138,12 @@ internal class ManagedSelection {
         if (start < 0 || end < 0) return setOf(last)
         return keys.subList(minOf(start, end), maxOf(start, end) + 1).toSet()
     }
+}
+
+/** 手势结束后释放布局锁；下一次 beginDrag 会覆盖范围基线和锚点。 */
+internal fun ManagedSelection.endDrag() {
+    dragInProgress = false
+    dragPointer = null
 }
 
 /**
@@ -201,27 +210,31 @@ private suspend fun AwaitPointerEventScope.trackPointerDrag(
 ): Boolean {
     var event = initialEvent
     var dragging = false
-    while (event.type == PointerEventType.Scroll || event.buttons.isPrimaryPressed) {
-        // 滚动只改变行坐标、不产生指针移动：按上一次指针位置重算，滚轮因此仍可扩展选区。
-        if (dragging) selection.reapplyDrag(keys)
-        // 滚轮事件直接放行，否则拖动期间列表滚不动。
-        if (event.type == PointerEventType.Scroll) {
+    try {
+        while (event.type == PointerEventType.Scroll || event.buttons.isPrimaryPressed) {
+            // 滚动只改变行坐标、不产生指针移动：按上一次指针位置重算，滚轮因此仍可扩展选区。
+            if (dragging) selection.reapplyDrag(keys)
+            // 滚轮事件直接放行，否则拖动期间列表滚不动。
+            if (event.type == PointerEventType.Scroll) {
+                event = awaitPointerEvent(PointerEventPass.Initial)
+                continue
+            }
+            val current = event.changes.firstOrNull { it.id == down.id } ?: return dragging
+            if (!dragging && (current.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                selection.beginDrag(startKey)
+                dragging = true
+            }
+            if (dragging) {
+                current.consume()
+                val window = current.position + selection.containerOrigin
+                selection.dragPointer = window
+                selection.dragTo(selection.keyAt(window), keys)
+            }
             event = awaitPointerEvent(PointerEventPass.Initial)
-            continue
         }
-        val current = event.changes.firstOrNull { it.id == down.id } ?: return dragging
-        if (!dragging && (current.position - down.position).getDistance() > viewConfiguration.touchSlop) {
-            selection.beginDrag(startKey)
-            dragging = true
-        }
-        if (dragging) {
-            current.consume()
-            val window = current.position + selection.containerOrigin
-            selection.dragPointer = window
-            selection.dragTo(selection.keyAt(window), keys)
-        }
-        event = awaitPointerEvent(PointerEventPass.Initial)
+        if (dragging) event.changes.forEach { it.consume() }
+        return dragging
+    } finally {
+        if (dragging) selection.endDrag()
     }
-    if (dragging) event.changes.forEach { it.consume() }
-    return dragging
 }

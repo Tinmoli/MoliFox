@@ -128,7 +128,8 @@ internal fun SelectionActionBar(
     keys: List<String>,
     actions: List<ManagedAction> = emptyList(),
 ) {
-    if (!selection.active) return
+    if (!selection.active && !selection.dragInProgress) return
+    val actionsEnabled = selection.active
     val strings = LocalStrings.current
     Surface(
         Modifier.fillMaxWidth(),
@@ -150,9 +151,9 @@ internal fun SelectionActionBar(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                TextChip(strings.t("selection.all")) { selection.all(keys) }
-                TextChip(strings.t("selection.clear")) { selection.clear() }
-                actions.forEach { action -> BatchActionChip(action) }
+                TextChip(strings.t("selection.all"), actionsEnabled) { selection.all(keys) }
+                TextChip(strings.t("selection.clear"), actionsEnabled) { selection.clear() }
+                actions.forEach { action -> BatchActionChip(action, actionsEnabled && action.enabled) }
             }
         }
     }
@@ -162,30 +163,35 @@ internal fun SelectionActionBar(
 @Composable
 private fun TextChip(
     title: String,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .85f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = if (enabled) .85f else .4f),
     ) {
         Text(
             title,
             Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             fontSize = 11.5.sp,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .45f),
         )
     }
 }
 
 /** 批量操作小按钮：比 TextButton 紧凑，一行能放下四五个。 */
 @Composable
-private fun BatchActionChip(action: ManagedAction) {
+private fun BatchActionChip(
+    action: ManagedAction,
+    enabled: Boolean,
+) {
     Surface(
         onClick = action.run,
-        enabled = action.enabled,
+        enabled = enabled,
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = if (action.enabled) .85f else .4f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = if (enabled) .85f else .4f),
     ) {
         Row(
             Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
@@ -196,12 +202,12 @@ private fun BatchActionChip(action: ManagedAction) {
                 action.icon,
                 null,
                 Modifier.size(13.dp),
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = if (action.enabled) 1f else .45f),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else .45f),
             )
             Text(
                 action.title,
                 fontSize = 11.5.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (action.enabled) 1f else .45f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .45f),
             )
         }
     }
