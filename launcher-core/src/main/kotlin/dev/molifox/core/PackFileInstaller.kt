@@ -12,6 +12,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
@@ -29,9 +30,10 @@ internal suspend fun stagePackFiles(
     context: JobContext,
     progressStart: Float = 0f,
     progressEnd: Float = 1f,
+    concurrency: Int = 1,
     download: suspend (DownloadArtifact) -> Unit,
 ) {
-    val stager = PackFileStager(context, download, progressStart, progressEnd)
+    val stager = PackFileStager(context, download, progressStart, progressEnd, concurrency)
     stager.indexed(manifest, transaction, optionalFiles)
     val prefixes = manifest.overridePrefixes
     val target = PackStagingTarget(transaction, game, repairing)
@@ -50,37 +52,41 @@ private class PackFileStager(
     private val download: suspend (DownloadArtifact) -> Unit,
     private val progressStart: Float,
     private val progressEnd: Float,
+    private val concurrency: Int,
 ) {
     suspend fun indexed(
         manifest: PackManifest,
         transaction: PackFileTransaction,
         optionalFiles: Set<String>?,
     ) {
+        if (manifest.index == null) return
         val files =
             manifest.index
-                ?.array("files")
-                ?.map { it.asJsonObject }
-                ?.filter {
+                .array("files")
+                .map { it.asJsonObject }
+                .filter {
                     it.obj("env").string("client") != "unsupported" &&
                         (
                             it.obj("env").string("client") != "optional" ||
                                 optionalFiles == null ||
                                 it.string("path") in optionalFiles
                         )
-                }.orEmpty()
+                }
         // 整合包下载是独立阶段：重置任务中心的文件计数，避免沿用原版安装的 1 万多文件。
         context.beginTransfers(files.size)
-        val span = progressEnd - progressStart
-        for ((position, file) in files.withIndex()) {
-            context.checkCancelled()
+        val finished = AtomicInteger()
+        stagePackFilesConcurrently(files, concurrency, context) { file ->
             val path = file.string("path")
-            context.progress(
-                progressStart + span * position.toFloat() / maxOf(files.size, 1),
-                I18n.t("packsA2.packStaging.progressIndexedFile", position + 1, files.size, path),
-            )
             val target = packPath(transaction.content, path)
             val size = downloadIndexFile(file, target)
             context.transfer(target.toString(), size, size, completed = true)
+            synchronized(finished) {
+                val count = finished.incrementAndGet()
+                context.progress(
+                    progressStart + (progressEnd - progressStart) * count / maxOf(files.size, 1),
+                    I18n.t("packsA2.packStaging.progressIndexedFile", count, files.size, path),
+                )
+            }
         }
     }
 
@@ -122,11 +128,11 @@ private class PackFileStager(
         manifest: PackManifest,
         destination: PackStagingTarget,
     ) {
-        for (file in manifest.checkedFiles.filter { it.url.isNotBlank() }) {
-            context.checkCancelled()
+        val files = manifest.checkedFiles.filter { it.url.isNotBlank() }
+        stagePackFilesConcurrently(files, concurrency, context) { file ->
             val target = packPath(destination.transaction.content, file.path)
             val actual = packPath(destination.game, file.path)
-            if (destination.repairing && actual.exists()) continue
+            if (destination.repairing && actual.exists()) return@stagePackFilesConcurrently
             download(DownloadArtifact(file.url, target, file.hash))
             require(target.isRegularFile() && digest(target).equals(file.hash, true)) {
                 I18n.t("packsA2.packStaging.verificationFailed", file.path)

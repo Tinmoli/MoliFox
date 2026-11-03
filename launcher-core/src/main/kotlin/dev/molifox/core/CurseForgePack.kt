@@ -10,6 +10,7 @@ import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.fileSize
@@ -328,16 +329,13 @@ internal suspend fun stageCurseForgePackFiles(
     context: JobContext,
     progressStart: Float = 0f,
     progressEnd: Float = 1f,
+    concurrency: Int = 1,
     download: suspend (DownloadArtifact) -> Unit,
 ) {
+    if (files.isEmpty()) return
     context.beginTransfers(files.size)
-    for ((position, file) in files.withIndex()) {
-        context.checkCancelled()
-        val span = progressEnd - progressStart
-        context.progress(
-            progressStart + span * position.toFloat() / maxOf(files.size, 1),
-            I18n.t("packsB1.curseForgePack.stagingFile", position + 1, files.size, file.path),
-        )
+    val finished = AtomicInteger()
+    stagePackFilesConcurrently(files, concurrency, context) { file ->
         val target = packPath(transaction.content, file.path)
         if (file.local != null) {
             require(file.local.isRegularFile() && !Files.isSymbolicLink(file.local)) {
@@ -350,6 +348,14 @@ internal suspend fun stageCurseForgePackFiles(
         }
         require(target.fileSize() == file.size && digest(target).equals(file.hash, true)) {
             I18n.t("packsB1.curseForgePack.hashMismatch", file.path)
+        }
+        context.transfer(target.toString(), file.size, file.size, completed = true)
+        synchronized(finished) {
+            val count = finished.incrementAndGet()
+            context.progress(
+                progressStart + (progressEnd - progressStart) * count / maxOf(files.size, 1),
+                I18n.t("packsB1.curseForgePack.stagingFile", count, files.size, file.path),
+            )
         }
     }
 }

@@ -182,8 +182,11 @@ internal abstract class ContentPackUpgradeActions(
                 prepared.selection,
                 false,
                 context,
+                concurrency = store.data.settings.downloadThreads,
             ) {
-                network.download(it)
+                network.download(it) { done, total ->
+                    context.transfer(it.target.toString(), done, total)
+                }
             }
             context.checkCancelled()
             applyPreparedUpgrade(instance, prepared, staged, snapshot, savedPack, zip, context)

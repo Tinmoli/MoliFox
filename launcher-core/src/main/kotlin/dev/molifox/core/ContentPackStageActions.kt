@@ -112,6 +112,7 @@ internal abstract class ContentPackStageActions(
             context,
             progressStart,
             progressEnd,
+            concurrency = store.data.settings.downloadThreads,
         ) {
             network.download(it) { done, total ->
                 context.transfer(it.target.toString(), done, total)
@@ -127,6 +128,7 @@ internal abstract class ContentPackStageActions(
             context,
             progressStart,
             progressEnd,
+            concurrency = store.data.settings.downloadThreads,
         ) {
             network.download(it) { done, total ->
                 context.transfer(it.target.toString(), done, total)
@@ -199,9 +201,4 @@ internal abstract class ContentPackStageActions(
     }
 
     protected fun upgradeWorkDirectory(root: Path): Path = root.resolve(".molifox-pack-upgrade-${UUID.randomUUID()}")
-
-    /**
-     * 导出对话框的顶层内容扫描：列出实例目录的直接子项并按实际文件统计数量与体积。
-     * 边扫描边发快照，界面可先显示 `…` 再逐步更新；取消收集即停止扫描。
-     */
 }
