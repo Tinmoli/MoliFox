@@ -24,35 +24,36 @@ MoliFox 是使用 Kotlin 与 Compose Multiplatform 开发的开源 Minecraft Jav
 >
 > 这个启动器的大部分内容，是我借助 AI 一点点写出来的。有些地方可能还没做好，也可能藏着 Bug，不要骂我，呜呜呜……如果发现了问题，欢迎[提交 Issue](https://github.com/Tinmoli/MoliFox/issues) 告诉我，我会慢慢改好的。谢谢你愿意使用 MoliFox 啦！
 
-## 功能
+## 主要功能
 
 | 功能 | 说明 |
 | --- | --- |
-| 实例管理 | 管理多个游戏目录，设置版本隔离、Java 和启动参数。 |
-| 游戏安装 | 安装原版及多种模组加载器，管理已有游戏版本。 |
-| 内容管理 | 搜索、下载和管理模组、资源包与光影。 |
-| 整合包与备份 | 导入、导出多种格式的整合包，备份实例。 |
-| 账户与联机 | 微软账户、离线账户、皮肤管理和多人联机。 |
-| 界面个性化 | 调整主题、背景、字体及界面外观。 |
+| 游戏与实例 | 安装游戏和模组加载器，为不同实例设置 Java、内存与启动参数。 |
+| 模组与资源 | 搜索、安装和更新模组、资源包与光影。 |
+| 整合包 | 导入、导出多种格式的整合包，按需打包资源与配置。 |
+| 存档与投影 | 备份、恢复和导入存档，整理实例中的投影文件。 |
+| 账户与皮肤 | 使用微软或离线账户，管理游戏皮肤。 |
+| 多人联机 | 创建或加入房间，查看房间与玩家状态。 |
+| 外观设置 | 自定义主题、背景、字体与背景音乐。 |
 
 ## 下载
 
-在 [GitHub Releases](https://github.com/Tinmoli/MoliFox/releases) 选择对应平台的附件：
+[**Windows x64 下载**](https://github.com/Tinmoli/MoliFox/releases/latest/download/MoliFox.exe)　[**Linux x64 下载**](https://github.com/Tinmoli/MoliFox/releases/latest/download/MoliFox.run)
 
-| 平台 | 架构 | 文件 |
-| --- | --- | --- |
-| Windows | x86_64 | `MoliFox-<版本>-windows-x86_64.exe` |
-| Linux | x86_64 | `MoliFox-<版本>-linux-x86_64.run` |
-
-- **首次运行**：需要联网准备界面依赖；之后可离线打开启动器。缺少可用 Java 时，按提示准备运行环境。
-- **数据位置**：默认保存在程序旁的 `MoliFox/`；主动添加的外部游戏目录直接使用原文件。
-- **平台范围**：当前提供 Windows、Linux 桌面版，暂不提供 macOS、Android 和 ARM 安装包。
 
 ## 反馈与贡献
 
 欢迎通过 [Issue](https://github.com/Tinmoli/MoliFox/issues) 反馈问题或提出建议，也欢迎提交 Pull Request。
 
 报告问题时，请附上启动器版本、操作系统、复现步骤，以及相关日志或截图，方便定位。
+
+## 未来计划
+
+接下来想先把现有功能做稳，把已发现的问题修好，再逐步补上 ARM、macOS 和 Android 的支持。
+
+更远一点的目标，是在 1.0 之后提供插件管理，让投影预览、存档地图管理等工具按需安装。
+
+这些目前还在规划阶段，没有确定的完成时间，实际进度以发布说明为准。
 
 ## 许可与声明
 
