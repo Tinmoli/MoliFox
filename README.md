@@ -6,7 +6,7 @@
 
 <p>
   <img alt="支持平台：Windows 与 Linux x86_64" src="https://img.shields.io/badge/Windows%20%7C%20Linux-x86__64-ec8eaa?style=flat-square" />
-  <img alt="当前版本：0.4.5" src="https://img.shields.io/badge/version-0.4.5-f2b66d?style=flat-square" />
+  <img alt="当前版本：0.4.7" src="https://img.shields.io/badge/version-0.4.7-f2b66d?style=flat-square" />
   <a href="LICENSE"><img alt="许可证：GPL-3.0-only" src="https://img.shields.io/badge/license-GPL--3.0--only-6a8caa?style=flat-square" /></a>
 </p>
 
@@ -18,7 +18,7 @@
 
 MoliFox 是使用 Kotlin 与 Compose Multiplatform 开发的开源 Minecraft Java 版启动器，支持 Windows 和 Linux x86_64。它将游戏实例、模组与整合包管理、账户和多人联机集中在同一套界面中，并提供主题、背景和字体等个性化设置。
 
-当前源码版本为 **0.4.5**。可用版本及更新内容以发布页为准。
+当前源码版本为 **0.4.7**。可用版本及更新内容以发布页为准。
 
 > **小暮绾偷偷在这里说几句话**
 >
