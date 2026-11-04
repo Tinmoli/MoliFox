@@ -162,7 +162,10 @@ fun MultiplayerScreen(
     MultiplayerRuntimeAutoDownload(backend, page, downloadRuntime)
     Column(Modifier.fillMaxSize()) {
         val agreed = settings.acceptedTermsRevision == MultiplayerPolicy.TERMS_REVISION
-        if (page.initialized && agreed) {
+        // 说明门只看「是否已同意」：initialized 只代表后端就绪。若把两者绑在一起，
+        // 下载进行中切走再切回时 initialize 会晚些才完成，已同意的用户也会被拦在
+        // 说明门里且按钮禁用；已同意时直接显示大厅，各操作由后端阶段自己把关。
+        if (agreed) {
             MultiplayerContent(backend, page, execute, onCopy, runtimeInstall)
         } else {
             MultiplayerConsentGate(page)

@@ -141,15 +141,25 @@ class PclLobbyBackend(
         runCatching {
             mutableSettings.value = settingsRepository.load()
             machineId = withContext(Dispatchers.IO) { machineIdStore.read() }
-            val status =
-                installer.install(downloadMissing = false).getOrElse { failure ->
-                    if (failure is CancellationException) throw failure
-                    logger("EasyTier local migration failed: ${failure.message}", true)
-                    withContext(Dispatchers.IO) { installer.inspect() }
-                }
-            store.update { it.copy(runtime = status) }
+            if (runtimeInstallActive()) {
+                // 下载/安装进行中时安装锁被占用：initialize 在这里排队会让页面一直停在
+                // 说明门且按钮禁用，直到下载结束。此时跳过迁移检查，运行时状态由安装
+                // 任务完成后自己写回 store（performRuntimeInstall 成功路径必写）。
+            } else {
+                val status =
+                    installer.install(downloadMissing = false).getOrElse { failure ->
+                        if (failure is CancellationException) throw failure
+                        logger("EasyTier local migration failed: ${failure.message}", true)
+                        withContext(Dispatchers.IO) { installer.inspect() }
+                    }
+                store.update { it.copy(runtime = status) }
+            }
             scanner.sync(mutableSettings.value.enabled)
         }
+
+    /** 是否有运行时下载/安装任务正在执行；initialize 用它避开被占用的安装锁。 */
+    private fun runtimeInstallActive(): Boolean =
+        synchronized(installGuard) { installTask?.isActive == true }
 
     override suspend fun inspectRuntime(): Result<CoreStatus> =
         runCatching {
