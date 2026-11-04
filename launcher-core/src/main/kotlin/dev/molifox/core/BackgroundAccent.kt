@@ -13,8 +13,8 @@ import javax.imageio.ImageIO
 import kotlin.math.ceil
 import kotlin.math.max
 
-/** 默认种子有适度蓝色彩度；无彩色图片不会让整套主题退化成灰阶。 */
-const val DEFAULT_THEME_SEED: Int = -0xad9883 // #52677D
+/** 默认种子为樱花粉（与预设 sakura 同色，保持适度彩度）；无彩色图片不会让整套主题退化成灰阶。 */
+const val DEFAULT_THEME_SEED: Int = -0x46B185 // #B94E7B
 private const val SAMPLE_EDGE = 128
 private const val MAX_IMAGE_BYTES = 12 * 1024 * 1024
 private const val MAX_IMAGE_PIXELS = 100_000_000L

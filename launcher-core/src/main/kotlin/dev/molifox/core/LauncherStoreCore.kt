@@ -178,7 +178,7 @@ internal class LauncherStoreCore(
         curseForgeBaseFallback = curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
         return settings.copy(
             accentColor = normalizedAccentColor(settings.accentColor),
-            // 旧配置保留自动/手动选择；新安装才默认使用简洁白配色。
+            // 旧配置保留自动/手动选择；新安装才默认使用樱花粉配色。
             themeColorSource = raw.string("themeColorSource").takeIf { it in setOf("default", "background", "manual") }
                 ?: if (settings.automaticAccent) "background" else "manual",
             autoCheckUpdates = if (raw.has("autoCheckUpdates")) settings.autoCheckUpdates else true,
