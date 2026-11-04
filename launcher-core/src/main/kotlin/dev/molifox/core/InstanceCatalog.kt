@@ -426,7 +426,7 @@ private fun buildProfile(
                 ?: json.string("releaseTime").ifBlank { parentProfile?.time.orEmpty() },
         // 真实版本号优先；目录名/整合包标识（TwilightMC-26.3v1.0）解析成 26.3。
         // 候选链逐个做版本号校验，全都提不出真实版本时保持为空（界面显示「版本未知」），
-        // 不能把自定义 id（如整合包名「香草纪元」）原样当成游戏版本。
+        // 不能把自定义整合包 id 原样当成游戏版本。
         gameVersion =
             listOf(json.string("gameVersion"), parentProfile?.gameVersion.orEmpty(), parent, id)
                 .asSequence()
