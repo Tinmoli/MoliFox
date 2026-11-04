@@ -154,7 +154,10 @@ private fun CurrentInstallSection(
 ) {
     val strings = LocalStrings.current
     SettingsSection(strings.t("pages.instance.install.current.title")) {
-        SettingRow(strings.t("pages.instance.install.current.gameVersion"), instance.gameVersion) {
+        SettingRow(
+            strings.t("pages.instance.install.current.gameVersion"),
+            instance.gameVersion.ifBlank { strings.t("pages.instance.meta.versionUnknown") },
+        ) {
             InstanceArtwork(instance, actions, Modifier.size(24.dp))
         }
         SettingRow(

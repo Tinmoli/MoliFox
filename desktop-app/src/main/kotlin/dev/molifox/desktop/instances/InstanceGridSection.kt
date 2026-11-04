@@ -223,7 +223,9 @@ private fun InstanceCardSubtitle(instance: GameInstance) {
         if (instance.broken) {
             strings.t("pages.instance.card.broken", instance.brokenReason)
         } else {
-            instance.gameVersion + " · " + instance.loader.title
+            // 自定义整合包 id 提不出真实版本时显示「版本未知」，不输出空段。
+            instance.gameVersion.ifBlank { strings.t("pages.instance.meta.versionUnknown") } +
+                " · " + instance.loader.title
         },
         fontSize = 12.sp,
         color =

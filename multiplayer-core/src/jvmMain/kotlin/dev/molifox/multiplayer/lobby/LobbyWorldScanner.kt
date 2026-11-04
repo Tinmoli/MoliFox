@@ -32,18 +32,17 @@ internal class LobbyWorldScanner(
     private var discoveryJob: Job? = null
     private var verifierJob: Job? = null
 
-    /** 重启发现会话：先关闭旧的，再启动新的；失败只记录技术日志。 */
-    fun start() {
+    /** 重启发现会话：先关闭旧的，再启动新的；失败返回原因（调用方决定是否提示用户）。 */
+    fun start(): Result<Unit> {
         stop()
         val created =
             factory.create { failure ->
                 logger(I18n.t("multiplayerB.lobbyWorldScanner.discoveryFailed", failure.message), true)
             }
-        created
-            .start()
-            .onFailure { failure ->
-                logger(I18n.t("multiplayerB.lobbyWorldScanner.listenFailed", failure.message), true)
-            }
+        val started = created.start()
+        started.onFailure { failure ->
+            logger(I18n.t("multiplayerB.lobbyWorldScanner.listenFailed", failure.message), true)
+        }
         discovery = created
         discoveryJob =
             scope.launch {
@@ -60,6 +59,7 @@ internal class LobbyWorldScanner(
                     onPruned(inspected, alive)
                 }
             }
+        return started
     }
 
     /** 按联机开关同步扫描状态；已关闭的发现不会重新启动。 */

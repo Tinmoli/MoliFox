@@ -218,7 +218,8 @@ internal fun ColumnScope.CurrentGameCardBody(
             }
             if (instance != null) {
                 Text(
-                    instance.gameVersion +
+                    // 自定义整合包 id（如「香草纪元」）提不出真实版本时保持为空，显示「版本未知」。
+                    instance.gameVersion.ifBlank { strings.t("pages.instance.meta.versionUnknown") } +
                         " · " +
                         instance.loader.title +
                         " · " +

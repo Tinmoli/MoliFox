@@ -201,21 +201,36 @@ class PclLobbyBackend(
 
     override suspend fun refreshWorlds(): Result<Unit> =
         runCatching {
+            if (closed) {
+                throw IOException(I18n.t("deskI.multiplayer.closed"))
+            }
             if (store.current.connected || store.current.busy) {
                 throw IOException(I18n.t("multiplayer.pclLobbyBackend.2"))
             }
-            store.update {
-                it.copy(
-                    phase = LobbyPhase.DiscoveringWorld,
-                    worlds = emptyList(),
-                    error = null,
-                )
+            // 调用方协程随页面切换被取消：发现会话从启动到收尾必须整体完成，
+            // 否则阶段会永久停在「扫描中」，把创建房间/刷新按钮全部锁死。
+            withContext(NonCancellable) {
+                store.update {
+                    it.copy(
+                        phase = LobbyPhase.DiscoveringWorld,
+                        worlds = emptyList(),
+                        error = null,
+                    )
+                }
+                try {
+                    val started = scanner.start()
+                    started.exceptionOrNull()?.let { failure ->
+                        // 4445 被占用等监听失败此前只写技术日志，界面只会看到“扫描不到世界”。
+                        store.fail(I18n.t("multiplayerB.lobbyWorldScanner.listenFailed", failure.message))
+                        throw failure
+                    }
+                    withTimeoutOrNull(DISCOVERY_SETTLE_TIMEOUT_MILLIS) {
+                        store.state.first { it.worlds.isNotEmpty() }
+                    }
+                } finally {
+                    store.update { it.copy(phase = LobbyPhase.Idle) }
+                }
             }
-            scanner.start()
-            withTimeoutOrNull(DISCOVERY_SETTLE_TIMEOUT_MILLIS) {
-                store.state.first { it.worlds.isNotEmpty() }
-            }
-            store.update { it.copy(phase = LobbyPhase.Idle) }
         }
 
     override suspend fun host(worldPort: Int?): Result<Unit> =

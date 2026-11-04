@@ -307,7 +307,7 @@ private fun InstanceDetailsHeader(
                 // 加载器名与版本号都属于产品名，不翻译；由占位符拼成一行摘要。
                 strings.t(
                     "pages.instance.details.summary",
-                    instance.gameVersion,
+                    instance.gameVersion.ifBlank { strings.t("pages.instance.meta.versionUnknown") },
                     if (instance.loaderVersion.isBlank()) {
                         instance.loader.title
                     } else {

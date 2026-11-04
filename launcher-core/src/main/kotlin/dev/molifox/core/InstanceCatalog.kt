@@ -13,6 +13,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.zip.ZipFile
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.getLastModifiedTime
@@ -23,6 +24,9 @@ import kotlin.io.path.name
 import kotlin.io.path.reader
 
 private const val MAX_JSON_BYTES = 8L * 1024 * 1024
+
+/** 客户端 JAR 内嵌的版本描述文件；vanilla jar 一直带有，id 字段即真实游戏版本。 */
+private const val JAR_VERSION_ENTRY = "version.json"
 
 /** 一个已登记的游戏根及其界面目录标识；null 表示默认游戏根（`settings.gameRoot`）。 */
 internal data class InstanceRoot(
@@ -122,10 +126,9 @@ internal object InstanceCatalog {
             // 目录名就是实例 id；不跟随 ../ 或绝对路径。
             val name = folder.name
             if (name.isBlank() || name == "." || name == "..") return@mapNotNull null
-            // 完全空白的目录不算版本：安装器会先建目录再写 JSON。
-            val empty =
-                runCatching { folder.listDirectoryEntries().isEmpty() }.getOrDefault(false)
-            if (empty && !folder.resolve("$name.json").exists()) return@mapNotNull null
+            // 目录里没有任何版本 JSON 就不是版本目录：可能是安装器先建的空目录，
+            // 或升级后残留的旧版 jar（旧版没有 JSON 本来就无法启动），按约定不识别。
+            if (versionJsonFile(folder, name) == null) return@mapNotNull null
             runCatching { readInstance(root, name) }
                 .getOrElse { error ->
                     brokenInstance(
@@ -158,13 +161,16 @@ private fun readInstance(
 ): GameInstance {
     val cache = mutableMapOf<String, Profile>()
     val profile = readProfile(root.path, name, cache, mutableSetOf())
-    val jar =
-        root.path
-            .resolve("versions")
-            .resolve(name)
-            .resolve("$name.jar")
-    val installed = jar.isRegularFile() || profile.parentJar
     val versionFolder = root.path.resolve("versions").resolve(name)
+    // JAR 优先与选中的版本 JSON 同名（HMCL 规则）：文件夹被单独改名后 JSON/JAR 仍保持
+    // 原名时靠它找到；同名 JAR 不存在再按目录名兜底。
+    val jarNames = listOf(profile.jsonName, name).distinct()
+    val jar =
+        jarNames
+            .asSequence()
+            .map { versionFolder.resolve("$it.jar") }
+            .firstOrNull { it.isRegularFile() }
+    val installed = jar != null || profile.parentJar
     val gamePath = if (versionFolder.resolve("mods").isDirectory()) versionFolder else root.path
     return GameInstance(
         id = InstanceCatalog.instanceId(root.directoryId, name),
@@ -195,6 +201,8 @@ private data class Profile(
     val loader: LoaderType,
     val loaderVersion: String,
     val managed: Boolean,
+    /** 选中的版本 JSON 文件名（不含扩展名）；JAR 优先按它配对，目录名只作兜底。 */
+    val jsonName: String,
 )
 
 /**
@@ -209,11 +217,13 @@ private fun readProfile(
     name: String,
     cache: MutableMap<String, Profile>,
     chain: MutableSet<String>,
+    /** 合并布局的父版本目录：父版本 JSON 位于子版本目录内时传入该目录。 */
+    localFolder: Path? = null,
 ): Profile {
     cache[name]?.let { return it }
     require(chain.add(name)) { I18n.t("instA1.catalog.cyclicInheritance", name) }
     try {
-        val folder = root.resolve("versions").resolve(name)
+        val folder = localFolder ?: root.resolve("versions").resolve(name)
         require(folder.isDirectory()) { I18n.t("instA1.catalog.versionFolderMissing", name) }
         val file = versionJsonFile(folder, name)
         require(file != null) { I18n.t("instA1.catalog.versionFileMissing", name) }
@@ -225,13 +235,18 @@ private fun readProfile(
         val parent = json.string("inheritsFrom").ifBlank { json.string("jar") }
         val parentProfile =
             if (parent.isNotBlank() && parent != name && parent != id) {
-                // 父版本所在目录缺失或损坏只影响继承链，不推翻本版本的识别结果。
-                runCatching { readProfile(root, parent, cache, chain) }.getOrNull()
+                resolveParentProfile(root, folder, parent, cache, chain)
             } else {
                 null
             }
-        val inheritance = resolveProfileInheritance(root, id, parent, parentProfile, json)
-        val profile = buildProfile(json, inheritance)
+        val inheritance = resolveProfileInheritance(root, folder, id, parent, parentProfile, json)
+        var profile = buildProfile(json, inheritance, file.name.substringBeforeLast('.'))
+        // JSON 继承链提不出真实版本时，从客户端 JAR 内嵌的 version.json 兜底；修正后的
+        // 结果一并进缓存，继承本版本作父版本的子版本同样受益。
+        if (profile.gameVersion.isBlank()) {
+            val fromJar = minecraftVersionFromJar(folder, profile.jsonName, name)
+            if (fromJar.isNotBlank()) profile = profile.copy(gameVersion = fromJar)
+        }
         cache[name] = profile
         return profile
     } finally {
@@ -239,21 +254,96 @@ private fun readProfile(
     }
 }
 
-/** 版本 JSON 的位置：优先同名文件，其次目录里唯一的 JSON。 */
+/**
+ * 解析 `inheritsFrom` 父版本：标准布局 `versions/<parent>/` 优先；缺失时在子版本目录里
+ * 找 `<parent>.json` 兜底——部分整合包/启动器把原版与加载器版本写进同一个目录
+ * （如 `1.21.4.json` 与 `1.21.4-Fabric x.json` 同层）。两边都没有才允许继承断链。
+ */
+private fun resolveParentProfile(
+    root: Path,
+    folder: Path,
+    parent: String,
+    cache: MutableMap<String, Profile>,
+    chain: MutableSet<String>,
+): Profile? =
+    runCatching { readProfile(root, parent, cache, chain) }.getOrElse {
+        val localJson = folder.resolve("$parent.json")
+        if (localJson.isRegularFile()) {
+            runCatching { readProfile(root, parent, cache, chain, folder) }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+/**
+ * 从客户端 JAR 内嵌的 version.json 读取游戏版本（HMCL 同款兜底）：整合包把 JSON 的 id 改成
+ * 自定义名且没有继承链时，JAR 本身仍带着真实版本号。只读取单个条目，不扫描整个 JAR。
+ */
+private fun minecraftVersionFromJar(
+    folder: Path,
+    jsonName: String,
+    name: String,
+): String =
+    listOf(jsonName, name)
+        .distinct()
+        .asSequence()
+        .map { folder.resolve("$it.jar") }
+        .filter { it.isRegularFile() }
+        .mapNotNull { jar ->
+            runCatching {
+                ZipFile(jar.toFile()).use { archive ->
+                    val entry = archive.getEntry(JAR_VERSION_ENTRY) ?: return@runCatching null
+                    val parsed = archive.getInputStream(entry).use { stream ->
+                        JsonParser.parseReader(stream.reader())
+                    }
+                    if (!parsed.isJsonObject) return@runCatching null
+                    minecraftVersionTag(parsed.asJsonObject.string("id"))
+                }
+            }.getOrNull()
+        }.firstOrNull().orEmpty()
+
+/**
+ * 版本 JSON 的位置：优先同名文件；缺失时目录里只有一个 JSON 就用它；有多个时按文件名序
+ * 挑第一个像版本清单的（HMCL 同款规则）。这样文件夹改名、JSON 以版本 id 命名、目录里混入
+ * 普通 JSON 都不会让识别失效。
+ */
 private fun versionJsonFile(
     folder: Path,
     name: String,
 ): Path? {
     val exact = folder.resolve("$name.json")
     if (exact.isRegularFile()) return exact
-    val jsonFiles =
-        runCatching {
-            folder
-                .listDirectoryEntries()
-                .filter { it.isRegularFile() && it.name.endsWith(".json", true) }
-        }.getOrDefault(emptyList())
-    return jsonFiles.singleOrNull()
+    val jsonFiles = jsonFilesIn(folder)
+    return when (jsonFiles.size) {
+        0 -> null
+        1 -> jsonFiles.first()
+        else -> jsonFiles.firstOrNull { looksLikeVersionManifest(it) }
+    }
 }
+
+private fun jsonFilesIn(folder: Path): List<Path> =
+    runCatching {
+        folder
+            .listDirectoryEntries()
+            .filter { it.isRegularFile() && it.name.endsWith(".json", true) }
+            .sortedBy { it.name }
+    }.getOrDefault(emptyList())
+
+/**
+ * 版本清单特征：主类、继承声明、jar 指向或库列表；模组写出的普通配置 JSON 不满足这些，
+ * 超过大小上限的文件也不参与挑选（正式读取时会以相同上限拒绝）。
+ */
+private fun looksLikeVersionManifest(file: Path): Boolean =
+    runCatching {
+        if (file.fileSize() > MAX_JSON_BYTES) return@runCatching false
+        val parsed = Files.newBufferedReader(file).use { reader -> JsonParser.parseReader(reader) }
+        if (!parsed.isJsonObject) return@runCatching false
+        val json = parsed.asJsonObject
+        json.string("mainClass").isNotBlank() ||
+            json.string("inheritsFrom").isNotBlank() ||
+            json.string("jar").isNotBlank() ||
+            (json.has("libraries") && json.get("libraries").isJsonArray)
+    }.getOrDefault(false)
 
 private fun brokenInstance(
     root: InstanceRoot,
@@ -321,6 +411,7 @@ private data class ProfileInheritance(
 private fun buildProfile(
     json: JsonObject,
     inheritance: ProfileInheritance,
+    jsonName: String,
 ): Profile {
     val id = inheritance.id
     val parent = inheritance.parent
@@ -333,24 +424,24 @@ private fun buildProfile(
         time =
             json.string("time").takeIf { it.isNotBlank() }
                 ?: json.string("releaseTime").ifBlank { parentProfile?.time.orEmpty() },
-        // 真实版本号优先；目录名/整合包标识（TwilightMC-26.3v1.0）解析成 26.3，
-        // 否则按版本筛选会发给服务端一个不存在的版本、静默得到 0 条结果。
+        // 真实版本号优先；目录名/整合包标识（TwilightMC-26.3v1.0）解析成 26.3。
+        // 候选链逐个做版本号校验，全都提不出真实版本时保持为空（界面显示「版本未知」），
+        // 不能把自定义 id（如整合包名「香草纪元」）原样当成游戏版本。
         gameVersion =
-            json.string("gameVersion").ifBlank {
-                listOf(parentProfile?.gameVersion.orEmpty(), parent, id)
-                    .asSequence()
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .map { candidate -> minecraftVersionTag(candidate) ?: candidate }
-                    .firstOrNull()
-                    .orEmpty()
-            },
+            listOf(json.string("gameVersion"), parentProfile?.gameVersion.orEmpty(), parent, id)
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .map { candidate -> minecraftVersionTag(candidate) }
+                .firstOrNull { it != null }
+                .orEmpty(),
         parent = parent,
         parentJar = parentJar,
         loader = loader.first,
         loaderVersion = loader.second,
         // 只认本目录自己的标记；外部版本即使继承自有标记的基础目录也保持 external。
         managed = json.boolean("molifoxManaged"),
+        jsonName = jsonName,
     )
 }
 
@@ -361,15 +452,40 @@ private fun appendVersionSignature(
     val name = child.name
     text.append(name)
     if (child.isDirectory()) {
-        val json = versionJsonFile(child, name) ?: child.resolve("$name.json")
+        // 配对规则依赖目录里全部 JSON/JAR 的文件名与内容：手动改名、混入普通 JSON、
+        // 补删残留 JAR 都要改变签名，下一次可见时才会重扫。
+        val entries =
+            runCatching { child.listDirectoryEntries() }.getOrDefault(emptyList())
+        val jsons =
+            entries
+                .filter { it.isRegularFile() && it.name.endsWith(".json", true) }
+                .sortedBy { it.name }
+        val jars =
+            entries
+                .filter { it.isRegularFile() && it.name.endsWith(".jar", true) }
+                .sortedBy { it.name }
         text.append('|')
-        appendFileSignature(text, json, "no-json")
-        // 手动补上/移除同名 JAR 也要在下一次可见时反映为已安装/待修复。
-        val jar = child.resolve("$name.jar")
+        appendFileSignatures(text, jsons, "no-json")
         text.append('|')
-        appendFileSignature(text, jar, "no-jar")
+        appendFileSignatures(text, jars, "no-jar")
     }
     text.append('\n')
+}
+
+private fun appendFileSignatures(
+    text: StringBuilder,
+    files: List<Path>,
+    missing: String,
+) {
+    if (files.isEmpty()) {
+        text.append(missing)
+        return
+    }
+    files.forEachIndexed { index, file ->
+        if (index > 0) text.append(',')
+        text.append(file.name).append(':')
+        appendFileSignature(text, file, "missing")
+    }
 }
 
 private fun appendFileSignature(
@@ -391,6 +507,7 @@ private fun appendFileSignature(
 
 private fun resolveProfileInheritance(
     root: Path,
+    folder: Path,
     id: String,
     parent: String,
     parentProfile: Profile?,
@@ -407,6 +524,7 @@ private fun resolveProfileInheritance(
         } else {
             parentProfile?.let { it.loader to it.loaderVersion } ?: ownLoader
         }
+    // 父版本 JAR：标准布局在自己的 versions/<parent>/ 里；合并布局与子版本同目录。
     val parentJar =
         parentProfile != null &&
             (
@@ -416,6 +534,7 @@ private fun resolveProfileInheritance(
                     ).resolve(parent)
                     .resolve("$parent.jar")
                     .isRegularFile() ||
+                    folder.resolve("$parent.jar").isRegularFile() ||
                     parentProfile.parentJar
             )
     return ProfileInheritance(id, parent, parentProfile, parentJar, loader)

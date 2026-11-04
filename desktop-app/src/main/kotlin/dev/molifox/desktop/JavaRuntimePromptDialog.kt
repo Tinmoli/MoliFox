@@ -67,7 +67,8 @@ internal fun JavaRuntimePromptDialog(
     fun dismiss() = actions.controller.dismissJavaPrompt(rememberDismiss)
     Modal(
         strings.t("settings.java.prompt.title"),
-        "${prompt.instanceName} · ${prompt.gameVersion}",
+        "${prompt.instanceName} · " +
+            prompt.gameVersion.ifBlank { strings.t("pages.instance.meta.versionUnknown") },
         width = 620.dp,
         onDismiss = { dismiss() },
     ) {
