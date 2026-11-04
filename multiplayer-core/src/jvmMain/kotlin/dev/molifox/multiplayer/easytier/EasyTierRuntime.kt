@@ -179,6 +179,10 @@ class EasyTierRuntime(
     private var stopping = false
     private var recentOutput = ""
 
+    /** 最近一次进程退出码；用于把「秒退」翻译成可诊断的原因（如缺 DLL 的 0xC0000135）。 */
+    @Volatile
+    private var lastExitCode: Int? = null
+
     @Volatile
     private var unexpectedExit: ((Int, String) -> Unit)? = null
 
@@ -219,6 +223,7 @@ class EasyTierRuntime(
             } else {
                 stopping = false
                 recentOutput = ""
+                lastExitCode = null
                 portAllocator.allocate().also { rpcPort = it }
             }
         }
@@ -300,7 +305,10 @@ class EasyTierRuntime(
             delay(cliReadyIntervalMillis)
         }
         return if (exited) {
-            Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.3", tailOutput())))
+            // 退出码能直接区分缺运行库（0xC0000135 等 Windows 加载错误）与被安全软件拦截。
+            Result.failure(
+                IOException(I18n.t("multiplayer.easyTierRuntime.3", lastExitCode ?: -1, tailOutput())),
+            )
         } else {
             Result.failure(IOException(I18n.t("multiplayer.easyTierRuntime.4", cliReadyTimeoutMillis)))
         }
@@ -308,6 +316,7 @@ class EasyTierRuntime(
 
     /** 退出回调：主动停止时静默，意外退出时带上最近日志通知上层。 */
     private fun onProcessExit(code: Int) {
+        lastExitCode = code
         val unexpected =
             synchronized(lock) {
                 if (!stopping && handle != null) unexpectedExit else null

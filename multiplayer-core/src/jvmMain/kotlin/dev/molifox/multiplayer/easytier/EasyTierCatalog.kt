@@ -16,10 +16,15 @@ data class EasyTierPackage(
     val cliFile: String,
     /** 与官方文件完全相同的镜像地址；下载器会先测速再决定顺序。 */
     val mirrors: List<String> = emptyList(),
+    /**
+     * 主程序之外必须随包分发的官方文件；Windows 的 easytier-core 静态导入
+     * Packet.dll（缺它启动即退出 0xC0000135 且零输出），wintun.dll 供非 no-tun 模式使用。
+     */
+    val extraFiles: List<String> = emptyList(),
 ) {
     /** 解包并剥离 [rootPrefix] 后必须存在的文件；第一个是主程序。 */
     val requiredFiles: List<String>
-        get() = listOf(coreFile, cliFile)
+        get() = listOf(coreFile, cliFile) + extraFiles
 }
 
 /**
@@ -56,6 +61,7 @@ object EasyTierCatalog {
                     rootPrefix = "easytier-$WINDOWS_X86_64",
                     coreFile = "easytier-core.exe",
                     cliFile = "easytier-cli.exe",
+                    extraFiles = listOf("Packet.dll", "wintun.dll"),
                     mirrors =
                         mirrorsOf(
                             "$RELEASE_BASE/v$VERSION/easytier-$WINDOWS_X86_64-v$VERSION.zip",
