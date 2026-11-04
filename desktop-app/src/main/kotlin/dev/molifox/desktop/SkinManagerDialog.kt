@@ -28,7 +28,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +50,13 @@ import dev.molifox.core.AccountType
 import dev.molifox.core.LibrarySkin
 import dev.molifox.core.SkinService
 import dev.molifox.core.SkinVariant
+import dev.molifox.core.MinecraftCape
+import dev.molifox.core.localizedName
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import javax.imageio.ImageIO
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /** Shared account skin tools stay on the start page, preserving the four main navigation items. */
@@ -74,7 +81,12 @@ fun SkinManagerDialog(
     var currentVariant by
         remember(account.id, account.skinVariant) { mutableStateOf(account.skinVariant) }
     var overlays by remember { mutableStateOf(true) }
+    var capeEnabled by remember(account.id) { mutableStateOf(true) }
+    var capes by remember(account.id) { mutableStateOf<List<MinecraftCape>>(emptyList()) }
+    var capeProfileLoaded by remember(account.id) { mutableStateOf(false) }
+    var capeProfileLoading by remember(account.id) { mutableStateOf(account.type == AccountType.Microsoft) }
     var confirmUpload by remember { mutableStateOf<LibrarySkin?>(null) }
+    var authlibUploadSupported by remember(account.id) { mutableStateOf<Boolean?>(null) }
     var confirmRemove by remember { mutableStateOf<LibrarySkin?>(null) }
     val selected = entries.find { it.id == selectedId }
 
@@ -102,6 +114,38 @@ fun SkinManagerDialog(
         resourceAttempt { service.library.list() }
             .onSuccess { entries = it }
             .onFailure { failure -> error = failure.message }
+    }
+    LaunchedEffect(account.id) {
+        if (account.type == AccountType.Authlib) {
+            resourceAttempt { service.supportsAuthlibSkinUpload(account.id) }
+                .onSuccess { authlibUploadSupported = it }
+                .onFailure { error = skinErrorMessage(it) }
+        }
+        if (account.type == AccountType.Microsoft) {
+            try {
+                resourceAttempt { service.refreshProfile(account.id) }
+                    .onSuccess {
+                        capes = it.capes
+                        capeProfileLoaded = true
+                        currentVariant = it.variant
+                    }
+                    .onFailure { error = skinErrorMessage(it) }
+            } finally {
+                capeProfileLoading = false
+            }
+        }
+    }
+    val activeCape = capes.firstOrNull { it.active }
+    val capeImage by produceState<BufferedImage?>(null, activeCape, capeEnabled) {
+        value = null
+        if (capeEnabled && activeCape != null) {
+            resourceAttempt {
+                val bytes = service.capeTexture(activeCape)
+                withContext(Dispatchers.IO) {
+                    ImageIO.read(ByteArrayInputStream(bytes))?.takeIf { it.width == 64 && it.height == 32 }
+                }
+            }.onSuccess { value = it }.onFailure { error = skinErrorMessage(it) }
+        }
     }
     var textureError by remember { mutableStateOf<String?>(null) }
     val image by
@@ -138,6 +182,9 @@ fun SkinManagerDialog(
                 overlays = overlays,
                 onOverlaysChange = { overlays = it },
                 textureError = textureError,
+                cape = capeImage,
+                capeEnabled = capeEnabled,
+                onCapePreviewChange = if (account.type == AccountType.Microsoft) { { capeEnabled = it } } else null,
             )
             SkinLibraryPane(
                 entries = entries,
@@ -146,6 +193,25 @@ fun SkinManagerDialog(
                 onSelect = { selectedId = it },
                 onRemove = { confirmRemove = it },
             )
+        }
+        if (account.type == AccountType.Microsoft) {
+            SettingRow(strings.t("dialogs.skin.cape.title")) {
+                if (capeProfileLoaded) {
+                    SimpleDropdown(
+                        activeCape?.id.orEmpty(),
+                        listOf("" to strings.t("dialogs.skin.cape.none")) + capes.map { it.id to it.localizedName(strings) },
+                        { id ->
+                            if (id != activeCape?.id.orEmpty()) act {
+                                capes = service.changeCape(account.id, id.takeIf { it.isNotBlank() }).capes
+                            }
+                        },
+                        Modifier.width(200.dp),
+                        enabled = !busy && !capeProfileLoading,
+                    )
+                } else {
+                    MutedText(strings.t(if (capeProfileLoading) "dialogs.skin.cape.loading" else "dialogs.skin.cape.notLoaded"))
+                }
+            }
         }
         SkinImportRow(
             name = importName,
@@ -178,18 +244,31 @@ fun SkinManagerDialog(
             }
             if (account.type == AccountType.Microsoft) {
                 MicrosoftSkinActions(
-                    busy = busy,
+                    busy = busy || capeProfileLoading,
                     selected = selected,
                     onRefreshProfile = {
                         act(refreshAvatar = true) {
                             val profile = service.refreshProfile(account.id)
                             currentVariant = profile.variant
+                            capes = profile.capes
+                            capeProfileLoaded = true
                             selectedId = null
                             message = strings.t("dialogs.skin.profileRefreshed")
                         }
                     },
                     onUpload = { confirmUpload = selected },
                 )
+            } else if (account.type == AccountType.Authlib) {
+                if (authlibUploadSupported == true) {
+                    PrimaryButton(
+                        strings.t("dialogs.skin.site.upload"),
+                        Icons.Outlined.CloudUpload,
+                        enabled = !busy && selected != null,
+                        onClick = { confirmUpload = selected },
+                    )
+                } else if (authlibUploadSupported == false) {
+                    MutedText(strings.t("dialogs.skin.site.unsupported"))
+                }
             } else {
                 OfflineSkinActions(
                     account = account,
@@ -216,7 +295,7 @@ fun SkinManagerDialog(
     confirmUpload?.let { entry ->
         Modal(
             strings.t("dialogs.skin.uploadTitle"),
-            strings.t("dialogs.skin.uploadMessage", account.name),
+            strings.t(if (account.type == AccountType.Authlib) "dialogs.skin.site.confirm" else "dialogs.skin.uploadMessage", account.name),
             onDismiss = { confirmUpload = null },
         ) {
             Text(strings.t("dialogs.skin.uploadConfirm", entry.name, entry.variant.title))
@@ -225,10 +304,16 @@ fun SkinManagerDialog(
                 onConfirm = {
                     confirmUpload = null
                     act(refreshAvatar = true) {
-                        val result = service.upload(account.id, entry.id)
-                        selectedId = null
-                        currentVariant = result.variant
-                        message = uploadResultMessage(result.textureUrl)
+                        if (account.type == AccountType.Authlib) {
+                            service.uploadAuthlibSkin(account.id, entry.id)
+                            currentVariant = entry.variant
+                            message = strings.t("dialogs.skin.site.uploaded")
+                        } else {
+                            val result = service.upload(account.id, entry.id)
+                            selectedId = null
+                            currentVariant = result.variant
+                            message = uploadResultMessage(result.textureUrl)
+                        }
                     }
                 },
                 onCancel = { confirmUpload = null },
@@ -350,6 +435,9 @@ private fun SkinPreviewPane(
     overlays: Boolean,
     onOverlaysChange: (Boolean) -> Unit,
     textureError: String?,
+    cape: BufferedImage?,
+    capeEnabled: Boolean,
+    onCapePreviewChange: ((Boolean) -> Unit)?,
 ) {
     val strings = LocalStrings.current
     Column(Modifier.width(180.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -365,6 +453,7 @@ private fun SkinPreviewPane(
                 variant,
                 overlays,
                 Modifier.fillMaxSize().padding(12.dp),
+                cape = cape,
             )
         }
         textureError?.let {
@@ -374,12 +463,16 @@ private fun SkinPreviewPane(
                 fontSize = 11.sp,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(strings.t("dialogs.skin.dragRotate"), fontSize = 11.sp)
-            Spacer(Modifier.width(10.dp))
-            CompactSwitch(overlays, onOverlaysChange)
-            Spacer(Modifier.width(4.dp))
+        Text(strings.t("dialogs.skin.dragRotate"), fontSize = 11.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(strings.t("dialogs.skin.outerLayer"), fontSize = 11.sp)
+            CompactSwitch(overlays, onOverlaysChange)
+        }
+        onCapePreviewChange?.let { onChange ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(strings.t("dialogs.skin.cape.preview"), fontSize = 11.sp)
+                CompactSwitch(capeEnabled, onChange)
+            }
         }
     }
 }
@@ -494,4 +587,17 @@ private fun SkinDialogStatus(
 }
 
 /** 操作失败的提示：服务层通常带可读文案，缺失时给通用提示。 */
-private fun skinErrorMessage(failure: Throwable): String = failure.message ?: tr("dialogs.skin.failed")
+private fun skinErrorMessage(failure: Throwable): String {
+    java.util.logging.Logger.getLogger("MoliFox.skin").warning("Skin operation: ${failure.javaClass.simpleName}: ${failure.message}")
+    return when (failure) {
+        is dev.molifox.core.ServiceHttpException -> tr("dialogs.skin.httpFailed", failure.statusCode,
+            tr(when (failure.statusCode) {
+                401 -> "dialogs.skin.http.auth"
+                403 -> "dialogs.skin.http.forbidden"
+                429 -> "dialogs.skin.http.rateLimited"
+                else -> "dialogs.skin.http.service"
+            }))
+        is java.io.IOException -> tr("dialogs.skin.networkFailed")
+        else -> failure.message ?: tr("dialogs.skin.failed")
+    }
+}

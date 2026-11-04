@@ -18,7 +18,7 @@ import java.util.UUID
 import kotlin.jvm.Transient
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
-const val LAUNCHER_VERSION = "0.4.5"
+const val LAUNCHER_VERSION = "0.4.6"
 
 enum class LoaderType {
     Vanilla,
@@ -200,6 +200,9 @@ data class LauncherSettings(
     val uiScale: Float = 1f,
     val backgroundPath: String = "",
     val backgroundRevision: Long = 0,
+    /** null 沿用旧通用背景；显式 default/none 分别表示内置图和纯色。 */
+    val lightBackgroundPath: String? = null,
+    val darkBackgroundPath: String? = null,
     /**
      * 用户自定义的左上角品牌图标：只替换主窗口标题栏左侧的品牌标识。
      * 为空表示使用内置图标；文件副本保存在 MoliFox/appearance/branding，标题栏、任务栏与准备窗口仍用内置图标。
@@ -225,6 +228,9 @@ data class LauncherSettings(
     val pages: PagePreferences = PagePreferences(),
     /** 主题颜色：预设键（sakura/ocean/mint/amber/lavender/graphite）或 #RRGGBB 自定义。 */
     val accentColor: String = "sakura",
+    val automaticAccent: Boolean = false,
+    /** 配色来源与手动种子分开保存，切回手动时不会丢失用户选色。 */
+    val themeColorSource: String = "default",
     /** 关闭后页面切换与提示不使用过渡动画。 */
     val animationsEnabled: Boolean = true,
     /** 标题栏半透明（无需玻璃效果也生效）。 */
@@ -722,6 +728,8 @@ data class GameCredentials(
     val skinVariant: SkinVariant = SkinVariant.Classic,
     /** 非空表示外置认证服务器（authlib-injector）账户：启动时注入对应的 javaagent 参数。 */
     val authlibServer: String = "",
+    /** 本次官方认证已读取的披风；仅随运行凭据传递，不写入配置。null 表示尚未读取。 */
+    val capes: List<MinecraftCape>? = null,
 )
 
 interface PlatformServices {

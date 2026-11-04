@@ -42,7 +42,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -513,7 +513,7 @@ private fun FrameWindowScope.LauncherRoot(
     onExit: () -> Unit,
 ) {
     val strings = LocalStrings.current
-    MoliTheme(launcherState.data.settings) {
+    MoliTheme(launcherState.data.settings, actions.controller.appearance) {
         if (actions.agreementOpen) {
             // 阅读时只组合正文，菜单、弹窗与拖放入口均不挂载在下层。
             AgreementViewer(onClose = { run { actions.agreementOpen = false } })
@@ -661,11 +661,29 @@ fun MoliApp(
                     current != null -> "instance:" + current.id
                     else -> "page:" + navigation.page.name
                 }
-            // 120ms 淡入 + 4dp 上移；关闭动画时直接呈现，不做过渡。
-            if (LocalReducedMotion.current) {
+            // 保持同一组合位置，开关动画只改变过渡，不能销毁当前设置页和滚动状态。
+            val reducedMotion = LocalReducedMotion.current
+            val shift = with(LocalDensity.current) { 4.dp.roundToPx() }
+            AnimatedContent(
+                targetState = target,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    if (reducedMotion) {
+                        androidx.compose.animation.EnterTransition.None togetherWith
+                            androidx.compose.animation.ExitTransition.None
+                    } else {
+                        (
+                            fadeIn(tween(Motion.FAST)) +
+                                slideInVertically(tween(Motion.FAST)) { shift }
+                        ) togetherWith
+                            fadeOut(tween(Motion.FAST))
+                    }
+                },
+                label = "content",
+            ) { stateKey ->
                 Column(Modifier.fillMaxSize()) {
                     LauncherContent(
-                        targetKey = target,
+                        targetKey = stateKey,
                         state = state,
                         actions = actions,
                         fallbackPage = navigation.page,
@@ -673,32 +691,6 @@ fun MoliApp(
                         onTidyReport = { tidyReport = it },
                         onMoveTarget = { movingInstance = it },
                     )
-                }
-            } else {
-                val shift = with(LocalDensity.current) { 4.dp.roundToPx() }
-                AnimatedContent(
-                    targetState = target,
-                    modifier = Modifier.fillMaxSize(),
-                    transitionSpec = {
-                        (
-                            fadeIn(tween(Motion.FAST)) +
-                                slideInVertically(tween(Motion.FAST)) { shift }
-                        ) togetherWith
-                            fadeOut(tween(Motion.FAST))
-                    },
-                    label = "content",
-                ) { stateKey ->
-                    Column(Modifier.fillMaxSize()) {
-                        LauncherContent(
-                            targetKey = stateKey,
-                            state = state,
-                            actions = actions,
-                            fallbackPage = navigation.page,
-                            onDelete = { deleting = it },
-                            onTidyReport = { tidyReport = it },
-                            onMoveTarget = { movingInstance = it },
-                        )
-                    }
                 }
             }
         }

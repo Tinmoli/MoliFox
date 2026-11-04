@@ -13,13 +13,19 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include "miniz/miniz.h"
 #include "NativeMessages.h"
@@ -27,6 +33,8 @@
 namespace fs = std::filesystem;
 static HWND preparationWindow = nullptr;
 static HWND statusLabel = nullptr;
+static HWND progressBar = nullptr;
+static std::wstring statusBase;
 static bool cancelled = false;
 static const NativeMessages* messages = &nativeMessagesenUS;
 
@@ -80,8 +88,19 @@ static LRESULT CALLBACK preparationProc(HWND window, UINT message, WPARAM wParam
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+static void setProgress(int percent) {
+    if (!progressBar) return;
+    const int value = std::clamp(percent, 0, 100);
+    SendMessageW(progressBar, PBM_SETPOS, value, 0);
+    if (statusLabel && !statusBase.empty()) {
+        SetWindowTextW(statusLabel, (statusBase + L" " + std::to_wstring(value) + L"%").c_str());
+    }
+}
+
 static void showStatus(const wchar_t* text) {
     if (!preparationWindow) {
+        INITCOMMONCONTROLSEX controls{sizeof(INITCOMMONCONTROLSEX), ICC_PROGRESS_CLASS};
+        InitCommonControlsEx(&controls);
         WNDCLASSW type{};
         type.lpfnWndProc = preparationProc;
         type.hInstance = GetModuleHandleW(nullptr);
@@ -90,12 +109,17 @@ static void showStatus(const wchar_t* text) {
         type.hIcon = LoadIconW(type.hInstance, MAKEINTRESOURCEW(1));
         type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&type);
+        // 下载期间主线程持续 pump，窗口保持可重绘；进度条让用户看到确实在推进。
         preparationWindow = CreateWindowExW(0, type.lpszClassName, messages->preparationTitle, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            (GetSystemMetrics(SM_CXSCREEN) - 520) / 2, (GetSystemMetrics(SM_CYSCREEN) - 180) / 2, 520, 180, nullptr, nullptr, type.hInstance, nullptr);
-        statusLabel = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE, 24, 28, 465, 75, preparationWindow, nullptr, type.hInstance, nullptr);
+            (GetSystemMetrics(SM_CXSCREEN) - 560) / 2, (GetSystemMetrics(SM_CYSCREEN) - 220) / 2, 560, 220, nullptr, nullptr, type.hInstance, nullptr);
+        statusLabel = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE, 24, 28, 512, 82, preparationWindow, nullptr, type.hInstance, nullptr);
         SendMessageW(statusLabel, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+        progressBar = CreateWindowExW(0, PROGRESS_CLASSW, nullptr, WS_CHILD | WS_VISIBLE | PBS_SMOOTH, 24, 126, 512, 20, preparationWindow, nullptr, type.hInstance, nullptr);
+        SendMessageW(progressBar, PBM_SETRANGE32, 0, 100);
+        SendMessageW(progressBar, PBM_SETPOS, 0, 0);
         ShowWindow(preparationWindow, SW_SHOW);
     }
+    statusBase = text;
     SetWindowTextW(statusLabel, text);
     pump();
 }
@@ -201,7 +225,9 @@ struct HttpHandle {
     operator HINTERNET() const { return handle; }
 };
 
-static std::string download(const std::wstring& url, const fs::path& target = {}) {
+using DownloadProgress = std::function<void(unsigned long long, unsigned long long)>;
+
+static std::string download(const std::wstring& url, const fs::path& target = {}, const DownloadProgress& progress = {}, int receiveTimeout = 60000) {
     URL_COMPONENTS components{sizeof(URL_COMPONENTS)};
     components.dwHostNameLength = components.dwUrlPathLength = components.dwExtraInfoLength = (DWORD)-1;
     check(WinHttpCrackUrl(url.c_str(), 0, 0, &components), "Read download URL");
@@ -209,9 +235,10 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     std::wstring host(components.lpszHostName, components.dwHostNameLength);
     std::wstring route(components.lpszUrlPath, components.dwUrlPathLength);
     if (components.dwExtraInfoLength) route.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.5", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    HttpHandle session{WinHttpOpen(L"MoliFox/0.4.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     check(session.handle != nullptr, "Open network connection");
-    WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
+    // 12002 是 WinHTTP 超时；首次启动的 Java 下载在慢网络下需要更宽的接收窗口。
+    WinHttpSetTimeouts(session, 15000, 30000, receiveTimeout, receiveTimeout);
     HttpHandle connection{WinHttpConnect(session, host.c_str(), components.nPort, 0)};
     HttpHandle request{WinHttpOpenRequest(connection, L"GET", route.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)};
     check(request.handle != nullptr, "Prepare download");
@@ -221,18 +248,89 @@ static std::string download(const std::wstring& url, const fs::path& target = {}
     DWORD status = 0, statusSize = sizeof(status);
     WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &statusSize, nullptr);
     if (status != 200) throw std::runtime_error("Runtime download returned HTTP " + std::to_string(status));
+    unsigned long long total = 0;
+    DWORD contentLength = 0, lengthSize = sizeof(contentLength);
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &contentLength, &lengthSize, nullptr)) total = contentLength;
     std::ofstream output;
     if (!target.empty()) { output.open(target, std::ios::binary | std::ios::trunc); check(output.good(), "Create download file"); }
     std::string body;
     char buffer[65536]; DWORD received = 0;
+    unsigned long long completed = 0;
     while (true) {
         check(WinHttpReadData(request, buffer, sizeof(buffer), &received), "Read runtime download");
         if (!received) break;
+        completed += received;
         if (target.empty()) { body.append(buffer, received); if (body.size() > 4 * 1024 * 1024) throw std::runtime_error("Runtime metadata is too large"); }
         else { output.write(buffer, received); check(output.good(), "Write runtime download"); }
-        pump();
+        if (progress) progress(completed, total);
     }
     return body;
+}
+
+struct DownloadOutcome {
+    std::mutex mutex;
+    std::string body;
+    std::string error;
+    std::atomic<bool> finished{false};
+    std::atomic<unsigned long long> completed{0};
+    std::atomic<unsigned long long> total{0};
+};
+
+/** WinHTTP 调用放到工作线程，主线程继续 pump；这样慢速连接时准备窗口不会显示“未响应”。 */
+static std::string downloadAsync(const std::wstring& url, const fs::path& target = {}, bool showProgress = false, int receiveTimeout = 60000) {
+    auto outcome = std::make_shared<DownloadOutcome>();
+    std::thread worker([outcome, url, target, showProgress, receiveTimeout] {
+        try {
+            auto body = download(url, target, [outcome, showProgress](unsigned long long completed, unsigned long long total) {
+                if (!showProgress) return;
+                outcome->completed.store(completed);
+                outcome->total.store(total);
+            }, receiveTimeout);
+            {
+                std::lock_guard<std::mutex> lock(outcome->mutex);
+                outcome->body = std::move(body);
+            }
+        } catch (const std::exception& error) {
+            std::lock_guard<std::mutex> lock(outcome->mutex);
+            outcome->error = error.what();
+        }
+        outcome->finished.store(true);
+    });
+    try {
+        while (!outcome->finished.load()) {
+            pump();
+            if (showProgress) {
+                const auto total = outcome->total.load();
+                const auto completed = outcome->completed.load();
+                setProgress(total ? (int)(completed * 100 / total) : 0);
+            }
+            Sleep(20);
+        }
+    } catch (...) {
+        // 用户取消时下载线程可能仍在写临时文件；让它自行结束，不能阻塞窗口关闭。
+        worker.detach();
+        throw;
+    }
+    worker.join();
+    std::lock_guard<std::mutex> lock(outcome->mutex);
+    if (!outcome->error.empty()) throw std::runtime_error(outcome->error);
+    return outcome->body;
+}
+
+static std::string downloadWithRetry(const std::wstring& url, const fs::path& target = {}, bool showProgress = false, int attempts = 4, int receiveTimeout = 60000) {
+    std::string lastError;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        try {
+            return downloadAsync(url, target, showProgress, receiveTimeout);
+        } catch (const std::exception& error) {
+            if (cancelled) throw;
+            lastError = error.what();
+            if (attempt + 1 >= attempts) break;
+            setProgress(0);
+            Sleep(1200 * (attempt + 1));
+        }
+    }
+    throw std::runtime_error(lastError);
 }
 
 // Windows 实测空闲工作集约 396→255 MiB；只降低初始堆和空闲保留，不限制游戏或启动器最大堆。
@@ -358,17 +456,42 @@ static bool confirmJavaDownload() {
                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
 
+static constexpr wchar_t javaMetadataUrl[] = L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse";
+// Adoptium API 与 GitHub 在部分网络不可达；TUNA 镜像提供同一 Temurin 21.0.13+9 JRE。
+static constexpr wchar_t javaMirrorUrl[] = L"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip";
+static constexpr const char* javaMirrorSha256 = "2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628";
+
 static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     showStatus(messages->javaPreparing);
-    auto metadata = download(L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse");
-    auto start = metadata.find("\"package\"");
-    if (start == std::string::npos) throw std::runtime_error("No compatible Java runtime was returned");
-    auto package = metadata.substr(start, metadata.find('}', start) - start + 1);
-    std::string checksum = jsonString(package, "checksum");
-    if (!std::regex_match(checksum, std::regex("[0-9a-fA-F]{64}"))) throw std::runtime_error("Invalid runtime checksum");
+    setProgress(0);
+    std::wstring url;
+    std::string checksum;
+    try {
+        auto metadata = downloadWithRetry(javaMetadataUrl, {}, false, 2, 15000);
+        auto start = metadata.find("\"package\"");
+        if (start == std::string::npos) throw std::runtime_error("No compatible Java runtime was returned");
+        auto package = metadata.substr(start, metadata.find('}', start) - start + 1);
+        checksum = jsonString(package, "checksum");
+        if (!std::regex_match(checksum, std::regex("[0-9a-fA-F]{64}"))) throw std::runtime_error("Invalid runtime checksum");
+        url = wide(jsonString(package, "link"));
+    } catch (const std::exception&) {
+        if (cancelled) throw;
+        // 元数据接口失败时直接走镜像；归档仍然要过 SHA-256 校验。
+        url = javaMirrorUrl;
+        checksum = javaMirrorSha256;
+    }
     auto archive = data / L"cache/downloads/java/java21.zip.part";
-    download(wide(jsonString(package, "link")), archive);
+    try {
+        downloadWithRetry(url, archive, true, 3);
+    } catch (const std::exception&) {
+        if (cancelled || url == javaMirrorUrl) throw;
+        url = javaMirrorUrl;
+        checksum = javaMirrorSha256;
+        downloadWithRetry(url, archive, true, 3);
+    }
+    std::transform(checksum.begin(), checksum.end(), checksum.begin(), [](unsigned char value) { return (char)std::tolower(value); });
     check(sha256(archive) == checksum, "Verify downloaded Java SHA-256");
+    setProgress(100);
     showStatus(messages->javaExtracting);
     auto staging = temporary / L"java-extract";
     fs::create_directories(staging);
@@ -483,7 +606,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.4.5.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox-0.4.6.jar";
         // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
         if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
             auto pending = temporary.path / L"launcher-payload.part";

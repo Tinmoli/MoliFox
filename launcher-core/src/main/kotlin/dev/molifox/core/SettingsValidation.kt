@@ -38,6 +38,7 @@ private const val MAX_PROXY_PORT = 65535
  */
 internal fun normalizedSettings(input: LauncherSettings): LauncherSettings =
     input.copy(
+        accentColor = normalizedAccentColor(input.accentColor),
         javaDownloadSource = input.effectiveJavaDownloadSource,
         downloadSource = input.effectiveDownloadSource,
         versionListSource = input.effectiveVersionListSource,
@@ -198,6 +199,9 @@ private fun validateDownloadSettings(settings: LauncherSettings) {
 }
 
 private fun validateInterfaceSettings(settings: LauncherSettings) {
+    require(settings.themeColorSource in setOf("default", "background", "manual")) {
+        I18n.t("settings.appearance.accent.invalidSource")
+    }
     require(
         settings.accentColor == "sakura" ||
             Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor) ||
@@ -248,3 +252,6 @@ private fun validateProxySettings(settings: LauncherSettings) {
         I18n.t("core.settingsValidation.30")
     }
 }
+
+internal fun normalizedAccentColor(value: String?): String =
+    value?.takeUnless { it in setOf("minimal", "monochrome") } ?: "sakura"

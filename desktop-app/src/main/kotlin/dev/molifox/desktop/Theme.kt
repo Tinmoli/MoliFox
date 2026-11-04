@@ -28,12 +28,11 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -50,7 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -63,13 +61,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
+import dev.molifox.core.AppearanceAssetService
+import com.materialkolor.rememberDynamicColorScheme
+import com.materialkolor.PaletteStyle
+import com.materialkolor.dynamiccolor.ColorSpec
+import com.materialkolor.ktx.animateColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-private const val OPAQUE_COLOR_ALPHA_MASK = 0xFF000000L
-private const val COLOR_HEX_RADIX = 16
-private const val DARK_CUSTOM_ACCENT_BLEND = .45f
-private const val LIGHT_CUSTOM_ACCENT_BLEND = .16f
 
 val MutedGreen = Color(0xFF398571)
 
@@ -95,40 +93,10 @@ object Motion {
 private fun motionSpec(durationMillis: Int): androidx.compose.animation.core.AnimationSpec<Float> =
     if (LocalReducedMotion.current) snap<Float>() else tween<Float>(durationMillis = durationMillis)
 
-/** 主题颜色预设：第一项是浅色主题用色（较深，保证白底对比度）， 第二项是深色主题用色（较浅）。默认樱花粉，其余为用户可选预设。 */
-val accentPresets: List<Pair<String, Pair<Color, Color>>> =
-    listOf(
-        "sakura" to (Color(0xFFB94E7B) to Color(0xFFF2B2CF)),
-        "ocean" to (Color(0xFF2C6E9E) to Color(0xFF9CC9E8)),
-        "mint" to (Color(0xFF2E7D63) to Color(0xFFA8DCC6)),
-        "amber" to (Color(0xFFB27427) to Color(0xFFEFC78F)),
-        "lavender" to (Color(0xFF6E5AA0) to Color(0xFFC9BAEC)),
-        "graphite" to (Color(0xFF565B66) to Color(0xFFB9BEC8)),
-    )
-
-private fun parseHexColor(value: String): Color? {
-    if (!Regex("^#[0-9A-Fa-f]{6}$").matches(value)) return null
-    return Color(OPAQUE_COLOR_ALPHA_MASK or value.substring(1).toLong(COLOR_HEX_RADIX))
-}
-
-/** 自定义颜色在浅色主题压深、深色主题提亮，保证两种模式下都有足够对比度。 */
-fun resolveAccent(
-    setting: String,
-    dark: Boolean,
-): Color {
-    val preset = accentPresets.firstOrNull { it.first == setting }
-    if (preset != null) return if (dark) preset.second.second else preset.second.first
-    val custom = parseHexColor(setting) ?: return resolveAccent("sakura", dark)
-    return if (dark) {
-        lerp(custom, Color.White, DARK_CUSTOM_ACCENT_BLEND)
-    } else {
-        lerp(custom, Color.Black, LIGHT_CUSTOM_ACCENT_BLEND)
-    }
-}
-
 @Composable
 fun MoliTheme(
     settings: LauncherSettings,
+    assets: AppearanceAssetService? = null,
     content: @Composable () -> Unit,
 ) {
     val dark =
@@ -138,65 +106,26 @@ fun MoliTheme(
             "system" -> isSystemInDarkTheme()
             else -> isSystemInDarkTheme()
         }
-    val primary = resolveAccent(settings.accentColor, dark)
+    val automatic by rememberBackgroundAccent(settings, dark, assets)
     val cornerRadius = settings.cornerRadiusDp.coerceIn(0, 24)
     val font by produceState<FontFamily>(FontFamily.Default, settings.fontChoice) {
         value = withContext(Dispatchers.IO) { launcherFontFamily(settings.fontChoice) }
     }
     val surfaceAlpha = if (settings.glassEnabled) settings.surfaceOpacity.coerceIn(.6f, 1f) else 1f
-    // 背景与卡片使用平面色，主题色只出现在选中态、主按钮、开关、滑块与进度上。
-    val colors =
-        if (dark) {
-            darkColorScheme(
-                primary = primary,
-                onPrimary = Color(0xFF1B1017),
-                primaryContainer = primary.copy(alpha = .16f),
-                onPrimaryContainer = lerp(primary, Color.White, .32f),
-                secondary = primary,
-                secondaryContainer = primary.copy(alpha = .16f),
-                onSecondaryContainer = primary,
-                background = Color(0xFF1B181C),
-                onBackground = Color(0xFFEFE8EE),
-                surface = Color(0xFF262028).copy(alpha = surfaceAlpha),
-                onSurface = Color(0xFFEFE8EE),
-                surfaceVariant = Color(0xFF302A32),
-                surfaceContainerLow = Color(0xFF221D21),
-                surfaceContainer = Color(0xFF2B2529),
-                surfaceContainerHigh = Color(0xFF322C32),
-                surfaceContainerHighest = Color(0xFF3B343A),
-                onSurfaceVariant = Color(0xFFA9A0A7),
-                outline = Color(0xFF4A4148),
-                outlineVariant = Color(0xFF3A343A),
-                inverseSurface = Color(0xFFF3EAF0),
-                inverseOnSurface = Color(0xFF2E2830),
-                error = Color(0xFFFFABB2),
-            )
-        } else {
-            lightColorScheme(
-                primary = primary,
-                onPrimary = Color.White,
-                primaryContainer = primary.copy(alpha = .10f),
-                onPrimaryContainer = lerp(primary, Color.Black, .48f),
-                secondary = lerp(primary, Color.Black, .10f),
-                secondaryContainer = primary.copy(alpha = .10f),
-                onSecondaryContainer = primary,
-                background = Color(0xFFFBF7F9),
-                onBackground = Color(0xFF3A333A),
-                surface = Color(0xFFFFFFFF).copy(alpha = surfaceAlpha),
-                onSurface = Color(0xFF3A333A),
-                surfaceVariant = Color(0xFFF3EEF1),
-                surfaceContainerLow = Color(0xFFFAF5F8),
-                surfaceContainer = Color(0xFFF6F1F4),
-                surfaceContainerHigh = Color(0xFFF2ECEF),
-                surfaceContainerHighest = Color(0xFFEDE6EA),
-                onSurfaceVariant = Color(0xFF6B646B),
-                outline = Color(0xFFD9CFD5),
-                outlineVariant = Color(0xFFCFC2C9),
-                inverseSurface = Color(0xFF342D33),
-                inverseOnSurface = Color(0xFFF7F1F4),
-                error = Color(0xFFB3384A),
-            )
-        }
+    // 种子只交给 Material，完整的前景、容器、中性色和语义色由同一算法生成。
+    val targetColors = rememberDynamicColorScheme(
+        seedColor = themeSeed(settings, automatic.hex),
+        isDark = dark,
+        style = PaletteStyle.TonalSpot,
+        specVersion = ColorSpec.SpecVersion.SPEC_2021,
+    )
+    // 切换明暗时不把黑字与白字交叉淡化，避免中途两者都变成灰色；同模式换种子平滑过渡。
+    val animated = key(dark) {
+        animateColorScheme(targetColors, animationSpec = {
+            if (settings.animationsEnabled) tween(Motion.NORMAL) else snap()
+        })
+    }
+    val colors = animated.copy(surface = animated.surface.copy(alpha = surfaceAlpha))
     val density = LocalDensity.current
     MaterialTheme(
         colorScheme = colors,
@@ -319,6 +248,7 @@ fun MoliTheme(
             LocalReducedMotion provides !settings.animationsEnabled,
             LocalCornerRadius provides settings.cornerRadiusDp.coerceIn(0, 24).dp,
             LocalLauncherSettings provides settings,
+            LocalBackgroundAccent provides automatic,
             LocalDensity provides
                 Density(
                     density.density * settings.uiScale.coerceIn(.85f, 1.2f),

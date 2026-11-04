@@ -20,6 +20,7 @@ enum class AppLanguage(
 ) {
     AUTO("auto", "language.auto", ""),
     SIMPLIFIED_CHINESE("zh-CN", "language.zhCN", "zh_cn"),
+    CAT_CHINESE("zh-CN-x-meow", "language.meow", "zh_cn"),
     TRADITIONAL_CHINESE("zh-TW", "language.zhTW", "zh_tw"),
     HONG_KONG_CHINESE("zh-HK", "language.zhHK", "zh_tw"),
     ENGLISH("en-US", "language.enUS", "en_us"),

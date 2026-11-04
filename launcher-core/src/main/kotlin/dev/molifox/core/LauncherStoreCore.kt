@@ -177,6 +177,10 @@ internal class LauncherStoreCore(
         val curseForgeBase = normalizedCurseForgeBaseUrl(rawCurseForgeBase)
         curseForgeBaseFallback = curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
         return settings.copy(
+            accentColor = normalizedAccentColor(settings.accentColor),
+            // 旧配置保留自动/手动选择；新安装才默认使用简洁白配色。
+            themeColorSource = raw.string("themeColorSource").takeIf { it in setOf("default", "background", "manual") }
+                ?: if (settings.automaticAccent) "background" else "manual",
             autoCheckUpdates = if (raw.has("autoCheckUpdates")) settings.autoCheckUpdates else true,
             // 旧配置没有协议版本：视为未同意，启动时重新询问；已同意过的版本原样保留。
             agreementVersion = raw.string("agreementVersion"),

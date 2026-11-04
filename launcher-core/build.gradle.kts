@@ -8,6 +8,10 @@ import java.util.Properties
 
 plugins { kotlin("jvm") }
 
+tasks.processResources {
+    from(rootProject.file("assets/backgrounds/default-backgrounds.zip")) { into("META-INF/molifox") }
+}
+
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 java {
@@ -53,6 +57,7 @@ sourceSets.test {
 }
 
 dependencies {
+    implementation("com.materialkolor:material-color-utilities:4.0.5")
     // 资源目录模型把 JsonObject 暴露在公开签名里，界面层需要能引用 Gson 的解析异常类型。
     api("com.google.code.gson:gson:2.13.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -6,6 +6,8 @@
 | --- | --- | --- | --- |
 | Kotlin / kotlinx.coroutines | Apache-2.0 | Kotlin 标准库、反射与协程调度。 | https://github.com/JetBrains/kotlin |
 | Compose Multiplatform | Apache-2.0 | 桌面 UI、Material 3 组件与图标。 | https://github.com/JetBrains/compose-multiplatform |
+| MaterialKolor 4.0.5 | MIT | 从种子生成 Material 3 完整配色及配色过渡。 | https://github.com/jordond/MaterialKolor |
+| Material Color Utilities（MaterialKolor 移植）4.0.5 | Apache-2.0 | Celebi 图片量化、HCT 与种子颜色评分。 | https://github.com/material-foundation/material-color-utilities |
 | Skiko | Apache-2.0 | Compose Desktop 的 Skia 渲染绑定。 | https://github.com/JetBrains/skiko |
 | Skia | BSD-3-Clause | Skiko 内置的 2D 图形引擎。 | https://skia.org/ |
 | OkHttp / Okio | Apache-2.0 | HTTP 客户端与底层 I/O。 | https://github.com/square/okhttp |

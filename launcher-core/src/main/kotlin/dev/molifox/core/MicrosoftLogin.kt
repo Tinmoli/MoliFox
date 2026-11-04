@@ -206,6 +206,7 @@ internal class MicrosoftLogin(
             } else {
                 SkinVariant.Classic
             },
+            capes = parseMinecraftCapes(profile),
         )
     }
 

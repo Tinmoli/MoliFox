@@ -36,6 +36,11 @@ fun importAppearanceBackground(
     dataDirectory: Path,
     source: Path,
 ): Path {
+    validateAppearanceBackground(source)
+    return storeAppearanceBackground(dataDirectory, source)
+}
+
+private fun validateAppearanceBackground(source: Path) {
     require(source.isRegularFile() && source.fileSize() in 1..MAX_BACKGROUND_FILE_BYTES) {
         I18n.t("core.appearanceAssets.1")
     }
@@ -59,16 +64,16 @@ fun importAppearanceBackground(
             reader.dispose()
         }
     }
-    return storeAppearanceBackground(dataDirectory, source)
 }
 
 private fun storeAppearanceBackground(
     dataDirectory: Path,
     source: Path,
+    name: String = "background.img",
 ): Path {
     val directory =
         LauncherDirectories(dataDirectory).backgrounds.apply { createStorageDirectory(this) }
-    val destination = directory.resolve("background.img")
+    val destination = directory.resolve(name)
     if (destination.exists() && Files.isSameFile(source, destination)) return destination
     val temporary = Files.createTempFile(directory, "background-", ".tmp")
     try {
@@ -126,7 +131,15 @@ fun removeAppearanceFont(
 
 /** UI 无关的外观资源边界：校验、复制、删除和读取都由 core 负责。 */
 interface AppearanceAssetService {
+    fun backgroundAccent(settings: LauncherSettings, dark: Boolean): String? =
+        readModeBackground(settings, dark)?.let(::extractBackgroundAccent)
+
     fun importBackground(source: Path): Path
+
+    fun importModeBackground(source: Path, dark: Boolean): Path = importBackground(source)
+
+    fun readModeBackground(settings: LauncherSettings, dark: Boolean): ByteArray? =
+        readBackground(settings.effectiveBackground(dark))
 
     fun removeBackground()
 
@@ -149,6 +162,29 @@ internal class FileAppearanceAssetService(
     private val dataDirectory: Path,
 ) : AppearanceAssetService {
     override fun importBackground(source: Path): Path = importAppearanceBackground(dataDirectory, source)
+
+    override fun importModeBackground(source: Path, dark: Boolean): Path {
+        validateAppearanceBackground(source)
+        return storeAppearanceBackground(dataDirectory, source, if (dark) "background-dark.img" else "background-light.img")
+    }
+
+    override fun readModeBackground(settings: LauncherSettings, dark: Boolean): ByteArray? {
+        val defaults = try {
+            ensureDefaultBackgrounds(dataDirectory)
+        } catch (failure: IOException) {
+            java.util.logging.Logger.getLogger("MoliFox.appearance").warning("Default backgrounds: ${failure.message}")
+            null
+        } catch (failure: IllegalArgumentException) {
+            java.util.logging.Logger.getLogger("MoliFox.appearance").warning("Default backgrounds: ${failure.message}")
+            null
+        }
+        val selected = settings.effectiveBackground(dark)
+        return when (selected) {
+            NO_BACKGROUND -> null
+            DEFAULT_BACKGROUND -> defaults?.let { readBackground(defaultBackgroundFile(it, dark).toString()) }
+            else -> readBackground(selected)
+        }
+    }
 
     override fun removeBackground() {
         Files.deleteIfExists(LauncherDirectories(dataDirectory).backgrounds.resolve("background.img"))

@@ -28,14 +28,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
-import dev.molifox.core.i18n.Strings
+import dev.molifox.core.DEFAULT_BACKGROUND
+import dev.molifox.core.NO_BACKGROUND
+import dev.molifox.core.effectiveBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -47,6 +50,7 @@ internal fun ThemeModeSection(
     apply: AppearanceChange,
 ) {
     val theme = settings.themeMode
+    val previewAccent = "#%06X".format(themeSeed(settings, LocalBackgroundAccent.current.hex).toArgb() and 0xFFFFFF)
     val strings = LocalStrings.current
     val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
     SettingsSection(
@@ -59,7 +63,7 @@ internal fun ThemeModeSection(
                 strings.t("settings.appearance.theme.light.title"),
                 strings.t("settings.appearance.theme.light.detail"),
                 theme == "light",
-                settings.accentColor,
+                previewAccent,
                 duration,
             ) {
                 apply { it.copy(themeMode = "light") }
@@ -69,7 +73,7 @@ internal fun ThemeModeSection(
                 strings.t("settings.appearance.theme.dark.title"),
                 strings.t("settings.appearance.theme.dark.detail"),
                 theme == "dark",
-                settings.accentColor,
+                previewAccent,
                 duration,
             ) {
                 apply { it.copy(themeMode = "dark") }
@@ -79,94 +83,10 @@ internal fun ThemeModeSection(
                 strings.t("settings.appearance.theme.system.title"),
                 strings.t("settings.appearance.theme.system.detail"),
                 theme == "system",
-                settings.accentColor,
+                previewAccent,
                 duration,
             ) {
                 apply { it.copy(themeMode = "system") }
-            }
-        }
-    }
-}
-
-/** 强调色预设标题按 id 从 settings bundle 取，颜色本身仍在 Theme.kt 定义。 */
-internal fun accentPresetTitle(
-    strings: Strings,
-    id: String,
-): String =
-    if (accentPresets.any { it.first == id }) {
-        strings.t("settings.appearance.accent.$id")
-    } else {
-        strings.t("settings.appearance.accent.custom")
-    }
-
-/** 主题颜色：预设强调色 + 自定义十六进制输入。 */
-@Composable
-internal fun AccentColorSection(
-    settings: LauncherSettings,
-    apply: AppearanceChange,
-) {
-    val duration = if (LocalReducedMotion.current) 0 else Motion.FAST
-    val strings = LocalStrings.current
-    SettingsSection(
-        strings.t("settings.appearance.accent.title"),
-        strings.t("settings.appearance.accent.detail"),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            accentPresets.forEach { (id, _) ->
-                AccentChip(
-                    id = id,
-                    title = strings.t("settings.appearance.accent.$id"),
-                    dark = isDarkScheme(),
-                    selected = settings.accentColor == id,
-                    duration = duration,
-                ) {
-                    apply { it.copy(accentColor = id) }
-                }
-            }
-        }
-        Text(
-            strings.t("settings.appearance.accent.current", accentPresetTitle(strings, settings.accentColor)),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.sp,
-        )
-        var customHex by
-            remember(settings.accentColor) {
-                mutableStateOf(
-                    if (Regex("^#[0-9A-Fa-f]{6}$").matches(settings.accentColor)) {
-                        settings.accentColor
-                    } else {
-                        ""
-                    },
-                )
-            }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.width(200.dp)) {
-                CompactTextField(
-                    customHex,
-                    { value ->
-                        customHex = value
-                        if (Regex("^#[0-9A-Fa-f]{6}$").matches(value)) {
-                            apply { it.copy(accentColor = value.uppercase()) }
-                        }
-                    },
-                    placeholder = "#RRGGBB",
-                )
-            }
-            if (customHex.isNotEmpty() && !Regex("^#[0-9A-Fa-f]{6}$").matches(customHex)) {
-                Text(
-                    strings.t("settings.appearance.accent.invalidFormat"),
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp,
-                )
-            } else {
-                Text(
-                    strings.t("settings.appearance.accent.customHint"),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
-                )
             }
         }
     }
@@ -408,9 +328,8 @@ internal fun BackgroundImageSection(
     actions: UiActions,
     apply: AppearanceChange,
 ) {
-    var removing by remember { mutableStateOf(false) }
     val strings = LocalStrings.current
-    val backgroundOn = settings.backgroundPath.isNotBlank()
+    val backgroundOn = settings.effectiveBackground(false) != NO_BACKGROUND || settings.effectiveBackground(true) != NO_BACKGROUND
     SettingsSection(
         strings.t("settings.appearance.background.title"),
         strings.t("settings.appearance.background.detail"),
@@ -418,35 +337,14 @@ internal fun BackgroundImageSection(
         // 卡片内的四个行块之间用 1dp 细线分隔：行数 4 → 分隔线 3 条，首末不加。
         contentGap = 0.dp,
     ) {
+        ModeBackgroundRow(settings, actions, apply, dark = false)
+        ModeBackgroundRow(settings, actions, apply, dark = true)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SecondaryButton({
-                actions.run {
-                    val source =
-                        actions
-                            .choose(
-                                strings.t("settings.appearance.background.choose"),
-                                extensions = listOf("png", "jpg", "jpeg"),
-                            ).firstOrNull()
-                    if (source != null) {
-                        val imported =
-                            actions.controller.appearance.importBackground(source)
-                        applySetting(actions) {
-                            it.copy(
-                                backgroundPath = imported.toString(),
-                                backgroundRevision = System.currentTimeMillis(),
-                            )
-                        }
-                    }
-                }
-            }) {
-                Icon(Icons.Outlined.Image, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(7.dp))
-                Text(strings.t("settings.appearance.background.pick"))
+            SecondaryButton({ apply { it.copy(lightBackgroundPath = DEFAULT_BACKGROUND, darkBackgroundPath = DEFAULT_BACKGROUND) } }) {
+                Text(strings.t("settings.appearance.background.defaults"))
             }
-            if (backgroundOn) {
-                SecondaryButton({ removing = true }) {
-                    Text(strings.t("settings.appearance.background.remove"))
-                }
+            SecondaryButton({ apply { it.copy(lightBackgroundPath = NO_BACKGROUND, darkBackgroundPath = NO_BACKGROUND) } }) {
+                Text(strings.t("settings.appearance.background.none"))
             }
         }
         SettingDivider()
@@ -459,6 +357,7 @@ internal fun BackgroundImageSection(
         ) { value ->
             apply { it.copy(backgroundOpacity = value) }
         }
+        MutedText(strings.t("settings.appearance.background.opacity.detail"))
         SettingDivider()
         SettingRow(
             strings.t("settings.appearance.background.fit.title"),
@@ -504,30 +403,6 @@ internal fun BackgroundImageSection(
         }
         if (settings.backgroundFit == "stretch") {
             MutedText(strings.t("settings.appearance.background.note.stretch"))
-        }
-    }
-    // 移除背景会删除 MoliFox/appearance 里的图片副本，先确认再执行。
-    if (removing) {
-        Modal(
-            strings.t("settings.appearance.background.remove.title"),
-            strings.t("settings.appearance.background.remove.detail"),
-            460.dp,
-            { removing = false },
-        ) {
-            MutedText(strings.t("settings.appearance.background.remove.note"))
-            DialogActions(
-                confirmText = strings.t("settings.appearance.background.remove"),
-                onConfirm = {
-                    actions.run {
-                        applySetting(actions) { it.copy(backgroundPath = "") }
-                        actions.controller.appearance.removeBackground()
-                    }
-                    removing = false
-                },
-                cancelText = strings.t("settings.appearance.background.remove.cancel"),
-                onCancel = { removing = false },
-                danger = true,
-            )
         }
     }
 }

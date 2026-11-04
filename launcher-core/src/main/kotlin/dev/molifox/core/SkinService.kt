@@ -28,6 +28,7 @@ data class MinecraftSkinProfile(
     val uuid: String,
     val textureUrl: String,
     val variant: SkinVariant,
+    val capes: List<MinecraftCape> = emptyList(),
 )
 
 /**
@@ -49,6 +50,11 @@ class SkinService
         private val api: String = "https://api.minecraftservices.com",
     ) {
         val library = SkinLibrary(store)
+        private val authlibUploads = AuthlibSkinUploads(store, network, credentials, library)
+
+        suspend fun supportsAuthlibSkinUpload(id: String): Boolean = authlibUploads.supported(id)
+
+        suspend fun uploadAuthlibSkin(id: String, skinId: String) = authlibUploads.upload(id, skinId)
 
         private fun microsoftAccount(id: String): Account =
             store.data.accounts
@@ -59,7 +65,14 @@ class SkinService
         suspend fun refreshProfile(id: String): MinecraftSkinProfile {
             val account = microsoftAccount(id)
             val credential = credentials(id)
+            return profileFor(account, credential)
+        }
+
+        private suspend fun profileFor(account: Account, credential: GameCredentials): MinecraftSkinProfile {
             require(credential.uuid == account.uuid) { I18n.t("core.skinService.3") }
+            credential.capes?.let { capes ->
+                return MinecraftSkinProfile(credential.name, credential.uuid, credential.skinUrl, credential.skinVariant, capes)
+            }
             return saveProfile(
                 account,
                 network.authorizedJson("$api/minecraft/profile", credential.accessToken),
@@ -103,7 +116,39 @@ class SkinService
                         },
                 )
             }
-            return MinecraftSkinProfile(name, account.uuid, url, variant)
+            return MinecraftSkinProfile(name, account.uuid, url, variant, parseMinecraftCapes(json))
+        }
+
+        suspend fun changeCape(id: String, capeId: String?): MinecraftSkinProfile {
+            val account = microsoftAccount(id)
+            val credential = credentials(id)
+            val profile = profileFor(account, credential)
+            require(capeId == null || profile.capes.any { it.id == capeId }) { I18n.t("dialogs.skin.cape.unavailable") }
+            try {
+                network.changeMinecraftCape(api, credential.accessToken, capeId)
+            } catch (failure: ServiceHttpException) {
+                if (failure.statusCode != 401) throw failure
+                // 只在令牌失效时重新认证一次，不重复完整登录链或无限重试。
+                val refreshed = credentials(id)
+                require(refreshed.uuid == account.uuid) { I18n.t("core.skinService.3") }
+                network.changeMinecraftCape(api, refreshed.accessToken, capeId)
+            }
+            return profile.copy(capes = profile.capes.map { it.copy(active = it.id == capeId) })
+        }
+
+        suspend fun capeTexture(cape: MinecraftCape): ByteArray = withContext(Dispatchers.IO) {
+            val bytes = network.skinTexture(cape.textureUrl)
+            javax.imageio.ImageIO.createImageInputStream(java.io.ByteArrayInputStream(bytes)).use { input ->
+                require(input != null) { I18n.t("dialogs.skin.cape.unavailable") }
+                val readers = javax.imageio.ImageIO.getImageReaders(input)
+                require(readers.hasNext()) { I18n.t("dialogs.skin.cape.unavailable") }
+                val reader = readers.next()
+                try {
+                    reader.input = input
+                    require(reader.getWidth(0) == 64 && reader.getHeight(0) == 32) { I18n.t("dialogs.skin.cape.unavailable") }
+                } finally { reader.dispose() }
+            }
+            bytes
         }
 
         /**

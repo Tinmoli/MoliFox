@@ -445,7 +445,7 @@ fun CompactTextField(
 @Composable
 fun CompactSwitch(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
@@ -483,12 +483,12 @@ fun CompactSwitch(
             .alpha(if (enabled) 1f else .38f)
             .clip(RoundedCornerShape(11.dp))
             .background(track)
-            .toggleable(
+            .then(if (onCheckedChange == null) Modifier else Modifier.toggleable(
                 value = checked,
                 enabled = enabled,
                 role = Role.Switch,
                 onValueChange = onCheckedChange,
-            ).padding(3.dp),
+            )).padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(

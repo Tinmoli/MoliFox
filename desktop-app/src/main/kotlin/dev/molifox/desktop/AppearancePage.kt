@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.AppearanceAssetService
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
+import dev.molifox.core.effectiveBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -69,12 +70,6 @@ private const val WINDOW_BACKGROUND_ALPHA = .82f
 
 typealias AppearanceChange = ((LauncherSettings) -> LauncherSettings) -> Unit
 
-// 主题预览块里的固定色：只表示「这套主题长什么样」，不跟随当前主题变化。
-private val previewLightSurface = Color(0xFFFFFFFF)
-private val previewLightLine = Color(0xFFE7DEE3)
-private val previewDarkSurface = Color(0xFF262028)
-private val previewDarkLine = Color(0xFF3A343A)
-
 /** 窗口背景：无背景图时铺平面底色，有图时按浓度叠加。 */
 @Composable
 fun LauncherBackdrop(
@@ -83,26 +78,23 @@ fun LauncherBackdrop(
 ) {
     var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     val base = MaterialTheme.colorScheme.background
-    LaunchedEffect(settings.backgroundPath, settings.backgroundRevision) {
+    val dark = isDarkScheme()
+    LaunchedEffect(settings.effectiveBackground(dark), settings.backgroundRevision, dark) {
+        bitmap = null
         bitmap =
-            if (settings.backgroundPath.isBlank()) {
-                null
-            } else {
                 withContext(Dispatchers.IO) {
-                    assets.readBackground(settings.backgroundPath)?.let { bytes ->
+                    assets.readModeBackground(settings, dark)?.let { bytes ->
                         runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
                     }
                 }
-            }
     }
     Box(
         Modifier
             .fillMaxSize()
             .alpha(if (settings.windowTransparent) WINDOW_BACKGROUND_ALPHA else 1f)
-            .blur(
-                if (settings.glassEnabled) settings.backgroundBlur.dp else 0.dp,
-                edgeTreatment = BlurredEdgeTreatment.Unbounded,
-            ),
+            .then(if (settings.glassEnabled && settings.backgroundBlur > 0f) {
+                Modifier.blur(settings.backgroundBlur.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+            } else Modifier),
     ) {
         Box(Modifier.fillMaxSize().background(base))
         bitmap?.let {
@@ -128,8 +120,12 @@ fun ColumnScope.AppearanceSection(
     val settings = state.data.settings
     // 外观与其它分区一致：改动当场写入 store，MoliTheme / LauncherBackdrop 随之重绘，
     // 主题和窗口效果会随保存的设置即时更新。
-    val apply: AppearanceChange = { change -> applySetting(actions, change) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    val apply: AppearanceChange = { change -> saveError = applySetting(actions, change) }
     Column(Modifier.weight(1f).fillMaxWidth()) {
+        saveError?.let { message ->
+            Text(LocalStrings.current.t("settings.unsavedPrefix") + message, color = MaterialTheme.colorScheme.error)
+        }
         Crossfade(
             subSection,
             Modifier.weight(1f).fillMaxWidth(),
@@ -198,6 +194,9 @@ internal fun RowScope.ThemeOptionCard(
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    // 配色过渡每帧都会重组卡片；种子未变时复用预览，避免重复运行 HCT 配色生成。
+    val lightScheme = remember(accentSetting) { themeColorScheme(manualThemeSeed(accentSetting), false) }
+    val darkScheme = remember(accentSetting) { themeColorScheme(manualThemeSeed(accentSetting), true) }
     val border by
         animateColorAsState(
             if (selected) colors.primary else hairline(),
@@ -233,26 +232,22 @@ internal fun RowScope.ThemeOptionCard(
             when (id) {
                 "light" ->
                     ThemeSwatchPane(
-                        false,
-                        resolveAccent(accentSetting, false),
+                        lightScheme,
                         Modifier.fillMaxSize(),
                     )
                 "dark" ->
                     ThemeSwatchPane(
-                        true,
-                        resolveAccent(accentSetting, true),
+                        darkScheme,
                         Modifier.fillMaxSize(),
                     )
                 else ->
                     Row(Modifier.fillMaxSize()) {
                         ThemeSwatchPane(
-                            false,
-                            resolveAccent(accentSetting, false),
+                            lightScheme,
                             Modifier.weight(1f),
                         )
                         ThemeSwatchPane(
-                            true,
-                            resolveAccent(accentSetting, true),
+                            darkScheme,
                             Modifier.weight(1f),
                         )
                     }
@@ -269,15 +264,15 @@ internal fun RowScope.ThemeOptionCard(
     }
 }
 
-/** 主题预览里的一格：一小块卡片 + 两行文字 + 主按钮，颜色固定表示该明暗主题。 */
+/** 预览也使用同一种子生成的完整 Material 角色，避免预览和实际主题各走一套。 */
 @Composable
 private fun ThemeSwatchPane(
-    dark: Boolean,
-    accent: Color,
+    scheme: androidx.compose.material3.ColorScheme,
     modifier: Modifier,
 ) {
-    val surface = if (dark) previewDarkSurface else previewLightSurface
-    val line = if (dark) previewDarkLine else previewLightLine
+    val surface = scheme.surface
+    val line = scheme.outlineVariant
+    val accent = scheme.primary
     Column(
         modifier.background(surface).padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -325,9 +320,11 @@ internal fun AccentChip(
     dark: Boolean,
     selected: Boolean,
     duration: Int,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val swatch = remember(id, dark) { resolveAccent(id, dark) }
     val border by
         animateColorAsState(
             if (selected) colors.primary else colors.outlineVariant.copy(alpha = .5f),
@@ -345,9 +342,10 @@ internal fun AccentChip(
     Row(
         Modifier
             .pressScale()
+            .alpha(if (enabled) 1f else .38f)
             .clip(RoundedCornerShape(Metrics.innerRadius))
-            .hoverHighlight(RoundedCornerShape(Metrics.innerRadius))
-            .clickable(role = Role.RadioButton, onClick = onClick)
+            .hoverHighlight(RoundedCornerShape(Metrics.innerRadius), enabled = enabled)
+            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .background(fill)
             .border(borderWidth.dp, border, RoundedCornerShape(Metrics.innerRadius))
             .padding(horizontal = 9.dp, vertical = 6.dp),
@@ -358,7 +356,7 @@ internal fun AccentChip(
             Modifier
                 .size(16.dp)
                 .clip(CircleShape)
-                .background(resolveAccent(id, dark))
+                .background(swatch)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
         )
         Text(

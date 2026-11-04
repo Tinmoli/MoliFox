@@ -134,6 +134,7 @@ private data class Box(
     val v: Int,
     val inflate: Float = 0f,
     val mirror: Boolean = false,
+    val z: Float = 0f,
 )
 
 /** 立方体在模型坐标里的六个边界，按面取四角时使用。 */
@@ -144,8 +145,8 @@ private class BoxBounds(
     val x1: Float = box.x + box.w / 2f + box.inflate
     val y0: Float = box.y - box.h / 2f - box.inflate
     val y1: Float = box.y + box.h / 2f + box.inflate
-    val z0: Float = -box.d / 2f - box.inflate
-    val z1: Float = box.d / 2f + box.inflate
+    val z0: Float = box.z - box.d / 2f - box.inflate
+    val z1: Float = box.z + box.d / 2f + box.inflate
 }
 
 /** 正交投影相机：先绕 y 轴偏转，再按俯仰倾斜，最后按画布尺寸缩放。 */
@@ -189,15 +190,22 @@ private class SkinCamera(
 
 /** 带深度缓冲的软件光栅化器：把一组立方体按面投影、贴图并混合到画布。 */
 private class SkinRasterizer(
-    private val texture: IntArray,
-    private val textureWidth: Int,
-    private val textureHeight: Int,
+    private var texture: IntArray,
+    private var textureWidth: Int,
+    private var textureHeight: Int,
     private val width: Int,
     private val height: Int,
     private val camera: SkinCamera,
 ) {
     private val pixels = IntArray(width * height)
     private val depth = FloatArray(pixels.size) { Float.NEGATIVE_INFINITY }
+
+    fun cape(image: BufferedImage) {
+        textureWidth = image.width
+        textureHeight = image.height
+        texture = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+        rasterize(listOf(Box(0f, BODY_Y - 2f, 10, 16, 1, 0, 0, z = -3f)))
+    }
 
     fun rasterize(boxes: List<Box>): IntArray {
         for (box in boxes) {
@@ -459,6 +467,7 @@ object SkinModelRenderer {
         headOnly: Boolean = false,
         width: Int = DEFAULT_RENDER_WIDTH,
         height: Int = DEFAULT_RENDER_HEIGHT,
+        cape: BufferedImage? = null,
     ): BufferedImage {
         require(
             hasSupportedSkinWidth(textureWidth) &&
@@ -482,6 +491,7 @@ object SkinModelRenderer {
                 SkinCamera.of(yaw, pitch, headOnly, width, height),
             )
         val pixels = rasterizer.rasterize(boxes)
+        if (!headOnly && cape != null && cape.width == 64 && cape.height == 32) rasterizer.cape(cape)
         return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).apply {
             setRGB(0, 0, width, height, pixels, 0, width)
         }

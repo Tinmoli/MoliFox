@@ -82,6 +82,8 @@ internal fun dialogSubtitle(account: Account): String =
     account.name +
         if (account.type == AccountType.Microsoft) {
             tr("dialogs.skin.accountSuffix.official")
+        } else if (account.type == AccountType.Authlib) {
+            tr("dialogs.skin.site.accountSuffix")
         } else {
             tr("dialogs.skin.accountSuffix.offline")
         }

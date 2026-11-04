@@ -36,6 +36,7 @@ import dev.molifox.core.domain.skin.PlayerHeadReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
+import java.awt.image.BufferedImage
 import org.jetbrains.skia.Image as SkiaImage
 
 /** 内置占位皮肤的原始字节；3D 回退与静态头像回退共用同一份，避免重复读资源。 */
@@ -57,6 +58,7 @@ internal fun SkinModelImage(
     pitch: Float,
     headOnly: Boolean,
     modifier: Modifier,
+    cape: BufferedImage? = null,
 ) {
     val strings = LocalStrings.current
     val texture =
@@ -70,7 +72,7 @@ internal fun SkinModelImage(
             IntArray(texture.width * texture.height).also { texture.readPixels(it) }
         }
     val frame by
-        produceState<ImageBitmap?>(null, texture, variant, overlays, yaw, pitch, headOnly) {
+        produceState<ImageBitmap?>(null, texture, variant, overlays, yaw, pitch, headOnly, cape) {
             value =
                 withContext(Dispatchers.Default) {
                     SkinModelRenderer
@@ -85,6 +87,7 @@ internal fun SkinModelImage(
                             headOnly,
                             if (headOnly) 128 else 240,
                             if (headOnly) 128 else 320,
+                            cape,
                         ).toComposeImageBitmap()
                 }
         }
@@ -107,6 +110,7 @@ fun SkinPreview(
     variant: SkinVariant,
     overlays: Boolean,
     modifier: Modifier = Modifier,
+    cape: BufferedImage? = null,
 ) {
     val strings = LocalStrings.current
     var yaw by remember(skin) { mutableFloatStateOf(-25f) }
@@ -128,6 +132,7 @@ fun SkinPreview(
                     pitch = (pitch + movement.y * .45f).coerceIn(-75f, 75f)
                 }
             },
+        cape = cape,
     )
 }
 

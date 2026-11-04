@@ -8,7 +8,7 @@ package dev.molifox.desktop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import dev.molifox.core.ModFile
 import dev.molifox.core.ModUpdateItem

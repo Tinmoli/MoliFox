@@ -10,6 +10,7 @@ import java.security.MessageDigest
 import java.time.Duration
 import java.util.Properties
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 
 plugins {
     kotlin("jvm")
@@ -22,7 +23,11 @@ evaluationDependsOn(":multiplayer-core")
 
 // 界面与文档资源统一放在仓库根的 assets/；legal 与 brand 由打包任务单独处理，不进类路径。
 sourceSets["main"].resources.srcDir(rootProject.file("assets"))
-sourceSets["main"].resources.exclude("legal/**", "brand/**")
+// 默认背景已由 core 放在 META-INF/molifox，避免桌面资源再打包一份同样的压缩包。
+sourceSets["main"].resources.exclude(
+    "legal/**", "brand/**", "backgrounds/**",
+    "icons/app/icon.ico", "icons/app/icon-white-1024.png", "icons/app/icon-white-300.png",
+)
 // 测试与 GUI 检查源码统一放在仓库根的 tests/。
 sourceSets["test"].kotlin.srcDirs(rootProject.file("tests/desktop-app/test/kotlin"))
 
@@ -141,7 +146,8 @@ fun runtimeEntries(
                 group = module.group,
                 artifact = module.module,
                 version = module.version,
-                filename = file.name,
+                // 有些 KMP 元数据给出的本地文件名不带版本，Maven 下载 URL 仍要求版本后缀。
+                filename = if (file.name == "${module.module}.jar") "${module.module}-${module.version}.jar" else file.name,
                 sha256 = sha256Of(file),
                 size = file.length(),
             )
@@ -697,6 +703,25 @@ tasks.register("verifyDesktopPackages") {
                     }
                 }
                 // 运行时依赖不再内嵌；jar 里只留清单。
+                val backgrounds = zip.getEntry("META-INF/molifox/default-backgrounds.zip")
+                check(backgrounds != null) { "$platform 包缺少默认背景压缩资源" }
+                val backgroundNames = mutableSetOf<String>()
+                ZipInputStream(zip.getInputStream(backgrounds)).use { archive ->
+                    while (true) {
+                        val entry = archive.nextEntry ?: break
+                        if (!entry.isDirectory) backgroundNames += entry.name
+                    }
+                }
+                check(backgroundNames == setOf("default-light.jpg", "default-dark.jpg")) {
+                    "$platform 包的默认背景资源不完整"
+                }
+                check(zip.getEntry("backgrounds/default-backgrounds.zip") == null) {
+                    "$platform 包重复嵌入默认背景"
+                }
+                check(zip.getEntry("icons/app/icon.png") != null) { "$platform 包缺少窗口图标" }
+                for (name in listOf("icon.ico", "icon-white-1024.png", "icon-white-300.png")) {
+                    check(zip.getEntry("icons/app/$name") == null) { "$platform 包包含多余图标 $name" }
+                }
                 val embedded =
                     zip.entries().asSequence().filter {
                         it.name.startsWith("molifox-dependencies/")
@@ -709,6 +734,9 @@ tasks.register("verifyDesktopPackages") {
                         .use { groovy.json.JsonSlurper().parse(it) as Map<*, *> }
                 val dependencies = (json["dependencies"] as List<*>).map { it as Map<*, *> }
                 check(dependencies.isNotEmpty()) { "运行时清单为空" }
+                check(dependencies.filter { it["group"] == "com.materialkolor" }.all {
+                    it["filename"] == "${it["artifact"]}-${it["version"]}.jar"
+                }) { "Material 运行依赖的文件名不符合 Maven 下载路径" }
                 check((json["version"] as String).contains("-")) { "清单版本号缺少依赖哈希" }
                 for (dependency in dependencies) {
                     val filename = dependency["filename"] as String
@@ -760,6 +788,7 @@ java {
 }
 
 dependencies {
+    implementation("com.materialkolor:material-kolor:4.0.5")
     implementation(project(":launcher-core"))
     implementation(project(":multiplayer-core"))
     implementation(project(":launcher-bootstrap"))

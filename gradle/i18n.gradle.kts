@@ -37,7 +37,7 @@ val i18nBundleNames: List<String> =
 val i18nRequiredLanguages: List<String> = listOf("en-US", "zh-TW")
 
 /** 只覆盖差异、其余回退到 zh-TW 的语言。 */
-val i18nOverlayLanguages: List<String> = listOf("zh-HK")
+val i18nOverlayLanguages: List<String> = listOf("zh-HK", "zh-CN-x-meow")
 
 val i18nKeyPattern = Regex("[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9]+)+")
 val i18nPlaceholderPattern = Regex("""\{(\d+)\}""")
