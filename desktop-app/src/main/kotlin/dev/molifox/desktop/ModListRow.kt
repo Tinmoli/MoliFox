@@ -27,7 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -77,13 +76,13 @@ internal fun ModRow(
         listOf(
             mod.metadata.versions.ifBlank { strings.t("pages.instance.meta.versionUnknown") },
             mod.metadata.loader.ifBlank { strings.t("deskA.modRow.loaderUnknown") },
-            "%.1f MB".format(mod.size / 1048576f),
+            megabytesText(mod.size),
         ).filter { it.isNotBlank() }
             .joinToString(" · ")
     val metaDetails =
         listOf(
             mod.metadata.loader.ifBlank { strings.t("deskA.modRow.loaderUnknown") },
-            "%.1f MB".format(mod.size / 1048576f),
+            megabytesText(mod.size),
         ).filter { it.isNotBlank() }
             .joinToString(" · ")
     val updateItem = update?.takeIf { it.status == ModUpdateStatus.Updatable }

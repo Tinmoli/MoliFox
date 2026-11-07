@@ -16,7 +16,6 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -33,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,14 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.AppearanceAssetService
@@ -154,10 +149,7 @@ class DesktopNavigationState(
 private fun <T> stateSpec(): AnimationSpec<T> =
     if (LocalReducedMotion.current) snap<T>() else tween<T>(durationMillis = Motion.FAST)
 
-/**
- * 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧；「设置」右侧的测试提示占用剩余空间， 窗口宽度不足 1100dp
- * 时整条隐藏，不挤压导航和窗口按钮。
- */
+/** 标题栏：52dp 高，左侧品牌，中部四项导航，右侧窗口三键，底部 1dp 分隔线。 导航仍在顶部（顶部导航布局），只做视觉收紧。 */
 @Composable
 fun AppHeader(
     navigation: DesktopNavigationState,
@@ -175,9 +167,7 @@ fun AppHeader(
             colors.surface
         }
     Column(Modifier.fillMaxWidth().background(headerColor)) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // 窄窗口下提示会让位：整条隐藏，避免文字挤进窗口三键。
-            val showBetaNotice = maxWidth >= 1100.dp
+        Box(Modifier.fillMaxWidth()) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -233,7 +223,7 @@ fun AppHeader(
                         }
                     }
                 }
-                // 品牌与导航宽度固定，剩余空间全给提示；窗口三键始终贴右，位置不随提示变化。
+                // 品牌与导航宽度固定，剩余空间留白；窗口三键始终贴右，这一片同样是拖拽区。
                 Box(
                     Modifier
                         .weight(1f)
@@ -245,20 +235,7 @@ fun AppHeader(
                                 Modifier
                             },
                         ).padding(end = 12.dp),
-                    contentAlignment = Alignment.CenterEnd,
-                ) {
-                    if (showBetaNotice) {
-                        Text(
-                            LocalStrings.current.t("app.betaNotice"),
-                            modifier = Modifier.fillMaxWidth(),
-                            color = colors.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.End,
-                        )
-                    }
-                }
+                )
                 controls()
             }
         }
@@ -358,71 +335,6 @@ private fun Modifier.titlebarDoubleClick(onDoubleClick: () -> Unit): Modifier =
             }
         }
     }
-
-/** 页面内二级导航项：34dp 高、圆角 6、图标 16、文字 13。 */
-@Composable
-fun NavigationEntry(
-    title: String,
-    icon: ImageVector,
-    selected: Boolean,
-    wide: Boolean = true,
-    onClick: () -> Unit,
-    badge: String? = null,
-) {
-    val colors = MaterialTheme.colorScheme
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val focused by interaction.collectIsFocusedAsState()
-    val spec = stateSpec<Color>()
-    val color by
-        animateColorAsState(
-            targetValue = if (selected) colors.primary else colors.onSurfaceVariant,
-            animationSpec = spec,
-            label = "entryContent",
-        )
-    val background by
-        animateColorAsState(
-            targetValue =
-                when {
-                    selected -> colors.primaryContainer
-                    hovered -> colors.primary.copy(alpha = .05f)
-                    else -> Color.Transparent
-                },
-            animationSpec = spec,
-            label = "entryBackground",
-        )
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(Metrics.controlHeight)
-            .focusRing(focused, cornerRadius = Metrics.cardRadius)
-            .clip(RoundedCornerShape(Metrics.cardRadius))
-            .background(background)
-            .selectable(
-                selected,
-                interaction,
-                LocalIndication.current,
-                role = Role.Tab,
-                onClick = onClick,
-            ).padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (wide) Arrangement.Start else Arrangement.Center,
-    ) {
-        Icon(icon, if (wide) null else title, Modifier.size(16.dp), color)
-        if (wide) {
-            Spacer(Modifier.width(8.dp))
-            Text(
-                title,
-                Modifier.weight(1f),
-                color = color,
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-            )
-            if (badge != null) Text(badge, color = color, fontSize = 11.sp)
-        }
-    }
-}
 
 /** 紧凑侧栏的缩进子条目（游戏文件夹/管理子菜单等）。 */
 @Composable

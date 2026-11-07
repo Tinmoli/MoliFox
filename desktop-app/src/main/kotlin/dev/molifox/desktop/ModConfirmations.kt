@@ -8,7 +8,6 @@ package dev.molifox.desktop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import dev.molifox.core.ModFile
 import dev.molifox.core.ModUpdateItem
@@ -38,12 +37,12 @@ internal fun ModUpdateConfirmation(
             )
         },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("pages.mods.confirm.update"), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("pages.mods.confirm.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("pages.mods.confirm.cancel")) }
         },
     )
 }
@@ -77,12 +76,12 @@ internal fun DeleteModConfirmation(
             )
         },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("pages.mods.delete.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("pages.mods.delete.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("pages.mods.delete.cancel")) }
         },
     )
 }

@@ -158,8 +158,7 @@ class PclLobbyBackend(
         }
 
     /** 是否有运行时下载/安装任务正在执行；initialize 用它避开被占用的安装锁。 */
-    private fun runtimeInstallActive(): Boolean =
-        synchronized(installGuard) { installTask?.isActive == true }
+    private fun runtimeInstallActive(): Boolean = synchronized(installGuard) { installTask?.isActive == true }
 
     override suspend fun inspectRuntime(): Result<CoreStatus> =
         runCatching {

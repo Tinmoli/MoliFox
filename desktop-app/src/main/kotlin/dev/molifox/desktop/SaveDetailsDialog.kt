@@ -41,7 +41,6 @@ import dev.molifox.core.SaveEntry
 import dev.molifox.core.SaveSettingsChanges
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -120,7 +119,8 @@ internal fun SaveDetailsDialog(
             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
                 SaveDetailsHeader(entry, enabled = !saving, onDismiss = dismiss)
                 if (canManageDatapacks) {
-                    TabRow(selectedTabIndex = tab) {
+                    // 下方卡片都在 ScrollColumn 里、右缘自带滚动条留白；页签行留同样的边，右缘保持一条线。
+                    TabRow(selectedTabIndex = tab, modifier = Modifier.padding(end = ScrollbarGutter)) {
                         Tab(
                             selected = tab == DETAILS_TAB_INFO,
                             onClick = { tab = DETAILS_TAB_INFO },
@@ -175,8 +175,9 @@ private fun SaveDetailsHeader(
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    // 与下方卡片同一滚动条留白：关闭按钮的右缘和卡片、页签对齐。
     Row(
-        Modifier.fillMaxWidth(),
+        Modifier.fillMaxWidth().padding(end = ScrollbarGutter),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

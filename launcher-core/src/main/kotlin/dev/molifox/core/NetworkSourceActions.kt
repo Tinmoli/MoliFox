@@ -9,7 +9,6 @@ import dev.molifox.core.net.CandidateSource
 import dev.molifox.core.net.DownloadSource
 import dev.molifox.core.net.DownloadSourceCatalog
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope

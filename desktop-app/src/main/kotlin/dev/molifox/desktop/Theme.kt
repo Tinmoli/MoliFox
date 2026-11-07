@@ -15,7 +15,6 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,7 +37,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.runtime.toLong
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -60,12 +58,12 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.LauncherSettings
-import dev.molifox.core.AppearanceAssetService
-import com.materialkolor.rememberDynamicColorScheme
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.ktx.animateColorScheme
+import com.materialkolor.rememberDynamicColorScheme
+import dev.molifox.core.AppearanceAssetService
+import dev.molifox.core.LauncherSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -85,7 +83,6 @@ val LocalLauncherSettings = compositionLocalOf { LauncherSettings() }
 object Motion {
     const val FAST = 120
     const val NORMAL = 180
-    const val SLOW = 260
 }
 
 /** 按「减少动态效果」返回过渡曲线；关闭动画时直接跳到终值。 */
@@ -97,6 +94,7 @@ private fun motionSpec(durationMillis: Int): androidx.compose.animation.core.Ani
 fun MoliTheme(
     settings: LauncherSettings,
     assets: AppearanceAssetService? = null,
+    videoAccent: String? = null,
     content: @Composable () -> Unit,
 ) {
     val dark =
@@ -106,25 +104,27 @@ fun MoliTheme(
             "system" -> isSystemInDarkTheme()
             else -> isSystemInDarkTheme()
         }
-    val automatic by rememberBackgroundAccent(settings, dark, assets)
+    val automatic by rememberBackgroundAccent(settings, dark, assets, videoAccent)
     val cornerRadius = settings.cornerRadiusDp.coerceIn(0, 24)
     val font by produceState<FontFamily>(FontFamily.Default, settings.fontChoice) {
         value = withContext(Dispatchers.IO) { launcherFontFamily(settings.fontChoice) }
     }
     val surfaceAlpha = if (settings.glassEnabled) settings.surfaceOpacity.coerceIn(.6f, 1f) else 1f
     // 种子只交给 Material，完整的前景、容器、中性色和语义色由同一算法生成。
-    val targetColors = rememberDynamicColorScheme(
-        seedColor = themeSeed(settings, automatic.hex),
-        isDark = dark,
-        style = PaletteStyle.TonalSpot,
-        specVersion = ColorSpec.SpecVersion.SPEC_2021,
-    )
+    val targetColors =
+        rememberDynamicColorScheme(
+            seedColor = themeSeed(settings, automatic.hex),
+            isDark = dark,
+            style = PaletteStyle.TonalSpot,
+            specVersion = ColorSpec.SpecVersion.SPEC_2021,
+        )
     // 切换明暗时不把黑字与白字交叉淡化，避免中途两者都变成灰色；同模式换种子平滑过渡。
-    val animated = key(dark) {
-        animateColorScheme(targetColors, animationSpec = {
-            if (settings.animationsEnabled) tween(Motion.NORMAL) else snap()
-        })
-    }
+    val animated =
+        key(dark) {
+            animateColorScheme(targetColors, animationSpec = {
+                if (settings.animationsEnabled) tween(Motion.NORMAL) else snap()
+            })
+        }
     val colors = animated.copy(surface = animated.surface.copy(alpha = surfaceAlpha))
     val density = LocalDensity.current
     MaterialTheme(
@@ -323,7 +323,6 @@ object Metrics {
     val sectionGap = 12.dp
     val rowHeight = 44.dp
     val rowHeightWithDetail = 52.dp
-    val rowMinHeight = 44.dp
     val rowGap = 10.dp
     val controlHeight = 34.dp
     val iconButton = 30.dp

@@ -12,9 +12,6 @@ import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.createDirectory
 import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.readAttributes
 
 /** All launcher-owned paths live beneath this portable root; game directories are separate. */
 class LauncherDirectories(

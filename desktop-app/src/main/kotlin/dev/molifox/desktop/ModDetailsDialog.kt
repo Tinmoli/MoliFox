@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,7 +66,7 @@ fun ModDetailsDialog(
             // 链接行紧跟标题信息：有官方页就列出来，识别不到项目时至少留一个百科搜索。
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 links.forEach { link ->
-                    TextButton(
+                    MoliTextButton(
                         { onOpenUrl(link.url) },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     ) {
@@ -90,7 +89,7 @@ fun ModDetailsDialog(
             MutedText(strings.t("dialogs.contentUpdates.footer"))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onDismiss) { Text(strings.t("dialogs.contentUpdates.closeDetails")) }
+            MoliTextButton(onDismiss) { Text(strings.t("dialogs.contentUpdates.closeDetails")) }
         }
     }
 }

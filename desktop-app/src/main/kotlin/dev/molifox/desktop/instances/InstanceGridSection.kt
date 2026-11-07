@@ -52,6 +52,7 @@ import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.hairline
+import dev.molifox.desktop.rememberInstanceBusy
 
 /** 网格卡固定高度：图标行 + 单行名称 + 单行副标题 + 底部操作行，最长内容也不裁切（内容约 138dp，余量留给弹性间隔）。 */
 private val InstanceCardHeight = 176.dp
@@ -85,7 +86,7 @@ internal fun InstanceGridBody(
                 instance = instance,
                 actions = actions,
                 selected = instance.id == selectedId,
-                busy = busy || actions.controller.isInstanceBusy(instance.id),
+                busy = busy || rememberInstanceBusy(actions, instance.id),
                 onSelect = { onSelect(instance) },
                 onManage = { onManage(instance.id) },
                 onLaunch = { onLaunch(instance) },

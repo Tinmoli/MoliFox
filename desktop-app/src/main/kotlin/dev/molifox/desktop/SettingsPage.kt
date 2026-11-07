@@ -55,7 +55,6 @@ import dev.molifox.core.i18n.Strings
 import dev.molifox.desktop.content.DownloadsPage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -227,7 +226,7 @@ private fun SettingsSearchHeader(
 /**
  * 左侧二级列表与下载页分类栏用同一套条目规格：项高 32、圆角 6、图标 17、内边距 10、
  * 选中 selectedRowBackground 实底 + onPrimaryContainer 文字，悬停 rowHoverHighlight、按下 pressScale。
- * 整栏套磨砂面板，上下留 8dp 内边距，条目因此整体缩在面板圆角以内；高度撑满，与右侧内容列同高。
+ * 整栏套磨砂面板，四周留 8dp 内边距（与联机大厅侧栏一致），条目因此整体缩在面板圆角以内；高度撑满，与右侧内容列同高。
  */
 @Composable
 private fun SettingsNavigationPanel(
@@ -241,7 +240,7 @@ private fun SettingsNavigationPanel(
     val strings = LocalStrings.current
     FrostedPanel(
         Modifier.width(168.dp).fillMaxHeight(),
-        contentPadding = PaddingValues(vertical = 8.dp),
+        contentPadding = PaddingValues(8.dp),
     ) {
         Column(
             // 内容超出面板高度时滚动，而不是画到面板圆角外面。

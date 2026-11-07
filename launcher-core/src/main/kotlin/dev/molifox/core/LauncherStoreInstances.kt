@@ -15,8 +15,6 @@ internal interface StoreScanApi {
 
     fun refreshInstancesIfChanged(): Boolean
 
-    fun rescanInstances(): Int
-
     fun pruneMissingInstanceRecords(): Int
 }
 
@@ -56,7 +54,7 @@ internal abstract class StoreScanActions(
             )
         }
         refreshInstances()
-        // 已删目录留下的设置键保持惰性，不因一次启动就删掉；下一次保存时由 mutate 统一清理。
+        // 已删目录留下的设置键保持惰性，不因一次启动就删掉；下一次保存时由 mutate 磁盘核对后统一清理。
         core.recoveryMessage?.let { log(it, true) }
         val legacy = core.legacyRecords
         if (legacy.isNotEmpty()) {
@@ -113,8 +111,6 @@ internal abstract class StoreScanActions(
         refreshInstances()
         return true
     }
-
-    override fun rescanInstances(): Int = refreshInstances()
 
     /**
      * 启动/发现时用磁盘核对实例设置：`versions/<目录名>` 在所有扫描根里都不存在时，这条记录已没有文件，

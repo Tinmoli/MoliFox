@@ -7,7 +7,6 @@ package dev.molifox.core.data.skin
 
 import dev.molifox.core.platform.files.readBoundedImage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 

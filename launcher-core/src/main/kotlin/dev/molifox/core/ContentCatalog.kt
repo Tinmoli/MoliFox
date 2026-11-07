@@ -25,6 +25,14 @@ private const val MAX_CHANGELOG_CHARS = 40000
 private val supportedContentKinds =
     setOf("mod", "modpack", "resourcepack", "shader", "datapack", "world")
 
+/** 版本声明的依赖；project_id 可能为空，但 version_id 会用于直接定位。 */
+data class ContentDependency(
+    val projectId: String,
+    val versionId: String,
+    val fileName: String,
+    val type: String,
+)
+
 data class ContentVersion(
     val id: String,
     val name: String,
@@ -35,6 +43,7 @@ data class ContentVersion(
     val gameVersions: List<String> = emptyList(),
     val loaders: List<String> = emptyList(),
     val featured: Boolean = false,
+    val dependencies: List<ContentDependency> = emptyList(),
 )
 
 data class ContentDetails(
@@ -117,6 +126,8 @@ private fun JsonObject.toContentHit(
         get("downloads")?.asLong ?: 0,
         kind,
         string("icon_url").takeIf { it.isNotBlank() },
+        // Modrinth 项目对象自带 display_categories；CurseForge 的规范化对象没有该字段，保持空列表。
+        categories = modrinthDisplayCategories(),
     )
 
 internal fun verifyContentSource(
@@ -161,7 +172,25 @@ internal fun contentVersionOf(info: JsonObject) =
         info.array("game_versions").map { it.asString },
         info.array("loaders").map { it.asString.lowercase() },
         info.boolean("featured"),
+        contentDependenciesOf(info),
     )
+
+private fun contentDependenciesOf(info: JsonObject): List<ContentDependency> =
+    info.array("dependencies").mapNotNull { element ->
+        val dependency = element.asJsonObject
+        val projectId = dependency.string("project_id")
+        val versionId = dependency.string("version_id")
+        if (projectId.isBlank() && versionId.isBlank()) {
+            null
+        } else {
+            ContentDependency(
+                projectId = projectId,
+                versionId = versionId,
+                fileName = dependency.string("file_name"),
+                type = dependency.string("dependency_type").ifBlank { "required" },
+            )
+        }
+    }
 
 class ContentCatalog
     internal constructor(
@@ -182,6 +211,14 @@ class ContentCatalog
             // 私有内容服务的项目名称不发送给第三方百科。
             val publicApi = runCatching { java.net.URI(api).host == "api.modrinth.com" }.getOrDefault(false)
             return if (publicApi) encyclopedia.resolve(hit, declared) else directEncyclopediaUrl(declared)
+        }
+
+        /** 依赖只用于展示名称和跳转，拿到项目基本信息即可，不再拉完整版本列表。 */
+        suspend fun projectHit(projectId: String): ContentHit {
+            val project = backend.project(projectId)
+            val kind = project.string("project_type")
+            require(kind in supportedContentKinds) { I18n.t("contentA1.catalog.unsupportedKind") }
+            return project.toContentHit(projectId, kind)
         }
 
         /** Lazy changelog loading avoids one extra request per version in a large project. */

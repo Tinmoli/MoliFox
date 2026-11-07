@@ -67,6 +67,7 @@ import dev.molifox.desktop.Tag
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.hairline
 import dev.molifox.desktop.hoverHighlight
+import dev.molifox.desktop.rememberInstanceBusy
 import dev.molifox.desktop.selectedRowBackground
 
 /** 实例行高：64dp，容纳两行文字与 12sp 文字操作。 */
@@ -176,7 +177,7 @@ internal fun InstanceListBody(
                     instance = instance,
                     actions = actions,
                     selected = instance.id == selectedId,
-                    busy = busy || actions.controller.isInstanceBusy(instance.id),
+                    busy = busy || rememberInstanceBusy(actions, instance.id),
                     showNotes = showNotes,
                     sizeRevision = sizeRevision,
                     onSelect = { onSelect(instance) },

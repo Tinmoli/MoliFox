@@ -21,7 +21,6 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.writeText
 

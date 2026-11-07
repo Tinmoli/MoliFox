@@ -6,7 +6,6 @@
 package dev.molifox.desktop
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +40,6 @@ import dev.molifox.core.LocalPackEntry
 import dev.molifox.core.PackFolder
 import dev.molifox.core.PackUpdateItem
 import dev.molifox.core.PackUpdateStatus
-import kotlin.io.path.isDirectory
 
 /** 资源包 / 光影行：缩略图 + 名称 14 + 类型/大小/修改时间 12 + 更新标记；行尾只有删除。 */
 @Composable

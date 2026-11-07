@@ -9,10 +9,7 @@ import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
-import kotlin.io.path.isDirectory
-import kotlin.io.path.name
 import kotlin.io.path.writeBytes
 
 /** 元数据里图标路径的长度上限：超过视为可疑字段，直接忽略。 */

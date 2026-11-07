@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,7 +26,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,7 +58,6 @@ import dev.molifox.desktop.instance.InstanceSettingsAutoSave
 import dev.molifox.desktop.instance.InstanceSettingsSaver
 import dev.molifox.desktop.instance.InstanceSettingsTab
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 
 /** 页签序号：光影 3、存档 4、原理图 5；其余页签按内容目录的固定顺序排列。 */
@@ -141,10 +139,11 @@ fun ColumnScope.InstanceDetailsPage(
     // 非法值一律不写盘：对应输入框失焦时回退到上一次有效值，并保留内联错误。
     val settingsScope = rememberCoroutineScope()
     val saver = remember(instance.id) { InstanceSettingsSaver(actions, settingsScope) }
-    val instanceBusy = actions.controller.isInstanceBusy(instance.id)
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
     // 「原理图」页签只在实例已有 schematics 目录时出现；其它页签照旧。
     var schematicsFolder by remember(instance.id) { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(instance.id, state.jobs) {
+    // key 只取任务 id 与状态：直接用 state.jobs 会让下载进度（100–200ms 一跳）反复重启这里的目录扫描。
+    LaunchedEffect(instance.id, state.jobs.map { it.id + ":" + it.status }) {
         schematicsFolder =
             withContext(Dispatchers.IO) {
                 actions.controller.instanceWorkspace
@@ -173,6 +172,8 @@ fun ColumnScope.InstanceDetailsPage(
     // ---------------- 页头 ----------------
     InstanceDetailsHeader(instance, actions, onBack) { editingIcon = true }
     // ---------------- 左侧页签 + 右侧内容 ----------------
+    // 与下载中心、联机大厅同款版式：左右两栏都套磨砂面板（内边距 8dp），卡片不直接
+    // 铺在窗口背板上——否则方框贴着玻璃边，透明底的次要按钮也因背板不同显得颜色不一。
     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         InstanceDetailsRail(
             instance = instance,
@@ -187,54 +188,56 @@ fun ColumnScope.InstanceDetailsPage(
             onDelete = { onDelete() },
             showSchematics = schematicsFolder != false,
         )
-        InstanceTabContent(
-            instance = instance,
-            actions = actions,
-            settings = state.data.settings,
-            tab = tab,
-            draft = draft,
-            onDraftChange = { draft = it },
-            saver = saver,
-            editSnapshot = editSnapshot,
-            instanceBusy = instanceBusy,
-            memoryMb = memoryMb,
-            onMemoryMbChange = { memoryMb = it },
-            initialMemory = initial,
-            onInitialMemoryChange = { initial = it },
-            width = width,
-            onWidthChange = { width = it },
-            height = height,
-            onHeightChange = { height = it },
-            javaRuntimes = javaRuntimes,
-            javaDetecting = javaDetecting,
-            javaSaveError = javaSaveError,
-            onOpenJavaPicker = {
-                javaSaveError = null
-                javaSheetOpen = true
-            },
-            advancedValid = advancedValid,
-            onAdvancedValidChange = { advancedValid = it },
-            onEditIcon = { editingIcon = true },
-            onResetLaunchSettings = {
-                memoryMb = 0
-                initial = "0"
-                width = ""
-                height = ""
-                draft =
-                    applyInstanceMemoryPolicy(
-                        draft,
-                        InstanceMemoryPolicy.Inherit,
-                        state.data.settings.memoryMb,
-                    ).copy(
-                        javaPath = "",
-                        windowMode = "inherit",
-                        extraJvmArgs = "",
-                        extraGameArgs = "",
-                    )
-            },
-            updateCenter = updateCenter,
-            navigate = navigate,
-        )
+        FrostedPanel(Modifier.weight(1f).fillMaxHeight(), contentPadding = PaddingValues(8.dp)) {
+            InstanceTabContent(
+                instance = instance,
+                actions = actions,
+                settings = state.data.settings,
+                tab = tab,
+                draft = draft,
+                onDraftChange = { draft = it },
+                saver = saver,
+                editSnapshot = editSnapshot,
+                instanceBusy = instanceBusy,
+                memoryMb = memoryMb,
+                onMemoryMbChange = { memoryMb = it },
+                initialMemory = initial,
+                onInitialMemoryChange = { initial = it },
+                width = width,
+                onWidthChange = { width = it },
+                height = height,
+                onHeightChange = { height = it },
+                javaRuntimes = javaRuntimes,
+                javaDetecting = javaDetecting,
+                javaSaveError = javaSaveError,
+                onOpenJavaPicker = {
+                    javaSaveError = null
+                    javaSheetOpen = true
+                },
+                advancedValid = advancedValid,
+                onAdvancedValidChange = { advancedValid = it },
+                onEditIcon = { editingIcon = true },
+                onResetLaunchSettings = {
+                    memoryMb = 0
+                    initial = "0"
+                    width = ""
+                    height = ""
+                    draft =
+                        applyInstanceMemoryPolicy(
+                            draft,
+                            InstanceMemoryPolicy.Inherit,
+                            state.data.settings.memoryMb,
+                        ).copy(
+                            javaPath = "",
+                            windowMode = "inherit",
+                            extraJvmArgs = "",
+                            extraGameArgs = "",
+                        )
+                },
+                updateCenter = updateCenter,
+                navigate = navigate,
+            )
+        }
     }
     InstanceDetailsDialogs(
         instance = instance,
@@ -266,6 +269,8 @@ private fun InstanceDetailsHeader(
     onEditIcon: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时页头按钮才会刷新。
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // 返回目标由导航状态决定（实例列表或开始页的版本设置），所以标签保持中性。
         HeaderIconButton(Icons.Outlined.ArrowBack, strings.t("pages.instance.details.back"), onClick = onBack)
@@ -273,13 +278,13 @@ private fun InstanceDetailsHeader(
         // 实例页头也显示图标：默认草方块，自定义图片或加载器图标会替换它。
         IconButton(
             { onEditIcon() },
-            enabled = !actions.controller.isInstanceBusy(instance.id),
+            enabled = !instanceBusy,
         ) {
             InstanceArtwork(instance, actions, Modifier.size(34.dp))
         }
-        TextButton(
+        MoliTextButton(
             { onEditIcon() },
-            enabled = !actions.controller.isInstanceBusy(instance.id),
+            enabled = !instanceBusy,
         ) {
             Text(strings.t("pages.instance.details.changeIcon"), fontSize = 12.sp)
         }
@@ -326,7 +331,7 @@ private fun InstanceDetailsHeader(
 
 /** 右侧内容区：切换页签时先建好对应目录，再渲染对应的页签内容。 */
 @Composable
-private fun RowScope.InstanceTabContent(
+private fun InstanceTabContent(
     instance: GameInstance,
     actions: UiActions,
     settings: LauncherSettings,
@@ -356,7 +361,7 @@ private fun RowScope.InstanceTabContent(
     navigate: (Page) -> Unit,
 ) {
     val strings = LocalStrings.current
-    Box(Modifier.weight(1f).fillMaxHeight()) {
+    Box(Modifier.fillMaxSize()) {
         // 页签对应的内容目录缺失时先建成，再列目录；这样左栏「游戏文件夹」只会出现真正存在的目录。
         val tabFolder = instanceTabFolder(tab)
         var folderReady by remember(instance.id, tab) { mutableStateOf(tabFolder == null) }
@@ -516,14 +521,21 @@ private fun InstanceJavaPicker(
         onSelect = { path ->
             onDraftChange(draft.copy(javaPath = path))
             // 立即写入实例配置：启动读取的是已保存值，无需重启启动器。
-            onSaveError(
-                runCatching {
-                    if (!actions.controller.isInstanceBusy(instance.id)) {
-                        actions.controller.saveInstanceConfiguration(instance.copy(javaPath = path))
+            // 写盘（备份复制 + 全量写 JSON）移到后台，点击线程只更新草稿与错误提示。
+            actions.run {
+                val failure =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            if (!actions.controller.isInstanceBusy(instance.id)) {
+                                actions.controller.saveInstanceConfiguration(
+                                    instance.copy(javaPath = path),
+                                )
+                            }
+                        }.exceptionOrNull()
+                            ?.message
                     }
-                }.exceptionOrNull()
-                    ?.message,
-            )
+                onSaveError(failure)
+            }
         },
         onDismiss = onDismiss,
     )

@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import dev.molifox.desktop.MoliButton as Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.SaveDetails
 import dev.molifox.core.SaveSettingsChanges
+import dev.molifox.desktop.MoliButton as Button
 
 /** 难度档位（0–3，对应 level.dat 数值）；显示文案随语言变化，不能做成静态标签表。 */
 private const val DIFFICULTY_HARD = 3
@@ -171,7 +170,7 @@ private fun SaveActions(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(strings.t("dialogs.saveSettings.saved"), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-            TextButton(onDismissNotice) { Text(strings.t("dialogs.common.gotIt"), fontSize = 11.sp) }
+            MoliTextButton(onDismissNotice) { Text(strings.t("dialogs.common.gotIt"), fontSize = 11.sp) }
         }
     }
     Button(

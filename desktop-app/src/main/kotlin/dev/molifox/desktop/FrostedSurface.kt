@@ -26,8 +26,10 @@ fun FrostedPanel(
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     Box(
-        modifier.background(MaterialTheme.colorScheme.surface, shape)
-            .border(1.dp, hairline(), shape).padding(contentPadding),
+        modifier
+            .background(MaterialTheme.colorScheme.surface, shape)
+            .border(1.dp, hairline(), shape)
+            .padding(contentPadding),
         content = content,
     )
 }

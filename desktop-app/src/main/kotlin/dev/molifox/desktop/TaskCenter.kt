@@ -33,7 +33,6 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
-import dev.molifox.desktop.MoliButton as Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -41,7 +40,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,6 +63,7 @@ import dev.molifox.core.JobStatus
 import dev.molifox.core.LauncherState
 import kotlinx.coroutines.delay
 import java.util.Locale
+import dev.molifox.desktop.MoliButton as Button
 
 private const val TASK_MIB_BYTES = 1024 * 1024
 private const val TASK_MIB_DIVISOR = 1048576.0
@@ -310,7 +309,7 @@ fun TaskCenterDialog(
             title = { Text(strings.t("pages.tasks.cancel.title")) },
             text = { Text(strings.t("pages.tasks.cancel.message", job.title)) },
             confirmButton = {
-                TextButton({
+                MoliTextButton({
                     actions.controller.jobs.cancel(job.id)
                     cancelling = null
                 }) {
@@ -318,7 +317,7 @@ fun TaskCenterDialog(
                 }
             },
             dismissButton = {
-                TextButton({ cancelling = null }) {
+                MoliTextButton({ cancelling = null }) {
                     Text(strings.t("pages.tasks.cancel.keep"))
                 }
             },

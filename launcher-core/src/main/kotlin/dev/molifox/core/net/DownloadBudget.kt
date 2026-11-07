@@ -7,14 +7,11 @@ package dev.molifox.core.net
 
 import dev.molifox.core.MAX_DOWNLOAD_THREADS
 import dev.molifox.core.i18n.I18n
+import dev.molifox.core.megabytesText
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-
-/** 字节换算到 KiB 的进制；日志里的 MB 用浮点除法，保留一位小数。 */
-private const val KIBIBYTE_BYTES = 1024.0
 
 /** 单任务传输缓冲预算；流式下载不把整个文件大小当作内存占用。 */
 const val DOWNLOAD_BUDGET_BYTES = 256L * 1024 * 1024
@@ -46,14 +43,11 @@ fun downloadConcurrency(
             "networkA.budget.clamped",
             files,
             fits,
-            megabytes(averageFileBytes),
-            megabytes(budgetBytes),
+            megabytesText(averageFileBytes),
+            megabytesText(budgetBytes),
         ),
     )
 }
-
-private fun megabytes(bytes: Long): String =
-    String.format(Locale.ROOT, "%.1f MB", bytes / KIBIBYTE_BYTES / KIBIBYTE_BYTES)
 
 /**
  * 传输闸门：调用方按实际传输缓冲估算占用，多许可取得与取消均受保护。

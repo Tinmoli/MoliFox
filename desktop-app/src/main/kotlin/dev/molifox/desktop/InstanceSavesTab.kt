@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,7 +30,6 @@ import dev.molifox.core.SaveBackupInfo
 import dev.molifox.core.SaveEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
@@ -67,7 +66,7 @@ internal fun InstanceSavesTab(
     var detailed by remember { mutableStateOf<SaveEntry?>(null) }
     var renaming by remember { mutableStateOf<SaveEntry?>(null) }
     val liveState by actions.controller.state.collectAsState()
-    val busy = actions.controller.isInstanceBusy(instance.id)
+    val busy = rememberInstanceBusy(actions, instance.id)
     val running = actions.controller.game.isRunning(instance.id)
     val canManage = !busy && !running
     val canCopy = canManage
@@ -267,15 +266,21 @@ private fun SavesLoadEffect(
     onFailed: (String?) -> Unit,
     onFinished: () -> Unit,
 ) {
+    // lambda 参数每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // effect 只随 (instanceId, refresh, saveJobsKey) 重启，执行时读到最新回调。
+    val latestOnStart by rememberUpdatedState(onStart)
+    val latestOnLoaded by rememberUpdatedState(onLoaded)
+    val latestOnFailed by rememberUpdatedState(onFailed)
+    val latestOnFinished by rememberUpdatedState(onFinished)
     LaunchedEffect(instanceId, refresh, saveJobsKey) {
-        onStart()
+        latestOnStart()
         try {
             when (val snapshot = loadSavesSnapshot(actions, instanceId)) {
-                is SavesSnapshot.Loaded -> onLoaded(snapshot.saves, snapshot.backups)
-                is SavesSnapshot.Failed -> onFailed(snapshot.message)
+                is SavesSnapshot.Loaded -> latestOnLoaded(snapshot.saves, snapshot.backups)
+                is SavesSnapshot.Failed -> latestOnFailed(snapshot.message)
             }
         } finally {
-            onFinished()
+            latestOnFinished()
         }
     }
 }
@@ -289,14 +294,20 @@ private fun SaveJobWatcher(
     onFailed: (String) -> Unit,
     onFinished: () -> Unit,
 ) {
+    // onFailed/onFinished 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // effect 只随 (watchingJob, saveJobsKey) 重启，执行时读到最新回调。
+    val latestOnFailed by rememberUpdatedState(onFailed)
+    val latestOnFinished by rememberUpdatedState(onFinished)
     LaunchedEffect(watchingJob, saveJobsKey) {
         val id = watchingJob ?: return@LaunchedEffect
         val job = jobs.firstOrNull { it.id == id } ?: return@LaunchedEffect
         when (job.status) {
-            JobStatus.Failed -> onFailed(job.error ?: tr("pages.saves.job.failed"))
+            JobStatus.Failed -> latestOnFailed(job.error ?: tr("pages.saves.job.failed"))
+
             JobStatus.Completed,
             JobStatus.Cancelled,
-            -> onFinished()
+            -> latestOnFinished()
+
             else -> Unit
         }
     }
@@ -351,12 +362,12 @@ internal fun SaveTrashDialog(
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("pages.saves.trash.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
         },
     )
 }
@@ -377,7 +388,7 @@ internal fun ReplaceSaveDialog(
         title = { Text(strings.t("pages.saves.replace.title")) },
         text = { Text(strings.t("pages.saves.replace.message", backup.saveName)) },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(
                     strings.t("pages.saves.replace.confirm"),
                     color = MaterialTheme.colorScheme.error,
@@ -385,7 +396,7 @@ internal fun ReplaceSaveDialog(
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) }
         },
     )
 }

@@ -11,7 +11,6 @@ import com.google.gson.JsonParser
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType

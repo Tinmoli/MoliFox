@@ -24,7 +24,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.awt.GraphicsEnvironment
 
@@ -135,7 +133,7 @@ private fun FontFamilySection(
                 Spacer(Modifier.width(7.dp))
                 Text(strings.t("settings.font.import"))
             }
-            TextButton({ apply { it.copy(fontChoice = "", fontScale = 1f) } }) {
+            MoliTextButton({ apply { it.copy(fontChoice = "", fontScale = 1f) } }) {
                 Text(strings.t("settings.font.restoreSystem"))
             }
         }
@@ -176,7 +174,7 @@ private fun ImportedFontsSection(
                 if (index > 0) SettingDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(font.name, Modifier.weight(1f))
-                    TextButton({ apply { it.copy(fontChoice = "file:" + font.path) } }) {
+                    MoliTextButton({ apply { it.copy(fontChoice = "file:" + font.path) } }) {
                         Text(strings.t("settings.font.use"))
                     }
                     SmallIconButton(
@@ -295,6 +293,6 @@ private fun FontPickerDialog(
                 }
             }
         }
-        TextButton(onDismiss, Modifier.align(Alignment.End)) { Text(strings.t("settings.common.close")) }
+        MoliTextButton(onDismiss, Modifier.align(Alignment.End)) { Text(strings.t("settings.common.close")) }
     }
 }

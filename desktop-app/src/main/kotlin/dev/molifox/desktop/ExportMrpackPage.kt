@@ -95,11 +95,13 @@ fun ExportMrpackPage(
     ) {
         excludedPaths = if (on) excludedPaths - path else excludedPaths + path
     }
+    // busy 是快照值：挂在 state 上重算，导出任务开始/结束时确认按钮才会刷新。
+    val launcherBusy = rememberLauncherBusy(actions)
     val canConfirm =
         exportCanConfirm(
             selectedEntries.size,
             exporting,
-            actions.controller.busy,
+            launcherBusy,
             view.validTarget,
             view.validVersion,
         )

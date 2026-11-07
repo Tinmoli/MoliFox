@@ -2,6 +2,7 @@
 package dev.molifox.multiplayer.easytier
 
 import dev.molifox.core.i18n.I18n
+import dev.molifox.core.isWindowsReservedFileName
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.InputStream
@@ -41,8 +42,6 @@ object ZipExtractor {
     private const val PARENT = ".."
     private const val CURRENT = "."
     private val DRIVE_PREFIX = Regex("^[A-Za-z]:")
-    private val WINDOWS_RESERVED_NAME =
-        Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?")
 
     /**
      * 把 [archive] 解包到 [destination]。
@@ -105,7 +104,7 @@ object ZipExtractor {
                 ':' in segment ||
                     segment.endsWith('.') ||
                     segment.endsWith(' ') ||
-                    WINDOWS_RESERVED_NAME.matches(segment)
+                    isWindowsReservedFileName(segment)
             },
         ) {
             I18n.t("multiplayer.zipExtractor.5", name)

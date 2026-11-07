@@ -27,7 +27,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,7 +110,7 @@ internal fun RecentPlayRow(
                 ) {
                     if (server) RecentServerMetrics(item.title, snapshot)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
+                        MoliTextButton(
                             { actions.play(item) },
                             modifier =
                                 Modifier.semantics {

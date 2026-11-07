@@ -91,10 +91,10 @@ fun ColumnScope.DownloadCenterPage(
     // 分类竖排在左侧，页面不显示“下载中心”标题，节省纵向空间。
     // 右侧内容随分类淡入切换（150ms），避免整块内容硬切。
     Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 分类左栏与右侧内容区都套磨砂面板，两栏撑满行高；左栏留 8dp 上下内边距，与右栏卡片的内缩对齐成一块。
+        // 分类左栏与右侧内容区都套磨砂面板，两栏撑满行高；左栏四周留 8dp 内边距（与联机大厅侧栏一致），条目不贴面板边框。
         FrostedPanel(
             Modifier.width(158.dp).fillMaxHeight(),
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(8.dp),
         ) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 downloadKinds().forEach { item ->

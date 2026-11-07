@@ -178,9 +178,12 @@ internal class LauncherStoreCore(
         curseForgeBaseFallback = curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
         return settings.copy(
             accentColor = normalizedAccentColor(settings.accentColor),
-            // 旧配置保留自动/手动选择；新安装才默认使用樱花粉配色。
-            themeColorSource = raw.string("themeColorSource").takeIf { it in setOf("default", "background", "manual") }
-                ?: if (settings.automaticAccent) "background" else "manual",
+            // 配色来源有默认、跟随背景图与手动三档；旧配置的 default 原样保留，
+            // 缺失时仍按旧 automaticAccent 推断。
+            themeColorSource = normalizedThemeColorSource(raw.string("themeColorSource"), settings.automaticAccent),
+            // 背景媒体类型未知值按图片处理；旧 video/gradient 配置读取后自然回退为 null。
+            lightBackgroundKind = settings.lightBackgroundKind?.takeIf { it in BACKGROUND_KINDS },
+            darkBackgroundKind = settings.darkBackgroundKind?.takeIf { it in BACKGROUND_KINDS },
             autoCheckUpdates = if (raw.has("autoCheckUpdates")) settings.autoCheckUpdates else true,
             // 旧配置没有协议版本：视为未同意，启动时重新询问；已同意过的版本原样保留。
             agreementVersion = raw.string("agreementVersion"),

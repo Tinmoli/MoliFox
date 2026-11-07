@@ -69,12 +69,12 @@ import dev.molifox.desktop.SecondaryButton
 import dev.molifox.desktop.SimpleDropdown
 import dev.molifox.desktop.SmallIconButton
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.rememberLauncherBusy
 import dev.molifox.desktop.resourceFailureMessage
 import dev.molifox.desktop.selectedRowBackground
 import dev.molifox.desktop.tr
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -278,7 +278,8 @@ fun ColumnScope.ContentBrowser(
                         Modifier.width(125.dp),
                     )
                 }
-                SimpleDropdown(sort, contentSortOptions(), { sort = it }, Modifier.width(105.dp))
+                // 105dp 放不下「下载量」加箭头（字体放大后必然截断），放宽到与加载器下拉一致的宽度。
+                SimpleDropdown(sort, contentSortOptions(), { sort = it }, Modifier.width(125.dp))
                 // 下载源：点一下就能换；世界只提供 CurseForge，显示固定说明。
                 ContentSourceControl(kind, state.data.settings.contentDownloadSource, actions)
             }
@@ -295,7 +296,7 @@ fun ColumnScope.ContentBrowser(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.weight(1f))
-                    SecondaryButton({ actions.importPack() }, enabled = !actions.controller.busy) {
+                    SecondaryButton({ actions.importPack() }, enabled = !rememberLauncherBusy(actions)) {
                         Icon(Icons.Outlined.Unarchive, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(strings.t("pages.content.pack.import"), fontSize = 12.sp)

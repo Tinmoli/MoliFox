@@ -15,7 +15,6 @@ import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.fileSize
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 
 /** CurseForge 整合包允许的文件条目上限。 */

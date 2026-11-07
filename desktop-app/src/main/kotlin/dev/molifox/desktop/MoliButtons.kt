@@ -12,13 +12,13 @@ import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonElevation
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Button as MaterialButton
-import androidx.compose.material3.OutlinedButton as MaterialOutlinedButton
-import androidx.compose.material3.TextButton as MaterialTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Button as MaterialButton
+import androidx.compose.material3.OutlinedButton as MaterialOutlinedButton
+import androidx.compose.material3.TextButton as MaterialTextButton
 
 /** 按钮共用小圆角，保留原有交互、尺寸与颜色参数。 */
 @Composable
@@ -35,7 +35,18 @@ fun MoliButton(
     content: @Composable RowScope.() -> Unit,
 ) {
     ButtonFeedback(colors, enabled, interactionSource) { feedback, interaction ->
-        MaterialButton(onClick, modifier, enabled, shape, feedback, elevation, border, contentPadding, interaction, content)
+        MaterialButton(
+            onClick,
+            modifier,
+            enabled,
+            shape,
+            feedback,
+            elevation,
+            border,
+            contentPadding,
+            interaction,
+            content,
+        )
     }
 }
 
@@ -54,7 +65,18 @@ fun MoliOutlinedButton(
     content: @Composable RowScope.() -> Unit,
 ) {
     ButtonFeedback(colors, enabled, interactionSource) { feedback, interaction ->
-        MaterialOutlinedButton(onClick, modifier, enabled, shape, feedback, elevation, border, contentPadding, interaction, content)
+        MaterialOutlinedButton(
+            onClick,
+            modifier,
+            enabled,
+            shape,
+            feedback,
+            elevation,
+            border,
+            contentPadding,
+            interaction,
+            content,
+        )
     }
 }
 
@@ -73,6 +95,17 @@ fun MoliTextButton(
     content: @Composable RowScope.() -> Unit,
 ) {
     ButtonFeedback(colors, enabled, interactionSource) { feedback, interaction ->
-        MaterialTextButton(onClick, modifier, enabled, shape, feedback, elevation, border, contentPadding, interaction, content)
+        MaterialTextButton(
+            onClick,
+            modifier,
+            enabled,
+            shape,
+            feedback,
+            elevation,
+            border,
+            contentPadding,
+            interaction,
+            content,
+        )
     }
 }

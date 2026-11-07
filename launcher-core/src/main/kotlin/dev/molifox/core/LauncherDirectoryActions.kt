@@ -11,8 +11,6 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.createDirectories
-import kotlin.io.path.isDirectory
-import kotlin.io.path.readAttributes
 
 /** 游戏目录切换、发现与界面文件夹。 */
 internal interface LauncherDirectoryApi {

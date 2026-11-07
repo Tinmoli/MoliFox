@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,13 +43,13 @@ internal fun LauncherUpdateNotice(
                 ScrollColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
                     MarkdownText(release.notes.ifBlank { strings.t("settings.update.noNotes") })
                 }
-                TextButton({ actions.run { actions.controller.platform.openUrl(release.pageUrl) } }) {
+                MoliTextButton({ actions.run { actions.controller.platform.openUrl(release.pageUrl) } }) {
                     Text(strings.t("settings.update.releases"))
                 }
             }
         },
         confirmButton = {
-            TextButton(
+            MoliTextButton(
                 onClick = {
                     actions.run {
                         actions.controller.downloadUpdate()
@@ -63,7 +62,7 @@ internal fun LauncherUpdateNotice(
             ) { Text(strings.t("settings.update.download")) }
         },
         dismissButton = {
-            TextButton({ dismissed = update.promptSerial }) { Text(strings.t("settings.update.later")) }
+            MoliTextButton({ dismissed = update.promptSerial }) { Text(strings.t("settings.update.later")) }
         },
     )
 }

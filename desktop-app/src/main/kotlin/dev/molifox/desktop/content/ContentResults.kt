@@ -53,8 +53,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +71,7 @@ import dev.molifox.desktop.EmptyState
 import dev.molifox.desktop.LocalAnimationsEnabled
 import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.Panel
 import dev.molifox.desktop.ResourceThumbnail
@@ -79,6 +80,7 @@ import dev.molifox.desktop.Tag
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.hoverHighlight
 import dev.molifox.desktop.pressScale
+import dev.molifox.desktop.rememberLauncherBusy
 import kotlinx.coroutines.launch
 
 /** 列表结果行：图标 40/44 + 两行文字 + 标签 + 安装，整行 56dp，悬停淡入、按压缩放。 */
@@ -120,6 +122,11 @@ private fun ContentResultRow(
                 )
                 Spacer(Modifier.width(8.dp))
                 Tag(contentKindLabel(hit.type))
+                // 分类标签跟在类型标签后面；标题带 weight 可省略，标签本身按内容占位不会被挤掉。
+                contentCategoryLabels(hit).forEach { label ->
+                    Spacer(Modifier.width(4.dp))
+                    Tag(label)
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -156,7 +163,7 @@ private fun ContentResultRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        TextButton(onInstall, enabled = canInstall) {
+        MoliTextButton(onInstall, enabled = canInstall) {
             Icon(Icons.Outlined.Add, null, Modifier.size(14.dp))
             Spacer(Modifier.width(3.dp))
             Text(strings.t("pages.content.row.chooseVersion"), fontSize = 12.sp)
@@ -220,7 +227,7 @@ private fun ContentResultCard(
                     )
                     if (showAuthors) {
                         Text(
-                            "by " + hit.author,
+                            strings.t("pages.content.row.author", hit.author),
                             fontSize = 11.sp,
                             color = colors.onSurfaceVariant,
                             maxLines = 1,
@@ -258,8 +265,12 @@ private fun ContentResultCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Tag(contentKindLabel(hit.type))
+                contentCategoryLabels(hit).forEach { label ->
+                    Spacer(Modifier.width(4.dp))
+                    Tag(label)
+                }
                 Spacer(Modifier.weight(1f))
-                TextButton(onInstall, enabled = canInstall) {
+                MoliTextButton(onInstall, enabled = canInstall) {
                     Icon(Icons.Outlined.Add, null, Modifier.size(15.dp))
                     Spacer(Modifier.width(3.dp))
                     Text(strings.t("pages.content.row.chooseVersion"), fontSize = 12.sp)
@@ -387,12 +398,18 @@ private fun ColumnScope.ContentResultsBody(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
-    val scrolled =
-        if (listView) {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        } else {
-            gridState.firstVisibleItemIndex > 0
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时行内安装按钮才会刷新。
+    val launcherBusy = rememberLauncherBusy(actions)
+    // derivedStateOf 切片滚动状态：直接在组合里读 firstVisibleItem* 会让滚动期间每帧重组整个结果区。
+    val scrolled by remember(listView) {
+        derivedStateOf {
+            if (listView) {
+                listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+            } else {
+                gridState.firstVisibleItemIndex > 0
+            }
         }
+    }
     val goTop: () -> Unit = {
         scope.launch {
             if (listView) listState.animateScrollToItem(0) else gridState.animateScrollToItem(0)
@@ -401,9 +418,13 @@ private fun ColumnScope.ContentResultsBody(
     Box(Modifier.weight(1f).fillMaxWidth()) {
         when {
             loading && !loadedOnce -> SkeletonResults()
+
             error != null -> SearchErrorPanel(error.orEmpty(), onRetry)
+
             result.hits.isEmpty() -> NoResultsState(query, onClearQuery)
+
             hits.isEmpty() -> FilteredEmptyState()
+
             listView ->
                 LazyColumn(
                     Modifier.fillMaxSize(),
@@ -416,12 +437,13 @@ private fun ColumnScope.ContentResultsBody(
                             hit,
                             actions,
                             modifier = Modifier.animateItem(),
-                            canInstall = !actions.controller.busy,
+                            canInstall = !launcherBusy,
                             onInstall = { onOpen(hit) },
                             onOpen = { onOpen(hit) },
                         )
                     }
                 }
+
             else ->
                 LazyVerticalGrid(
                     GridCells.Adaptive(250.dp),
@@ -436,7 +458,7 @@ private fun ColumnScope.ContentResultsBody(
                             hit,
                             actions,
                             modifier = Modifier.animateItem(),
-                            canInstall = !actions.controller.busy,
+                            canInstall = !launcherBusy,
                             showAuthors = showAuthors,
                             showDescriptions = showDescriptions,
                             onInstall = { onOpen(hit) },
@@ -466,7 +488,7 @@ private fun SearchErrorPanel(
             failure,
             Icons.Outlined.CloudOff,
         ) {
-            TextButton(onRetry) { Text(strings.t("pages.content.error.retry")) }
+            MoliTextButton(onRetry) { Text(strings.t("pages.content.error.retry")) }
         }
     }
 }
@@ -487,7 +509,7 @@ private fun NoResultsState(
             Icons.Outlined.SearchOff,
         ) {
             if (query.isNotBlank()) {
-                TextButton(onClearQuery) { Text(strings.t("pages.content.empty.clear")) }
+                MoliTextButton(onClearQuery) { Text(strings.t("pages.content.empty.clear")) }
             }
         }
     }
@@ -538,11 +560,11 @@ private fun ResultsPager(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         MutedText(strings.t("pages.content.pager.summary", result.total), Modifier)
         Spacer(Modifier.weight(1f))
-        TextButton({ onOffsetChange(maxOf(0, offset - 12)) }, enabled = offset > 0) {
+        MoliTextButton({ onOffsetChange(maxOf(0, offset - 12)) }, enabled = offset > 0) {
             Text(strings.t("pages.content.pager.prev"), fontSize = 12.sp)
         }
         val next = offset + 12
-        TextButton({ onOffsetChange(next) }, enabled = next < result.total && offset < 9996) {
+        MoliTextButton({ onOffsetChange(next) }, enabled = next < result.total && offset < 9996) {
             Text(strings.t("pages.content.pager.next"), fontSize = 12.sp)
         }
     }

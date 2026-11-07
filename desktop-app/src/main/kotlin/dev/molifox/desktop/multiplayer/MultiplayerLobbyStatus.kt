@@ -9,12 +9,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.SecondaryButton
 import dev.molifox.desktop.tr
@@ -75,7 +75,7 @@ private fun RoomRuntimeStatus(
     }
     if (!settings.enabled) return
     Text(multiplayerRuntimeDownloadNotice(), style = MaterialTheme.typography.bodySmall)
-    TextButton(onClick = actions.runtime.download, enabled = !state.busy) {
+    MoliTextButton(onClick = actions.runtime.download, enabled = !state.busy) {
         Text(
             if (actions.runtime.downloadFailed) {
                 strings.t("dialogs.mp.status.retryDownload")
@@ -103,7 +103,7 @@ private fun RoomRuntimeStatus(
     }
     if (actions.runtime.cancelVisible && state.phase == LobbyPhase.DownloadingRuntime) {
         // 下载慢或卡住时主动停止：取消不会留下未完成的安装包，也不会自动重新下载。
-        TextButton(
+        MoliTextButton(
             onClick = actions.runtime.cancelDownload,
             enabled = !actions.runtime.cancelling,
             colors =
@@ -139,7 +139,7 @@ internal fun RoomLeaveAction(
             LobbyPhase.Connected -> strings.t("dialogs.mp.status.leaveRoom")
             else -> null
         }
-    label?.let { TextButton(onClick = actions.leave) { Text(it) } }
+    label?.let { MoliTextButton(onClick = actions.leave) { Text(it) } }
 }
 
 @Composable

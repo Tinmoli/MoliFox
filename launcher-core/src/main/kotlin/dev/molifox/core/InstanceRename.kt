@@ -12,12 +12,10 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.writeBytes
@@ -47,8 +45,6 @@ private class RenameProgress {
 /** 实例名称里不允许出现的字符：与 Windows 文件名规则一致，跨平台都按同一套规则拒绝。 */
 private val invalidInstanceName = Regex("[\\\\/:*?\"<>|\\p{Cntrl}]")
 
-private val reservedInstanceName = Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?")
-
 /**
  * 校验用户输入的实例目录名；在改动磁盘前调用，错误信息直接展示给用户。
  *
@@ -64,7 +60,7 @@ fun validateInstanceDirectoryName(name: String) {
         I18n.t("instA2.instanceRename.endsWithDotOrSpace")
     }
     require(name != "." && name != "..") { I18n.t("core.instanceRename.4") }
-    require(!reservedInstanceName.matches(name)) { I18n.t("core.instanceRename.5") }
+    require(!isWindowsReservedFileName(name)) { I18n.t("core.instanceRename.5") }
     safeFilename(name)
 }
 

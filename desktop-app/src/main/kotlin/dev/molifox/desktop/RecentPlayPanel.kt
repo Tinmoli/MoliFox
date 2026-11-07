@@ -20,7 +20,6 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,7 +45,6 @@ import dev.molifox.core.LauncherController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -308,7 +306,7 @@ private fun RecentPlayCard(
                 strings.t("pages.recent.refresh"),
                 onClick = onRefresh,
             )
-            TextButton(onShowAll, contentPadding = PaddingValues(horizontal = 6.dp)) {
+            MoliTextButton(onShowAll, contentPadding = PaddingValues(horizontal = 6.dp)) {
                 Text(strings.t("pages.recent.viewAll"), fontSize = 12.sp)
             }
             SmallIconButton(
@@ -374,12 +372,12 @@ private fun DeleteRecentPlayDialog(
             )
         },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("pages.recent.delete"), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("pages.recent.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("pages.recent.cancel")) }
         },
     )
 }

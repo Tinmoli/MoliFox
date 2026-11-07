@@ -45,6 +45,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +62,8 @@ fun SimpleDropdown(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /** 控件的无障碍名；默认用当前值文本，多个下拉同值时会分不清，由调用方给字段名。 */
+    label: String = "",
 ) {
     var expanded by remember { mutableStateOf(false) }
     var anchorWidth by remember { androidx.compose.runtime.mutableIntStateOf(0) }
@@ -96,6 +100,7 @@ fun SimpleDropdown(
                 .border(1.dp, border, shape)
                 .hoverable(interaction, enabled = enabled)
                 .clickable(enabled = enabled, role = Role.DropdownList) { expanded = true }
+                .semantics { if (label.isNotBlank()) contentDescription = label }
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

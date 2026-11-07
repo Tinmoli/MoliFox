@@ -30,8 +30,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
-import dev.molifox.desktop.MoliButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -46,7 +46,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.toLong
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +59,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import dev.molifox.desktop.MoliButton as Button
 
 /** 弹窗显隐动画时长：0.96→1.0 缩放 + 淡入，关闭时反向；不做任何循环动画。 */
 private const val DIALOG_MOTION_MILLIS = 100
@@ -74,6 +74,8 @@ fun Modal(
     subtitle: String = "",
     width: Dp = 560.dp,
     onDismiss: () -> Unit,
+    onBack: (() -> Unit)? = null,
+    compact: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -107,18 +109,28 @@ fun Modal(
             enter = fadeIn(tween(duration)) + scaleIn(tween(duration), initialScale = .96f),
             exit = fadeOut(tween(duration)) + scaleOut(tween(duration), targetScale = .96f),
         ) {
+            val padding = if (compact) 16.dp else 20.dp
+            val gap = if (compact) 10.dp else 14.dp
             Surface(
-                Modifier.width(width).heightIn(max = 640.dp),
+                Modifier.width(width).heightIn(max = if (compact) 700.dp else 640.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(Metrics.dialogRadius),
                 border = BorderStroke(1.dp, hairline()),
                 shadowElevation = 12.dp,
             ) {
                 Column(
-                    Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    Modifier.padding(padding),
+                    verticalArrangement = Arrangement.spacedBy(gap),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (onBack != null) {
+                            SmallIconButton(
+                                Icons.AutoMirrored.Outlined.ArrowBack,
+                                strings.t("dialogs.common.back"),
+                                onBack,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
                         Column(Modifier.weight(1f)) {
                             Text(title, style = MaterialTheme.typography.titleLarge)
                             if (subtitle.isNotBlank()) {
@@ -136,7 +148,7 @@ fun Modal(
                     // 正文统一 13sp（bodyLarge / bodyMedium 已在 Typography 收敛到 13）。
                     Column(
                         Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(gap),
                     ) {
                         content()
                     }

@@ -10,7 +10,6 @@ import dev.molifox.core.PackFolder
 import dev.molifox.core.PackUpdateItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.nio.file.Path

@@ -18,7 +18,6 @@ import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -79,7 +78,7 @@ internal fun ModsStatusBar(
         } else {
             Spacer(Modifier.weight(1f))
         }
-        TextButton(
+        MoliTextButton(
             { onCheckUpdates() },
             enabled = !instanceBusy && !checking,
         ) {
@@ -88,13 +87,13 @@ internal fun ModsStatusBar(
                 fontSize = 12.sp,
             )
         }
-        TextButton(
+        MoliTextButton(
             { onOpenJarInJar() },
             enabled = !instanceBusy,
         ) {
             Text(strings.t("deskD.mods.jarInJar"), fontSize = 12.sp)
         }
-        TextButton(
+        MoliTextButton(
             { onUpdateAll() },
             enabled = !instanceBusy && !checking && updateCount > 0,
         ) {
@@ -126,7 +125,7 @@ internal fun ModsErrorRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(
+            MoliTextButton(
                 { onRetry() },
                 enabled = !instanceBusy && !checking,
             ) {
@@ -206,7 +205,7 @@ internal fun ModsListBody(
         error != null ->
             Panel(Modifier.fillMaxWidth()) {
                 EmptyState(strings.t("deskD.mods.listLoadFailed"), error.orEmpty(), Icons.Outlined.CloudOff) {
-                    TextButton(onRetry) { Text(strings.t("deskD.mods.retry")) }
+                    MoliTextButton(onRetry) { Text(strings.t("deskD.mods.retry")) }
                 }
             }
 
@@ -268,7 +267,7 @@ private fun ModsNoMatchState(
             },
             Icons.Outlined.SearchOff,
         ) {
-            TextButton(onClearFilter) { Text(strings.t("deskD.mods.clearFilter")) }
+            MoliTextButton(onClearFilter) { Text(strings.t("deskD.mods.clearFilter")) }
         }
     }
 }

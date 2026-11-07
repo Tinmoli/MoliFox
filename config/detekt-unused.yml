@@ -2,7 +2,29 @@ config:
   validation: true
   warningsAsErrors: true
 
+# 只跑「未使用代码」检查的专用配置。detekt 2.0 alpha 实测语义：--disable-default-rulesets
+# 会连 config 里显式激活的规则一起关掉（整个检查空转）；而传入的 config 整体替换默认配置，
+# 未提及的规则不启用，且规则集级 active: false 会压掉子规则的 active: true。
+# 因此：其它规则集整体 active: false，style 保持启用并只激活 Unused* 五条规则。
+# Unused* 规则依赖类型解析，必须在 --analysis-mode full + 完整 classpath 下运行（见 quality.gradle.kts）。
+comments:
+  active: false
+complexity:
+  active: false
+coroutines:
+  active: false
+empty-blocks:
+  active: false
+exceptions:
+  active: false
+naming:
+  active: false
+performance:
+  active: false
+potential-bugs:
+  active: false
 style:
+  active: true
   UnusedImport:
     active: true
   UnusedParameter:

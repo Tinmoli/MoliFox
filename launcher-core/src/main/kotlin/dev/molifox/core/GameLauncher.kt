@@ -10,7 +10,6 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
@@ -31,15 +30,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
-import kotlin.io.path.bufferedReader
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
-import kotlin.io.path.forEachLine
-import kotlin.io.path.inputStream
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 import kotlin.io.path.reader
-import kotlin.io.path.useLines
 
 /** 每个命令行参数额外占用的引号与空格。 */
 private const val ARGUMENT_QUOTE_OVERHEAD = 3
@@ -285,6 +280,15 @@ private class LaunchParameterResolver(
         }
 }
 
+/** 1.19 之前的正式版（1.x，x<19）与 a/b 开头的旧测试版没有 ARM64 原生库；快照等无法排序的 id 不猜测。 */
+internal fun isLegacyNativesVersion(id: String): Boolean {
+    if (id.isEmpty()) return false
+    val match = Regex("""^1\.(\d+)(?:\.(\d+))?$""").find(id) ?: return id[0] !in '0'..'9'
+    return match.groupValues[1].toInt() < LEGACY_NATIVE_GAME_VERSION
+}
+
+private const val LEGACY_NATIVE_GAME_VERSION = 19
+
 /** 命令行组装：JVM 前缀、模板参数、@argfile 改写与整条命令的长度校验。 */
 private class LaunchCommandAssembler(
     private val store: LauncherStore,
@@ -363,10 +367,12 @@ private class LaunchCommandAssembler(
             } else {
                 listOf("-Djava.library.path=${files.natives}", "-cp", files.classpathValue)
             }
-        return expanded
-            .map { argument ->
-                ignoreListArgument(argument, profile.id, files.jar.fileName.toString())
-            }.filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
+        val mapped =
+            expanded
+                .map { argument ->
+                    ignoreListArgument(argument, profile.id, files.jar.fileName.toString())
+                }.filterNot { it.startsWith("-Xmx") || it.startsWith("-Xms") }
+        return mapped + platformJvmArguments(platform, expanded, profile)
     }
 
     /** 模块化加载器必须忽略实际继承的 JAR：模板里的 `<版本 ID>.jar` 换成真实主文件名。 */
@@ -454,7 +460,7 @@ private class LaunchCommandAssembler(
             files.game,
             parameters.advanced.environmentVariables.toMap(),
             summary = parameters.options.summary,
-            warnings = parameters.options.warnings,
+            warnings = parameters.options.warnings + armNativesWarning(platform, profile),
             windowTitle = arguments.windowTitle,
         )
     }
@@ -740,6 +746,8 @@ internal fun applyGameProcessPriority(
         } catch (failure: IllegalStateException) {
             reason = failureReason(failure)
         } catch (failure: InterruptedException) {
+            // 与 GameWindowTitle.waitForNextPoll 同一口径：恢复中断标记，避免吞掉关停信号。
+            Thread.currentThread().interrupt()
             reason = failureReason(failure)
         }
     }

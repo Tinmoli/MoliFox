@@ -11,6 +11,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 
 private const val MAX_VISIBLE_LOG_LINES = 600
@@ -85,21 +86,7 @@ internal abstract class StoreRecordActions(
     override fun mutate(block: (LauncherData) -> LauncherData) {
         val current = core.data
         val requested = block(current)
-        val keys =
-            requested.instances
-                .map { it.instanceSettingsKey() }
-                .filter { it.isNotBlank() }
-                .toSet()
-        val next =
-            requested.copy(
-                instanceSettings =
-                    (
-                        requested.instanceSettings +
-                            requested.instances.associate {
-                                it.instanceSettingsKey() to InstanceSettings.of(it)
-                            }
-                    ).filterKeys { it in keys },
-            )
+        val next = requested.copy(instanceSettings = syncedInstanceSettings(requested))
         if (core.config.isRegularFile()) {
             Files.copy(core.config, core.backup, StandardCopyOption.REPLACE_EXISTING)
         }
@@ -341,4 +328,43 @@ internal abstract class StoreLogActions(
         lastNotice = null
         updateState { it.copy(toast = null) }
     }
+}
+
+/**
+ * 保存时同步实例设置表：扫描到的实例一律以内存快照覆盖；不在本次扫描里的键保持惰性，
+ * 只有磁盘核对确认 `versions/<键>` 在所有可见扫描根里都不存在时才清理。
+ * 扫描根一个都不可见（外接盘未挂载、网络盘断开）时无从核对「真的删了」还是「暂时看不到」，
+ * 全部保留：否则一次普通设置保存就会清掉暂时看不到的实例的显示名、隔离、Java 路径与游玩时长。
+ */
+internal fun syncedInstanceSettings(requested: LauncherData): Map<String, InstanceSettings> {
+    val merged =
+        requested.instanceSettings +
+            requested.instances
+                .filter { it.instanceSettingsKey().isNotBlank() }
+                .associate { it.instanceSettingsKey() to InstanceSettings.of(it) }
+    val scannedKeys =
+        requested.instances
+            .map { it.instanceSettingsKey() }
+            .filter { it.isNotBlank() }
+            .toSet()
+    val orphans = merged.keys - scannedKeys
+    if (orphans.isEmpty()) return merged
+    val existingRoots =
+        InstanceCatalog.roots(requested).filter { root ->
+            runCatching { root.path.isDirectory() }.getOrDefault(false)
+        }
+    if (existingRoots.isEmpty()) return merged
+    val verifiedMissing =
+        orphans.filterTo(mutableSetOf()) { key ->
+            existingRoots.none { root ->
+                runCatching {
+                    root.path
+                        .resolve("versions")
+                        .resolve(key)
+                        .isDirectory()
+                }.getOrDefault(false)
+            }
+        }
+    if (verifiedMissing.isEmpty()) return merged
+    return merged - verifiedMissing
 }

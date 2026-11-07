@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +36,7 @@ import dev.molifox.desktop.CompactSettingsSection
 import dev.molifox.desktop.CompactSlider
 import dev.molifox.desktop.CompactSwitch
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.NumberField
 import dev.molifox.desktop.SettingRow
@@ -164,7 +164,7 @@ internal fun InstanceLaunchSettingsSection(
         SettingRow(strings.t("deskG.launch.fullscreen"), strings.t("deskG.launch.fullscreenHint")) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (draft.windowMode != "inherit") {
-                    TextButton({
+                    MoliTextButton({
                         onDraftChange(draft.copy(windowMode = "inherit"))
                     }) {
                         Text(strings.t("deskG.launch.followGlobal"), fontSize = 11.sp)

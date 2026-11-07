@@ -13,7 +13,6 @@ import java.nio.file.Path
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
-import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 

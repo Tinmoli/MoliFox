@@ -9,11 +9,11 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.LobbyPhase
@@ -81,7 +81,7 @@ private fun FailureGroup(
         MutedText(
             strings.t("dialogs.mp.lobby.failureHint"),
         )
-        TextButton(onClick = actions.leave) { Text(strings.t("dialogs.mp.lobby.backToLobby")) }
+        MoliTextButton(onClick = actions.leave) { Text(strings.t("dialogs.mp.lobby.backToLobby")) }
     }
 }
 

@@ -36,7 +36,6 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.GameLaunchTarget
 import dev.molifox.core.LauncherState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 
 /** 当前游戏的安装状态：与启动按钮的分支共用同一套判断，避免两处说法不一致。 */

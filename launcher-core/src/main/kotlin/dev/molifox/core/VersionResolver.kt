@@ -121,11 +121,7 @@ class VersionResolver(
                     safePath(root.resolve("libraries"), relative),
                 ) to false
         }
-        val nativeClassifier =
-            library
-                .obj("natives")
-                .string(platform.osName)
-                .replace("\${arch}", if (platform.architecture == "x86") "32" else "64")
+        val nativeClassifier = nativeClassifier(library)
         if (nativeClassifier.isNotBlank() && downloads.obj("classifiers").has(nativeClassifier)) {
             artifacts +=
                 libraryArtifact(
@@ -137,6 +133,20 @@ class VersionResolver(
         }
         return artifacts
     }
+
+    /**
+     * 1.19+ 的原生库是带 arch 分类器的独立条目，不查这张映射表；表里若有 arm64 键则采用。
+     * 没有键说明该版本（1.19 前）只有 x86 64 位包，ARM64 上装上也载不起来：跳过，启动前另有警告。
+     */
+    private fun nativeClassifier(library: JsonObject): String =
+        if (platform.architecture == "arm64") {
+            library.obj("natives").string("${platform.osName}-arm64")
+        } else {
+            library
+                .obj("natives")
+                .string(platform.osName)
+                .replace("\${arch}", if (platform.architecture == "x86") "32" else "64")
+        }
 
     fun hasClasspathArtifact(library: JsonObject): Boolean =
         library.obj("downloads").has("artifact") || !library.obj("downloads").has("classifiers")

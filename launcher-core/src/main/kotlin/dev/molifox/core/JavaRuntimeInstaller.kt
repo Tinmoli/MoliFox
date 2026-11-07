@@ -22,17 +22,10 @@ import java.time.Instant
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import kotlin.io.path.copyTo
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
-import kotlin.io.path.isExecutable
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.name
-import kotlin.io.path.setAttribute
-import kotlin.io.path.setPosixFilePermissions
 
 /** 查询安装包阶段的进度。 */
 private const val PROGRESS_QUERYING_PACKAGE = .02f
@@ -166,7 +159,7 @@ internal class JavaRuntimeInstaller(
             I18n.t(
                 "networkB1.javaRuntimeInstaller.diskSpace",
                 major,
-                formatMegabytes(packageInfo.size * DISK_SPACE_FACTOR),
+                megabytesText(packageInfo.size * DISK_SPACE_FACTOR),
             )
         }
         return RuntimeInstallPlan(major, os, arch, packageInfo, runtimes, archive, unpacking)
@@ -293,7 +286,7 @@ internal class JavaRuntimeInstaller(
         )
         service.invalidate()
         context.progress(1f, I18n.t("core.javaRuntimeInstaller.8", plan.major))
-        val sizeLabel = formatMegabytes(runtime.sizeBytes)
+        val sizeLabel = megabytesText(runtime.sizeBytes)
         store.log(I18n.t("core.javaRuntimeInstaller.9", runtime.displayName, sizeLabel, runtime.path))
         return runtime
     }
@@ -388,8 +381,8 @@ internal class JavaRuntimeInstaller(
     }
 
     companion object {
-        /** 游戏侧需要的主版本；26.x 版本线使用 25。 */
-        val SUPPORTED_JAVA_MAJORS = listOf(8, 11, 16, 17, 21, 25)
+        /** 游戏侧需要的主版本；26.x 版本线使用 25，27 起新版本线直接用 27。 */
+        val SUPPORTED_JAVA_MAJORS = listOf(8, 11, 16, 17, 21, 25, 27)
     }
 }
 
@@ -633,6 +626,3 @@ internal fun javaInstallFailureReason(
         I18n.t("core.javaRuntimeInstaller.failedFileWriteWithDiagnostics", major, reason, detail, diagnosticRoot)
     }
 }
-
-/** 把字节数格式化成一位小数的 MB 文本。 */
-private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / BYTES_PER_MEBIBYTE.toFloat())

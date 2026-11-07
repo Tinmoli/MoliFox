@@ -8,12 +8,19 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import dev.molifox.core.i18n.I18n
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
 
 private const val MAX_PACK_MANIFEST_BYTES = 8_388_608
+private const val MAX_EMBEDDED_PACK_BYTES = 4L * 1024 * 1024 * 1024
+private const val EMBEDDED_COPY_BUFFER_BYTES = 64 * 1024
+private val embeddedPackNames = setOf("modpack.mrpack", "modpack.zip")
 
 /** Read metadata without extracting it or trusting the ZIP's claimed uncompressed size alone. */
 internal fun packJson(
@@ -59,7 +66,7 @@ internal fun findArchiveMetadata(
 private val packPayloadFolders =
     setOf("overrides", "client-overrides", "server-overrides", "files", "minecraft", ".minecraft")
 
-private fun hasRootPackMetadata(zip: ZipFile) =
+internal fun hasRootPackMetadata(zip: ZipFile) =
     listOf(
         "modrinth.index.json",
         "molifox-instance.json",
@@ -68,6 +75,93 @@ private fun hasRootPackMetadata(zip: ZipFile) =
         "mcbbs.packmeta",
         "modpack.json",
     ).any { zip.getEntry(it) != null }
+
+/** 外层压缩包里的整合包条目；只认根目录和一级目录，避免误读 overrides 内的同名文件。 */
+internal data class EmbeddedPack(
+    val entryName: String,
+    val size: Long,
+)
+
+internal fun findEmbeddedPack(zip: ZipFile): EmbeddedPack? =
+    zip
+        .entries()
+        .asSequence()
+        .filter {
+            !it.isDirectory &&
+                it.name.count { ch -> ch == '/' } <= 1 &&
+                it.name.substringAfterLast('/').lowercase() in embeddedPackNames
+        }.filter { it.size in 1..MAX_EMBEDDED_PACK_BYTES }
+        .sortedWith(compareBy({ it.name.count { ch -> ch == '/' } }, { it.name }))
+        .firstOrNull()
+        ?.let { EmbeddedPack(it.name, it.size) }
+
+/**
+ * 把外层包中的整合包条目解到临时文件；不解压启动器、overrides 或任何其他条目。
+ * 调用方负责在导入/预览结束后删除返回值。
+ */
+internal fun extractEmbeddedPack(
+    source: Path,
+    temporaryDirectory: Path,
+    embedded: EmbeddedPack,
+): Path {
+    temporaryDirectory.createDirectories()
+    val suffix = if (embedded.entryName.endsWith(".zip", ignoreCase = true)) ".zip" else ".mrpack"
+    val target = Files.createTempFile(temporaryDirectory, "pack-embedded-", suffix)
+    try {
+        ZipFile(source.toFile()).use { zip -> copyEmbeddedEntry(zip, target, embedded) }
+        return target
+    } catch (failure: IOException) {
+        target.deleteIfExists()
+        throw failure
+    } catch (failure: IllegalArgumentException) {
+        target.deleteIfExists()
+        throw failure
+    }
+}
+
+private fun copyEmbeddedEntry(
+    zip: ZipFile,
+    target: Path,
+    embedded: EmbeddedPack,
+) {
+    val entry = requireEmbeddedEntry(zip, embedded)
+    zip.getInputStream(entry).use { input ->
+        Files.newOutputStream(target).use { output -> copyEmbeddedContent(input, output, entry.size, embedded) }
+    }
+}
+
+private fun requireEmbeddedEntry(
+    zip: ZipFile,
+    embedded: EmbeddedPack,
+): ZipEntry {
+    val entry = zip.getEntry(embedded.entryName)
+    require(entry != null && !entry.isDirectory && entry.size in 1..MAX_EMBEDDED_PACK_BYTES) {
+        I18n.t("packsA1.packImport.embeddedPackMissing", embedded.entryName)
+    }
+    return entry
+}
+
+private fun copyEmbeddedContent(
+    input: java.io.InputStream,
+    output: java.io.OutputStream,
+    expectedSize: Long,
+    embedded: EmbeddedPack,
+) {
+    val buffer = ByteArray(EMBEDDED_COPY_BUFFER_BYTES)
+    var total = 0L
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        require(total <= MAX_EMBEDDED_PACK_BYTES) {
+            I18n.t("packsA1.packImport.embeddedPackTooLarge", embedded.entryName)
+        }
+        output.write(buffer, 0, count)
+    }
+    require(total == expectedSize) {
+        I18n.t("packsA1.packImport.embeddedPackChanged", embedded.entryName)
+    }
+}
 
 internal fun validatePackPayload(
     zip: ZipFile,

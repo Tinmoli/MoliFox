@@ -30,6 +30,9 @@ private const val MIN_LOG_FONT_SIZE = 10
 private const val MAX_LOG_FONT_SIZE = 18
 private const val MAX_PROXY_PORT = 65535
 
+/** 背景媒体类型：静态/动态图片或本地视频；旧 gradient 值读取时回退为 image。 */
+val BACKGROUND_KINDS = setOf("image", "video")
+
 /**
  * 设置校验：从 [LauncherController] 抽出的纯校验逻辑。
  * 只读入当前设置、实例是否为空、平台信息与「是否空闲」回调，不直接碰存储和界面。
@@ -50,6 +53,7 @@ internal fun normalizedSettings(input: LauncherSettings): LauncherSettings =
                 MIN_DOWNLOAD_SEGMENTS,
                 MAX_DOWNLOAD_SEGMENTS,
             ),
+        videoVolume = input.videoVolume.coerceIn(0f, 1f),
     )
 
 internal fun validateSettings(
@@ -140,6 +144,12 @@ private fun validateBackgroundSettings(settings: LauncherSettings) {
     ) {
         I18n.t("core.settingsValidation.12")
     }
+    require(settings.lightBackgroundKind == null || settings.lightBackgroundKind in BACKGROUND_KINDS) {
+        I18n.t("core.settingsValidation.32")
+    }
+    require(settings.darkBackgroundKind == null || settings.darkBackgroundKind in BACKGROUND_KINDS) {
+        I18n.t("core.settingsValidation.32")
+    }
 }
 
 private fun validateScaleSettings(settings: LauncherSettings) {
@@ -184,7 +194,7 @@ private fun validateScaleSettings(settings: LauncherSettings) {
 
 private fun validateDownloadSettings(settings: LauncherSettings) {
     require(GitHubSource.entries.any { it.key == settings.githubSource }) { I18n.t("settings.github.invalidSource") }
-    require(settings.githubSource != "custom" || validGitHubProxy(settings.githubCustomProxy)) {
+    require(settings.githubSource != "custom" || isValidGitHubProxy(settings.githubCustomProxy)) {
         I18n.t("settings.github.invalidAddress")
     }
     require(
@@ -199,7 +209,8 @@ private fun validateDownloadSettings(settings: LauncherSettings) {
 }
 
 private fun validateInterfaceSettings(settings: LauncherSettings) {
-    require(settings.themeColorSource in setOf("default", "background", "manual")) {
+    require(settings.videoVolume in 0f..1f) { I18n.t("core.settingsValidation.33") }
+    require(settings.themeColorSource in setOf("background", "manual")) {
         I18n.t("settings.appearance.accent.invalidSource")
     }
     require(
@@ -252,6 +263,3 @@ private fun validateProxySettings(settings: LauncherSettings) {
         I18n.t("core.settingsValidation.30")
     }
 }
-
-internal fun normalizedAccentColor(value: String?): String =
-    value?.takeUnless { it in setOf("minimal", "monochrome") } ?: "sakura"

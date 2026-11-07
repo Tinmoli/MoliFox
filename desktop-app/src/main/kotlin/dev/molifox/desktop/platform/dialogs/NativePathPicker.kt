@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.awt.Window
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.Executors
 
@@ -28,17 +29,18 @@ object NativePathPicker {
         owner: Window?,
     ): List<Path> =
         mutex.withLock {
+            val osName = System.getProperty("os.name")
             val ownerPointer =
-                if (System.getProperty("os.name").startsWith("Windows", true) && owner != null) {
+                if (osName.startsWith("Windows", true) && owner != null) {
                     Native.getComponentPointer(owner)
                 } else {
                     null
                 }
             withContext(dialogThread) {
-                if (System.getProperty("os.name").startsWith("Windows", true)) {
-                    WindowsFilePicker.pick(request, ownerPointer)
-                } else {
-                    LinuxFilePicker.pick(request)
+                when {
+                    osName.startsWith("Windows", true) -> WindowsFilePicker.pick(request, ownerPointer)
+                    osName.startsWith("Mac", true) -> MacFilePicker.pick(request)
+                    else -> LinuxFilePicker.pick(request)
                 }
             }
         }
@@ -158,4 +160,69 @@ internal object LinuxFilePicker {
                 addAll(listOf("--multiple", "--separate-output"))
             }
         }
+}
+
+/**
+ * macOS 选择器：系统自带 osascript 弹出真正的原生对话框（choose folder/file/file name），
+ * 与 HMCL 在 macOS 上借助系统工具的思路一致。osascript 不支持按扩展名过滤文件，这里不过滤；
+ * 该分支尚未在 macOS 真机验证。
+ */
+internal object MacFilePicker {
+    private const val USER_CANCELLED = "-128"
+
+    fun pick(request: PickRequest): List<Path> {
+        val process =
+            try {
+                ProcessBuilder(listOf("osascript", "-e", script(request))).start()
+            } catch (_: java.io.IOException) {
+                error(tr("pages.picker.notFound"))
+            }
+        try {
+            val errors = StringBuilder()
+            val drain =
+                Thread {
+                    process.errorStream.bufferedReader().use { errors.append(it.readText()) }
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val exit = process.waitFor()
+            drain.join()
+            if (exit != 0 && errors.contains(USER_CANCELLED)) return emptyList()
+            check(exit == 0) { tr("pages.picker.failed", "osascript", exit) }
+            return output
+                .trimEnd('\r', '\n')
+                .takeIf { it.isNotEmpty() }
+                ?.split('\n')
+                ?.map { Path.of(it).toAbsolutePath().normalize() }
+                .orEmpty()
+        } finally {
+            if (process.isAlive) process.destroy()
+        }
+    }
+
+    private fun script(request: PickRequest): String =
+        buildString {
+            when (request.mode) {
+                PickMode.Directory -> append("POSIX path of (choose folder")
+                PickMode.Save -> append("POSIX path of (choose file name")
+                PickMode.File -> append("POSIX path of (choose file")
+            }
+            append(" with prompt ").append(quoted(request.title))
+            if (request.mode == PickMode.Save && request.defaultName.isNotBlank()) {
+                append(" default name ").append(quoted(request.defaultName))
+            }
+            request.initialDirectory
+                ?.takeIf { Files.isDirectory(it) }
+                ?.let {
+                    append(" default location (POSIX file ").append(quoted(it.toString())).append(" as alias)")
+                }
+            if (request.mode == PickMode.File && request.multiple) {
+                append(" with multiple selections allowed")
+            }
+            append(")")
+        }
+
+    private fun quoted(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }

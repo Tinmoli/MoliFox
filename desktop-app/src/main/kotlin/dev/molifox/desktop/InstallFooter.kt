@@ -42,9 +42,11 @@ internal fun InstallFooter(
     onInstalled: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时禁用原因与按钮才会刷新。
+    val launcherBusy = rememberLauncherBusy(actions)
     val blocked =
         installBlockedReason(
-            actions,
+            launcherBusy,
             loading,
             error,
             selected,
@@ -113,10 +115,11 @@ private fun InstallLaunchButton(
     onInstalled: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    val launcherBusy = rememberLauncherBusy(actions)
     PrimaryButton(
         strings.t("dialogs.content.install.start"),
         Icons.Outlined.Download,
-        installAllowed(actions, loading, error, selected, loaderLoading, loader, loaderVersion),
+        installAllowed(launcherBusy, loading, error, selected, loaderLoading, loader, loaderVersion),
     ) {
         actions.run {
             actions.controller.install(
@@ -141,7 +144,7 @@ private fun installInstanceName(
 
 /** 开始安装按钮是否可用：与 [installBlockedReason] 的判定保持一致。 */
 private fun installAllowed(
-    actions: UiActions,
+    busy: Boolean,
     loading: Boolean,
     error: String?,
     selected: String,
@@ -149,7 +152,7 @@ private fun installAllowed(
     loader: LoaderType,
     loaderVersion: String,
 ): Boolean =
-    !actions.controller.busy &&
+    !busy &&
         !loading &&
         error == null &&
         selected.isNotBlank() &&
@@ -158,7 +161,7 @@ private fun installAllowed(
 
 /** 开始安装按钮的禁用原因；返回 null 表示当前可以安装。 */
 private fun installBlockedReason(
-    actions: UiActions,
+    busy: Boolean,
     loading: Boolean,
     error: String?,
     selected: String,
@@ -167,7 +170,7 @@ private fun installBlockedReason(
     loaderVersion: String,
 ): String? =
     when {
-        actions.controller.busy -> tr("deskA.installFooter.blocked.busy")
+        busy -> tr("deskA.installFooter.blocked.busy")
         loading -> tr("deskA.installFooter.blocked.loadingVersions")
         error != null -> tr("deskA.installFooter.blocked.versionListUnavailable")
         selected.isBlank() -> tr("deskA.installFooter.blocked.noVersion")

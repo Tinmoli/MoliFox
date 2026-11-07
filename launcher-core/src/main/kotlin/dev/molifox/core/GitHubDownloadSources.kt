@@ -26,11 +26,9 @@ enum class GitHubSource(
 
 fun LauncherSettings.gitHubSourceOptions(): GitHubSourceOptions = GitHubSourceOptions(githubSource, githubCustomProxy)
 
-fun validGitHubProxy(value: String): Boolean {
-    val uri = runCatching { URI(value.trim()) }.getOrNull() ?: return false
-    return uri.scheme == "https" && !uri.host.isNullOrBlank() &&
-        uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null
-}
+fun isValidGitHubProxy(value: String): Boolean =
+    // 加速前缀只接受 https；scheme 大小写保持原样判断，其余共通规则交给 isValidServiceRootUrl。
+    isValidServiceRootUrl(value) { scheme -> scheme == "https" }
 
 fun gitHubDownloadCandidates(
     official: String,
@@ -38,7 +36,7 @@ fun gitHubDownloadCandidates(
 ): List<String> {
     val candidates = gitHubDownloadCandidates(official, GitHubSourceOptions())
     if (candidates == listOf(official)) return candidates
-    val custom = customPrefix.trim().trimEnd('/').takeIf(::validGitHubProxy)
+    val custom = customPrefix.trim().trimEnd('/').takeIf(::isValidGitHubProxy)
     return (listOf(official) + candidates.filterNot { it == official } + listOfNotNull(custom?.let { "$it/$official" }))
         .distinct()
 }
@@ -57,7 +55,7 @@ fun gitHubDownloadCandidates(
         options.customPrefix
             .trim()
             .trimEnd('/')
-            .takeIf(::validGitHubProxy)
+            .takeIf(::isValidGitHubProxy)
     val defaults = GitHubSource.entries.filter { it.prefix.isNotEmpty() && (!api || it.supportsApi) }.map { it.prefix }
     val prefixes =
         when (selected) {

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,7 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,7 +60,7 @@ internal fun RecentKindSwitch(
             EntryKind.World to strings.t("dialogs.recent.worlds"),
             EntryKind.Server to strings.t("dialogs.recent.servers"),
         ).forEach { (entry, label) ->
-            TextButton(
+            MoliTextButton(
                 { onChange(entry) },
                 contentPadding = PaddingValues(horizontal = 8.dp),
                 colors =

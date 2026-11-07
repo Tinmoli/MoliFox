@@ -21,10 +21,8 @@ import kotlin.io.path.extension
 import kotlin.io.path.fileSize
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
-import kotlin.io.path.walk
 
 private const val MAX_INSTANCE_NAME_CHARS = 80
 private const val MAX_COPY_NAME_SUFFIX = 999

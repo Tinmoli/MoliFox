@@ -5,12 +5,16 @@
 
 package dev.molifox.desktop.content
 
+import dev.molifox.core.ContentHit
 import dev.molifox.desktop.tr
 
 private const val MILLION_COUNT = 1_000_000
 private const val MILLION_DIVISOR = 1_000_000f
 private const val THOUSAND_COUNT = 1_000
 private const val THOUSAND_DIVISOR = 1_000f
+
+/** 结果行最多展示的分类标签数：再多一行放不下，超出的直接省略。 */
+private const val CATEGORY_LABEL_LIMIT = 2
 
 /** 内容类型显示名；类型 slug 本身不翻译，只把已知 slug 映射到文案 key。 */
 internal fun contentKindLabel(type: String): String =
@@ -132,6 +136,16 @@ internal fun categoriesFor(kind: String): List<Pair<String, String>> =
         "modpack" -> modpackCategories()
         else -> modCategories()
     }
+
+/**
+ * 结果行的分类标签：把项目分类标识映射为当前类型的界面文案。未知 slug 直接跳过（不显示原文，
+ * 避免英文 slug 或 CurseForge 类别名混进中文界面）；世界没有 Modrinth 分类体系，一律不展示。
+ */
+internal fun contentCategoryLabels(hit: ContentHit): List<String> {
+    if (hit.type == "world") return emptyList()
+    val names = categoriesFor(hit.type).toMap()
+    return hit.categories.mapNotNull(names::get).take(CATEGORY_LABEL_LIMIT)
+}
 
 internal fun formatDownloads(value: Long): String =
     when {

@@ -11,7 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.molifox.core.ContentDetails
 import dev.molifox.core.ContentFilter
+import dev.molifox.core.ContentHit
+import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentVersion
+import dev.molifox.core.PlannedContentFile
 import dev.molifox.core.SaveEntry
 import java.nio.file.Path
 
@@ -32,12 +35,20 @@ internal class ContentProjectUiState(
     /** 用户在下载对话框里确认过的目标文件夹；为空表示沿用实例内的默认目录。 */
     var destination by mutableStateOf<Path?>(null)
     var installVersion by mutableStateOf<ContentVersion?>(null)
+    var installing by mutableStateOf(false)
+    var installError by mutableStateOf<String?>(null)
+    var pendingPlan by mutableStateOf<ContentInstallPlan?>(null)
+    var conflicts by mutableStateOf(emptyList<PlannedContentFile>())
+
+    /** 依赖默认不安装；打开后把待安装的依赖随主文件一起装（已装同版本的仍会跳过）。 */
+    var includeDependencies by mutableStateOf(false)
+
+    /** 依赖项目的标题与简介，按 projectId 缓存；加载失败的依赖仍显示项目 id。 */
+    var dependencyHits by mutableStateOf(emptyMap<String, ContentHit>())
     var tab by mutableStateOf("versions")
     var worlds by mutableStateOf(emptyList<SaveEntry>())
     var worldName by mutableStateOf("")
     var worldError by mutableStateOf<String?>(null)
-    var confirmDatapack by mutableStateOf(false)
-    var confirmWorld by mutableStateOf(false)
     var changelog by mutableStateOf<ContentVersion?>(null)
     var changelogError by mutableStateOf<String?>(null)
     var changelogLoading by mutableStateOf(false)

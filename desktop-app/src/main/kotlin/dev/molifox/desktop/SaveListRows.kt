@@ -32,7 +32,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,12 +52,6 @@ import kotlinx.coroutines.delay
 import kotlin.io.path.name
 
 private const val SAVE_ZIP_SUFFIX_CHARS = 4
-private const val SAVE_GIB_BYTES = 1073741824L
-private const val SAVE_GIB_DIVISOR = 1073741824f
-private const val SAVE_MIB_BYTES = 1048576L
-private const val SAVE_MIB_DIVISOR = 1048576f
-private const val SAVE_KIB_BYTES = 1024L
-private const val SAVE_KIB_DIVISOR = 1024f
 
 /** 一个存档行：44dp，名称 + 大小与修改时间，`hasLevelDat` 为 false 时给 11sp 提示。 */
 @Composable
@@ -107,7 +100,7 @@ internal fun SaveRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    tr("saveC.row.meta", formatSaveSize(entry.size), formatSaveTime(entry.lastModified)),
+                    tr("saveC.row.meta", byteSizeText(entry.size), formatSaveTime(entry.lastModified)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -178,7 +171,7 @@ internal fun SaveBackupRow(
             Text(
                 formatSaveTime(backup.createdAt) +
                     " · " +
-                    formatSaveSize(backup.size) +
+                    byteSizeText(backup.size) +
                     if (backup.restorable) "" else tr("saveC.backup.noLevelDat"),
                 fontSize = 12.sp,
                 color =
@@ -215,22 +208,16 @@ internal fun SaveBackupRow(
 internal fun saveBaseName(name: String): String =
     if (name.endsWith(".zip", true)) name.dropLast(SAVE_ZIP_SUFFIX_CHARS) else name
 
-/** 存档相关时间：本地时区 `yyyy-MM-dd HH:mm`；缺失时如实说明，不伪造时间。 */
+/** 存档相关时间：本地时区 `yyyy-MM-dd HH:mm`；缺失时如实说明，不伪造时间。各列表的兜底文案不同，由调用方传入。 */
 private val saveTimeFormatter: java.time.format.DateTimeFormatter =
     java.time.format.DateTimeFormatter
         .ofPattern("yyyy-MM-dd HH:mm")
         .withZone(java.time.ZoneId.systemDefault())
 
-internal fun formatSaveTime(time: java.time.Instant?): String =
-    time?.let { runCatching { saveTimeFormatter.format(it) }.getOrNull() } ?: tr("saveC.row.unknownTime")
-
-internal fun formatSaveSize(bytes: Long): String =
-    when {
-        bytes >= SAVE_GIB_BYTES -> "%.1f GB".format(bytes / SAVE_GIB_DIVISOR)
-        bytes >= SAVE_MIB_BYTES -> "%.1f MB".format(bytes / SAVE_MIB_DIVISOR)
-        bytes >= SAVE_KIB_BYTES -> "%.1f KB".format(bytes / SAVE_KIB_DIVISOR)
-        else -> bytes.toString() + " B"
-    }
+internal fun formatSaveTime(
+    time: java.time.Instant?,
+    unknownText: String = tr("saveC.row.unknownTime"),
+): String = time?.let { runCatching { saveTimeFormatter.format(it) }.getOrNull() } ?: unknownText
 
 /** 存档缩略图：悬停 250ms 后浮出详情卡片，可直接复制或删除；移入卡片不会收起。 */
 @Composable
@@ -279,7 +266,7 @@ private fun SaveThumbnailHoverCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            tr("saveC.row.meta", formatSaveSize(entry.size), formatSaveTime(entry.lastModified)),
+                            tr("saveC.row.meta", byteSizeText(entry.size), formatSaveTime(entry.lastModified)),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -291,14 +278,14 @@ private fun SaveThumbnailHoverCard(
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            TextButton({
+                            MoliTextButton({
                                 shown = false
                                 onDetails()
                             }) {
                                 Text(strings.t("saveC.row.details"), fontSize = 12.sp)
                             }
                             if (canCopy) {
-                                TextButton({
+                                MoliTextButton({
                                     shown = false
                                     onCopy()
                                 }) {
@@ -306,7 +293,7 @@ private fun SaveThumbnailHoverCard(
                                 }
                             }
                             if (canManage) {
-                                TextButton({
+                                MoliTextButton({
                                     shown = false
                                     onDelete()
                                 }) {

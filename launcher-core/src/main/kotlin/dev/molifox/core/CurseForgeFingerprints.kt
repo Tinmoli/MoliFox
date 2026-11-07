@@ -143,14 +143,14 @@ internal class CurseForgeFingerprints(
             .chunked(FINGERPRINT_BATCH_SIZE)) {
             val body = JsonObject().apply { add("fingerprints", gson.toJsonTree(batch)) }
             // 服务端出错时 data 可能是数组或字符串；只有对象才带 exactMatches，其余按未收录处理。
-            val data =
+            val responseData =
                 api
                     .request("fingerprints/432", body)
                     .get("data")
                     ?.takeIf { it.isJsonObject }
                     ?.asJsonObject
                     ?: continue
-            val records = data.array("exactMatches")
+            val records = responseData.array("exactMatches")
             for (element in records) {
                 val file = runCatching { element.asJsonObject.obj("file") }.getOrNull()
                 val fingerprint =
@@ -207,8 +207,8 @@ internal class CurseForgeFingerprints(
                     add("fileIds", gson.toJsonTree(batch.mapNotNull { it.toLongOrNull() }))
                 }
             for (entry in api.request("mods/files", body).array("data")) {
-                val info = runCatching { entry.asJsonObject }.getOrNull() ?: continue
-                result[info.string("id")] = info
+                val file = runCatching { entry.asJsonObject }.getOrNull() ?: continue
+                result[file.string("id")] = file
             }
         }
         return result
@@ -227,8 +227,8 @@ internal class CurseForgeFingerprints(
                     add("modIds", gson.toJsonTree(batch.mapNotNull { it.toLongOrNull() }))
                 }
             for (entry in api.request("mods", body).array("data")) {
-                val info = runCatching { entry.asJsonObject }.getOrNull() ?: continue
-                projects[info.string("id")] = info
+                val project = runCatching { entry.asJsonObject }.getOrNull() ?: continue
+                projects[project.string("id")] = project
             }
         }
         return projects

@@ -12,7 +12,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +24,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.MultiplayerPolicy
 
@@ -63,9 +63,9 @@ internal fun MultiplayerTermsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onAccept, enabled = checked) { Text(strings.t("dialogs.mp.consent.accept")) }
+            MoliTextButton(onClick = onAccept, enabled = checked) { Text(strings.t("dialogs.mp.consent.accept")) }
         },
-        dismissButton = { TextButton(onClick = onDecline) { Text(strings.t("dialogs.mp.consent.decline")) } },
+        dismissButton = { MoliTextButton(onClick = onDecline) { Text(strings.t("dialogs.mp.consent.decline")) } },
     )
 }
 

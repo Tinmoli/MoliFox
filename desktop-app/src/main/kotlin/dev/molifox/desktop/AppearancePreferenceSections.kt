@@ -28,17 +28,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.LauncherSettings
 import dev.molifox.core.DEFAULT_BACKGROUND
+import dev.molifox.core.LauncherSettings
 import dev.molifox.core.NO_BACKGROUND
 import dev.molifox.core.effectiveBackground
+import dev.molifox.core.effectiveBackgroundKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -142,11 +143,14 @@ internal fun BrandIconSection(
                                 result.exceptionOrNull()?.message
                                     ?: strings.t("settings.appearance.brand.failed")
                             } else {
-                                applySetting(actions) {
-                                    it.copy(
-                                        brandIconPath = imported.toString(),
-                                        brandIconRevision = System.currentTimeMillis(),
-                                    )
+                                // applySetting 落盘移到 IO： Swing 块里只等待结果与更新提示。
+                                withContext(Dispatchers.IO) {
+                                    applySetting(actions) {
+                                        it.copy(
+                                            brandIconPath = imported.toString(),
+                                            brandIconRevision = System.currentTimeMillis(),
+                                        )
+                                    }
                                 }
                             }
                     }
@@ -329,21 +333,44 @@ internal fun BackgroundImageSection(
     apply: AppearanceChange,
 ) {
     val strings = LocalStrings.current
-    val backgroundOn = settings.effectiveBackground(false) != NO_BACKGROUND || settings.effectiveBackground(true) != NO_BACKGROUND
+    val backgroundOn =
+        settings.effectiveBackground(false) != NO_BACKGROUND || settings.effectiveBackground(true) != NO_BACKGROUND
+    val videoOn =
+        settings.effectiveBackgroundKind(false) == "video" || settings.effectiveBackgroundKind(true) == "video"
     SettingsSection(
         strings.t("settings.appearance.background.title"),
-        strings.t("settings.appearance.background.detail"),
+        strings.t("settings.appearance.background.detail") +
+            "\n" +
+            strings.t("settings.appearance.background.formats"),
         action = { EnabledTag(backgroundOn) },
         // 卡片内的四个行块之间用 1dp 细线分隔：行数 4 → 分隔线 3 条，首末不加。
         contentGap = 0.dp,
     ) {
-        ModeBackgroundRow(settings, actions, apply, dark = false)
-        ModeBackgroundRow(settings, actions, apply, dark = true)
+        ModeBackgroundRow(actions, apply, dark = false)
+        ModeBackgroundRow(actions, apply, dark = true)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SecondaryButton({ apply { it.copy(lightBackgroundPath = DEFAULT_BACKGROUND, darkBackgroundPath = DEFAULT_BACKGROUND) } }) {
+            SecondaryButton({
+                apply {
+                    it.copy(
+                        lightBackgroundPath = DEFAULT_BACKGROUND,
+                        darkBackgroundPath = DEFAULT_BACKGROUND,
+                        lightBackgroundKind = "image",
+                        darkBackgroundKind = "image",
+                    )
+                }
+            }) {
                 Text(strings.t("settings.appearance.background.defaults"))
             }
-            SecondaryButton({ apply { it.copy(lightBackgroundPath = NO_BACKGROUND, darkBackgroundPath = NO_BACKGROUND) } }) {
+            SecondaryButton({
+                apply {
+                    it.copy(
+                        lightBackgroundPath = NO_BACKGROUND,
+                        darkBackgroundPath = NO_BACKGROUND,
+                        lightBackgroundKind = "image",
+                        darkBackgroundKind = "image",
+                    )
+                }
+            }) {
                 Text(strings.t("settings.appearance.background.none"))
             }
         }
@@ -400,6 +427,25 @@ internal fun BackgroundImageSection(
         }
         if (!backgroundOn) {
             MutedText(strings.t("settings.appearance.background.note.before"), Modifier.padding(top = 4.dp))
+        }
+        if (videoOn) {
+            SettingDivider()
+            SettingRow(strings.t("settings.appearance.background.videoSound")) {
+                CompactSwitch(
+                    settings.videoSoundEnabled,
+                    { enabled -> apply { it.copy(videoSoundEnabled = enabled) } },
+                )
+            }
+            if (settings.videoSoundEnabled) {
+                PreferenceSlider(
+                    strings.t("settings.appearance.background.videoVolume.title"),
+                    settings.videoVolume,
+                    0f..1f,
+                    { (it * 100).toInt().toString() + "%" },
+                ) { value ->
+                    apply { it.copy(videoVolume = value) }
+                }
+            }
         }
         if (settings.backgroundFit == "stretch") {
             MutedText(strings.t("settings.appearance.background.note.stretch"))

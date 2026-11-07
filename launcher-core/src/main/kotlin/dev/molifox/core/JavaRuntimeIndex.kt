@@ -10,10 +10,8 @@ import java.nio.file.Path
 import java.time.Instant
 import kotlin.io.path.createDirectories
 import kotlin.io.path.fileSize
-import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 

@@ -58,6 +58,8 @@ sourceSets.test {
 
 dependencies {
     implementation("com.materialkolor:material-color-utilities:4.0.5")
+    // 动图背景解码（GIF/APNG/动态 WebP）；纯 Kotlin、Apache-2.0，不引入原生运行库。
+    implementation("io.github.yuroyami:imagekodec:0.3.0")
     // 资源目录模型把 JsonObject 暴露在公开签名里，界面层需要能引用 Gson 的解析异常类型。
     api("com.google.code.gson:gson:2.13.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

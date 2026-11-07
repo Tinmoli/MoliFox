@@ -16,7 +16,6 @@ import java.util.Collections
 import kotlin.io.path.createDirectories
 import kotlin.io.path.fileSize
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.outputStream
 import org.apache.commons.compress.archivers.zip.ZipFile as ArchiveZipFile
 
 /** 世界包解压前的安全检查：条目数与解压体积上限与存档导入保持一致。 */
@@ -121,7 +120,9 @@ private class WorldPackExtraction(
         val relative = relativeName(entry)
         if (relative.isBlank()) return false
         if (relative.substringAfterLast('/').equals(SESSION_LOCK_FILE, true)) return false
-        writeEntry(entry, relative)
+        writeArchiveEntrySafely(zip, entry, root, relative) { input, output ->
+            copyEntryBytes(entry, input, output)
+        }
         writtenEntries++
         return true
     }
@@ -147,19 +148,6 @@ private class WorldPackExtraction(
         if (relative.isNotBlank() && entry.size > 0) declaredBytes += entry.size
         require(declaredBytes <= MAX_WORLD_ARCHIVE_BYTES) { I18n.t("packsB2.worldPack.sizeLimit") }
         return relative
-    }
-
-    private fun writeEntry(
-        entry: ZipArchiveEntry,
-        relative: String,
-    ) {
-        val target = safePath(root, relative)
-        target.parent.createDirectories()
-        target.outputStream().use { output ->
-            zip.getInputStream(entry).use { input ->
-                copyEntryBytes(entry, input, output)
-            }
-        }
     }
 
     /** 逐段复制条目内容，并按条目体积上限校验已写入的字节数。 */

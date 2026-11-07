@@ -8,7 +8,6 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -27,10 +26,8 @@ import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
-import kotlin.io.path.exists
 import kotlin.io.path.extension
 import kotlin.io.path.isDirectory
-import kotlin.io.path.isSymbolicLink
 
 /** 整合包元数据的长度上限，与导出对话框的输入限制共用。 */
 private const val MAX_PACK_NAME_LENGTH = 200

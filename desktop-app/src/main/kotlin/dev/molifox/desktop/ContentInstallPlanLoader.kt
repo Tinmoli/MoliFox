@@ -10,10 +10,12 @@ import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentInstallPlan
 import dev.molifox.core.ContentSource
 import dev.molifox.core.ContentVersion
+import dev.molifox.core.PlannedContentFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
+import kotlin.io.path.isRegularFile
 
 /** 版本更新日志：网络、JSON 解析与版本校验错误由对话框提示，不中断页面。 */
 internal suspend fun loadChangelog(
@@ -123,6 +125,19 @@ internal suspend fun installContentPlan(
     } catch (failure: IllegalArgumentException) {
         Result.failure(failure)
     }
+
+/** 目标文件已存在：包括同版本同内容，也先让用户选择替换、跳过或取消。 */
+internal fun contentFileConflicts(
+    plan: ContentInstallPlan,
+    instanceRoot: Path?,
+): List<PlannedContentFile> {
+    if (instanceRoot == null) return emptyList()
+    return plan.files.filter { file ->
+        val target = instanceRoot.resolve(file.folder).resolve(file.filename)
+        val disabled = target.resolveSibling("${target.fileName}.disabled")
+        listOf(target, disabled).any { it.isRegularFile() }
+    }
+}
 
 /** 只有计划就绪、没有加载中或错误、且来源未被锁定时才允许安装。 */
 internal fun installEnabled(

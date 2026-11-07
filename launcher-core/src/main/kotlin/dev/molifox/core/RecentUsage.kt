@@ -12,7 +12,6 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
 
 private const val FILE_NAME = "recent-usage.json"
 private const val FILE_VERSION = 1

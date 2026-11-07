@@ -8,7 +8,6 @@ package dev.molifox.core
 import com.google.gson.JsonObject
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -36,6 +35,7 @@ internal class WorldPackInstaller(
         versionId: String,
         instanceId: String,
         context: JobContext,
+        destination: Path? = null,
     ) = withContext(Dispatchers.IO) {
         require(hit.type == "world") { I18n.t("packsB2.worldPack.notWorldProject") }
         val instance = store.instance(instanceId)
@@ -46,7 +46,7 @@ internal class WorldPackInstaller(
         val project = backend.project(hit.id)
         requireWorldVersion(hit, versionId, instance, version, project)
         val file = resolveFile(hit, versionId, version)
-        downloadAndInstall(hit, file, instance, context)
+        downloadAndInstall(hit, file, instance, context, destination)
     }
 
     /** 版本必须属于当前世界项目，且支持目标实例的游戏版本。 */
@@ -110,6 +110,7 @@ internal class WorldPackInstaller(
         selectedFile: WorldPackFile,
         instance: GameInstance,
         context: JobContext,
+        destination: Path?,
     ) {
         val cache = store.temporaryDirectory.resolve("world-staging").apply { createDirectories() }
         val download = cache.resolve("${UUID.randomUUID()}.zip")
@@ -134,25 +135,22 @@ internal class WorldPackInstaller(
                 )
             }
             context.checkCancelled()
-            installArchive(download, hit, instance, context)
+            installArchive(download, hit, instance, context, destination)
         } finally {
             Files.deleteIfExists(download)
         }
     }
 
-    /** 校验压缩包结构后解压到 `saves/` 的临时目录，成功才改名就位；失败删除临时目录。 */
+    /** 校验压缩包结构后解压到目标存档目录的临时目录，成功才改名就位；失败删除临时目录。 */
     private suspend fun installArchive(
         archive: Path,
         hit: ContentHit,
         instance: GameInstance,
         context: JobContext,
+        destination: Path?,
     ) = withContext(Dispatchers.IO) {
-        // 下载期间游戏可能被启动：写存档目录前必须再确认一次。
-        requireSaveGameStopped(store, instance.id)
         val layout = SaveArchive.inspect(archive)
-        val saves = savesDirectoryOf(store, instance.id)
-        require(!isLinkPath(saves)) { I18n.t("packsB2.worldPack.savesIsLink") }
-        saves.createDirectories()
+        val saves = worldSaveRoot(instance.id, destination)
         val staging = saveStagingPath(saves)
         withSaveCleanup({ runCatching { deleteSaveTree(staging) } }) {
             extractWorldPack(archive, staging, layout.prefix, context)
@@ -162,11 +160,27 @@ internal class WorldPackInstaller(
             require(!target.exists(LinkOption.NOFOLLOW_LINKS)) {
                 I18n.t("packsB2.worldPack.duplicateSave", name)
             }
-            requireSaveGameStopped(store, instance.id)
             commitSavePath(staging, target)
             context.progress(1f, I18n.t("packsB2.worldPack.installedAt", name))
             store.log(I18n.t("packsB2.worldPack.installLogged", instance.name, name, hit.title))
         }
+    }
+
+    /** 默认写实例 `saves/`；用户可改到任意真实目录，但仍拒绝链接和同名覆盖。 */
+    private fun worldSaveRoot(
+        instanceId: String,
+        destination: Path?,
+    ): Path {
+        val root = destination?.toAbsolutePath()?.normalize() ?: savesDirectoryOf(store, instanceId)
+        require(!isLinkPath(root)) { I18n.t("packsB2.worldPack.savesIsLink") }
+        if (root.exists(LinkOption.NOFOLLOW_LINKS)) {
+            require(Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+                I18n.t("packsB2.worldPack.destinationInvalid")
+            }
+        } else {
+            root.createDirectories()
+        }
+        return root
     }
 }
 

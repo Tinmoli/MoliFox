@@ -9,7 +9,6 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
@@ -18,6 +17,7 @@ import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
@@ -212,14 +212,19 @@ internal class BatchRangeProgress(
     private val to: Float,
 ) : DownloadProgressSink {
     private val finished = AtomicInteger()
+    private val bytesDone = ConcurrentHashMap<String, Long>()
+    private val bytesTotal = ConcurrentHashMap<String, Long>()
 
     @Volatile private var total = 1
+
+    @Volatile private var plannedBytes = 0L
 
     override fun planned(
         files: Int,
         bytes: Long,
     ) {
         total = maxOf(files, 1)
+        plannedBytes = bytes
         context.beginTransfers(files)
     }
 
@@ -228,7 +233,13 @@ internal class BatchRangeProgress(
         done: Long,
         total: Long,
     ) {
+        bytesDone[key] = done
+        bytesTotal[key] = total
         context.transfer(key, done, total)
+        val expected = maxOf(plannedBytes, bytesTotal.values.sum())
+        if (expected <= 0) return
+        val ratio = (bytesDone.values.sum().toDouble() / expected).coerceAtMost(1.0)
+        context.progress(from + (to - from) * ratio.toFloat(), label)
     }
 
     override fun finished(
@@ -243,6 +254,6 @@ internal class BatchRangeProgress(
             }
         context.transfer(key, size, size, completed = true)
         val count = finished.incrementAndGet()
-        context.progress(from + (to - from) * count / total, "$label $count/$total")
+        if (count >= total) context.progress(to, "$label $count/$total")
     }
 }

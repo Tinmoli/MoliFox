@@ -5,6 +5,7 @@
 
 package dev.molifox.desktop
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -18,19 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,7 +44,7 @@ import dev.molifox.core.ContentVersion
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
-import java.nio.file.Path
+import dev.molifox.desktop.MoliOutlinedButton as OutlinedButton
 
 /** 项目说明与链接：链接由系统浏览器打开，复制按钮只复制项目名称。 */
 @OptIn(ExperimentalLayoutApi::class)
@@ -62,7 +65,7 @@ internal fun ContentProjectHeader(
     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         val links = ui.details?.links.orEmpty()
         links.forEach { link ->
-            TextButton(
+            MoliTextButton(
                 { actions.run { actions.controller.platform.openUrl(link.url) } },
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             ) {
@@ -71,7 +74,7 @@ internal fun ContentProjectHeader(
                 Text(link.title, fontSize = 12.sp)
             }
         }
-        TextButton({
+        MoliTextButton({
             clipboard.setText(AnnotatedString(hit.title))
             ui.copied = true
         }) {
@@ -88,6 +91,7 @@ internal fun ContentProjectHeader(
 internal fun ContentProjectFilters(
     hit: ContentHit,
     ui: ContentProjectUiState,
+    chosen: ContentVersion?,
 ) {
     val strings = LocalStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -130,8 +134,15 @@ internal fun ContentProjectFilters(
         )
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val dependencyCount = chosen?.dependencies?.count { it.type != "embedded" } ?: 0
         listOf(
             "versions" to strings.t("dialogs.content.tab.versions"),
+            "dependencies" to
+                if (dependencyCount > 0) {
+                    "${strings.t("dialogs.content.tab.dependencies")} ($dependencyCount)"
+                } else {
+                    strings.t("dialogs.content.tab.dependencies")
+                },
             "description" to strings.t("dialogs.content.tab.description"),
             "changelog" to strings.t("dialogs.content.tab.changelog"),
         ).forEach { (key, title) ->
@@ -140,20 +151,32 @@ internal fun ContentProjectFilters(
     }
 }
 
-/** 中间列表：按标签切换介绍、更新日志与版本列表，高度固定避免弹窗跳动。 */
+/** 中间列表：按标签切换介绍、更新日志与版本列表，占用弹窗剩余高度。 */
 @Composable
 internal fun ContentProjectTabList(
+    hit: ContentHit,
     ui: ContentProjectUiState,
     versions: List<ContentVersion>,
     recommendation: ContentVersion?,
     chosen: ContentVersion?,
+    dependencyHits: Map<String, ContentHit>,
+    onOpenProject: (ContentHit) -> Unit,
+    modifier: Modifier = Modifier.height(235.dp),
 ) {
     LazyColumn(
-        Modifier.fillMaxWidth().height(235.dp),
+        modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         when (ui.tab) {
+            "dependencies" ->
+                contentDependencyItems(
+                    chosen?.dependencies.orEmpty(),
+                    dependencyHits,
+                    onOpenProject,
+                )
+
             "description" -> contentDescriptionItem(ui.details)
+
             "changelog" ->
                 contentChangelogItem(
                     ui.changelogLoading,
@@ -161,12 +184,14 @@ internal fun ContentProjectTabList(
                     ui.changelogError,
                     chosen,
                 )
+
             else -> {
                 contentRecommendationItem(recommendation) { ui.versionId = it.id }
                 contentVersionItems(
                     loading = ui.loading,
                     versions = versions,
                     versionId = ui.versionId,
+                    formatLabel = { contentVersionFormatLabel(hit, it) },
                     onSelect = { ui.versionId = it.id },
                     onResetFilters = { ui.resetFilters() },
                 )
@@ -180,6 +205,7 @@ internal fun ContentProjectTabList(
 internal fun ContentProjectVersionRow(
     version: ContentVersion,
     selected: Boolean,
+    formatLabel: String?,
     onSelect: (ContentVersion) -> Unit,
 ) {
     Surface(
@@ -214,13 +240,20 @@ internal fun ContentProjectVersionRow(
                     fontSize = 13.sp,
                 )
                 Text(
-                    version.gameVersions.joinToString(" / ") +
-                        " · " +
-                        version.loaders.joinToString(" / "),
+                    listOfNotNull(
+                        formatLabel,
+                        version.gameVersions.joinToString(" / ").ifBlank { null },
+                        version.loaders.joinToString(" / ").ifBlank { null },
+                    ).joinToString(" · "),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color =
+                        if (formatLabel != null) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                 )
             }
             Text(
@@ -231,54 +264,101 @@ internal fun ContentProjectVersionRow(
     }
 }
 
-/** 目标选择：非整合包选出实例，数据包再选出存档。 */
+/** 目标选择：固定在模态底部；数据包左选实例、右选存档，其余只选实例。 */
 @Composable
 internal fun ContentProjectTargetPickers(
     hit: ContentHit,
     state: LauncherState,
     ui: ContentProjectUiState,
+    chosen: ContentVersion?,
 ) {
     val strings = LocalStrings.current
-    if (hit.type != "modpack") {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(strings.t("dialogs.content.installTo"), fontSize = 12.sp)
-            SimpleDropdown(
-                ui.targetId,
-                listOf("" to strings.t("dialogs.content.selectInstance")) +
-                    state.data.instances
-                        .filter { it.installed }
-                        .map { it.id to "${it.name} · ${it.gameVersion}" },
-                { ui.targetId = it },
-                Modifier.weight(1f),
-            )
+    if (hit.type == "modpack") return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 依赖默认不装：开关固定显示在目标栏上方，勾选后待安装依赖随主文件一起装。
+        if (chosen?.dependencies.orEmpty().any { it.projectId.isNotBlank() }) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Metrics.innerRadius))
+                    .clickable { ui.includeDependencies = !ui.includeDependencies }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    ui.includeDependencies,
+                    { ui.includeDependencies = it },
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+                Column {
+                    Text(strings.t("dialogs.content.dependencies.include"), fontSize = 12.sp)
+                    Text(
+                        strings.t("dialogs.content.dependencies.includeDetail"),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
-    }
-    if (hit.type == "datapack") {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(strings.t("dialogs.content.targetSave"), fontSize = 12.sp)
-            SimpleDropdown(
-                ui.worldName,
-                if (ui.worlds.isEmpty()) {
-                    listOf("" to (ui.worldError ?: strings.t("dialogs.content.noWorlds")))
-                } else {
-                    ui.worlds.map { it.name to it.name }
-                },
-                { ui.worldName = it },
-                Modifier.weight(1f),
-            )
+            Column(Modifier.weight(1f)) {
+                Text(strings.t("dialogs.content.installTo"), fontSize = 11.sp)
+                SimpleDropdown(
+                    ui.targetId,
+                    listOf("" to strings.t("dialogs.content.selectInstance")) +
+                        state.data.instances
+                            .filter { it.installed }
+                            .map { it.id to "${it.name} · ${it.gameVersion}" },
+                    { ui.targetId = it },
+                    Modifier.fillMaxWidth(),
+                )
+            }
+            if (hit.type == "datapack") {
+                val datapackTarget = contentTargetSaveEnabled(hit, chosen)
+                val saveValue =
+                    when {
+                        !datapackTarget -> TARGET_SAVE_UNAVAILABLE
+                        ui.worlds.isEmpty() -> TARGET_SAVE_NO_WORLDS
+                        else -> ui.worldName
+                    }
+                val saveOptions =
+                    when {
+                        !datapackTarget ->
+                            listOf(TARGET_SAVE_UNAVAILABLE to strings.t("dialogs.content.targetSaveUnavailable"))
+
+                        ui.worlds.isEmpty() ->
+                            listOf(
+                                TARGET_SAVE_NO_WORLDS to
+                                    (ui.worldError ?: strings.t("dialogs.content.noWorlds")),
+                            )
+
+                        else -> ui.worlds.map { it.name to it.name }
+                    }
+                Column(Modifier.weight(1f)) {
+                    Text(strings.t("dialogs.content.targetSave"), fontSize = 11.sp)
+                    SimpleDropdown(
+                        saveValue,
+                        saveOptions,
+                        { ui.worldName = it },
+                        Modifier.fillMaxWidth(),
+                        enabled = datapackTarget && ui.worlds.isNotEmpty(),
+                        label = strings.t("dialogs.content.targetSave"),
+                    )
+                }
+            }
         }
     }
 }
 
-/** 底部：一行提示 + 关闭/下载；下载先确认目标文件夹，再交给对话框继续。 */
+/** 目标存档下拉的占位值；不会写回 worldName，避免把“不可用”当成世界名。 */
+private const val TARGET_SAVE_UNAVAILABLE = "__unavailable__"
+private const val TARGET_SAVE_NO_WORLDS = "__no_worlds__"
+
+/** 底部：一行提示 + 关闭/另存为/安装；安装直接使用实例目录，不再弹目录选择框。 */
 @Composable
 internal fun ContentProjectFooter(
     hit: ContentHit,
@@ -286,94 +366,64 @@ internal fun ContentProjectFooter(
     ui: ContentProjectUiState,
     target: GameInstance?,
     chosen: ContentVersion?,
-    instanceRoot: Path?,
-    defaultDestination: Path?,
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
     val strings = LocalStrings.current
     val compatible = contentVersionCompatible(chosen, hit, target)
+    val installKind = chosen?.let { contentVersionInstallKind(hit, it) } ?: hit.type
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时安装按钮才会刷新。
+    val launcherBusy = rememberLauncherBusy(actions)
+    val installLabel =
+        if (hit.type == "modpack") {
+            strings.t("dialogs.content.installModpack")
+        } else {
+            strings.t("dialogs.content.installInstance")
+        }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            contentInstallHint(hit, target, compatible),
+            contentInstallHint(hit, target, compatible, installKind),
             Modifier.weight(1f),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onDismiss) { Text(strings.t("dialogs.common.close")) }
+        MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.close")) }
+        OutlinedButton(
+            enabled = chosen != null && !launcherBusy,
+            onClick = {
+                val version = chosen ?: return@OutlinedButton
+                saveContentAs(actions, hit, version)
+            },
+        ) {
+            Text(strings.t("dialogs.content.saveAs"))
+        }
         PrimaryButton(
-            strings.t("dialogs.content.download"),
+            installLabel,
             enabled =
-                contentDownloadEnabled(
-                    ui.loading,
-                    actions.controller.busy,
-                    chosen,
-                    target,
-                    compatible,
-                    hit,
-                    ui.worldName,
-                ),
+                !ui.installing &&
+                    contentDownloadEnabled(
+                        ui.loading,
+                        launcherBusy,
+                        chosen,
+                        target,
+                        compatible,
+                        hit,
+                        ui.worldName,
+                        installKind,
+                    ),
             onClick = {
                 val version = chosen ?: return@PrimaryButton
+                ui.installError = null
                 contentDownload(
                     actions = actions,
                     hit = hit,
                     version = version,
-                    instanceId = target?.id,
-                    worldName = ui.worldName,
-                    defaultDestination = defaultDestination,
-                    instanceRoot = instanceRoot,
-                    onDestination = { ui.destination = it },
-                    onConfirmDatapack = { ui.confirmDatapack = true },
-                    onConfirmWorld = { ui.confirmWorld = true },
-                    onInstallVersion = { ui.installVersion = version },
+                    target = target,
+                    ui = ui,
                     onInstallStarted = onInstallStarted,
+                    onError = { message -> ui.installError = message },
                 )
             },
         )
-    }
-}
-
-/** 数据包确认：先说明会写到哪个存档，再交给安装事务。 */
-@Composable
-internal fun ContentDatapackConfirmDialog(
-    hit: ContentHit,
-    ui: ContentProjectUiState,
-    target: GameInstance,
-    chosen: ContentVersion,
-    defaultDestination: Path?,
-    actions: UiActions,
-    onInstallStarted: () -> Unit,
-) {
-    val strings = LocalStrings.current
-    Modal(
-        strings.t("dialogs.content.datapack.title"),
-        "${target.name} / ${ui.worldName}",
-        onDismiss = { ui.confirmDatapack = false },
-    ) {
-        Text(strings.t("dialogs.content.datapack.message", hit.title, chosen.number))
-        Text(
-            strings.t("dialogs.content.datapack.hint"),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        defaultDestination?.let { folder ->
-            MutedText(strings.t("dialogs.content.downloadLocation", folder))
-            if (ui.destination != null && ui.destination != folder) {
-                MutedText(strings.t("dialogs.content.datapack.locationHint"))
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({ ui.confirmDatapack = false }) { Text(strings.t("dialogs.common.cancel")) }
-            PrimaryButton(
-                strings.t("dialogs.content.datapack.confirm"),
-                enabled = !actions.controller.busy,
-                onClick = {
-                    actions.run {
-                        actions.controller.installDatapack(hit, chosen.id, target.id, ui.worldName)
-                    }
-                    onInstallStarted()
-                },
-            )
-        }
     }
 }

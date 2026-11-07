@@ -8,7 +8,6 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import java.nio.file.Path
 import java.util.UUID
-import kotlin.io.path.name
 
 /** 内容、整合包与导出的后台任务入口。 */
 internal interface LauncherContentApi : LauncherContentUpdateApi {
@@ -34,11 +33,19 @@ internal interface LauncherContentApi : LauncherContentUpdateApi {
         worldName: String,
     ): String
 
-    /** 在后台任务里下载世界包并安装到实例 `saves/`；重名、游戏运行与任务冲突都会拒绝。 */
+    /** 只下载选中版本的主文件到本地，不安装、不写实例登记表。 */
+    fun saveContentFile(
+        hit: ContentHit,
+        versionId: String,
+        destination: Path,
+    ): String
+
+    /** 在后台任务里下载世界包并安装到指定目录（默认实例 `saves/`）；重名会被拒绝。 */
     fun installWorld(
         hit: ContentHit,
         versionId: String,
         instanceId: String,
+        destination: Path? = null,
     ): String
 
     fun importPack(
@@ -107,7 +114,6 @@ internal abstract class LauncherContentActions(
         hit: ContentHit,
         id: String?,
     ): String {
-        if (hit.type != "modpack") requireIdle(requireNotNull(id) { I18n.t("coreC.content.chooseInstance") })
         val resources =
             if (hit.type == "modpack") {
                 setOf("new-pack:${UUID.randomUUID()}")
@@ -124,16 +130,14 @@ internal abstract class LauncherContentActions(
         }
     }
 
-    override fun installContent(plan: ContentInstallPlan): String {
-        requireIdle(plan.instanceId)
-        return jobs.enqueue(
+    override fun installContent(plan: ContentInstallPlan): String =
+        jobs.enqueue(
             I18n.t("coreC.tasks.install", plan.title),
             taskResourcesForInstances(store, plan.instanceId),
             kind = LauncherTaskKind.InstallContent,
         ) {
             content.installPlan(plan, this)
         }
-    }
 
     override fun preparePack(
         hit: ContentHit,
@@ -154,32 +158,42 @@ internal abstract class LauncherContentActions(
         versionId: String,
         instanceId: String,
         worldName: String,
-    ): String {
-        requireIdle(instanceId)
-        return jobs.enqueue(
+    ): String =
+        jobs.enqueue(
             I18n.t("coreC.tasks.installDatapack", hit.title),
             taskResourcesForInstances(store, instanceId),
             kind = LauncherTaskKind.InstallContent,
         ) {
             content.installDatapack(hit, versionId, instanceId, worldName, this)
         }
-    }
+
+    override fun saveContentFile(
+        hit: ContentHit,
+        versionId: String,
+        destination: Path,
+    ): String =
+        jobs.enqueue(
+            I18n.t("coreC.tasks.saveContent", hit.title),
+            emptySet(),
+            kind = LauncherTaskKind.PrepareContent,
+        ) {
+            content.saveContentFile(hit, versionId, destination, this)
+        }
 
     override fun installWorld(
         hit: ContentHit,
         versionId: String,
         instanceId: String,
+        destination: Path?,
     ): String {
         require(hit.type == "world") { I18n.t("coreC.world.notAWorld") }
         require(versionId.isNotBlank()) { I18n.t("coreC.world.chooseVersion") }
-        require(!game.isRunning(instanceId)) { I18n.t("coreC.world.gameRunning") }
-        requireIdle(instanceId)
         return jobs.enqueue(
             I18n.t("coreC.tasks.installWorld", hit.title),
             taskResourcesForInstances(store, instanceId),
             kind = LauncherTaskKind.InstallContent,
         ) {
-            content.installWorld(hit, versionId, instanceId, this)
+            content.installWorld(hit, versionId, instanceId, this, destination)
         }
     }
 

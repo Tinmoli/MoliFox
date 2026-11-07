@@ -6,7 +6,6 @@ package dev.molifox.desktop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,12 +35,12 @@ internal fun ContentRenameDialog(
             )
         },
         confirmButton = {
-            TextButton({ onConfirm(value) }, enabled = value.isNotBlank()) {
+            MoliTextButton({ onConfirm(value) }, enabled = value.isNotBlank()) {
                 Text(strings.t("content.rename.confirm"))
             }
         },
         dismissButton = {
-            TextButton(onDismiss) { Text(strings.t("content.rename.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("content.rename.cancel")) }
         },
     )
 }

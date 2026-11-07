@@ -6,6 +6,9 @@
 package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -14,6 +17,8 @@ import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
+import kotlin.io.path.outputStream
+import org.apache.commons.compress.archivers.zip.ZipFile as ArchiveZipFile
 
 /** 写入磁盘的相对路径长度上限；超长按异常输入拒绝。 */
 private const val MAX_RELATIVE_PATH_LENGTH = 4096
@@ -23,6 +28,15 @@ private const val DEFAULT_MAX_ARCHIVE_BYTES = 4L * 1024 * 1024 * 1024
 
 /** 单个压缩包允许的条目数上限。 */
 private const val MAX_ARCHIVE_ENTRY_COUNT = 50000
+
+/**
+ * Windows 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含「保留名.任意后缀」形式）。
+ * 此前在路径校验、内嵌清单、实例重命名与联机解包四处各抄一份，收敛到此处统一维护，避免清单漂移。
+ */
+private val WINDOWS_RESERVED_FILE_NAME = Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?")
+
+/** 段名是否命中 Windows 保留设备名；launcher-core 与 multiplayer-core 的路径校验共用同一份清单。 */
+fun isWindowsReservedFileName(segment: String): Boolean = WINDOWS_RESERVED_FILE_NAME.matches(segment)
 
 /** Reject traversal, drive prefixes, ADS, and Windows reserved names on every OS. */
 fun safePath(
@@ -45,7 +59,7 @@ fun safePath(
             it == ".." ||
                 it.endsWith('.') ||
                 it.endsWith(' ') ||
-                Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?").matches(it)
+                isWindowsReservedFileName(it)
         },
     ) {
         I18n.t("diagA1.fileSafety.unsafePath")
@@ -86,6 +100,26 @@ internal fun validateArchive(
         size = Math.addExact(size, entry.size)
         require(size <= maxBytes) { I18n.t("diagA1.fileSafety.archiveTooLarge") }
         entry to safePath(root, entry.name.removePrefix(prefix))
+    }
+}
+
+/**
+ * 把压缩包条目写入 [root] 下的 [relative]：先用 [safePath] 阻断 zip slip，再建父目录、流式落盘。
+ * 复制与体积限额由调用方提供——存档导入与世界包解压的上限和计数口径不同，不能在这里合并。
+ */
+internal fun writeArchiveEntrySafely(
+    zip: ArchiveZipFile,
+    entry: ZipArchiveEntry,
+    root: Path,
+    relative: String,
+    copy: (InputStream, OutputStream) -> Unit,
+) {
+    val target = safePath(root, relative)
+    target.parent.createDirectories()
+    target.outputStream().use { output ->
+        zip.getInputStream(entry).use { input ->
+            copy(input, output)
+        }
     }
 }
 

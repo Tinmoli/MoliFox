@@ -7,7 +7,6 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -16,9 +15,6 @@ import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
-
-/** 从 java -version / -XshowSettings 输出解析主版本（1.8.0_512 → 8，21.0.5 → 21）。 */
-fun parseJavaVersion(output: String): Int? = parseJavaProbe(output)?.major
 
 internal data class JavaProbe(
     val major: Int,

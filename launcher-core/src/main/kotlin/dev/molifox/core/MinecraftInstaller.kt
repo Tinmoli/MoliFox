@@ -7,17 +7,13 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeout
 import java.net.URLEncoder
 import java.nio.file.Path
-import kotlin.io.path.bufferedReader
 import kotlin.io.path.exists
-import kotlin.io.path.useLines
 
 internal fun encoded(value: String): String = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 

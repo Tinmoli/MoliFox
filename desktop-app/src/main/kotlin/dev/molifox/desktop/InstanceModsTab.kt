@@ -34,7 +34,6 @@ import dev.molifox.core.ModUpdateStatus
 import dev.molifox.core.domain.mods.completeModUpdateReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -117,7 +116,7 @@ internal fun InstanceMods(
         applyingJob = null
         refresh++
     }
-    val busy = actions.controller.isInstanceBusy(instance.id)
+    val busy = rememberInstanceBusy(actions, instance.id)
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ContentToolbar(
             flexible = { ToolbarSearchField(query, { query = it }, strings.t("deskD.mods.searchPlaceholder")) },
@@ -278,7 +277,6 @@ private fun deleteMods(
     onRefresh: () -> Unit,
 ) {
     actions.run {
-        actions.controller.requireIdle(instanceId)
         targets.forEach { mod -> actions.controller.content.deleteMod(instanceId, mod.filename) }
         withContext(Dispatchers.Swing) { onRefresh() }
     }

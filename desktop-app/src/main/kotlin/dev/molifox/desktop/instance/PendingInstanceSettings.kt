@@ -7,7 +7,6 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 

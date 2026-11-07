@@ -48,6 +48,7 @@ local.properties
 # 编辑器与系统文件
 .idea/
 .vs/
+.zcode/
 *.iml
 *.code-workspace
 .DS_Store

@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,7 +32,6 @@ import dev.molifox.core.SaveDetails
 import dev.molifox.core.SaveSettingsChanges
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -99,7 +97,7 @@ internal fun SaveInfoPane(
             error != null ->
                 Panel(Modifier.fillMaxWidth()) {
                     EmptyState(strings.t("dialogs.saveInfo.loadFailed"), error.orEmpty(), Icons.Outlined.CloudOff) {
-                        TextButton({ retry++ }) { Text(strings.t("dialogs.common.retry")) }
+                        MoliTextButton({ retry++ }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
             details != null ->
@@ -131,7 +129,7 @@ private fun SaveInfoCard(details: SaveDetails) {
                 strings.t("dialogs.saveInfo.seed"),
                 seed.toString(),
                 action = {
-                    TextButton({ clipboard.setText(AnnotatedString(seed.toString())) }) {
+                    MoliTextButton({ clipboard.setText(AnnotatedString(seed.toString())) }) {
                         Text(strings.t("dialogs.common.copy"), fontSize = 11.sp)
                     }
                 },

@@ -3,7 +3,11 @@
 
 // 静态检查独立运行，避免把分析器及其编译器依赖带进启动器发行包。
 
+import org.gradle.api.Action
 import org.gradle.api.attributes.Bundling
+import org.gradle.api.attributes.Category
+import org.gradle.api.attributes.Usage
+import org.gradle.api.execution.TaskExecutionGraph
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.compile.JavaCompile
 
@@ -12,6 +16,10 @@ val detektClasspath = configurations.create("qualityDetekt")
 val detektPlugins = configurations.create("qualityDetektPlugins")
 listOf(ktlintClasspath, detektClasspath).forEach {
     it.attributes.attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL))
+    it.attributes.attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+    // Kotlin Multiplatform 模块同时发布 sourcesElements；只声明 runtime 仍可能选到源码 jar。
+    // 明确只取 library 变体，避免 detekt 类路径里出现 *-sources.jar 导致找不到类。
+    it.attributes.attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
 }
 val localKtlintJar = providers.gradleProperty("qualityKtlintJar")
 val localDetektJar = providers.gradleProperty("qualityDetektJar")
@@ -19,6 +27,10 @@ val localDetektJar = providers.gradleProperty("qualityDetektJar")
 dependencies {
     add(ktlintClasspath.name, "com.pinterest.ktlint:ktlint-cli:1.7.1")
     add(detektClasspath.name, "dev.detekt:detekt-cli:2.0.0-alpha.6")
+    // detekt 2.0 alpha 的 IntelliJ 编译器依赖使用未重定位的 kotlinx.coroutines，
+    // 但其 analysis-api 只传递了 IntelliJ 重定位版本；显式补上运行依赖，避免启动时
+    // NoClassDefFoundError: kotlinx/coroutines/CoroutineScope。
+    add(detektClasspath.name, "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     add(detektPlugins.name, "dev.detekt:detekt-rules-ktlint-wrapper:2.0.0-alpha.6")
     add(detektPlugins.name, "io.nlopez.compose.rules:detekt:0.6.8")
 }
@@ -131,7 +143,11 @@ allprojects {
     }
 }
 
-tasks.named("ktlintCheck") { mustRunAfter("ktlintFormat") }
+// 打包任务会在项目根目录写入 dist/MoliFox.jar；ktlint 以项目根为工作目录，
+// 先跑打包会让 Gradle 把该产物误判为 ktlint 的隐式输入。显式排序避免同次调用失败。
+tasks.named("ktlintCheck") {
+    mustRunAfter("ktlintFormat", ":desktop-app:universalJar")
+}
 
 val styleToolTest =
     tasks.register<JavaExec>("styleToolTest") {
@@ -239,9 +255,36 @@ val detektUnusedModules =
         ),
     )
 
+// Gradle 9 禁止在任务执行期解析依赖配置（会报 "without an exclusive lock"），
+// 但各模块的 runtimeClasspath 由插件在 afterEvaluate 才注册，根项目配置期也拿不到。
+// 因此在任务图确定后、执行开始前（whenReady 仍属配置阶段，持锁）完成解析并缓存，
+// doFirst 只读取缓存结果。仅在对应任务真正进入本次构建时才解析，避免拖慢无关构建。
+val resolvedAnalysisClasspaths = mutableMapOf<String, FileCollection>()
+gradle.taskGraph.whenReady(
+    // Kotlin DSL 下 whenReady 的 Action/Closure 重载有歧义，显式 SAM 构造。
+    object : Action<TaskExecutionGraph> {
+        override fun execute(graph: TaskExecutionGraph) {
+            detektUnusedModules.forEach { module ->
+                if (graph.hasTask(":detektUnused${module.taskSuffix}")) {
+                    val target = project(module.projectPath)
+                    resolvedAnalysisClasspaths[module.projectPath] =
+                        files(
+                            target.configurations.getByName(module.runtimeConfiguration).files,
+                            module.classPaths.map {
+                                target.layout.buildDirectory
+                                    .dir(it)
+                                    .get()
+                                    .asFile
+                            },
+                        )
+                }
+            }
+        }
+    },
+)
+
 val detektUnusedTasks =
     detektUnusedModules.map { module ->
-        val target = project(module.projectPath)
         tasks.register<JavaExec>("detektUnused${module.taskSuffix}") {
             group = "verification"
             description = "Find newly introduced unused production code in ${module.projectPath}"
@@ -253,17 +296,16 @@ val detektUnusedTasks =
             doFirst {
                 val reports = qualityReports.get().asFile.apply { mkdirs() }
                 val analysisClasspath =
-                    files(
-                        target.configurations.getByName(module.runtimeConfiguration),
-                        module.classPaths.map { target.layout.buildDirectory.dir(it) },
-                    ).filter(File::exists)
+                    resolvedAnalysisClasspaths.getValue(module.projectPath).filter(File::exists)
                 args =
                     listOf(
                         "--input",
                         module.sourcePaths.joinToString(File.pathSeparator),
                         "--config",
                         file("config/detekt-unused.yml").absolutePath,
-                        "--disable-default-rulesets",
+                        // 不传 --disable-default-rulesets：detekt 2.0 alpha 里该开关会把
+                        // config 中显式激活的规则一起关掉，整个检查变成空转；
+                        // 改由 config/detekt-unused.yml 逐个关闭默认规则集，只留 Unused*。
                         "--analysis-mode",
                         "full",
                         "--classpath",

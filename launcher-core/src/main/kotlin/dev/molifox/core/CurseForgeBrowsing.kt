@@ -36,12 +36,12 @@ internal class CurseForgeBrowsing(
                     "${encoded(query)}&index=$offset&pageSize=$pageSize" +
                     "&sortField=${if (query.isBlank()) 6 else 2}&sortOrder=desc$filters",
             )
-        val data = result.array("data").toList()
-        val (hits, failures) = collectHits(data, kind)
-        reportCollectOutcome(result, data, hits.size, failures)
+        val entries = result.array("data").toList()
+        val (hits, failures) = collectHits(entries, kind)
+        reportCollectOutcome(result, entries, hits.size, failures)
         val total =
             result.obj("pagination").int("totalCount").coerceIn(0, CURSE_FORGE_RESULT_LIMIT)
-        if (data.isEmpty() && total > 0) {
+        if (entries.isEmpty() && total > 0) {
             store.log(I18n.t("packsB1.curseForgeBrowsing.emptyPage", total, offset), true)
         }
         return ContentSearch(hits, total)
@@ -50,16 +50,16 @@ internal class CurseForgeBrowsing(
     /** 映射问题不能变成「没有结果」：一条都没认出来时按错误上报，并带上响应片段。 */
     private fun reportCollectOutcome(
         result: JsonObject,
-        data: List<JsonElement>,
+        entries: List<JsonElement>,
         hitCount: Int,
         failures: List<String>,
     ) {
-        if (hitCount == 0 && data.isNotEmpty()) {
+        if (hitCount == 0 && entries.isNotEmpty()) {
             api.fail(
                 I18n.t("packsB1.curseForgeBrowsing.stageSearchMapping"),
                 I18n.t(
                     "packsB1.curseForgeBrowsing.allEntriesUnrecognized",
-                    data.size,
+                    entries.size,
                     failures.first(),
                 ),
                 result,
@@ -96,18 +96,18 @@ internal class CurseForgeBrowsing(
 
     /** 逐条映射搜索响应；失败的原因只记录，不打断整页。 */
     private fun collectHits(
-        data: List<JsonElement>,
+        entries: List<JsonElement>,
         kind: String,
     ): Pair<List<ContentHit>, List<String>> {
         val hits = mutableListOf<ContentHit>()
         val failures = mutableListOf<String>()
-        for (element in data) {
-            val info = element.takeIf { it.isJsonObject }?.asJsonObject
-            if (info == null) {
+        for (element in entries) {
+            val project = element.takeIf { it.isJsonObject }?.asJsonObject
+            if (project == null) {
                 failures += I18n.t("packsB1.curseForgeBrowsing.entryNotJson")
                 continue
             }
-            val outcome = runCatching { hitOrNull(info, kind) }
+            val outcome = runCatching { hitOrNull(project, kind) }
             val hit = outcome.getOrNull()
             if (hit != null) {
                 hits += hit
@@ -122,44 +122,60 @@ internal class CurseForgeBrowsing(
 
     /** 搜索结果中的一条。缺失的可选字段按空值处理，只有标识矛盾才跳过（不抛异常拖垮整页）。 */
     fun hitOrNull(
-        info: JsonObject,
+        project: JsonObject,
         kind: String,
     ): ContentHit? {
-        info.intOrNull("gameId")?.let {
+        project.intOrNull("gameId")?.let {
             require(it == MINECRAFT_GAME_ID) {
                 I18n.t("packsB1.curseForgeBrowsing.searchNotMinecraft")
             }
         }
-        val rawId = info.string("id")
+        val rawId = project.string("id")
         val id = "curseforge:$rawId"
         curseForgeProjectId(id)
         return ContentHit(
             id,
-            info.string("slug"),
-            info.string("name"),
-            info.string("summary"),
-            info.array("authors").joinToString(", ") { author ->
+            project.string("slug"),
+            project.string("name"),
+            project.string("summary"),
+            project.array("authors").joinToString(", ") { author ->
                 runCatching { author.asJsonObject.string("name") }.getOrDefault("")
             },
-            info
+            project
                 .get("downloadCount")
                 ?.takeUnless { it.isJsonNull }
                 ?.let { runCatching { it.asLong }.getOrNull() }
                 ?: 0,
             kind,
-            info
+            project
                 .obj("logo")
                 .string("thumbnailUrl")
-                .ifBlank { info.obj("logo").string("url") }
+                .ifBlank { project.obj("logo").string("url") }
                 .takeIf { it.isNotBlank() },
+            categories = curseForgeCategoryNames(project),
         )
     }
 
+    /** CurseForge 的 categories 是对象数组，界面只取 name 展示；空缺或非文本名称按没有该分类处理。 */
+    private fun curseForgeCategoryNames(project: JsonObject): List<String> =
+        project
+            .array("categories")
+            .mapNotNull { element ->
+                element
+                    .takeIf { it.isJsonObject }
+                    ?.asJsonObject
+                    ?.get("name")
+                    ?.takeUnless { it.isJsonNull }
+                    ?.takeIf { it.isJsonPrimitive }
+                    ?.asString
+                    ?.trim()
+            }.filter { it.isNotEmpty() }
+
     fun hit(
-        info: JsonObject,
+        project: JsonObject,
         kind: String,
     ): ContentHit =
-        requireNotNull(hitOrNull(info, kind)) {
+        requireNotNull(hitOrNull(project, kind)) {
             I18n.t("packsB1.curseForgeBrowsing.invalidProjectId")
         }
 

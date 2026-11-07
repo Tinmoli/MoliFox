@@ -30,7 +30,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +54,7 @@ fun GameDirectoryControls(
     val selected = state.data.gameDirectories.find { it.id == state.data.activeGameDirectoryId }
     var removing by remember { mutableStateOf<GameDirectory?>(null) }
     val strings = LocalStrings.current
-    val busy = actions.controller.busy
+    val busy = rememberLauncherBusy(actions)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -128,7 +127,7 @@ fun GameDirectoryControls(
             title = { Text(strings.t("settings.game.directory.remove.title", directory.name)) },
             text = { Text(strings.t("settings.game.directory.remove.detail")) },
             confirmButton = {
-                TextButton({
+                MoliTextButton({
                     actions.run { actions.controller.removeGameDirectory(directory.id) }
                     removing = null
                 }) {
@@ -136,7 +135,7 @@ fun GameDirectoryControls(
                 }
             },
             dismissButton = {
-                TextButton({ removing = null }) { Text(strings.t("settings.common.cancel")) }
+                MoliTextButton({ removing = null }) { Text(strings.t("settings.common.cancel")) }
             },
         )
     }

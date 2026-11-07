@@ -101,6 +101,44 @@ private suspend fun rollbackFailedInstall(
     }
 }
 
+/** 实例配置里持久化的基础游戏版本；目录名不是版本号时用于修复安装兜底。 */
+internal fun persistedGameVersion(
+    store: LauncherStore,
+    instance: GameInstance,
+): String {
+    val target = store.versionGamePath(instance)
+    val jsonPath = target.resolve("${target.fileName}.json")
+    if (!jsonPath.isRegularFile()) return ""
+    return runCatching {
+        JsonParser.parseString(Files.readString(jsonPath)).asJsonObject.string("_minecraftVersion")
+    }.getOrDefault("")
+}
+
+private suspend fun managedMetadata(
+    store: LauncherStore,
+    catalog: MinecraftVersionCatalog,
+    instance: GameInstance,
+): Pair<GameInstance, ReleaseVersion> {
+    // 自定义整合包的目录名不一定是合法游戏版本号，扫描后会保持 gameVersion 为空。
+    // 修复安装时用实例自己配置里记录的基础版本兜底，避免把「未知版本」误判成缺失。
+    val gameVersion = instance.gameVersion.ifBlank { persistedGameVersion(store, instance) }
+    // 发布时把兜底版本写回配置，避免下一次修复又因为 gameVersion 为空而失败。
+    val effectiveInstance =
+        if (instance.gameVersion.isBlank() && gameVersion.isNotBlank()) {
+            instance.copy(gameVersion = gameVersion)
+        } else {
+            instance
+        }
+    val metadata =
+        catalog.versions().find { it.id == gameVersion }
+            ?: error(I18n.t("miscA2.install.versionNotInCatalog"))
+    val ancient = metadata.type in setOf("old_alpha", "old_beta")
+    require(!ancient || instance.loader == LoaderType.Vanilla) {
+        I18n.t("miscA2.install.ancientVersionVanillaOnly")
+    }
+    return effectiveInstance to metadata
+}
+
 /** 安装流水线：把一次安装拆成可回收的步骤，任何一步失败都按原有顺序清理。 */
 internal class MinecraftInstallPipeline(
     private val store: LauncherStore,
@@ -212,22 +250,16 @@ internal class MinecraftInstallPipeline(
         context: JobContext,
         progressEnd: Float,
     ) {
-        val metadata =
-            catalog.versions().find { it.id == instance.gameVersion }
-                ?: error(I18n.t("miscA2.install.versionNotInCatalog"))
-        val ancient = metadata.type in setOf("old_alpha", "old_beta")
-        require(!ancient || instance.loader == LoaderType.Vanilla) {
-            I18n.t("miscA2.install.ancientVersionVanillaOnly")
-        }
+        val (effectiveInstance, metadata) = managedMetadata(store, catalog, instance)
         val target = store.versionGamePath(instance)
         if (freshInstall) provisioner.requireNewInstanceDirectory(root, target)
         val base =
             if (freshInstall) {
                 prepareDirectBaseProfile(network, metadata, target)
             } else {
-                prepareBaseProfile(metadata, instance, target, root, createdVersions, context)
+                prepareBaseProfile(metadata, effectiveInstance, target, root, createdVersions, context)
             }
-        val hasLoader = instance.loader != LoaderType.Vanilla
+        val hasLoader = effectiveInstance.loader != LoaderType.Vanilla
         // 加载器安装阶段要留出预算：否则基础依赖做完进度条已经到 98%，
         // 之后的加载器安装会让进度停在原地（或回退）。
         installDependencies(
@@ -238,7 +270,7 @@ internal class MinecraftInstallPipeline(
             (if (hasLoader) LOADER_PROGRESS_START else SKIPPED_LOADER_PROGRESS) * progressEnd,
         )
         installLoaderAndPublish(
-            instance = instance,
+            instance = effectiveInstance,
             base = base.profile,
             target = target,
             root = root,

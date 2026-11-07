@@ -64,6 +64,10 @@ class LauncherController
         val network: NetworkClient
             get() = core.network
 
+        /** 启动器数据目录（MoliFox/）；视频背景运行库等附属资源放在其 dependencies 下。 */
+        val dataDirectory: Path
+            get() = core.dataDirectory
+
         val jobs: JobQueue
             get() = core.jobs
 

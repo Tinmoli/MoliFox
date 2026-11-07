@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -150,14 +149,14 @@ internal fun SchematicRenameDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            MoliTextButton(
                 onClick = { onConfirm(trimmed) },
                 enabled = problem == null && !busy,
             ) {
                 Text(strings.t("dialogs.common.save"))
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -186,11 +185,11 @@ internal fun SchematicDeleteDialog(
             )
         },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("dialogs.folder.trashConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -210,10 +209,10 @@ internal fun SchematicBatchDeleteDialog(
         title = { Text(strings.t("dialogs.folder.trashTitle")) },
         text = { Text(strings.t("dialogs.folder.trashManyMessage", count)) },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("dialogs.folder.trashConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }

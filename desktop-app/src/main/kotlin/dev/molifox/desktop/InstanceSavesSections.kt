@@ -24,7 +24,6 @@ import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -152,7 +151,7 @@ private fun ColumnScope.SavesListArea(
                     ui.loadError.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton({ callbacks.onRefresh() }) {
+                    MoliTextButton({ callbacks.onRefresh() }) {
                         Text(strings.t("pages.saves.load.retry"))
                     }
                 }
@@ -189,7 +188,7 @@ private fun SavesContentSection(
                     strings.t("pages.saves.emptyFiltered.body"),
                     Icons.Outlined.SearchOff,
                 ) {
-                    TextButton({ callbacks.onChangeQuery("") }) {
+                    MoliTextButton({ callbacks.onChangeQuery("") }) {
                         Text(strings.t("pages.saves.clearSearch"))
                     }
                 }

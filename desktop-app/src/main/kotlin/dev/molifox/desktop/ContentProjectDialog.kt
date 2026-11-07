@@ -10,20 +10,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.molifox.core.ContentFilter
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentVersion
@@ -32,11 +33,12 @@ import dev.molifox.core.LauncherState
 import dev.molifox.core.filteredContentVersions
 import dev.molifox.core.recommendedContentVersion
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import java.nio.file.Path
 import kotlin.io.path.isDirectory
 
 /** Project browsing is available without an installation target, including old versions. */
@@ -49,14 +51,15 @@ fun ContentProjectDialog(
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
 ) {
-    val strings = LocalStrings.current
+    // 从依赖点进来的项目会压栈；返回时回到上一个项目，关闭按钮始终关闭整个对话框。
+    var stack by remember(hit.id) { mutableStateOf(listOf(hit)) }
+    val currentHit = stack.last()
     val ui =
-        remember(hit.id) {
+        remember(currentHit.id) {
             ContentProjectUiState(initialFilter, state.data.selectedInstanceId)
         }
     val clipboard = LocalClipboardManager.current
-    val store = actions.controller.store
-    ContentProjectEffects(ui, hit, actions)
+    ContentProjectEffects(ui, currentHit, actions)
     val versions =
         filteredContentVersions(
             ui.details?.versions.orEmpty(),
@@ -64,57 +67,38 @@ fun ContentProjectDialog(
             ui.channel,
         ).sortedWith(newestVersionFirst)
     val target = state.data.instances.find { it.id == ui.targetId && it.installed }
-    val recommendation = recommendedContentVersion(versions, target, hit.type)
-    ContentProjectVersionEffect(ui, hit, target, versions, recommendation, actions)
+    // 数据包项目优先推荐数据包 zip；项目只发布模组版时才回退到模组 jar。
+    val datapackVersions =
+        versions.filter {
+            currentHit.type != "datapack" || contentVersionInstallKind(currentHit, it) == "datapack"
+        }
+    val recommendation =
+        recommendedContentVersion(datapackVersions, target, currentHit.type)
+            ?: recommendedContentVersion(versions, target, currentHit.type)
+    ContentProjectVersionEffect(ui, currentHit, target, versions, recommendation, actions)
     val chosen = versions.find { it.id == ui.versionId }
-    val instanceRoot = target?.let { runCatching { store.instancePath(it.id) }.getOrNull() }
     // 下载目标的默认值：实例内容目录（mods / resourcepacks / shaderpacks），
     // 数据包落到所选存档的 datapacks；没有实例时由用户从数据目录里自己挑。
-    val defaultDestination = contentDefaultDestination(instanceRoot, hit.type, ui.worldName)
-    ContentProjectWorldEffect(ui, hit, target, actions)
-    val installing = ui.installVersion
-    // 数据包确认、世界确认与安装进度共用一层覆盖层：同一时间只显示其中一个。
-    val overlayShown =
-        when {
-            ui.confirmDatapack && target != null && chosen != null -> {
-                ContentDatapackConfirmDialog(
-                    hit,
-                    ui,
-                    target,
-                    chosen,
-                    defaultDestination,
-                    actions,
-                    onInstallStarted,
-                )
-                true
-            }
-            ui.confirmWorld && target != null && chosen != null -> {
-                ContentWorldConfirmDialog(hit, ui, target, chosen, actions, onInstallStarted)
-                true
-            }
-            installing != null && target != null -> {
-                ContentInstallDialog(
-                    hit,
-                    target.id,
-                    actions,
-                    { ui.installVersion = null },
-                    onInstallStarted,
-                    initialVersionId = installing.id,
-                    destination = ui.destination,
-                )
-                true
-            }
-            else -> false
+    ContentProjectWorldEffect(ui, currentHit, target, chosen, actions)
+    ContentProjectDependencyEffect(ui, currentHit, chosen, actions)
+    // 同一页选好目标后直接排队；依赖由「同时安装依赖」开关决定，安装进度只进任务中心。
+    ContentConflictEffect(ui, actions, onInstallStarted)
+    val back: (() -> Unit)? =
+        if (stack.size > 1) {
+            { stack = stack.dropLast(1) }
+        } else {
+            null
         }
-    if (overlayShown) return
     Modal(
-        hit.title,
-        strings.t("dialogs.content.project.subtitle"),
+        currentHit.title,
+        "",
         width = 740.dp,
         onDismiss = onDismiss,
+        onBack = back,
+        compact = true,
     ) {
         ContentProjectModalBody(
-            hit = hit,
+            hit = currentHit,
             state = state,
             actions = actions,
             ui = ui,
@@ -123,10 +107,9 @@ fun ContentProjectDialog(
             target = target,
             recommendation = recommendation,
             chosen = chosen,
-            instanceRoot = instanceRoot,
-            defaultDestination = defaultDestination,
             onDismiss = onDismiss,
             onInstallStarted = onInstallStarted,
+            onOpenProject = { dependency -> stack = stack + dependency },
         )
     }
 }
@@ -142,36 +125,48 @@ private fun ColumnScope.ContentProjectModalBody(
     target: GameInstance?,
     recommendation: ContentVersion?,
     chosen: ContentVersion?,
-    instanceRoot: Path?,
-    defaultDestination: Path?,
     onDismiss: () -> Unit,
     onInstallStarted: () -> Unit,
+    onOpenProject: (ContentHit) -> Unit,
 ) {
     val strings = LocalStrings.current
     if (ui.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
     if (ui.error != null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(ui.error.orEmpty(), Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-            TextButton({ ui.retry++ }) { Text(strings.t("dialogs.common.retry")) }
+            MoliTextButton({ ui.retry++ }) { Text(strings.t("dialogs.common.retry")) }
         }
     }
     Column(
-        Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        Modifier.fillMaxWidth().weight(1f),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ContentProjectHeader(hit, ui, actions, clipboard)
-        ContentProjectFilters(hit, ui)
-        ContentProjectTabList(ui, versions, recommendation, chosen)
-        ContentProjectTargetPickers(hit, state, ui)
+        ContentProjectFilters(hit, ui, chosen)
+        // 版本列表吃掉剩余高度，避免依赖区和目标栏把可滚动区域越挤越小。
+        ContentProjectTabList(
+            hit,
+            ui,
+            versions,
+            recommendation,
+            chosen,
+            dependencyHits = ui.dependencyHits,
+            onOpenProject = onOpenProject,
+            modifier = Modifier.weight(1f),
+        )
     }
+    // 目标栏固定在滚动区外，资源再多也不会把“安装到哪里”挤掉。
+    ContentProjectTargetPickers(hit, state, ui, chosen)
+    ui.installError?.let {
+        Text(it, Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+    }
+    if (ui.installing) LinearProgressIndicator(Modifier.fillMaxWidth())
     ContentProjectFooter(
         hit = hit,
         actions = actions,
         ui = ui,
         target = target,
         chosen = chosen,
-        instanceRoot = instanceRoot,
-        defaultDestination = defaultDestination,
         onDismiss = onDismiss,
         onInstallStarted = onInstallStarted,
     )
@@ -222,7 +217,7 @@ private fun ContentProjectVersionEffect(
 ) {
     LaunchedEffect(hit.id, ui.targetId, ui.gameVersion, ui.loader, ui.channel, ui.details) {
         val current = versions.find { it.id == ui.versionId }
-        if (current == null || isUnusableFor(current, target, hit.type)) {
+        if (current == null || isUnusableFor(current, target, hit)) {
             ui.versionId = recommendation?.id.orEmpty()
         }
     }
@@ -246,19 +241,57 @@ private fun ContentProjectVersionEffect(
     }
 }
 
+/** 依赖标签页按需取项目名称；只解析尚未缓存的 projectId，失败时仍显示 id。 */
+@Composable
+private fun ContentProjectDependencyEffect(
+    ui: ContentProjectUiState,
+    hit: ContentHit,
+    chosen: ContentVersion?,
+    actions: UiActions,
+) {
+    LaunchedEffect(hit.id, ui.tab, chosen?.id) {
+        if (ui.tab != "dependencies" || chosen == null) return@LaunchedEffect
+        val ids =
+            chosen.dependencies
+                .map { it.projectId }
+                .filter { it.isNotBlank() }
+                .distinct()
+        ui.dependencyHits = ui.dependencyHits.filterKeys { it in ids }
+        val missing = ids.filter { it !in ui.dependencyHits }
+        if (missing.isEmpty()) return@LaunchedEffect
+        val loaded =
+            withContext(Dispatchers.IO) {
+                coroutineScope {
+                    missing
+                        .map { id ->
+                            async {
+                                runCatching {
+                                    actions.controller.content.catalog
+                                        .projectHit(id)
+                                }.getOrNull()
+                            }
+                        }.awaitAll()
+                }
+            }
+        ui.dependencyHits = ui.dependencyHits + loaded.filterNotNull().associateBy { it.id }
+    }
+}
+
 /** 数据包的世界列表：切实例或切项目时重扫，失败只提示不阻断。 */
 @Composable
 private fun ContentProjectWorldEffect(
     ui: ContentProjectUiState,
     hit: ContentHit,
     target: GameInstance?,
+    chosen: ContentVersion?,
     actions: UiActions,
 ) {
-    LaunchedEffect(ui.targetId, hit.type) {
+    val datapackTarget = contentTargetSaveEnabled(hit, chosen)
+    LaunchedEffect(ui.targetId, hit.type, datapackTarget) {
         ui.worlds = emptyList()
         ui.worldName = ""
         ui.worldError = null
-        if (hit.type != "datapack" || target == null) return@LaunchedEffect
+        if (!datapackTarget || target == null) return@LaunchedEffect
         resourceAttempt {
             ui.worlds =
                 withContext(Dispatchers.IO) {

@@ -29,6 +29,19 @@ data class PlannedContentFile(
     val iconUrl: String = "",
 )
 
+/** 安装计划里的依赖项：带上登记表里的当前版本，供界面判断已安装/待更新。 */
+data class PlannedDependency(
+    val projectId: String,
+    val title: String,
+    val versionId: String,
+    val installedVersionId: String,
+    val filename: String,
+    val folder: String,
+) {
+    /** 登记表已有同一版本时无需再次询问或下载。 */
+    val upToDate: Boolean get() = installedVersionId.isNotBlank() && installedVersionId == versionId
+}
+
 data class ContentInstallPlan(
     val instanceId: String,
     val title: String,
@@ -37,6 +50,9 @@ data class ContentInstallPlan(
     val files: List<PlannedContentFile>,
     val optional: List<OptionalContent>,
     val sources: List<ContentSource> = emptyList(),
+    val dependencies: List<PlannedDependency> = emptyList(),
+    /** 用户在冲突弹窗里确认替换未登记的同名文件。 */
+    val overwriteExisting: Boolean = false,
 )
 
 internal data class ContentRequest(

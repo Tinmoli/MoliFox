@@ -9,7 +9,6 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -24,7 +23,6 @@ import kotlin.io.path.fileSize
 import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
@@ -832,21 +830,7 @@ internal class ModrinthPackUpdateSource(
         if (folder == PackFolder.ResourcePacks && instance.gameVersion.isNotBlank()) {
             facets += listOf("versions:${instance.gameVersion}")
         }
-        val response =
-            network
-                .json(
-                    "$api/search?query=${encoded(
-                        name,
-                    )}&limit=8&facets=${encoded(gson.toJson(facets))}",
-                ).asJsonObject
-        return response.array("hits").mapNotNull { element ->
-            val hit =
-                element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
-            val id = hit.string("project_id").ifBlank { hit.string("id") }
-            val type = hit.string("project_type")
-            if (id.isBlank() || (type.isNotBlank() && type != folder.kind)) return@mapNotNull null
-            RemoteModProject(id, hit.string("slug"), hit.string("title"), provider)
-        }
+        return modrinthSearchProjects(network, api, name, facets, folder.kind, provider)
     }
 
     override suspend fun versions(

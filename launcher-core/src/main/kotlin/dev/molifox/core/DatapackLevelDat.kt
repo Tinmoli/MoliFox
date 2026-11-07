@@ -21,7 +21,7 @@ internal data class DatapackPackLists(
     val disabled: List<String>,
 ) {
     /** 该数据包的开关状态：Enabled 命中为启用，Disabled 命中为禁用，都没命中按原版默认启用。 */
-    fun enabledOf(name: String): Boolean =
+    fun isEnabled(name: String): Boolean =
         when {
             enabled.any { matchesPackId(it, name) } -> true
             disabled.any { matchesPackId(it, name) } -> false

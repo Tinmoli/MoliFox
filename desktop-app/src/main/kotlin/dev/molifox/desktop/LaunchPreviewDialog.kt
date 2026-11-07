@@ -14,7 +14,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -56,12 +55,12 @@ fun LaunchPreviewDialog(
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({
+            MoliTextButton({
                 Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
             }) {
                 Text(strings.t("dialogs.launchPreview.copy"))
             }
-            TextButton(onDismiss) { Text(strings.t("dialogs.launchPreview.close")) }
+            MoliTextButton(onDismiss) { Text(strings.t("dialogs.launchPreview.close")) }
         }
     }
 }

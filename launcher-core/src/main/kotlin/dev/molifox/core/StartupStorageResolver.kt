@@ -12,8 +12,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
-import kotlin.io.path.deleteIfExists
 
 /** 检查便携数据目录；不可写时明确报错，避免静默转移配置到其他位置。 */
 class StartupStorageResolver(

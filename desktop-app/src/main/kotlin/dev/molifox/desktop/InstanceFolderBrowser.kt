@@ -48,7 +48,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -79,9 +78,6 @@ import kotlinx.coroutines.withContext
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 import dev.molifox.core.data.instance.InstanceDirectoryEntry as FolderEntry
-
-private const val BYTES_PER_KB = 1024f
-private const val BYTES_PER_MB = 1048576f
 
 /** 内容文件夹浏览：原理图专用（可导入、可逐级进入、可删除）；大小与修改时间来自文件系统。 */
 @Composable
@@ -116,7 +112,7 @@ internal fun InstanceFolderBrowser(
         }
     var deletingSelected by remember(instance.id, folder, subPath) { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    val busy = actions.controller.isInstanceBusy(instance.id)
+    val busy = rememberInstanceBusy(actions, instance.id)
     val strings = LocalStrings.current
     val liveState by actions.controller.state.collectAsState()
     val root =
@@ -129,9 +125,12 @@ internal fun InstanceFolderBrowser(
         } else {
             subPath.fold(root) { path, segment -> path.resolve(segment) }
         }
-    val filtered = entries.filter { query.isBlank() || it.path.name.contains(query, true) }
+    // 过滤与键名缓存到 remember：任务进行期间 liveState 每 100–200ms 触发一次重组，
+    // 大目录（原理图/mods）不能每次重组都重新 filter/map。
+    val filtered =
+        remember(entries, query) { entries.filter { query.isBlank() || it.path.name.contains(query, true) } }
     // 选区用文件名作稳定键：同一目录内文件名唯一，跨目录切换会重建选区。
-    val keys = filtered.map { it.path.name }
+    val keys = remember(filtered) { filtered.map { it.path.name } }
     LaunchedEffect(keys) { selection?.retain(keys) }
     LaunchedEffect(instance.id, folder, refresh, liveState.jobs.map { it.status }, directory) {
         loading = true
@@ -298,7 +297,7 @@ private fun FolderEntryList(
                     error.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton(onRetry) { Text(strings.t("pages.folder.error.retry")) }
+                    MoliTextButton(onRetry) { Text(strings.t("pages.folder.error.retry")) }
                 }
             }
 
@@ -318,7 +317,7 @@ private fun FolderEntryList(
                     strings.t("pages.folder.filtered.body"),
                     Icons.Outlined.SearchOff,
                 ) {
-                    TextButton(onClearSearch) {
+                    MoliTextButton(onClearSearch) {
                         Text(strings.t("pages.folder.filtered.clear"))
                     }
                 }
@@ -572,13 +571,6 @@ private fun Modifier.schematicContextClick(
                 }
             }
         }
-    }
-
-internal fun formatFileSize(bytes: Long): String =
-    when {
-        bytes >= BYTES_PER_MB -> "%.1f MB".format(bytes / BYTES_PER_MB)
-        bytes >= BYTES_PER_KB -> "%.1f KB".format(bytes / BYTES_PER_KB)
-        else -> bytes.toString() + " B"
     }
 
 /** 列表骨架：3 行灰条，首次加载时占位，避免内容区高度跳变。 */

@@ -13,7 +13,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.isRegularFile
 
-/** 解析当前便携版启动器文件；开发环境（java -jar）返回 null，只允许手动更新。 */
+/** 解析当前便携版启动器文件；直接以 JAR 运行时返回 JAR 自身，原生外壳下返回 null。 */
 internal object LauncherBundlePath {
     fun current(
         os: String,
@@ -35,6 +35,17 @@ internal object LauncherBundlePath {
                     ?: command?.takeIf { it.endsWith(".run") }?.let(Path::of)
             else -> null
         }
+
+    /** 直接运行 JAR 时用当前代码源作为更新目标；被原生外壳启动时不走该分支。 */
+    fun currentJar(env: (String) -> String? = System::getenv): Path? {
+        if (env("MOLIFOX_WRAPPER_PID") != null) return null
+        return runCatching {
+            val location = LauncherBundlePath::class.java.protectionDomain.codeSource.location
+            Path.of(location.toURI())
+        }.getOrNull()?.takeIf {
+            it.isRegularFile() && it.fileName.toString().endsWith(".jar", ignoreCase = true)
+        }
+    }
 
     /** 原生外壳进程；JVM 退出后它还要清理临时目录并退出，覆盖文件前必须等它一起结束。 */
     fun wrapperPid(): Long? =
@@ -58,22 +69,23 @@ internal object LauncherBundlePath {
 internal class UpdateApplier(
     private val store: LauncherStore,
     private val bundle: Path? = LauncherBundlePath.current(store.platform.osName),
+    private val jar: Path? = LauncherBundlePath.currentJar(),
     private val pid: Long = ProcessHandle.current().pid(),
     private val wrapperPid: Long? = LauncherBundlePath.wrapperPid(),
 ) {
     fun apply(downloaded: Path): Result<Unit> =
         runCatching {
+            val bundleTarget = bundle?.toAbsolutePath()?.normalize()
+            val jarTarget = jar?.toAbsolutePath()?.normalize()
             val target =
-                requireNotNull(bundle) {
-                    I18n.t("networkB2.updateApplier.notPortable")
-                }.toAbsolutePath().normalize()
+                (bundleTarget ?: jarTarget) ?: error(I18n.t("networkB2.updateApplier.notPortable"))
             require(downloaded.isRegularFile()) {
                 I18n.t("networkB2.updateApplier.updateMissing")
             }
             require(target.isRegularFile()) {
                 I18n.t("networkB2.updateApplier.currentLauncherMissing")
             }
-            require(target.toAbsolutePath() != downloaded.toAbsolutePath()) {
+            require(target != downloaded.toAbsolutePath().normalize()) {
                 I18n.t("networkB2.updateApplier.sameFile")
             }
             require(!Files.isSameFile(target, downloaded)) { I18n.t("networkB2.updateApplier.sameFile") }
@@ -90,7 +102,11 @@ internal class UpdateApplier(
             val staged = target.resolveSibling(".${target.fileName}.update-$identifier")
             runCatching {
                 Files.copy(downloaded, staged)
-                launch(downloaded, target, staged, asset.sha256.lowercase(), identifier)
+                if (bundleTarget != null) {
+                    launch(downloaded, target, staged, asset.sha256.lowercase(), identifier)
+                } else {
+                    launchJar(target, staged, identifier)
+                }
             }.onFailure { failure ->
                 if (failure is Exception) {
                     Files.deleteIfExists(staged)
@@ -98,6 +114,46 @@ internal class UpdateApplier(
                 }
             }.getOrThrow()
         }
+
+    private fun launchJar(
+        target: Path,
+        staged: Path,
+        identifier: UUID,
+    ) {
+        val directory = store.downloadDirectory.resolve("updates/apply")
+        createStorageDirectory(directory)
+        val ready = directory.resolve("apply-$identifier.ready").toAbsolutePath()
+        val log = directory.resolve("apply-$identifier.log").toAbsolutePath()
+        val command =
+            listOf(
+                javaExecutable(),
+                "-cp",
+                staged.toString(),
+                "dev.molifox.bootstrap.JarUpdateMain",
+                "--target",
+                target.toString(),
+                "--source",
+                staged.toString(),
+                "--ready",
+                ready.toString(),
+                "--data-dir",
+                store.dataDirectory.toString(),
+                "--wait-pid",
+                pid.toString(),
+                "--restart",
+            )
+        val process =
+            ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                .start()
+        awaitReady(process, ready, log)
+    }
+
+    private fun javaExecutable(): String {
+        val name = if (store.platform.osName == "windows") "java.exe" else "java"
+        return Path.of(System.getProperty("java.home"), "bin", name).toString()
+    }
 
     private fun launch(
         downloaded: Path,

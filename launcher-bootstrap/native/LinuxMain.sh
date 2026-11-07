@@ -102,7 +102,7 @@ rm -f -- "$0.previous" 2>/dev/null || true
 runTemporary=$(mktemp -d "$data/cache/tmp/session-XXXXXX")
 export TMPDIR="$runTemporary"
 export XDG_CACHE_HOME="$data/cache"
-jar="$data/dependencies/launcher/MoliFox-@VERSION@.jar"
+jar="$data/dependencies/launcher/MoliFox.jar"
 payloadHash="@PAYLOAD_SHA256@"
 javaPid=""
 cleanup() {
@@ -180,12 +180,15 @@ if [ -z "$javaExecutable" ]; then
     fi
     case "$(uname -m)" in x86_64) architecture=x64 ;; aarch64|arm64) architecture=aarch64 ;; *) fail "$archUnsupported" ;; esac
     printf '%s\n' "$javaPreparingLinux"
-    metadata="$data/cache/metadata/java21.json"
-    fetch "https://api.adoptium.net/v3/assets/latest/21/hotspot?os=linux&architecture=$architecture&image_type=jre&vendor=eclipse" "$metadata"
+    # Linux x64 与 aarch64 都有 Temurin 17，首次下载统一用 17（兼容性更保守）；
+    # 缓存、归档与安装目录相应改名 java17/launcher-java17，旧版已装的 launcher-java21
+    # 仍由前面 runtimes/*/bin/java 的全子目录扫描识别，升级用户不会重复下载。
+    metadata="$data/cache/metadata/java17.json"
+    fetch "https://api.adoptium.net/v3/assets/latest/17/hotspot?os=linux&architecture=$architecture&image_type=jre&vendor=eclipse" "$metadata"
     checksum=$(sed -n 's/.*"checksum"[[:space:]]*:[[:space:]]*"\([a-fA-F0-9]*\)".*/\1/p' "$metadata" | head -n 1)
     link=$(sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$metadata" | head -n 1)
     [ "${#checksum}" -eq 64 ] || fail "$checksumMissing"
-    archive="$data/cache/downloads/java/java21.tar.gz.part"
+    archive="$data/cache/downloads/java/java17.tar.gz.part"
     fetch "$link" "$archive"
     verify "$checksum" "$archive" || fail "$checksumFailed"
     staging="$runTemporary/java-extract"
@@ -194,8 +197,8 @@ if [ -z "$javaExecutable" ]; then
     for candidate in "$staging"/*/bin/java; do
         if usableJava "$candidate"; then
             runtimeDirectory=$(dirname -- "$(dirname -- "$candidate")")
-            mv "$runtimeDirectory" "$data/runtimes/launcher-java21"
-            javaExecutable="$data/runtimes/launcher-java21/bin/java"
+            mv "$runtimeDirectory" "$data/runtimes/launcher-java17"
+            javaExecutable="$data/runtimes/launcher-java17/bin/java"
             break
         fi
     done

@@ -33,7 +33,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -92,7 +91,7 @@ internal fun InstancePackTab(
     var watchingJob by remember(instance.id, folder) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val liveState by actions.controller.state.collectAsState()
-    val busy = actions.controller.isInstanceBusy(instance.id)
+    val busy = rememberInstanceBusy(actions, instance.id)
     val checking = updates.packsChecking
     val report = updates.packs
     val reportItems = report?.items(folder).orEmpty()
@@ -196,7 +195,7 @@ internal fun InstancePackTab(
                 visible = listOf(ContentChip.All, ContentChip.Updatable, ContentChip.NoUpdate),
             ) { chip = it }
             PackStatusLabel(statusText, updatable)
-            TextButton(
+            MoliTextButton(
                 {
                     watchingJob = actions.controller.updatePacks(instance.id, actionable)
                 },
@@ -330,7 +329,6 @@ private suspend fun deletePackEntry(
     onRefresh: () -> Unit,
 ) {
     var reported = false
-    actions.controller.requireIdle(instanceId)
     val removed =
         runCatching {
             entries.forEach { entry ->
@@ -418,7 +416,7 @@ private fun PackUpdateErrorRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(
+            MoliTextButton(
                 {
                     updates.packsError = null
                     updates.checkPacks(scope)
@@ -459,7 +457,7 @@ internal fun PackDeleteDialog(
             )
         },
         confirmButton = {
-            TextButton({
+            MoliTextButton({
                 onDismiss()
                 onError(null)
                 actions.run {
@@ -477,7 +475,7 @@ internal fun PackDeleteDialog(
                 Text(strings.t("deskC.deleteDialog.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -520,7 +518,7 @@ private fun ColumnScope.PackContentArea(
                     ui.error.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton(onRetry) { Text(strings.t("deskC.list.retry")) }
+                    MoliTextButton(onRetry) { Text(strings.t("deskC.list.retry")) }
                 }
             }
 
@@ -552,7 +550,7 @@ private fun ColumnScope.PackContentArea(
                     },
                     Icons.Outlined.SearchOff,
                 ) {
-                    TextButton(onClearFilters) {
+                    MoliTextButton(onClearFilters) {
                         Text(strings.t("deskC.list.clearFilter"))
                     }
                 }

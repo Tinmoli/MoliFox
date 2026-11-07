@@ -110,6 +110,10 @@ internal class InstanceProfilePublisher(
         // 本启动器生成的配置：扫描时按受管实例处理（可以修复/改加载器），不会被当成外部整合包。
         profile.addProperty(MANAGED_PROFILE_MARKER, true)
         val file = target.resolve("$id.json")
+        // 实例曾经以自包含方式安装过时，目录里会留着自己的客户端 JAR。之后基础版本目录
+        // 已存在，配置改成 inheritsFrom，但这个 JAR 仍可能被旧配置或修复流程引用；
+        // 只要它存在就一起修复，避免留下与基础版本不一致的损坏副本。
+        val instanceJar = target.resolve("$id.jar")
         if (selfContained) {
             profile.remove("inheritsFrom")
             profile.remove("jar")
@@ -129,6 +133,9 @@ internal class InstanceProfilePublisher(
             profile.remove("jar")
             profile.remove("downloads")
             context.writeOutput(file) { writeJson(file, profile) }
+            if (instanceJar.isRegularFile(NOFOLLOW_LINKS)) {
+                copyBaseJar(root, base, target, context)
+            }
         }
     }
 

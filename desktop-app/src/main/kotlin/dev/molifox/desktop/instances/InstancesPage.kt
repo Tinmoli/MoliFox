@@ -27,6 +27,7 @@ import dev.molifox.core.LoaderType
 import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Page
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.rememberLauncherBusy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -83,7 +84,7 @@ fun ColumnScope.InstancesPage(
         if (runningTasks == 0 && previousRunningTasks > 0) sizeRevision++
         previousRunningTasks = runningTasks
     }
-    val busy = actions.controller.busy
+    val busy = rememberLauncherBusy(actions)
     // 「有没有游戏」以 instances 为准：没有生效目录（自动发现尚未选中、目录刚被移除）
     // 时列出全部实例，避免已经识别到版本却显示成空列表。
     val activeDirectoryId = state.data.activeGameDirectoryId

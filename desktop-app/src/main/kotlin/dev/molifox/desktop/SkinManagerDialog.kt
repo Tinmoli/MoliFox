@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,7 +27,6 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,18 +46,29 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.Account
 import dev.molifox.core.AccountType
 import dev.molifox.core.LibrarySkin
+import dev.molifox.core.MinecraftCape
 import dev.molifox.core.SkinService
 import dev.molifox.core.SkinVariant
-import dev.molifox.core.MinecraftCape
 import dev.molifox.core.localizedName
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
 
-/** Shared account skin tools stay on the start page, preserving the four main navigation items. */
+private const val HTTP_UNAUTHORIZED = 401
+private const val HTTP_FORBIDDEN = 403
+private const val HTTP_TOO_MANY_REQUESTS = 429
+
+/**
+ * Shared account skin tools stay on the start page, preserving the four main navigation items.
+ *
+ * 弹窗同时维护档案、皮肤库、披风、上传确认与离线预览五组相互影响的异步状态；
+ * 分支集中在这里才能保证它们共享同一 busy/错误生命周期，拆散会引入跨组件竞态。
+ * 根节点是固定尺寸的 Modal，没有可传递的 modifier 入口。
+ */
+@Suppress("CyclomaticComplexMethod", "ModifierMissing")
 @Composable
 fun SkinManagerDialog(
     account: Account,
@@ -128,8 +137,7 @@ fun SkinManagerDialog(
                         capes = it.capes
                         capeProfileLoaded = true
                         currentVariant = it.variant
-                    }
-                    .onFailure { error = skinErrorMessage(it) }
+                    }.onFailure { error = skinErrorMessage(it) }
             } finally {
                 capeProfileLoading = false
             }
@@ -184,7 +192,12 @@ fun SkinManagerDialog(
                 textureError = textureError,
                 cape = capeImage,
                 capeEnabled = capeEnabled,
-                onCapePreviewChange = if (account.type == AccountType.Microsoft) { { capeEnabled = it } } else null,
+                onCapePreviewChange =
+                    if (account.type == AccountType.Microsoft) {
+                        { capeEnabled = it }
+                    } else {
+                        null
+                    },
             )
             SkinLibraryPane(
                 entries = entries,
@@ -199,17 +212,24 @@ fun SkinManagerDialog(
                 if (capeProfileLoaded) {
                     SimpleDropdown(
                         activeCape?.id.orEmpty(),
-                        listOf("" to strings.t("dialogs.skin.cape.none")) + capes.map { it.id to it.localizedName(strings) },
+                        listOf("" to strings.t("dialogs.skin.cape.none")) +
+                            capes.map { it.id to it.localizedName(strings) },
                         { id ->
-                            if (id != activeCape?.id.orEmpty()) act {
-                                capes = service.changeCape(account.id, id.takeIf { it.isNotBlank() }).capes
+                            if (id != activeCape?.id.orEmpty()) {
+                                act {
+                                    capes = service.changeCape(account.id, id.takeIf { it.isNotBlank() }).capes
+                                }
                             }
                         },
                         Modifier.width(200.dp),
                         enabled = !busy && !capeProfileLoading,
                     )
                 } else {
-                    MutedText(strings.t(if (capeProfileLoading) "dialogs.skin.cape.loading" else "dialogs.skin.cape.notLoaded"))
+                    MutedText(
+                        strings.t(
+                            if (capeProfileLoading) "dialogs.skin.cape.loading" else "dialogs.skin.cape.notLoaded",
+                        ),
+                    )
                 }
             }
         }
@@ -295,7 +315,16 @@ fun SkinManagerDialog(
     confirmUpload?.let { entry ->
         Modal(
             strings.t("dialogs.skin.uploadTitle"),
-            strings.t(if (account.type == AccountType.Authlib) "dialogs.skin.site.confirm" else "dialogs.skin.uploadMessage", account.name),
+            strings.t(
+                if (account.type ==
+                    AccountType.Authlib
+                ) {
+                    "dialogs.skin.site.confirm"
+                } else {
+                    "dialogs.skin.uploadMessage"
+                },
+                account.name,
+            ),
             onDismiss = { confirmUpload = null },
         ) {
             Text(strings.t("dialogs.skin.uploadConfirm", entry.name, entry.variant.title))
@@ -464,12 +493,20 @@ private fun SkinPreviewPane(
             )
         }
         Text(strings.t("dialogs.skin.dragRotate"), fontSize = 11.sp)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(strings.t("dialogs.skin.outerLayer"), fontSize = 11.sp)
             CompactSwitch(overlays, onOverlaysChange)
         }
         onCapePreviewChange?.let { onChange ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(strings.t("dialogs.skin.cape.preview"), fontSize = 11.sp)
                 CompactSwitch(capeEnabled, onChange)
             }
@@ -489,7 +526,7 @@ private fun RowScope.SkinLibraryPane(
     val strings = LocalStrings.current
     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(strings.t("dialogs.skin.library"), fontWeight = FontWeight.SemiBold)
-        TextButton({ onSelect(null) }, enabled = !busy) { Text(strings.t("dialogs.skin.viewCurrent")) }
+        MoliTextButton({ onSelect(null) }, enabled = !busy) { Text(strings.t("dialogs.skin.viewCurrent")) }
         if (entries.isEmpty()) MutedText(strings.t("dialogs.skin.empty"))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(entries, key = { it.id }) { entry ->
@@ -588,16 +625,27 @@ private fun SkinDialogStatus(
 
 /** 操作失败的提示：服务层通常带可读文案，缺失时给通用提示。 */
 private fun skinErrorMessage(failure: Throwable): String {
-    java.util.logging.Logger.getLogger("MoliFox.skin").warning("Skin operation: ${failure.javaClass.simpleName}: ${failure.message}")
+    java.util.logging.Logger
+        .getLogger(
+            "MoliFox.skin",
+        ).warning("Skin operation: ${failure.javaClass.simpleName}: ${failure.message}")
     return when (failure) {
-        is dev.molifox.core.ServiceHttpException -> tr("dialogs.skin.httpFailed", failure.statusCode,
-            tr(when (failure.statusCode) {
-                401 -> "dialogs.skin.http.auth"
-                403 -> "dialogs.skin.http.forbidden"
-                429 -> "dialogs.skin.http.rateLimited"
-                else -> "dialogs.skin.http.service"
-            }))
+        is dev.molifox.core.ServiceHttpException ->
+            tr(
+                "dialogs.skin.httpFailed",
+                failure.statusCode,
+                tr(
+                    when (failure.statusCode) {
+                        HTTP_UNAUTHORIZED -> "dialogs.skin.http.auth"
+                        HTTP_FORBIDDEN -> "dialogs.skin.http.forbidden"
+                        HTTP_TOO_MANY_REQUESTS -> "dialogs.skin.http.rateLimited"
+                        else -> "dialogs.skin.http.service"
+                    },
+                ),
+            )
+
         is java.io.IOException -> tr("dialogs.skin.networkFailed")
+
         else -> failure.message ?: tr("dialogs.skin.failed")
     }
 }

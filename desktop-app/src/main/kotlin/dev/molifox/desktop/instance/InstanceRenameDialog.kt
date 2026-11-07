@@ -13,7 +13,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,7 +24,9 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.validateInstanceDirectoryName
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.rememberInstanceBusy
 
 /** 重命名实例：确认后由控制器移动目录，失败时保留输入并显示原因。 */
 @Composable
@@ -38,6 +39,8 @@ internal fun InstanceRenameDialog(
     var name by remember { mutableStateOf(instance.name) }
     var renameError by remember { mutableStateOf("") }
     val trimmed = name.trim()
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时提示与确认按钮才会刷新。
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
     val validation =
         if (trimmed == instance.name) {
             null
@@ -74,11 +77,15 @@ internal fun InstanceRenameDialog(
                 Text(
                     when {
                         validation != null -> validation
+
                         renameError.isNotBlank() -> renameError
+
                         trimmed == instance.name ->
                             strings.t("dialogs.rename.inputHint", currentDirectory)
-                        actions.controller.isInstanceBusy(instance.id) ->
+
+                        instanceBusy ->
                             strings.t("dialogs.rename.busyHint")
+
                         else ->
                             strings.t("dialogs.rename.message", currentDirectory, trimmed)
                     },
@@ -93,11 +100,11 @@ internal fun InstanceRenameDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            MoliTextButton(
                 enabled =
                     trimmed != instance.name &&
                         validation == null &&
-                        !actions.controller.isInstanceBusy(instance.id),
+                        !instanceBusy,
                 onClick = {
                     val failure =
                         runCatching { actions.controller.renameInstance(instance.id, trimmed) }
@@ -112,6 +119,6 @@ internal fun InstanceRenameDialog(
                 Text(strings.t("dialogs.common.save"))
             }
         },
-        dismissButton = { TextButton({ onDismiss() }) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton({ onDismiss() }) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }

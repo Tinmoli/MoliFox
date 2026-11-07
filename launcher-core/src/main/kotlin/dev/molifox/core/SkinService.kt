@@ -15,13 +15,14 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isDirectory
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 
 internal const val SKIN_SERVICE_MAX_BYTES = 1024 * 1024
+private const val HTTP_UNAUTHORIZED = 401
+private const val CAPE_TEXTURE_WIDTH = 64
+private const val CAPE_TEXTURE_HEIGHT = 32
 
 data class MinecraftSkinProfile(
     val name: String,
@@ -42,6 +43,9 @@ data class OfflineSkinPlacement(
     val customSkinLoader: Path?,
 )
 
+// 皮肤服务承载档案、Authlib 上传、披风与离线预览四组公开操作；共享账户与存储状态，
+// 再拆分会把内部状态暴露给多个协作类，故保留为单一服务门面。
+@Suppress("TooManyFunctions")
 class SkinService
     internal constructor(
         private val store: LauncherStore,
@@ -54,7 +58,10 @@ class SkinService
 
         suspend fun supportsAuthlibSkinUpload(id: String): Boolean = authlibUploads.supported(id)
 
-        suspend fun uploadAuthlibSkin(id: String, skinId: String) = authlibUploads.upload(id, skinId)
+        suspend fun uploadAuthlibSkin(
+            id: String,
+            skinId: String,
+        ) = authlibUploads.upload(id, skinId)
 
         private fun microsoftAccount(id: String): Account =
             store.data.accounts
@@ -68,10 +75,19 @@ class SkinService
             return profileFor(account, credential)
         }
 
-        private suspend fun profileFor(account: Account, credential: GameCredentials): MinecraftSkinProfile {
+        private suspend fun profileFor(
+            account: Account,
+            credential: GameCredentials,
+        ): MinecraftSkinProfile {
             require(credential.uuid == account.uuid) { I18n.t("core.skinService.3") }
             credential.capes?.let { capes ->
-                return MinecraftSkinProfile(credential.name, credential.uuid, credential.skinUrl, credential.skinVariant, capes)
+                return MinecraftSkinProfile(
+                    credential.name,
+                    credential.uuid,
+                    credential.skinUrl,
+                    credential.skinVariant,
+                    capes,
+                )
             }
             return saveProfile(
                 account,
@@ -119,7 +135,10 @@ class SkinService
             return MinecraftSkinProfile(name, account.uuid, url, variant, parseMinecraftCapes(json))
         }
 
-        suspend fun changeCape(id: String, capeId: String?): MinecraftSkinProfile {
+        suspend fun changeCape(
+            id: String,
+            capeId: String?,
+        ): MinecraftSkinProfile {
             val account = microsoftAccount(id)
             val credential = credentials(id)
             val profile = profileFor(account, credential)
@@ -127,7 +146,7 @@ class SkinService
             try {
                 network.changeMinecraftCape(api, credential.accessToken, capeId)
             } catch (failure: ServiceHttpException) {
-                if (failure.statusCode != 401) throw failure
+                if (failure.statusCode != HTTP_UNAUTHORIZED) throw failure
                 // 只在令牌失效时重新认证一次，不重复完整登录链或无限重试。
                 val refreshed = credentials(id)
                 require(refreshed.uuid == account.uuid) { I18n.t("core.skinService.3") }
@@ -136,20 +155,25 @@ class SkinService
             return profile.copy(capes = profile.capes.map { it.copy(active = it.id == capeId) })
         }
 
-        suspend fun capeTexture(cape: MinecraftCape): ByteArray = withContext(Dispatchers.IO) {
-            val bytes = network.skinTexture(cape.textureUrl)
-            javax.imageio.ImageIO.createImageInputStream(java.io.ByteArrayInputStream(bytes)).use { input ->
-                require(input != null) { I18n.t("dialogs.skin.cape.unavailable") }
-                val readers = javax.imageio.ImageIO.getImageReaders(input)
-                require(readers.hasNext()) { I18n.t("dialogs.skin.cape.unavailable") }
-                val reader = readers.next()
-                try {
-                    reader.input = input
-                    require(reader.getWidth(0) == 64 && reader.getHeight(0) == 32) { I18n.t("dialogs.skin.cape.unavailable") }
-                } finally { reader.dispose() }
+        suspend fun capeTexture(cape: MinecraftCape): ByteArray =
+            withContext(Dispatchers.IO) {
+                val bytes = network.skinTexture(cape.textureUrl)
+                javax.imageio.ImageIO.createImageInputStream(java.io.ByteArrayInputStream(bytes)).use { input ->
+                    require(input != null) { I18n.t("dialogs.skin.cape.unavailable") }
+                    val readers = javax.imageio.ImageIO.getImageReaders(input)
+                    require(readers.hasNext()) { I18n.t("dialogs.skin.cape.unavailable") }
+                    val reader = readers.next()
+                    try {
+                        reader.input = input
+                        require(
+                            reader.getWidth(0) == CAPE_TEXTURE_WIDTH && reader.getHeight(0) == CAPE_TEXTURE_HEIGHT,
+                        ) { I18n.t("dialogs.skin.cape.unavailable") }
+                    } finally {
+                        reader.dispose()
+                    }
+                }
+                bytes
             }
-            bytes
-        }
 
         /**
          * Called only after an explicit upload action; authentication uses this account, never

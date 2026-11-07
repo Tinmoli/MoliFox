@@ -7,7 +7,6 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -25,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import java.awt.datatransfer.DataFlavor
 import java.io.File
 import java.nio.file.Path
-import kotlin.io.path.toPath
 
 /** 一次拖放最多接受的文件数：避免误拖整个目录。 */
 private const val DROP_FILE_LIMIT = 20

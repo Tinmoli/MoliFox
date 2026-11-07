@@ -15,7 +15,6 @@ import dev.molifox.core.net.TransferBudget
 import dev.molifox.core.net.TransferSlots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive

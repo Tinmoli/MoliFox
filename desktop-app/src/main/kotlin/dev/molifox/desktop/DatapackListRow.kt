@@ -30,7 +30,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.DatapackEntry
-import kotlin.io.path.name
 
 /** 一个数据包行：44dp，图标 + 名称 + 大小与状态，行尾启用开关与「删除」。 */
 @Composable
@@ -68,7 +67,7 @@ internal fun DatapackRow(
             Text(
                 kind +
                     " · " +
-                    formatSaveSize(entry.size) +
+                    byteSizeText(entry.size) +
                     " · " +
                     when (entry.enabled) {
                         true -> strings.t("deskF.datapackRow.enabled")

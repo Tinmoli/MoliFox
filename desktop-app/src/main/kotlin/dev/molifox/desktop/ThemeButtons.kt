@@ -17,12 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import dev.molifox.desktop.MoliButton as Button
 import androidx.compose.material3.ButtonColors
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import dev.molifox.desktop.MoliOutlinedButton as OutlinedButton
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +30,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.desktop.MoliButton as Button
+import dev.molifox.desktop.MoliOutlinedButton as OutlinedButton
 
 /** 主按钮：高 34、圆角 4、13sp Medium、内边距 14/8，按下 0.98 缩放。 */
 @Composable

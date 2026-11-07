@@ -8,7 +8,6 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URI
@@ -24,7 +23,6 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.fileSize
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.reader
 import kotlin.io.path.writeBytes
 
@@ -54,7 +52,7 @@ internal fun normalizeSkinTextureUrl(url: String): String {
     return "https://textures.minecraft.net${uri.rawPath}"
 }
 
-internal fun validSkinTexture(path: Path): Boolean =
+internal fun isValidSkinTexture(path: Path): Boolean =
     runCatching {
         if (!path.isRegularFile() ||
             Files.isSymbolicLink(
@@ -101,7 +99,7 @@ internal class AccountSkinCache(
                 val key = textureKey(url)
                 val cache = safePath(store.cacheDirectory, "skins/$key.png")
                 cached = cache
-                if (!refresh && validSkinTexture(cache)) return@withContext cache
+                if (!refresh && isValidSkinTexture(cache)) return@withContext cache
                 val bytes = fetchTexture(url)
                 cache.parent.createDirectories()
                 val staging = cache.resolveSibling("${cache.fileName}.${UUID.randomUUID()}.tmp")
@@ -149,7 +147,7 @@ internal class AccountSkinCache(
         cache: Path,
     ) {
         staging.writeBytes(bytes)
-        require(validSkinTexture(staging)) { I18n.t("core.accountSkinCache.2") }
+        require(isValidSkinTexture(staging)) { I18n.t("core.accountSkinCache.2") }
         Files.move(staging, cache, StandardCopyOption.REPLACE_EXISTING)
     }
 
@@ -159,6 +157,6 @@ internal class AccountSkinCache(
         cached: Path?,
     ): Path? {
         store.log(I18n.t("miscA1.accountSkinCache.fetchFailed", failure.message))
-        return cached?.takeIf(::validSkinTexture)
+        return cached?.takeIf(::isValidSkinTexture)
     }
 }

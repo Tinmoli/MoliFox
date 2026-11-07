@@ -16,7 +16,6 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,7 +35,6 @@ import dev.molifox.core.launchOnly
 import dev.molifox.core.loaderUpgradeCandidates
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -179,7 +177,7 @@ private fun CurrentInstallSection(
                     actions.run { actions.controller.repair(instance.id) }
                     actions.taskQueued()
                 },
-                enabled = !actions.controller.isInstanceBusy(instance.id),
+                enabled = !rememberInstanceBusy(actions, instance.id),
             ) {
                 Text(strings.t("pages.instance.install.current.repair"), fontSize = 12.sp)
             }
@@ -259,6 +257,7 @@ private fun LoaderCandidateStatus(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
         ui.versionError != null ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -267,14 +266,16 @@ private fun LoaderCandidateStatus(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.error,
                 )
-                TextButton({ ui.onRetry() }) { Text(strings.t("pages.instance.install.retry"), fontSize = 12.sp) }
+                MoliTextButton({ ui.onRetry() }) { Text(strings.t("pages.instance.install.retry"), fontSize = 12.sp) }
             }
+
         versions.isEmpty() ->
             Text(
                 strings.t("pages.instance.install.noVersions", instance.loader.title),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
         latest == null ->
             Text(
                 strings.t(
@@ -285,6 +286,7 @@ private fun LoaderCandidateStatus(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
         else ->
             SettingRow(
                 strings.t("pages.instance.install.upgradeTo"),
@@ -297,7 +299,7 @@ private fun LoaderCandidateStatus(
                 PrimaryButton(
                     strings.t("pages.instance.install.upgrade"),
                     Icons.Outlined.ArrowUpward,
-                    !actions.controller.isInstanceBusy(instance.id),
+                    !rememberInstanceBusy(actions, instance.id),
                 ) {
                     actions.run {
                         actions.controller.upgradeInstanceLoader(

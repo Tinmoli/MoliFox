@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +23,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.tr
@@ -79,7 +79,7 @@ private fun WorldsHeader(
             Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
         )
-        TextButton(onClick = actions.refreshWorlds, enabled = !state.busy) {
+        MoliTextButton(onClick = actions.refreshWorlds, enabled = !state.busy) {
             Text(strings.t("dialogs.mp.host.refresh"))
         }
     }

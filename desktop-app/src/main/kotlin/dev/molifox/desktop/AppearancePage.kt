@@ -31,16 +31,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,8 +48,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,50 +58,87 @@ import dev.molifox.core.AppearanceAssetService
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
 import dev.molifox.core.effectiveBackground
+import dev.molifox.core.effectiveVideo
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
-import org.jetbrains.skia.Image as SkiaImage
+import java.nio.file.Files
+import java.nio.file.Path
 
 private const val WINDOW_BACKGROUND_ALPHA = .82f
 
 typealias AppearanceChange = ((LauncherSettings) -> LauncherSettings) -> Unit
 
-/** 窗口背景：无背景图时铺平面底色，有图时按浓度叠加。 */
+/** 窗口背景：按当前主题显示纯色底、静态图片或动态图片；浓度与整窗模糊对所有类型一致生效。 */
 @Composable
 fun LauncherBackdrop(
     settings: LauncherSettings,
     assets: AppearanceAssetService,
+    dataDirectory: java.nio.file.Path,
+    paused: Boolean = false,
+    onVideoAccent: (String?) -> Unit = {},
 ) {
-    var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var backdrop by remember { mutableStateOf<LoadedBackdrop?>(null) }
     val base = MaterialTheme.colorScheme.background
     val dark = isDarkScheme()
-    LaunchedEffect(settings.effectiveBackground(dark), settings.backgroundRevision, dark) {
-        bitmap = null
-        bitmap =
-                withContext(Dispatchers.IO) {
-                    assets.readModeBackground(settings, dark)?.let { bytes ->
-                        runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
-                    }
-                }
+    val video =
+        settings.effectiveVideo(dark)?.takeIf { path ->
+            VideoRuntime.isInstalled(dataDirectory) &&
+                runCatching { Files.isRegularFile(Path.of(path)) }.getOrDefault(false)
+        }
+    val clearVideoAccent by rememberUpdatedState(onVideoAccent)
+    LaunchedEffect(video) { clearVideoAccent(null) }
+    LaunchedEffect(settings.effectiveBackground(dark), settings.backgroundRevision, dark, video) {
+        backdrop = null
+        if (video != null) return@LaunchedEffect
+        val bytes =
+            withContext(Dispatchers.IO) {
+                assets.readModeBackground(settings, dark)
+            }
+        backdrop = bytes?.let { loadBackdrop(it) }
     }
     Box(
         Modifier
             .fillMaxSize()
             .alpha(if (settings.windowTransparent) WINDOW_BACKGROUND_ALPHA else 1f)
-            .then(if (settings.glassEnabled && settings.backgroundBlur > 0f) {
-                Modifier.blur(settings.backgroundBlur.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-            } else Modifier),
+            .then(
+                if (settings.glassEnabled && settings.backgroundBlur > 0f) {
+                    Modifier.blur(settings.backgroundBlur.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         Box(Modifier.fillMaxSize().background(base))
-        bitmap?.let {
-            Image(
-                it,
-                null,
-                Modifier.fillMaxSize().alpha(settings.backgroundOpacity.coerceIn(0f, 1f)),
-                contentScale = backgroundContentScale(settings.backgroundFit),
-                alignment = backgroundContentAlignment(settings.backgroundAlignment),
-            )
+        val loaded = backdrop
+        when {
+            video != null ->
+                VideoBackdrop(
+                    dataDirectory = dataDirectory,
+                    videoPath = video,
+                    settings = settings,
+                    paused = paused,
+                    onAccent = onVideoAccent,
+                    modifier = Modifier.fillMaxSize().alpha(settings.backgroundOpacity.coerceIn(0f, 1f)),
+                )
+
+            loaded is LoadedBackdrop.Animated ->
+                AnimatedBackdrop(
+                    animation = loaded,
+                    modifier = Modifier,
+                    alpha = settings.backgroundOpacity.coerceIn(0f, 1f),
+                    contentScale = backgroundContentScale(settings.backgroundFit),
+                    alignment = backgroundContentAlignment(settings.backgroundAlignment),
+                    paused = paused,
+                )
+
+            loaded is LoadedBackdrop.Static ->
+                Image(
+                    loaded.bitmap,
+                    null,
+                    Modifier.fillMaxSize().alpha(settings.backgroundOpacity.coerceIn(0f, 1f)),
+                    contentScale = backgroundContentScale(settings.backgroundFit),
+                    alignment = backgroundContentAlignment(settings.backgroundAlignment),
+                )
         }
     }
 }
@@ -235,11 +269,13 @@ internal fun RowScope.ThemeOptionCard(
                         lightScheme,
                         Modifier.fillMaxSize(),
                     )
+
                 "dark" ->
                     ThemeSwatchPane(
                         darkScheme,
                         Modifier.fillMaxSize(),
                     )
+
                 else ->
                     Row(Modifier.fillMaxSize()) {
                         ThemeSwatchPane(
@@ -345,9 +381,9 @@ internal fun AccentChip(
             .alpha(if (enabled) 1f else .38f)
             .clip(RoundedCornerShape(Metrics.innerRadius))
             .hoverHighlight(RoundedCornerShape(Metrics.innerRadius), enabled = enabled)
-            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .background(fill)
             .border(borderWidth.dp, border, RoundedCornerShape(Metrics.innerRadius))
+            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 9.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

@@ -25,9 +25,22 @@ internal interface ContentPackDownloadApi {
         worldName: String,
         context: JobContext,
     )
+
+    /** 把项目版本的主文件下载到用户指定路径；不创建实例、不写资源登记表。 */
+    suspend fun saveContentFile(
+        hit: ContentHit,
+        versionId: String,
+        destination: Path,
+        context: JobContext,
+    )
 }
 
 private const val BYTES_PER_MEGABYTE = 1024 * 1024
+
+private fun packDownloadProgress(
+    bytes: Long,
+    total: Long,
+): Float = if (total > 0) bytes.toFloat() / total else 0f
 
 /** 实现由 [ContentService] 委托调用；方法体与原实现一致。 */
 internal abstract class ContentPackDownloadActions(
@@ -190,11 +203,6 @@ internal abstract class ContentPackDownloadActions(
         }
     }
 
-    private fun packDownloadProgress(
-        bytes: Long,
-        total: Long,
-    ): Float = if (total > 0) bytes.toFloat() / total else 0f
-
     private fun requirePackVersion(
         hit: ContentHit,
         version: JsonObject,
@@ -207,6 +215,13 @@ internal abstract class ContentPackDownloadActions(
             I18n.t("contentA2.contentPackDownloadActions.versionMismatch")
         }
     }
+
+    override suspend fun saveContentFile(
+        hit: ContentHit,
+        versionId: String,
+        destination: Path,
+        context: JobContext,
+    ) = ContentFileSaver(core).save(hit, versionId, destination, context)
 
     override suspend fun installDatapack(
         hit: ContentHit,

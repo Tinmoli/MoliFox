@@ -11,7 +11,6 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -59,6 +58,12 @@ internal class MicrosoftLogin(
         val expiresAt =
             System.currentTimeMillis() +
                 data.int("expires_in", DEVICE_CODE_EXPIRY_SECONDS) * MILLIS_PER_SECOND
+        // 设备码有效期与轮询节奏落进调试日志：网页端报「已过期」时可以对照这是否真的超时。
+        store.log(
+            "Microsoft device code issued: expires_in=${data.int("expires_in", DEVICE_CODE_EXPIRY_SECONDS)}s, " +
+                "interval=${data.int("interval", DEFAULT_POLL_INTERVAL_SECONDS)}s",
+            level = LogLevel.Debug,
+        )
         loginJob =
             startPolling(
                 clientId,
@@ -87,7 +92,14 @@ internal class MicrosoftLogin(
                     "scope" to "XboxLive.signin offline_access",
                 ),
             )
-        check(!tokens.has("error")) { I18n.t("core.microsoftLogin.4") }
+        if (tokens.has("error")) {
+            // 刷新失败的原始错误码只进日志；界面提示保持通用，远程排查靠文件里的这一行。
+            store.log(
+                "Microsoft token refresh failed (${tokens.string("error")}): ${tokens.string("error_description")}",
+                true,
+            )
+            error(I18n.t("core.microsoftLogin.4"))
+        }
         vault.save(account.id, tokens.string("refresh_token", refresh))
         val credentials = exchange(tokens.string("access_token"))
         require(credentials.uuid == account.uuid) { I18n.t("core.microsoftLogin.5") }
@@ -140,13 +152,28 @@ internal class MicrosoftLogin(
                 )
             val errorCode = tokens.string("error")
             when {
-                errorCode == "slow_down" -> interval += SLOW_DOWN_STEP_SECONDS
+                errorCode == "slow_down" -> {
+                    interval += SLOW_DOWN_STEP_SECONDS
+                    store.log("Microsoft token polling slowed down: interval=${interval}s", level = LogLevel.Debug)
+                }
+
                 errorCode.isEmpty() -> {
                     saveAccount(tokens)
                     return
                 }
-                errorCode != "authorization_pending" ->
+
+                // 每次未完成的轮询都算详细档：只在「详细」筛选下可见，不进默认视图。
+                errorCode == "authorization_pending" ->
+                    store.log("Microsoft token polling: authorization_pending", level = LogLevel.Trace)
+
+                else -> {
+                    // 微软返回的原始错误码与描述是远程排查的唯一线索；界面只显示通用文案。
+                    store.log(
+                        "Microsoft token polling failed ($errorCode): ${tokens.string("error_description")}",
+                        true,
+                    )
                     error(I18n.t("core.microsoftLogin.7"))
+                }
             }
         }
         error(I18n.t("core.microsoftLogin.8"))
@@ -184,8 +211,11 @@ internal class MicrosoftLogin(
     /** Xbox Live → XSTS → Minecraft 服务，换到可直接启动游戏的档案凭据。 */
     private suspend fun exchange(microsoftToken: String): GameCredentials {
         val xboxToken = authenticateXbox(microsoftToken)
+        store.log("Xbox Live authentication succeeded", level = LogLevel.Debug)
         val xsts = authorizeXsts(xboxToken)
+        store.log("XSTS authorization succeeded", level = LogLevel.Debug)
         val login = loginWithXbox(xsts)
+        store.log("Minecraft services session acquired", level = LogLevel.Debug)
         val token = login.string("access_token")
         val profile =
             network.authorizedJson("https://api.minecraftservices.com/minecraft/profile", token)
@@ -194,6 +224,7 @@ internal class MicrosoftLogin(
                 .array("skins")
                 .firstOrNull { it.asJsonObject.string("state") == "ACTIVE" }
                 ?.asJsonObject
+        store.log("Minecraft profile fetched: ${profile.string("name")}", level = LogLevel.Debug)
         val skinUrl = activeSkin?.string("url").orEmpty()
         return GameCredentials(
             profile.string("name"),

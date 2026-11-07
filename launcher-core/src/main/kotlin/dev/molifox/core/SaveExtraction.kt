@@ -12,7 +12,6 @@ import java.io.OutputStream
 import java.nio.file.Path
 import java.util.Collections
 import kotlin.io.path.createDirectories
-import kotlin.io.path.outputStream
 import org.apache.commons.compress.archivers.zip.ZipFile as ArchiveZipFile
 
 /** 单个压缩包允许的条目数上限。 */
@@ -71,7 +70,9 @@ private class SaveExtraction(
     fun extract(entry: ZipArchiveEntry): Boolean {
         val relative = relativeName(entry)
         if (relative.isBlank() || isSkipped(relative)) return false
-        writeEntry(entry, relative)
+        writeArchiveEntrySafely(zip, entry, root, relative) { input, output ->
+            copyEntryBytes(entry, input, output)
+        }
         writtenEntries++
         return true
     }
@@ -98,19 +99,6 @@ private class SaveExtraction(
     /** `session.lock` 是游戏打开世界时持有的锁文件；复制出来只会让新世界一启动就报「世界正在使用」。 */
     private fun isSkipped(relative: String): Boolean =
         skipSessionLock && relative.substringAfterLast('/').equals("session.lock", true)
-
-    private fun writeEntry(
-        entry: ZipArchiveEntry,
-        relative: String,
-    ) {
-        val target = safePath(root, relative)
-        target.parent.createDirectories()
-        target.outputStream().use { output ->
-            zip.getInputStream(entry).use { input ->
-                copyEntryBytes(entry, input, output)
-            }
-        }
-    }
 
     /** 逐段复制条目内容，并按条目体积上限校验已写入的字节数。 */
     private fun copyEntryBytes(

@@ -456,18 +456,38 @@ static bool confirmJavaDownload() {
                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
 
-static constexpr wchar_t javaMetadataUrl[] = L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse";
-// Adoptium API 与 GitHub 在部分网络不可达；TUNA 镜像提供同一 Temurin 21.0.13+9 JRE。
-static constexpr wchar_t javaMirrorUrl[] = L"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip";
-static constexpr const char* javaMirrorSha256 = "2332c0b4cff6bed722da3567c91d5e47568bcba863fa4945d0a8d6fc76158628";
+// 32 位外壳同时服务 x64 与 ARM64：GetNativeSystemInfo 返回系统真实架构，
+// 不受 WOW64/ARM64 模拟层影响。这里不静态导入 IsWow64Process2，兼容旧系统。
+static bool windowsArm64() {
+    SYSTEM_INFO info{};
+    GetNativeSystemInfo(&info);
+    return info.wProcessorArchitecture == 12; // PROCESSOR_ARCHITECTURE_ARM64
+}
+
+// x64 首次下载改用 Temurin 17：与 17+ 门槛一致，兼容性更保守；17 完全满足启动器运行需求。
+static constexpr wchar_t javaMetadataX64[] = L"https://api.adoptium.net/v3/assets/latest/17/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse";
+// Temurin 17 没有 Windows ARM64 构建，ARM64 分支只能保持 21。
+static constexpr wchar_t javaMetadataArm64[] = L"https://api.adoptium.net/v3/assets/latest/21/hotspot?os=windows&architecture=aarch64&image_type=jre&vendor=eclipse";
+// Adoptium API 与 GitHub 在部分网络不可达；TUNA 镜像提供同一 Temurin 归档。
+static constexpr wchar_t javaMirrorX64[] = L"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jre/x64/windows/OpenJDK17U-jre_x64_windows_hotspot_17.0.21_9.zip";
+static constexpr wchar_t javaMirrorArm64[] = L"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/aarch64/windows/OpenJDK21U-jre_aarch64_windows_hotspot_21.0.12.1_1.zip";
+static constexpr const char* javaMirrorX64Sha256 = "fe4656bd78fb09812dc38c49da777f79cc33e7ee435a254be82f9e7f40d9d117";
+static constexpr const char* javaMirrorArm64Sha256 = "e82cc17e0bf89a25b0b0ed106d072f2ea420587d0a6870534b71b1dce3ae28c3";
 
 static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     showStatus(messages->javaPreparing);
     setProgress(0);
+    const bool arm64 = windowsArm64();
+    const wchar_t* metadataUrl = arm64 ? javaMetadataArm64 : javaMetadataX64;
+    const wchar_t* mirrorUrl = arm64 ? javaMirrorArm64 : javaMirrorX64;
+    const char* mirrorSha256 = arm64 ? javaMirrorArm64Sha256 : javaMirrorX64Sha256;
+    // 归档与安装目录按下载版本命名（java17/java21），不覆盖旧版用户已装的 launcher-java21；
+    // findJava 扫描 runtimes/ 下所有子目录，旧目录里的 Java 21 照常被识别，升级用户不会重复下载。
+    const wchar_t* runtimeName = arm64 ? L"launcher-java21" : L"launcher-java17";
     std::wstring url;
     std::string checksum;
     try {
-        auto metadata = downloadWithRetry(javaMetadataUrl, {}, false, 2, 15000);
+        auto metadata = downloadWithRetry(metadataUrl, {}, false, 2, 15000);
         auto start = metadata.find("\"package\"");
         if (start == std::string::npos) throw std::runtime_error("No compatible Java runtime was returned");
         auto package = metadata.substr(start, metadata.find('}', start) - start + 1);
@@ -477,16 +497,16 @@ static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     } catch (const std::exception&) {
         if (cancelled) throw;
         // 元数据接口失败时直接走镜像；归档仍然要过 SHA-256 校验。
-        url = javaMirrorUrl;
-        checksum = javaMirrorSha256;
+        url = mirrorUrl;
+        checksum = mirrorSha256;
     }
-    auto archive = data / L"cache/downloads/java/java21.zip.part";
+    auto archive = data / L"cache/downloads/java" / (std::wstring(arm64 ? L"java21" : L"java17") + L".zip.part");
     try {
         downloadWithRetry(url, archive, true, 3);
     } catch (const std::exception&) {
-        if (cancelled || url == javaMirrorUrl) throw;
-        url = javaMirrorUrl;
-        checksum = javaMirrorSha256;
+        if (cancelled || url == mirrorUrl) throw;
+        url = mirrorUrl;
+        checksum = mirrorSha256;
         downloadWithRetry(url, archive, true, 3);
     }
     std::transform(checksum.begin(), checksum.end(), checksum.begin(), [](unsigned char value) { return (char)std::tolower(value); });
@@ -500,7 +520,7 @@ static fs::path prepareJava(const fs::path& data, const fs::path& temporary) {
     for (auto& directory : fs::directory_iterator(staging)) {
         auto java = directory.path() / L"bin/java.exe";
         if (usableJava(java, data)) {
-            auto ready = data / L"runtimes/launcher-java21";
+            auto ready = data / L"runtimes" / runtimeName;
             if (!fs::exists(ready)) fs::rename(directory.path(), ready);
             return ready / L"bin/java.exe";
         }
@@ -606,7 +626,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         auto loaded = LoadResource(instance, resource);
         auto bytes = LockResource(loaded);
         auto size = SizeofResource(instance, resource);
-        auto jar = data / L"dependencies/launcher/MoliFox-0.4.6.jar";
+        auto jar = data / L"dependencies/launcher/MoliFox.jar";
         // 已有负载与内嵌内容一致时直接使用，省掉一次整包写入和临时文件校验。
         if (!fs::exists(jar) || sha256(jar) != sha256Bytes(bytes, size)) {
             auto pending = temporary.path / L"launcher-payload.part";

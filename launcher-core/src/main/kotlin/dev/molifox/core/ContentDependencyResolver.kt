@@ -117,7 +117,25 @@ internal class ContentDependencyResolver(
             state.files.values.toList(),
             state.optional.values.toList(),
             batch.sources.filter { it.projectId in state.files },
+            dependencies = planDependencies(state.files.values),
         )
+    }
+
+    /** 除主项目外的文件视为依赖；登记表里的版本用于界面区分已安装与待更新。 */
+    private fun planDependencies(files: Collection<PlannedContentFile>): List<PlannedDependency> {
+        val roots = batch.requests.mapTo(mutableSetOf()) { it.hit.id }
+        return files
+            .filter { it.projectId !in roots }
+            .map { file ->
+                PlannedDependency(
+                    file.projectId,
+                    file.title,
+                    file.versionId,
+                    batch.registry.obj(file.projectId).string("versionId"),
+                    file.filename,
+                    file.folder,
+                )
+            }
     }
 
     /** 一轮依赖遍历的全部可变状态；每轮重建，依赖缓存留在 [cache] 里跨轮复用。 */

@@ -5,6 +5,7 @@
 
 package dev.molifox.desktop.instance
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +49,7 @@ import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.RailSubEntry
 import dev.molifox.desktop.ScrollColumn
 import dev.molifox.desktop.UiActions
+import dev.molifox.desktop.rememberInstanceBusy
 import dev.molifox.desktop.title
 
 /** 原理图页签的标题；实例没有 schematics 目录时隐藏，索引保持不变。 */
@@ -106,17 +108,19 @@ internal fun InstanceDetailsRail(
         )
     }
     val isolated = actions.controller.store.isolated(instance)
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时页签与操作按钮才会刷新。
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
     val availability =
         instanceOperationAvailability(
             isolated,
             instance.externalProfile,
-            actions.controller.isInstanceBusy(instance.id),
+            instanceBusy,
         )
     val canMaintainInstance = availability.maintain
     val canMoveInstance = availability.move
     val moveBlockedNote = availability.moveBlockedNote
-    // 左侧页签整栏套磨砂面板：宽度统一 158dp，条目 32dp 高、间距 4dp；内容超出时整栏滚动。
-    FrostedPanel(Modifier.width(158.dp).fillMaxHeight()) {
+    // 左侧页签整栏套磨砂面板：宽度统一 158dp，四周 8dp 内边距与下载中心左栏一致，条目不贴面板边框。
+    FrostedPanel(Modifier.width(158.dp).fillMaxHeight(), contentPadding = PaddingValues(8.dp)) {
         ScrollColumn(Modifier.fillMaxSize(), gap = 4.dp) {
             instanceTabs.forEachIndexed { index, item ->
                 if (!showSchematics && item.titleKey == SCHEMATICS_TAB_KEY) return@forEachIndexed
@@ -159,7 +163,7 @@ internal fun InstanceDetailsRail(
                     strings.t("pages.logs.action.viewLaunchArgs"),
                     Icons.Outlined.Terminal,
                     enabled =
-                        instance.installed && !actions.controller.isInstanceBusy(instance.id),
+                        instance.installed && !instanceBusy,
                 ) { actions.previewLaunch(instance.id) }
                 InstanceRailAction(strings.t("pages.instances.menu.openFolder"), Icons.Outlined.FolderOpen) {
                     actions.run { actions.controller.openFolder(instance.id) }
@@ -167,7 +171,7 @@ internal fun InstanceDetailsRail(
                 InstanceRailAction(
                     strings.t("instA1.rail.exportModpack"),
                     Icons.Outlined.Archive,
-                    enabled = !actions.controller.isInstanceBusy(instance.id),
+                    enabled = !instanceBusy,
                 ) { onExport() }
                 InstanceRailAction(strings.t("dialogs.screenshot.title"), Icons.Outlined.PhotoLibrary) {
                     onScreenshots()

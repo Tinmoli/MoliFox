@@ -26,8 +26,9 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.JobStatus
 import dev.molifox.core.LauncherSettings
+import dev.molifox.core.PlatformServices
+import dev.molifox.core.availableJavaDownloadSources
 import dev.molifox.core.effectiveJavaDownloadSource
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.job
 
 /** Java 与运行环境：当前使用项、扁平候选列表、添加入口与安装控件。 */
@@ -78,11 +79,7 @@ internal fun javaSettingCards(
                 ) {
                     SimpleDropdown(
                         settings.effectiveJavaDownloadSource,
-                        listOf(
-                            "auto" to strings.t("settings.java.auto"),
-                            "azul" to "Azul",
-                            "adoptium" to "Adoptium",
-                        ),
+                        javaDownloadSourceOptions(actions.controller.platform),
                         { value -> writer.commit { it.copy(javaDownloadSource = value) } },
                     )
                 },
@@ -100,6 +97,7 @@ internal fun javaSettingCards(
                                 "17" to "Java 17",
                                 "21" to "Java 21",
                                 "25" to "Java 25",
+                                "27" to "Java 27",
                             ),
                             { installVersion = it },
                             Modifier.weight(1f),
@@ -173,3 +171,14 @@ internal fun javaSettingCards(
         ),
     )
 }
+
+/** 下载来源下拉项：对当前系统/架构没有任何安装包的来源（如 Windows ARM64 上的 Oracle）不显示。 */
+private fun javaDownloadSourceOptions(platform: PlatformServices): List<Pair<String, String>> =
+    availableJavaDownloadSources(platform.osName, platform.architecture).map { source ->
+        when (source) {
+            "azul" -> "azul" to "Azul"
+            "adoptium" -> "adoptium" to "Adoptium"
+            "oracle" -> "oracle" to "Oracle"
+            else -> "auto" to tr("settings.java.auto")
+        }
+    }

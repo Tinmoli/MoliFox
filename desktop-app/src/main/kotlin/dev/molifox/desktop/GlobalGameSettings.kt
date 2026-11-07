@@ -8,7 +8,6 @@ package dev.molifox.desktop
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -133,7 +132,7 @@ internal fun gameSettingCards(
                             valueRange = 512f..maximum.toFloat(),
                             enabled = !settings.autoMemory,
                         )
-                        Tag("%.1f GB".format(memory.floatValue / 1024f))
+                        Tag(gigabytesFromMebibytes(memory.floatValue))
                     }
                     MutedText(strings.t("settings.game.memory.hint"))
                 },
@@ -254,6 +253,7 @@ internal fun gameSettingCards(
                         }
                     },
                     settingControl(strings.t("settings.game.advanced.preview")) {
+                        val launcherBusy = rememberLauncherBusy(actions)
                         SecondaryButton(
                             {
                                 state.data.selectedInstanceId?.let {
@@ -261,7 +261,7 @@ internal fun gameSettingCards(
                                 }
                             },
                             enabled =
-                                state.data.selectedInstanceId != null && !actions.controller.busy,
+                                state.data.selectedInstanceId != null && !launcherBusy,
                         ) {
                             Text(strings.t("settings.game.advanced.previewAction"))
                         }

@@ -55,7 +55,4 @@ object ScaffoldingProtocol {
     /** 是否是合法响应状态（0、32..63、255）；其他值说明对端实现异常。 */
     fun isKnownStatus(status: Int): Boolean =
         status == STATUS_OK || isProtocolError(status) || status == STATUS_UNKNOWN_ERROR
-
-    /** 是否是 5 个基础协议之一。 */
-    fun isStandardProtocol(type: String): Boolean = STANDARD_PROTOCOLS.contains(type)
 }

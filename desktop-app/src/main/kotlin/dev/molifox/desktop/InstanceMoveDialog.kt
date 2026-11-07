@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.visible
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,13 +17,13 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +70,8 @@ fun InstanceMoveDialog(
     )
     val prepared = plan
     val blockers = prepared?.blockers.orEmpty()
+    // busy 是快照值：挂在 state 上重算，任务开始/结束时确认按钮与提示才会刷新。
+    val launcherBusy = rememberLauncherBusy(actions)
     Modal(strings.t("dialogs.move.title"), instance.name, width = 640.dp, onDismiss = onDismiss) {
         MovePlanBody(
             prepared = prepared,
@@ -96,7 +97,7 @@ fun InstanceMoveDialog(
                     confirming,
                     error,
                     blockers,
-                    actions.controller.busy,
+                    launcherBusy,
                 ),
             onCancel = onDismiss,
             onConfirm = {
@@ -109,7 +110,7 @@ fun InstanceMoveDialog(
                     attempt++
                 }
             },
-            hint = moveHint(prepared, blockers, actions.controller.busy),
+            hint = moveHint(prepared, blockers, launcherBusy),
         )
     }
 }
@@ -125,27 +126,32 @@ private fun MovePlanEffect(
     onLoading: (Boolean) -> Unit,
     onError: (String?) -> Unit,
 ) {
-    val strings = LocalStrings.current
+    // lambda 参数与 strings 每次重组都是新实例（strings 随语言切换变化）；rememberUpdatedState
+    // 让 effect 只随 (instanceId, target, attempt) 重启，执行时读到最新回调与当前语言文案。
+    val latestOnPlan by rememberUpdatedState(onPlan)
+    val latestOnLoading by rememberUpdatedState(onLoading)
+    val latestOnError by rememberUpdatedState(onError)
+    val latestStrings by rememberUpdatedState(LocalStrings.current)
     LaunchedEffect(instanceId, target, attempt) {
-        onPlan(null)
-        onLoading(true)
-        onError(null)
+        latestOnPlan(null)
+        latestOnLoading(true)
+        latestOnError(null)
         try {
             val prepared =
                 withContext(Dispatchers.IO) {
                     actions.controller.planInstanceMove(instanceId, target)
                 }
-            onPlan(prepared)
+            latestOnPlan(prepared)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: IllegalArgumentException) {
-            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
+            latestOnError(failure.message ?: latestStrings.t("dialogs.move.previewFailed"))
         } catch (failure: IllegalStateException) {
-            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
+            latestOnError(failure.message ?: latestStrings.t("dialogs.move.previewFailed"))
         } catch (failure: UncheckedIOException) {
-            onError(failure.message ?: strings.t("dialogs.move.previewFailed"))
+            latestOnError(failure.message ?: latestStrings.t("dialogs.move.previewFailed"))
         } finally {
-            onLoading(false)
+            latestOnLoading(false)
         }
     }
 }
@@ -200,8 +206,8 @@ private fun MovePlanUnavailable(
             Icons.Outlined.ErrorOutline,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onRetry) { Text(strings.t("dialogs.move.previewAgain")) }
-                TextButton(onPickTarget) { Text(strings.t("dialogs.move.chooseOther")) }
+                MoliTextButton(onRetry) { Text(strings.t("dialogs.move.previewAgain")) }
+                MoliTextButton(onPickTarget) { Text(strings.t("dialogs.move.chooseOther")) }
             }
         }
     }
@@ -232,7 +238,7 @@ private fun MovePlanDetails(
             Text(strings.t("dialogs.move.transferItems", prepared.transferCount), fontSize = 13.sp)
         }
         SettingRow(strings.t("dialogs.move.totalSize"), strings.t("dialogs.move.totalSizeHint")) {
-            Text(reportBytes(prepared.copyBytes), fontSize = 13.sp)
+            Text(byteSizeText(prepared.copyBytes), fontSize = 13.sp)
         }
         SettingRow(strings.t("dialogs.move.conflicts"), strings.t("dialogs.move.conflictsHint")) {
             ConflictCountText(prepared.conflictCount)
@@ -249,7 +255,7 @@ private fun MovePlanDetails(
             strings.t("dialogs.move.blockersHint"),
             action = {
                 if (!confirming) {
-                    TextButton(onRetry) {
+                    MoliTextButton(onRetry) {
                         Text(strings.t("dialogs.move.previewAgain"), fontSize = 12.sp)
                     }
                 }

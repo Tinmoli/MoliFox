@@ -78,8 +78,8 @@ internal fun ExportEntryRow(
     val size =
         when {
             entry.scanning -> "…"
-            entry.directory -> strings.t("dialogs.pack.fileSummary", entry.fileCount, reportBytes(entry.totalBytes))
-            else -> reportBytes(entry.totalBytes)
+            entry.directory -> strings.t("dialogs.pack.fileSummary", entry.fileCount, byteSizeText(entry.totalBytes))
+            else -> byteSizeText(entry.totalBytes)
         }
     Column(Modifier.fillMaxWidth()) {
         Row(

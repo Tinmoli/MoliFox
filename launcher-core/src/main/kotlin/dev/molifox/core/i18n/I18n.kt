@@ -87,9 +87,6 @@ object I18n {
             }
         }
 
-    /** 设置页与校验脚本使用的可选语言标签。 */
-    fun availableTags(): List<String> = AppLanguage.entries.filter { it != AppLanguage.AUTO }.map { it.settingValue }
-
     private fun loadValues(tag: String): Map<String, String> {
         val merged = LinkedHashMap<String, String>()
         for (bundle in BUNDLES) {

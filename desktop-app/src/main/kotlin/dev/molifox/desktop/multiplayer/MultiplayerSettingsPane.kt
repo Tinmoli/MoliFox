@@ -24,9 +24,7 @@ import dev.molifox.desktop.CompactTextField
 import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.PrimaryButton
-import dev.molifox.desktop.tr
 import dev.molifox.multiplayer.common.CoreStatus
-import dev.molifox.multiplayer.common.MultiplayerPolicy
 import dev.molifox.multiplayer.common.MultiplayerSettings
 import dev.molifox.multiplayer.common.NatDiagnostics
 
@@ -45,7 +43,7 @@ internal fun MultiplayerSettingsPane(
         saved = false
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        item("identity") { IdentityGroup(draft, runtime, change) }
+        item("identity") { IdentityGroup(draft, change) }
         item("relay") { RelayGroup(draft, change) }
         item("diagnostics") { MultiplayerNatDiagnosticsGroup(runtime, testNat) }
         item("advanced") { AdvancedGroup(draft, change) }
@@ -62,7 +60,6 @@ internal fun MultiplayerSettingsPane(
 @Composable
 private fun IdentityGroup(
     draft: MultiplayerSettings,
-    runtime: CoreStatus?,
     change: (MultiplayerSettings) -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -79,7 +76,6 @@ private fun IdentityGroup(
                 placeholder = strings.t("dialogs.mp.settings.nicknamePlaceholder"),
                 hint = strings.t("dialogs.mp.settings.nicknameHint"),
             )
-            MutedText(runtimeSummary(runtime))
         }
     }
 }
@@ -155,19 +151,6 @@ private fun SaveGroup(
             )
         }
     }
-}
-
-private fun runtimeSummary(runtime: CoreStatus?): String {
-    val version = runtime?.version?.takeIf { it.isNotBlank() } ?: MultiplayerPolicy.CORE_VERSION
-    val platform = runtime?.platform?.takeIf { it.isNotBlank() }
-    val installed =
-        if (runtime?.installed == true) {
-            tr("dialogs.mp.settings.installed")
-        } else {
-            tr("dialogs.mp.settings.notDownloaded")
-        }
-    val suffix = platform?.let { " · $it" }.orEmpty()
-    return tr("dialogs.mp.settings.runtimeLine", version, suffix, installed)
 }
 
 /**

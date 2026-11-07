@@ -62,27 +62,11 @@ internal class JavaRuntimePackages(
         preferredImageType: String? = null,
         downloadSource: String = "auto",
     ): JavaRuntimePackage {
-        val normalized = normalizedJavaArchitecture(architecture)
-        val zuluArch =
-            when (normalized) {
-                "arm64" -> "aarch64"
-                "x86" -> "x86"
-                else -> "x64"
-            }
-        val types =
-            when (preferredImageType) {
-                "jdk" -> listOf("jdk")
-                else -> listOf("jre", "jdk")
-            }
-        val failures = mutableListOf<String>()
         val source = normalizedJavaDownloadSource(downloadSource)
-        val vendors =
-            when (source) {
-                "azul" -> listOf("zulu")
-                "adoptium" -> listOf("temurin")
-                else -> fastestOfficialVendorOrder()
-            }
-        val target = JavaPackageTarget(major, os, zuluArch)
+        val target = JavaPackageTarget(major, os, normalizedJavaArchitecture(architecture))
+        val types = if (preferredImageType == "jdk") listOf("jdk") else listOf("jre", "jdk")
+        val failures = mutableListOf<String>()
+        val vendors = vendorsFor(source)
         for (vendor in vendors) {
             findFromVendor(target, vendor, types, failures)?.let { return it }
         }
@@ -90,7 +74,7 @@ internal class JavaRuntimePackages(
             I18n.t(
                 "networkB2.javaRuntimePackages.notFound",
                 os,
-                zuluArch,
+                target.architecture,
                 major,
                 vendors.joinToString("/") { it.replaceFirstChar { c -> c.uppercaseChar() } },
                 types.joinToString("/") { it.uppercase() },
@@ -102,6 +86,15 @@ internal class JavaRuntimePackages(
         )
     }
 
+    /** 手动来源只查所选厂商；自动模式按官方接口测速排序并在厂商间回退。 */
+    private suspend fun vendorsFor(source: String): List<String> =
+        when (source) {
+            "azul" -> listOf("zulu")
+            "adoptium" -> listOf("temurin")
+            "oracle" -> listOf("oracle")
+            else -> fastestOfficialVendorOrder()
+        }
+
     private suspend fun findFromVendor(
         target: JavaPackageTarget,
         vendor: String,
@@ -112,10 +105,13 @@ internal class JavaRuntimePackages(
         for (type in types) {
             try {
                 val packageInfo =
-                    if (vendor == "zulu") {
-                        zulu(major, os, architecture, type)
-                    } else {
-                        adoptium(major, os, architecture, type)
+                    when (vendor) {
+                        "zulu" -> zulu(major, os, architecture, type)
+
+                        // Oracle 只有 JDK 构建：JRE 请求也按 JDK 返回并保留真实类型（见 JavaRuntimePackage 契约）。
+                        "oracle" -> oracle(major, os, architecture)
+
+                        else -> adoptium(major, os, architecture, type)
                     }
                 packageInfo?.let { return it }
             } catch (cancelled: CancellationException) {
@@ -141,7 +137,12 @@ internal class JavaRuntimePackages(
         type: String,
         failures: MutableList<String>,
     ) {
-        val title = if (vendor == "zulu") "Zulu" else "Temurin"
+        val title =
+            when (vendor) {
+                "zulu" -> "Zulu"
+                "oracle" -> "Oracle"
+                else -> "Temurin"
+            }
         failures +=
             I18n.t(
                 "networkB2.javaRuntimePackages.failureLine",
@@ -302,6 +303,58 @@ internal class JavaRuntimePackages(
         )
     }
 
+    /**
+     * Oracle 官方直链。latest 路径只覆盖 25 / 27 两个 NFTC 许可版本（更早版本的 latest 已 404，
+     * archive 需要登录接受 OTN 许可），且只有 JDK、没有 Windows ARM64 / x86 构建，这些组合直接返回 null。
+     * 直链没有元数据 API：SHA-256 取自官方伴随的 `.sha256` 文件，大小未知按 0 处理（磁盘预检退化为余量判断，
+     * 完整性仍由 SHA-256 兜底）。
+     */
+    private suspend fun oracle(
+        major: Int,
+        os: String,
+        arch: String,
+    ): JavaRuntimePackage? {
+        if (major !in ORACLE_NFTC_MAJORS || arch == "x86") return null
+        if (os == "windows" && arch != "x64") return null
+        val oracleOs = if (os == "osx") "macos" else os
+        val archive = if (oracleOs == "windows") "zip" else "tar.gz"
+        // 官方直链命名：版本号后是下划线（jdk-25_windows-x64），平台与架构之间是连字符。
+        val fileName = "jdk-${major}_$oracleOs-${arch}_bin.$archive"
+        val url = "https://download.oracle.com/java/$major/latest/$fileName"
+        requireOracleUrl(url, major, fileName)
+        val checksum = network.text("$url.sha256").trim().lowercase()
+        require(checksum.matches(Regex("[a-f0-9]{64}"))) {
+            I18n.t("networkB2.javaRuntimePackages.oracleMissingSha256")
+        }
+        return JavaRuntimePackage(
+            urls = listOf(url),
+            sha256 = checksum,
+            size = 0,
+            vendor = "Oracle",
+            // Oracle 不再发布单独 JRE：一律按 JDK 处理并保留真实类型。
+            imageType = "jdk",
+            version = major.toString(),
+            fileName = fileName,
+            sourceUrl = url,
+            sourceLabel = "Oracle",
+        )
+    }
+
+    /** Oracle 下载地址门：只接受官方 download.oracle.com 的 https latest 直链。 */
+    private fun requireOracleUrl(
+        url: String,
+        major: Int,
+        fileName: String,
+    ) {
+        val uri = URI(url)
+        require(uri.scheme == "https" && uri.host == "download.oracle.com") {
+            I18n.t("networkB2.javaRuntimePackages.oracleHostNotAllowed", uri.host)
+        }
+        require(uri.rawPath == "/java/$major/latest/$fileName") {
+            I18n.t("networkB2.javaRuntimePackages.oracleUnexpectedPath")
+        }
+    }
+
     private companion object {
         /** 只用于测延迟：两个官方元数据接口，各取极小响应。 */
         const val ZULU_METADATA_PROBE =
@@ -311,6 +364,9 @@ internal class JavaRuntimePackages(
                 "&page_size=1&latest=true"
 
         const val ADOPTIUM_METADATA_PROBE = "https://api.adoptium.net/v3/info/available_releases"
+
+        /** Oracle latest 直链只覆盖这两个 NFTC 版本；21/17 的 latest 已下线（2026-11-07 实测 404）。 */
+        val ORACLE_NFTC_MAJORS = setOf(25, 27)
     }
 }
 
@@ -319,20 +375,42 @@ fun javaDownloadSourceLabel(value: String): String =
     when (normalizedJavaDownloadSource(value)) {
         "azul" -> "Azul"
         "adoptium" -> "Adoptium"
+        "oracle" -> "Oracle"
         else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceAuto")
     }
 
-/** 下载进度按当前真正尝试的地址显示来源；只剩 Azul / Temurin 两个官方主机。 */
+/** 下载进度按当前真正尝试的地址显示来源；只剩 Azul / Temurin / Oracle 三个官方主机。 */
 internal fun javaDownloadUrlLabel(url: String): String =
     when (runCatching { URI(url).host.orEmpty() }.getOrDefault("")) {
         "cdn.azul.com",
         "api.azul.com",
         -> "Azul"
+
         "github.com",
         "objects.githubusercontent.com",
         "api.adoptium.net",
         -> "Adoptium"
+
+        "download.oracle.com",
+        -> "Oracle"
+
         else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceOfficial")
+    }
+
+/**
+ * 设置里可见的下载来源：对当前系统/架构没有任何安装包的来源不显示，避免选了就必然失败。
+ * 覆盖情况按 2026-11-07 官方清单核验：Azul 与 Adoptium 覆盖全部桌面平台（部分旧版本除外），
+ * Oracle 只有 Windows x64 / Linux x64+aarch64 / macOS x64+aarch64 的 JDK，x86 与 Windows ARM64 没有 Oracle 包。
+ */
+fun availableJavaDownloadSources(
+    os: String,
+    arch: String,
+): List<String> =
+    buildList {
+        add("auto")
+        add("azul")
+        add("adoptium")
+        if (arch != "x86" && (os != "windows" || arch == "x64")) add("oracle")
     }
 
 private fun com.google.gson.JsonObject.longOrZero(key: String): Long =

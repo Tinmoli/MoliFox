@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -27,13 +28,17 @@ internal fun InstalledPackThumbnail(
     modifier: Modifier,
     fallback: @Composable () -> Unit,
 ) {
+    // read/onFailure 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // produceState 只随文件标识与 revision 重启，执行时读到最新回调。
+    val currentRead by rememberUpdatedState(read)
+    val currentOnFailure by rememberUpdatedState(onFailure)
     val bitmap by produceState<ImageBitmap?>(null, entry.path, entry.modified, revision) {
-        val bytes = read(entry.path)
+        val bytes = currentRead(entry.path)
         value =
             bytes?.let {
                 withContext(Dispatchers.Default) {
                     runCatching { SkiaImage.makeFromEncoded(it).toComposeImageBitmap() }
-                        .onFailure(onFailure)
+                        .onFailure(currentOnFailure)
                         .getOrNull()
                 }
             }

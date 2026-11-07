@@ -20,7 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +43,7 @@ import dev.molifox.desktop.InstanceArtwork
 import dev.molifox.desktop.InstanceInstallSections
 import dev.molifox.desktop.JavaPickerRow
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.MutedText
 import dev.molifox.desktop.ScrollColumn
 import dev.molifox.desktop.SecondaryButton
@@ -52,6 +52,7 @@ import dev.molifox.desktop.SimpleDropdown
 import dev.molifox.desktop.Tag
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.packSourceOf
+import dev.molifox.desktop.rememberInstanceBusy
 
 /** 设置页签：自动保存的编辑值由页面持有，这里只负责渲染与回写。 */
 @Composable
@@ -84,7 +85,7 @@ internal fun InstanceSettingsTab(
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
-    val instanceBusy = actions.controller.isInstanceBusy(instance.id)
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
     val memoryPolicy = instanceMemoryPolicy(draft)
     // 只有手动分配会持久化显式值；继承全局/自动分配一律按「没有显式值」解析。
     val savedMemoryMb = if (memoryPolicy == InstanceMemoryPolicy.Manual) memoryMb else 0
@@ -174,7 +175,7 @@ internal fun InstanceSettingsTab(
             onAdvancedValidChange = onAdvancedValidChange,
         )
         InstanceInstallSections(instance, actions)
-        TextButton({
+        MoliTextButton({
             onResetLaunchSettings()
         }) {
             Text(strings.t("instA1.settings.resetLaunch"), fontSize = 12.sp)

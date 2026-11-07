@@ -22,8 +22,6 @@ interface AuthlibServerApi {
     fun isBuiltinAuthlibServer(serverUrl: String): Boolean
 
     fun removeAuthlibServer(serverUrl: String): Boolean
-
-    suspend fun authlibMetadata(serverUrl: String): String
 }
 
 internal class AuthlibServers(
@@ -80,19 +78,6 @@ internal class AuthlibServers(
             data.copy(authlibServers = data.authlibServers.filterNot { it.url == target.url })
         }
         return true
-    }
-
-    /** 服务器显示名（账户卡片副标题）。已保存的服务器直接取缓存名称，不发起请求； 未保存的地址会先校验元数据，失败时抛出 [AuthlibException]。 */
-    override suspend fun authlibMetadata(serverUrl: String): String {
-        val normalized =
-            normalizeAuthlibServerUrl(serverUrl)
-                ?: throw AuthlibException(AuthlibError.InvalidServer, I18n.t("core.authlibClient.4"))
-        store.data.authlibServers
-            .find { matchesAuthlibServer(it.url, normalized) }
-            ?.let {
-                return it.name
-            }
-        return client.metadata(normalized).name
     }
 
     private fun invalidServerFailure(message: String?): AuthlibException =

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.FileDownload
@@ -22,7 +23,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +41,6 @@ import dev.molifox.core.DatapackListing
 import dev.molifox.core.GameInstance
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -210,7 +209,7 @@ private fun SaveDatapackBody(
     modifier: Modifier,
     onDeleteRequest: (DatapackEntry) -> Unit,
 ) {
-    val busy = actions.controller.isInstanceBusy(instance.id)
+    val busy = rememberInstanceBusy(actions, instance.id)
     val running = actions.controller.game.isRunning(instance.id)
     val canEdit = !busy && !running
     val strings = LocalStrings.current
@@ -226,7 +225,8 @@ private fun SaveDatapackBody(
             .resolve("saves")
     val datapacksDirectory = savesDirectory.resolve(state.world).resolve("datapacks")
     Column(modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DatapackToolbar(instance, actions, state, canEdit, busy)
+        // 工具栏与说明行都留滚动条同款右边距，右缘与下方滚动列表保持一条线。
+        DatapackToolbar(instance, actions, state, canEdit, busy, Modifier.padding(end = ScrollbarGutter))
         Text(
             strings.t(
                 "saveA1.datapackPanel.summary",
@@ -237,19 +237,26 @@ private fun SaveDatapackBody(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(end = ScrollbarGutter),
         )
         if (blockedNote.isNotBlank()) {
             Text(
                 blockedNote,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = ScrollbarGutter),
             )
         }
         state.actionError?.let {
-            Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            Text(
+                it,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(end = ScrollbarGutter),
+            )
         }
         if (state.loading && state.listing != null) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(end = ScrollbarGutter).height(3.dp))
         }
         DatapackListingBody(instance, actions, state, canEdit, onDeleteRequest)
     }
@@ -262,9 +269,12 @@ private fun DatapackToolbar(
     state: DatapackPanelState,
     canEdit: Boolean,
     busy: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
+    // 下方列表在 ScrollColumn 里、右缘自带滚动条留白；工具栏留同样的边，上下框缘才对得齐。
     ContentToolbar(
+        modifier.padding(end = ScrollbarGutter),
         flexible = {
             Row(
                 Modifier.fillMaxWidth(),
@@ -321,31 +331,35 @@ private fun ColumnScope.DatapackListingBody(
     val current = state.listing
     when {
         state.loadError != null ->
-            Panel(Modifier.fillMaxWidth()) {
+            // 错误/空态面板不在 ScrollColumn 里，同样留出右边距与滚动列表对齐。
+            Panel(Modifier.fillMaxWidth().padding(end = ScrollbarGutter)) {
                 EmptyState(
                     strings.t("saveA1.datapackPanel.loadFailed"),
                     state.loadError.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton({ state.refresh++ }) { Text(strings.t("pages.saves.load.retry")) }
+                    MoliTextButton({ state.refresh++ }) { Text(strings.t("pages.saves.load.retry")) }
                 }
             }
+
         state.loading && current == null ->
-            Panel(Modifier.fillMaxWidth()) {
+            Panel(Modifier.fillMaxWidth().padding(end = ScrollbarGutter)) {
                 EmptyState(
                     strings.t("saveA1.datapackPanel.loadingTitle"),
                     strings.t("saveA1.datapackPanel.loadingBody"),
                     Icons.Outlined.FolderZip,
                 )
             }
+
         current != null && current.entries.isEmpty() ->
-            Panel(Modifier.fillMaxWidth()) {
+            Panel(Modifier.fillMaxWidth().padding(end = ScrollbarGutter)) {
                 EmptyState(
                     strings.t("saveA1.datapackPanel.emptyTitle"),
                     strings.t("saveA1.datapackPanel.emptyBody"),
                     Icons.Outlined.FolderZip,
                 )
             }
+
         current != null ->
             DatapackList(
                 current = current,
@@ -408,10 +422,10 @@ private fun DeleteDatapackDialog(
         title = { Text(strings.t("pages.saves.trash.title")) },
         text = { Text(strings.t("saveA1.datapackPanel.trashMessage", entry.name)) },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("pages.saves.trash.confirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("pages.saves.cancel")) } },
     )
 }

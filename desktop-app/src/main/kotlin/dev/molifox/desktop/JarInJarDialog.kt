@@ -19,7 +19,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,9 +59,8 @@ internal fun JarInJarDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
-    val busy =
-        actions.controller.game.isRunning(instance.id) ||
-            actions.controller.isInstanceBusy(instance.id)
+    val instanceBusy = rememberInstanceBusy(actions, instance.id)
+    val busy = actions.controller.game.isRunning(instance.id) || instanceBusy
     LaunchedEffect(instance.id, mods, refresh, busy) {
         loading = true
         error = null
@@ -239,6 +237,6 @@ private fun JarInJarFooter(onDismiss: () -> Unit) {
         Modifier.fillMaxWidth().padding(top = 2.dp),
         horizontalArrangement = Arrangement.End,
     ) {
-        TextButton(onDismiss) { Text(strings.t("dialogs.common.close"), fontSize = 12.sp) }
+        MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.close"), fontSize = 12.sp) }
     }
 }

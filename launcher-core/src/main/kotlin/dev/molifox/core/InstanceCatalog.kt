@@ -16,14 +16,11 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
-import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.reader
-
-private const val MAX_JSON_BYTES = 8L * 1024 * 1024
 
 /** 客户端 JAR 内嵌的版本描述文件；vanilla jar 一直带有，id 字段即真实游戏版本。 */
 private const val JAR_VERSION_ENTRY = "version.json"
@@ -293,57 +290,16 @@ private fun minecraftVersionFromJar(
             runCatching {
                 ZipFile(jar.toFile()).use { archive ->
                     val entry = archive.getEntry(JAR_VERSION_ENTRY) ?: return@runCatching null
-                    val parsed = archive.getInputStream(entry).use { stream ->
-                        JsonParser.parseReader(stream.reader())
-                    }
+                    val parsed =
+                        archive.getInputStream(entry).use { stream ->
+                            JsonParser.parseReader(stream.reader())
+                        }
                     if (!parsed.isJsonObject) return@runCatching null
                     minecraftVersionTag(parsed.asJsonObject.string("id"))
                 }
             }.getOrNull()
-        }.firstOrNull().orEmpty()
-
-/**
- * 版本 JSON 的位置：优先同名文件；缺失时目录里只有一个 JSON 就用它；有多个时按文件名序
- * 挑第一个像版本清单的（HMCL 同款规则）。这样文件夹改名、JSON 以版本 id 命名、目录里混入
- * 普通 JSON 都不会让识别失效。
- */
-private fun versionJsonFile(
-    folder: Path,
-    name: String,
-): Path? {
-    val exact = folder.resolve("$name.json")
-    if (exact.isRegularFile()) return exact
-    val jsonFiles = jsonFilesIn(folder)
-    return when (jsonFiles.size) {
-        0 -> null
-        1 -> jsonFiles.first()
-        else -> jsonFiles.firstOrNull { looksLikeVersionManifest(it) }
-    }
-}
-
-private fun jsonFilesIn(folder: Path): List<Path> =
-    runCatching {
-        folder
-            .listDirectoryEntries()
-            .filter { it.isRegularFile() && it.name.endsWith(".json", true) }
-            .sortedBy { it.name }
-    }.getOrDefault(emptyList())
-
-/**
- * 版本清单特征：主类、继承声明、jar 指向或库列表；模组写出的普通配置 JSON 不满足这些，
- * 超过大小上限的文件也不参与挑选（正式读取时会以相同上限拒绝）。
- */
-private fun looksLikeVersionManifest(file: Path): Boolean =
-    runCatching {
-        if (file.fileSize() > MAX_JSON_BYTES) return@runCatching false
-        val parsed = Files.newBufferedReader(file).use { reader -> JsonParser.parseReader(reader) }
-        if (!parsed.isJsonObject) return@runCatching false
-        val json = parsed.asJsonObject
-        json.string("mainClass").isNotBlank() ||
-            json.string("inheritsFrom").isNotBlank() ||
-            json.string("jar").isNotBlank() ||
-            (json.has("libraries") && json.get("libraries").isJsonArray)
-    }.getOrDefault(false)
+        }.firstOrNull()
+        .orEmpty()
 
 private fun brokenInstance(
     root: InstanceRoot,
@@ -366,17 +322,6 @@ private fun brokenInstance(
         broken = true,
         brokenReason = reason,
     )
-
-private fun directoryTime(
-    root: InstanceRoot,
-    name: String,
-): String =
-    runCatching {
-        Files
-            .getLastModifiedTime(root.path.resolve("versions").resolve(name))
-            .toInstant()
-            .toString()
-    }.getOrDefault("")
 
 private fun readProfileJson(
     file: Path,

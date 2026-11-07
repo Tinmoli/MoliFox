@@ -31,12 +31,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,14 +170,14 @@ internal fun RemoveAccountDialog(
         title = { Text(strings.t("dialogs.account.deleteTitle", account.name)) },
         text = { Text(strings.t("dialogs.account.deleteMessage")) },
         confirmButton = {
-            TextButton({
+            MoliTextButton({
                 actions.run { actions.controller.accounts.remove(account.id) }
                 onDismiss()
             }) {
                 Text(strings.t("dialogs.account.deleteConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 
@@ -193,6 +193,9 @@ internal fun MicrosoftDeviceCodeDialog(
     var copied by remember { mutableStateOf<Boolean?>(null) }
     // 验证码剩余有效期（毫秒）：对话框每秒刷新，用于显示剩余时间并在到期时自动收起。
     var remainingMillis by remember { mutableStateOf(0L) }
+    // onClose 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // 倒计时 effect 不随重组重启，到期收起时也能调用到最新的关闭回调。
+    val currentOnClose by rememberUpdatedState(onClose)
     // 设备码一到就自动复制：结果写进 copied，失败时对话框中显示「验证码复制失败，请手动复制」。
     LaunchedEffect(code.userCode) {
         remainingMillis = code.expiresAt - System.currentTimeMillis()
@@ -207,7 +210,7 @@ internal fun MicrosoftDeviceCodeDialog(
             remainingMillis = code.expiresAt - System.currentTimeMillis()
         }
         actions.controller.accounts.cancelLogin()
-        onClose()
+        currentOnClose()
     }
     Modal(
         strings.t("dialogs.account.msLogin.title"),

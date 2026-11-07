@@ -40,7 +40,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -131,7 +130,8 @@ internal fun ColumnScope.LogsPage(
     )
 
     val listState = rememberLazyListState()
-    LaunchedEffect(logs.lastOrNull()?.time, autoScroll, query, levels, onlyGame) {
+    // 用 LogLine.id 做 key：同一毫秒到达的多条日志 time 相同，用 time 会在日志爆发时漏滚最后几条。
+    LaunchedEffect(logs.lastOrNull()?.id, autoScroll, query, levels, onlyGame) {
         if (autoScroll && logs.isNotEmpty()) listState.scrollToItem(logs.lastIndex)
     }
     LogConsolePanel(state, actions, logs, listState, autoScroll) { autoScroll = it }
@@ -150,13 +150,13 @@ internal fun ColumnScope.LogsPage(
             title = { Text(strings.t("pages.logs.clear.title")) },
             text = { Text(strings.t("pages.logs.clear.message")) },
             confirmButton = {
-                TextButton({
+                MoliTextButton({
                     confirmClear = false
                     actions.controller.clearLogs()
                 }) { Text(strings.t("pages.logs.clear.confirm")) }
             },
             dismissButton = {
-                TextButton({ confirmClear = false }) {
+                MoliTextButton({ confirmClear = false }) {
                     Text(strings.t("pages.logs.clear.cancel"))
                 }
             },

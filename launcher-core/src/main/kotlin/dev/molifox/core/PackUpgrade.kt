@@ -12,13 +12,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
-import kotlin.io.path.walk
 
 /** 升级计划里单个文件的动作；desktop-app 需要据此展示预览列表。 */
 enum class PackFileAction {

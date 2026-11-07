@@ -53,7 +53,6 @@ internal fun MultiplayerNatDiagnosticsGroup(
     MultiplayerGroup(
         Modifier.fillMaxWidth(),
         title = strings.t("dialogs.mp.nat.title"),
-        detail = strings.t("dialogs.mp.nat.detail"),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(onClick = startTest, enabled = installed && !testing) {

@@ -17,13 +17,9 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createDirectory
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
-import kotlin.io.path.readAttributes
 
 private const val MAX_DATAPACK_DOWNLOAD_BYTES = 200L * 1024 * 1024
 private const val MAX_DATAPACK_METADATA_BYTES = 65536
@@ -97,7 +93,7 @@ internal class DatapackInstaller(
         project: JsonObject,
     ) {
         require(
-            project.string("project_type") == "datapack" &&
+            isDatapackInstallVersion(project, info) &&
                 info.string("project_id") == hit.id &&
                 info.string("id") == versionId &&
                 info.array("game_versions").any { it.asString == instance.gameVersion },
@@ -264,6 +260,17 @@ internal class DatapackInstaller(
         )
     }
 }
+
+/**
+ * Modrinth 的双格式项目可能把 project_type 报成 mod，只在候选版本的 loaders 里标 datapack。
+ * 两处任一成立都按数据包装；调用方仍需继续校验项目、版本与游戏版本。
+ */
+internal fun isDatapackInstallVersion(
+    project: JsonObject,
+    version: JsonObject,
+): Boolean =
+    project.string("project_type") == "datapack" ||
+        version.array("loaders").any { it.asString.equals("datapack", true) }
 
 private data class DatapackDestination(
     val instanceId: String,

@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.visible
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -25,22 +23,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.TidyReport
-
-private const val TIDY_GIB_BYTES = 1073741824L
-private const val TIDY_GIB_DIVISOR = 1073741824f
-private const val TIDY_MIB_BYTES = 1048576L
-private const val TIDY_MIB_DIVISOR = 1048576f
-private const val TIDY_KIB_BYTES = 1024L
-private const val TIDY_KIB_DIVISOR = 1024f
-
-/** 报告里可读的字节数；只用于展示，不参与业务计算。 */
-internal fun reportBytes(bytes: Long): String =
-    when {
-        bytes >= TIDY_GIB_BYTES -> "%.1f GB".format(bytes / TIDY_GIB_DIVISOR)
-        bytes >= TIDY_MIB_BYTES -> "%.1f MB".format(bytes / TIDY_MIB_DIVISOR)
-        bytes >= TIDY_KIB_BYTES -> "%.1f KB".format(bytes / TIDY_KIB_DIVISOR)
-        else -> bytes.toString() + " B"
-    }
 
 /** 报告行：44dp 高、路径省略、行尾状态标签；只读，不提供点击或删除。 */
 @Composable
@@ -89,7 +71,7 @@ fun TidyReportDialog(
                     Text(strings.t("dialogs.tidy.disabledCount", report.movedDisabledMods), fontSize = 13.sp)
                 }
                 SettingRow(strings.t("dialogs.tidy.duplicateMods"), strings.t("dialogs.tidy.duplicateModsHint")) {
-                    Text(reportBytes(report.totalBytes), fontSize = 13.sp)
+                    Text(byteSizeText(report.totalBytes), fontSize = 13.sp)
                 }
             }
             SettingsSection(

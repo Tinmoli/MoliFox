@@ -11,7 +11,6 @@ import dev.molifox.core.i18n.I18n
 import dev.molifox.core.platform.files.NioFileSystemAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -32,7 +31,7 @@ import java.nio.file.StandardOpenOption
  */
 internal class LauncherControllerCore(
     val platform: PlatformServices,
-    dataDirectory: Path,
+    val dataDirectory: Path,
     updateApiBase: String,
     networkClient: NetworkClient?,
 ) {

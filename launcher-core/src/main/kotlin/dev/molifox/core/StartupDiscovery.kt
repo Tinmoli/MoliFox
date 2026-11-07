@@ -7,8 +7,6 @@ package dev.molifox.core
 
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
 
 /** 启动时发现的一个游戏根：真实路径，以及 `versions/<id>/<id>.json` 的数量。 */
 data class StartupRoot(

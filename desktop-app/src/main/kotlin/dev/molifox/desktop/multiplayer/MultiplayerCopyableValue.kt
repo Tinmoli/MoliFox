@@ -7,12 +7,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.molifox.desktop.MoliTextButton
 
 /** [label] 说明值的用途，[copyLabel] 是按钮文案；复制动作仍交给页面传入的剪贴板回调。 */
 @Composable
@@ -36,7 +36,7 @@ internal fun CopyableValue(
                 maxLines = 1,
                 overflow = TextOverflow.Clip,
             )
-            TextButton(onClick = { copy(value) }) { Text(copyLabel) }
+            MoliTextButton(onClick = { copy(value) }) { Text(copyLabel) }
         }
     }
 }

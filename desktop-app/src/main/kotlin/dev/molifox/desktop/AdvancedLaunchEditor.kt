@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -46,7 +47,10 @@ fun AdvancedLaunchEditor(
             validateAdvancedLaunchSettings(value, os)
         }.exceptionOrNull()
             ?.message
-    LaunchedEffect(error) { onValidityChange(error == null) }
+    // onValidityChange 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // 让 effect 只随 error 变化重启，回调时通知的是最新的有效性监听者。
+    val currentOnValidityChange by rememberUpdatedState(onValidityChange)
+    LaunchedEffect(error) { currentOnValidityChange(error == null) }
     SettingRow(
         strings.t("settings.game.advanced.verify.title"),
         strings.t("settings.game.advanced.verify.detail"),

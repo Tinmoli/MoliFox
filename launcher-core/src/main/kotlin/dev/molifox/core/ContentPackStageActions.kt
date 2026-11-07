@@ -14,10 +14,8 @@ import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 
 /** 导入已解析、后续存档与安装共用的整合包信息。 */
 internal data class PackImport(

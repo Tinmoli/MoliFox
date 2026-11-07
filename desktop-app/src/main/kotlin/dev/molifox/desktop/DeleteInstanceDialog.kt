@@ -30,30 +30,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-
-/** 字节换算单位：阈值用 Long、除法用 Float，避免整型除法把小数位抹掉。 */
-private const val BYTES_PER_GIGABYTE = 1073741824L
-private const val BYTES_PER_MEGABYTE = 1048576L
-private const val BYTES_PER_KILOBYTE = 1024L
-
-/** 删除实例的字节数：只用于提示与对话框展示，不参与业务计算。 */
-private fun deletionSizeText(bytes: Long): String =
-    when {
-        bytes >= BYTES_PER_GIGABYTE -> "%.2f GB".format(bytes / BYTES_PER_GIGABYTE.toFloat())
-        bytes >= BYTES_PER_MEGABYTE -> "%.1f MB".format(bytes / BYTES_PER_MEGABYTE.toFloat())
-        bytes >= BYTES_PER_KILOBYTE -> "%.1f KB".format(bytes / BYTES_PER_KILOBYTE.toFloat())
-        else -> bytes.toString() + " B"
-    }
-
-/** 存档「上次修改」时间，本地时区；读不到修改时间时如实说明。 */
-private val deletionTimeFormat =
-    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
-
-private fun deletionTimeText(modified: Instant?): String =
-    modified?.let { deletionTimeFormat.format(it) } ?: tr("dialogs.delete.timeUnknown")
 
 /**
  * 「删除实例」确认框（实例列表三点菜单与实例详情「管理」共用）。
@@ -195,7 +171,11 @@ private fun DeletionWorldsNotice(
         )
         shownWorlds.forEach { world ->
             Text(
-                LocalStrings.current.t("dialogs.delete.worldLine", world.name, deletionTimeText(world.modified)),
+                LocalStrings.current.t(
+                    "dialogs.delete.worldLine",
+                    world.name,
+                    formatSaveTime(world.modified, tr("dialogs.delete.timeUnknown")),
+                ),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -265,7 +245,7 @@ private fun removalSummary(report: InstanceDeletionReport): String {
         if (report.movedToTrash) {
             tr("dialogs.delete.movedToTrash")
         } else {
-            tr("dialogs.delete.freedSpace", deletionSizeText(report.freedBytes))
+            tr("dialogs.delete.freedSpace", byteSizeText(report.freedBytes))
         }
     return tr("dialogs.delete.removedSummary", removed, moved)
 }

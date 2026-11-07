@@ -10,7 +10,6 @@ import dev.molifox.core.net.DownloadSourceCatalog
 import dev.molifox.core.net.SourceHealth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext

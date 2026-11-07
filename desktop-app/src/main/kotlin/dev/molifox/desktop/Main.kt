@@ -11,7 +11,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -42,7 +44,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -53,12 +54,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -82,6 +85,7 @@ import dev.molifox.core.LauncherWindowAction
 import dev.molifox.core.PackPreview
 import dev.molifox.core.StartupStorageResolver
 import dev.molifox.core.TidyReport
+import dev.molifox.core.brandIconProblem
 import dev.molifox.core.domain.server.ServerStatusQuery
 import dev.molifox.core.i18n.I18n
 import dev.molifox.core.launcherWindowAction
@@ -95,7 +99,6 @@ import dev.molifox.desktop.platform.dialogs.SystemFilePicker
 import dev.molifox.desktop.platform.multiplayer.DesktopMultiplayerOwner
 import dev.molifox.desktop.platform.nativeWindowTransparencySupported
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -176,6 +179,7 @@ class UiActions
             multiple: Boolean = false,
             extensions: List<String> = emptyList(),
             defaultName: String = "",
+            initialDirectory: Path? = null,
         ): List<Path> =
             choose(
                 PickRequest(
@@ -189,6 +193,7 @@ class UiActions
                     multiple = multiple,
                     extensions = extensions,
                     defaultName = defaultName,
+                    initialDirectory = initialDirectory,
                 ),
             )
 
@@ -232,6 +237,7 @@ class UiActions
                     save = true,
                     extensions = listOf("log"),
                     defaultName = "MoliFox.log",
+                    initialDirectory = controller.store.dataDirectory,
                 ).firstOrNull()
                     ?.let { controller.exportLogs(it) }
             }
@@ -243,6 +249,7 @@ class UiActions
                     save = true,
                     extensions = listOf("zip"),
                     defaultName = "MoliFox-diagnostics.zip",
+                    initialDirectory = controller.store.dataDirectory,
                 ).firstOrNull()
                     ?.let { controller.exportDiagnostics(it) }
             }
@@ -255,7 +262,12 @@ fun main() {
     // 各阶段的耗时都从同一个起点算，只进日志；需要打点的函数接收这个计时器。
     val startupMillis: () -> Long = { (System.nanoTime() - startupStartedAt) / 1_000_000 }
     System.setProperty("java.net.useSystemProxies", "true")
+    // macOS 跟随系统深浅色外观；AWT 初始化后再设置不生效，必须放在控制器构建之前。
+    if (System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true)) {
+        System.setProperty("apple.awt.application.appearance", "system")
+    }
     val controller = startLauncherController(startupMillis) ?: return
+    warnMacTranslocation(controller)
     val multiplayer = DesktopMultiplayerOwner(controller)
     try {
         // Compose 默认直接退出 JVM，会跳过外层 finally，必须先返回这里释放联机进程。
@@ -333,12 +345,19 @@ private fun ApplicationScope.LauncherApplication(
         exitApplication()
     }
     // 首帧后再扫描旁边的游戏目录：启动路径只依赖已加载的配置，目录多或磁盘慢也不会拖慢窗口出现。
+    // startupMillis 是每次重组都会新建的 lambda 参数；用 rememberUpdatedState 持有最新值，
+    // 让下面的耗时统计 effect 不随重组重启，执行时也能读到最新的计时回调。
+    val currentStartupMillis by rememberUpdatedState(startupMillis)
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             runCatching { controller.discoverStartupGameDirectories() }
                 .onFailure { controller.store.log(I18n.t("desktop.startup.discoveryFailed", it.message ?: ""), true) }
         }
-        controller.store.log(I18n.t("desktop.startup.discoveryDone", startupMillis()))
+        controller.store.log(I18n.t("desktop.startup.discoveryDone", currentStartupMillis()))
+    }
+    // Linux 注册应用菜单（.desktop）：仅 .run 便携模式生效，路径、图标或文案变化时自动重写；失败只记日志。
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { registerLinuxDesktopEntry(controller) }
     }
     // 自定义左上角图标缺失或损坏时只记一行日志并回退内置图标（BrandMark 内部同样回退），启动不受影响。
     LaunchedEffect(
@@ -347,7 +366,7 @@ private fun ApplicationScope.LauncherApplication(
     ) {
         val stored = launcherState.data.settings.brandIconPath
         if (stored.isBlank()) return@LaunchedEffect
-        val problem = withContext(Dispatchers.IO) { controller.appearance.brandIconProblem(stored) }
+        val problem = withContext(Dispatchers.IO) { brandIconProblem(stored) }
         if (problem != null) {
             controller.store.log(I18n.t("desktop.startup.brandIconUnavailable", problem))
         }
@@ -407,8 +426,10 @@ private fun ApplicationScope.LauncherApplication(
             }
         },
     )
-    // AWT 不允许改变已显示窗口的透明模式；内容背景随设置切换，原生窗口模式保持不变。
-    val windowTransparent = remember { nativeWindowTransparencySupported() }
+    // AWT 不允许改变已显示窗口的透明模式：透明窗口只在启动时按设置决定，运行中的改动
+    // 重启后生效。透明分层窗口在 Windows 上拖动/缩放时会出现局部不重绘，默认关闭可避开。
+    val windowTransparent =
+        remember { nativeWindowTransparencySupported() && launcherState.data.settings.windowTransparent }
     Window(
         onCloseRequest = {
             if (controller.jobs.busy ||
@@ -432,7 +453,7 @@ private fun ApplicationScope.LauncherApplication(
         // 首帧真正提交后再记一次启动耗时，作为「窗口可见」的可测量时间点。
         LaunchedEffect(Unit) {
             withFrameNanos { }
-            controller.store.log(I18n.t("desktop.startup.firstFrame", startupMillis()))
+            controller.store.log(I18n.t("desktop.startup.firstFrame", currentStartupMillis()))
         }
         val actions = remember(window) { UiActions(controller, window, multiplayer = multiplayer) }
         CompositionLocalProvider(LocalStrings provides strings) {
@@ -513,7 +534,12 @@ private fun FrameWindowScope.LauncherRoot(
     onExit: () -> Unit,
 ) {
     val strings = LocalStrings.current
-    MoliTheme(launcherState.data.settings, actions.controller.appearance) {
+    var videoAccent by remember { mutableStateOf<String?>(null) }
+    MoliTheme(
+        launcherState.data.settings,
+        actions.controller.appearance,
+        videoAccent = videoAccent,
+    ) {
         if (actions.agreementOpen) {
             // 阅读时只组合正文，菜单、弹窗与拖放入口均不挂载在下层。
             AgreementViewer(onClose = { run { actions.agreementOpen = false } })
@@ -534,7 +560,13 @@ private fun FrameWindowScope.LauncherRoot(
                     },
                 ),
         ) {
-            LauncherBackdrop(launcherState.data.settings, controller.appearance)
+            LauncherBackdrop(
+                launcherState.data.settings,
+                controller.appearance,
+                controller.dataDirectory,
+                paused = launcherState.runningGames.isNotEmpty(),
+                onVideoAccent = { videoAccent = it },
+            )
             Column(Modifier.fillMaxSize()) {
                 // 标题栏固定在顶部，双击拖动区切换最大化（拖动逻辑不变）。
                 WindowDraggableArea {
@@ -583,6 +615,18 @@ private fun FrameWindowScope.LauncherRoot(
                     MoliApp(launcherState, actions)
                 }
             }
+            if (!actions.agreementOpen && launcherState.data.settings.agreementVersion != AGREEMENT_VERSION) {
+                // 未同意协议时整窗遮罩挡住主界面的全部指针输入（含滚轮）。
+                // Compose Dialog 的模态行为不可依赖，协议门必须由主窗口自己保证。
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
+                        .pointerInput(Unit) {
+                            detectTapGestures { }
+                        },
+                )
+            }
         }
         if (!actions.agreementOpen && launcherState.data.settings.agreementVersion != AGREEMENT_VERSION) {
             AgreementPrompt(
@@ -610,10 +654,10 @@ private fun FrameWindowScope.LauncherRoot(
                     )
                 },
                 confirmButton = {
-                    TextButton(onClick = { onExit() }) { Text(strings.t("exit.confirm")) }
+                    MoliTextButton(onClick = { onExit() }) { Text(strings.t("exit.confirm")) }
                 },
                 dismissButton = {
-                    TextButton(onClick = onDismissConfirmExit) { Text(strings.t("exit.cancel")) }
+                    MoliTextButton(onClick = onDismissConfirmExit) { Text(strings.t("exit.cancel")) }
                 },
             )
         }
@@ -925,6 +969,7 @@ private fun LauncherDialogs(
         LaunchFailureDialog(
             issue,
             onViewLogs = { actions.navigation.navigate(Page.Downloads) },
+            onExport = { actions.exportDiagnostics() },
             onDismiss = { actions.controller.dismissLaunchIssue() },
         )
     }

@@ -14,7 +14,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
@@ -22,8 +21,8 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 import kotlin.io.path.reader
 
-private const val MAX_BACKGROUND_FILE_BYTES = 12L * 1024 * 1024
-private const val MAX_BACKGROUND_PIXELS = 20_000_000
+private const val MAX_BACKGROUND_FILE_BYTES = 20L * 1024 * 1024
+private const val MAX_VIDEO_FILE_BYTES = 2L * 1024 * 1024 * 1024
 private const val MAX_FONT_FILE_BYTES = 32L * 1024 * 1024
 private const val MAX_BRAND_ICON_BYTES = 2L * 1024 * 1024
 private const val MIN_BRAND_ICON_EDGE = 16
@@ -44,26 +43,7 @@ private fun validateAppearanceBackground(source: Path) {
     require(source.isRegularFile() && source.fileSize() in 1..MAX_BACKGROUND_FILE_BYTES) {
         I18n.t("core.appearanceAssets.1")
     }
-    ImageIO.createImageInputStream(source.toFile()).use { input ->
-        require(input != null) { I18n.t("core.appearanceAssets.2") }
-        val readers = ImageIO.getImageReaders(input)
-        require(readers.hasNext()) { I18n.t("core.appearanceAssets.3") }
-        val reader = readers.next()
-        try {
-            reader.input = input
-            require(reader.formatName.lowercase() in listOf("png", "jpeg", "jpg")) {
-                I18n.t("core.appearanceAssets.3")
-            }
-            val width = reader.getWidth(0)
-            val height = reader.getHeight(0)
-            require(width > 0 && height > 0 && width.toLong() * height <= MAX_BACKGROUND_PIXELS) {
-                I18n.t("core.appearanceAssets.4")
-            }
-            require(reader.read(0) != null) { I18n.t("core.appearanceAssets.5") }
-        } finally {
-            reader.dispose()
-        }
-    }
+    validateAppearanceBackgroundBytes(Files.readAllBytes(source))
 }
 
 private fun storeAppearanceBackground(
@@ -94,6 +74,35 @@ private fun storeAppearanceBackground(
     return destination
 }
 
+fun importModeVideo(
+    dataDirectory: Path,
+    source: Path,
+    dark: Boolean,
+): Path {
+    validateAppearanceVideo(source)
+    return storeAppearanceBackground(
+        dataDirectory,
+        source,
+        if (dark) "background-dark.video" else "background-light.video",
+    )
+}
+
+private fun validateAppearanceVideo(source: Path) {
+    require(source.isRegularFile() && source.fileSize() in 1..MAX_VIDEO_FILE_BYTES) {
+        I18n.t("core.appearanceAssets.11")
+    }
+    require(
+        source.fileName
+            .toString()
+            .substringAfterLast('.', "")
+            .lowercase() in VIDEO_EXTENSIONS,
+    ) {
+        I18n.t("core.appearanceAssets.12")
+    }
+}
+
+private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "webm", "mkv")
+
 /** Import a font by content hash, retaining the user's original file. */
 fun importAppearanceFont(
     dataDirectory: Path,
@@ -117,29 +126,29 @@ fun importAppearanceFont(
     return LauncherFont(font.getFamily(java.util.Locale.getDefault()), target.toString())
 }
 
-fun removeAppearanceFont(
-    dataDirectory: Path,
-    font: LauncherFont,
-) {
-    val directory = dataDirectory.resolve("appearance/fonts").toAbsolutePath().normalize()
-    val file = Path.of(font.path).toAbsolutePath().normalize()
-    // A manually edited record never authorizes removal of a font outside our storage.
-    if (file.parent == directory && file.name.matches(Regex("[a-f0-9]{24}\\.font"))) {
-        Files.deleteIfExists(file)
-    }
-}
-
 /** UI 无关的外观资源边界：校验、复制、删除和读取都由 core 负责。 */
-interface AppearanceAssetService {
-    fun backgroundAccent(settings: LauncherSettings, dark: Boolean): String? =
-        readModeBackground(settings, dark)?.let(::extractBackgroundAccent)
+fun AppearanceAssetService.backgroundAccent(
+    settings: LauncherSettings,
+    dark: Boolean,
+): String? = readModeBackground(settings, dark)?.let(::extractBackgroundAccent)
 
+interface AppearanceAssetService {
     fun importBackground(source: Path): Path
 
-    fun importModeBackground(source: Path, dark: Boolean): Path = importBackground(source)
+    fun importModeBackground(
+        source: Path,
+        dark: Boolean,
+    ): Path = importBackground(source)
 
-    fun readModeBackground(settings: LauncherSettings, dark: Boolean): ByteArray? =
-        readBackground(settings.effectiveBackground(dark))
+    fun importModeVideo(
+        source: Path,
+        dark: Boolean,
+    ): Path = importBackground(source)
+
+    fun readModeBackground(
+        settings: LauncherSettings,
+        dark: Boolean,
+    ): ByteArray? = readBackground(settings.effectiveBackground(dark))
 
     fun removeBackground()
 
@@ -154,8 +163,6 @@ interface AppearanceAssetService {
     fun removeBrandIcon(stored: String)
 
     fun readBrandIcon(path: String): ByteArray?
-
-    fun brandIconProblem(path: String): String?
 }
 
 internal class FileAppearanceAssetService(
@@ -163,21 +170,41 @@ internal class FileAppearanceAssetService(
 ) : AppearanceAssetService {
     override fun importBackground(source: Path): Path = importAppearanceBackground(dataDirectory, source)
 
-    override fun importModeBackground(source: Path, dark: Boolean): Path {
+    override fun importModeBackground(
+        source: Path,
+        dark: Boolean,
+    ): Path {
         validateAppearanceBackground(source)
-        return storeAppearanceBackground(dataDirectory, source, if (dark) "background-dark.img" else "background-light.img")
+        return storeAppearanceBackground(
+            dataDirectory,
+            source,
+            if (dark) "background-dark.img" else "background-light.img",
+        )
     }
 
-    override fun readModeBackground(settings: LauncherSettings, dark: Boolean): ByteArray? {
-        val defaults = try {
-            ensureDefaultBackgrounds(dataDirectory)
-        } catch (failure: IOException) {
-            java.util.logging.Logger.getLogger("MoliFox.appearance").warning("Default backgrounds: ${failure.message}")
-            null
-        } catch (failure: IllegalArgumentException) {
-            java.util.logging.Logger.getLogger("MoliFox.appearance").warning("Default backgrounds: ${failure.message}")
-            null
-        }
+    override fun importModeVideo(
+        source: Path,
+        dark: Boolean,
+    ): Path = importModeVideo(dataDirectory, source, dark)
+
+    override fun readModeBackground(
+        settings: LauncherSettings,
+        dark: Boolean,
+    ): ByteArray? {
+        val defaults =
+            try {
+                ensureDefaultBackgrounds(dataDirectory)
+            } catch (failure: IOException) {
+                java.util.logging.Logger
+                    .getLogger("MoliFox.appearance")
+                    .warning("Default backgrounds: ${failure.message}")
+                null
+            } catch (failure: IllegalArgumentException) {
+                java.util.logging.Logger
+                    .getLogger("MoliFox.appearance")
+                    .warning("Default backgrounds: ${failure.message}")
+                null
+            }
         val selected = settings.effectiveBackground(dark)
         return when (selected) {
             NO_BACKGROUND -> null
@@ -233,23 +260,24 @@ internal class FileAppearanceAssetService(
     }
 
     override fun readBrandIcon(path: String): ByteArray? = readAppearanceBytes(path, MAX_BRAND_ICON_BYTES)
+}
 
-    override fun brandIconProblem(path: String): String? {
-        if (path.isBlank()) return null
-        return runCatching {
-            val file = Path.of(path)
-            require(file.isRegularFile()) { I18n.t("dialogs.brandIcon.fileMissing") }
-            require(file.fileSize() in 1..MAX_BRAND_ICON_BYTES) { I18n.t("dialogs.brandIcon.sizeAbnormal") }
-            val image = ImageIO.read(file.toFile()) ?: error(I18n.t("dialogs.brandIcon.decodeFailed"))
-            require(image.width in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
-                I18n.t("dialogs.brandIcon.dimensionAbnormal")
-            }
-            require(image.height in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
-                I18n.t("dialogs.brandIcon.dimensionAbnormal")
-            }
-            null
-        }.getOrElse { failure -> failure.message ?: failure.javaClass.simpleName }
-    }
+/** 品牌图标校验只读文件本身，不需要外观服务实例。 */
+fun brandIconProblem(path: String): String? {
+    if (path.isBlank()) return null
+    return runCatching {
+        val file = Path.of(path)
+        require(file.isRegularFile()) { I18n.t("dialogs.brandIcon.fileMissing") }
+        require(file.fileSize() in 1..MAX_BRAND_ICON_BYTES) { I18n.t("dialogs.brandIcon.sizeAbnormal") }
+        val image = ImageIO.read(file.toFile()) ?: error(I18n.t("dialogs.brandIcon.decodeFailed"))
+        require(image.width in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+            I18n.t("dialogs.brandIcon.dimensionAbnormal")
+        }
+        require(image.height in MIN_BRAND_ICON_EDGE..MAX_BRAND_ICON_EDGE) {
+            I18n.t("dialogs.brandIcon.dimensionAbnormal")
+        }
+        null
+    }.getOrElse { failure -> failure.message ?: failure.javaClass.simpleName }
 }
 
 private fun validateBrandIcon(source: Path): String =

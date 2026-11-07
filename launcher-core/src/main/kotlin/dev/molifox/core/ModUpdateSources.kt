@@ -42,6 +42,33 @@ internal fun defaultModDownloader(
         }
     }
 
+/**
+ * Modrinth 搜索的共用请求与结果解析：facets 与项目类型由调用方决定（模组按游戏版本与加载器筛，
+ * 资源包只按游戏版本筛），命中解析此前在模组与资源包两处各抄一份，收敛到此处保持同一规则。
+ */
+internal suspend fun modrinthSearchProjects(
+    network: NetworkClient,
+    api: String,
+    query: String,
+    facets: List<List<String>>,
+    projectType: String,
+    provider: String,
+): List<RemoteModProject> {
+    val response =
+        network
+            .json(
+                "$api/search?query=${encoded(query)}&limit=8&facets=${encoded(gson.toJson(facets))}",
+            ).asJsonObject
+    return response.array("hits").mapNotNull { element ->
+        val hit =
+            element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
+        val id = hit.string("project_id").ifBlank { hit.string("id") }
+        val type = hit.string("project_type")
+        if (id.isBlank() || (type.isNotBlank() && type != projectType)) return@mapNotNull null
+        RemoteModProject(id, hit.string("slug"), hit.string("title"), provider)
+    }
+}
+
 internal class ModrinthModUpdateSource(
     private val network: NetworkClient,
     private val api: String,
@@ -123,21 +150,7 @@ internal class ModrinthModUpdateSource(
         if (instance.loader != LoaderType.Vanilla) {
             facets += listOf("categories:${instance.loader.name.lowercase()}")
         }
-        val response =
-            network
-                .json(
-                    "$api/search?query=${encoded(
-                        name,
-                    )}&limit=8&facets=${encoded(gson.toJson(facets))}",
-                ).asJsonObject
-        return response.array("hits").mapNotNull { element ->
-            val hit =
-                element.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return@mapNotNull null
-            val id = hit.string("project_id").ifBlank { hit.string("id") }
-            val type = hit.string("project_type")
-            if (id.isBlank() || (type.isNotBlank() && type != "mod")) return@mapNotNull null
-            RemoteModProject(id, hit.string("slug"), hit.string("title"), provider)
-        }
+        return modrinthSearchProjects(network, api, name, facets, "mod", provider)
     }
 
     override suspend fun versions(

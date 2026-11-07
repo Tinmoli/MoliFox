@@ -9,10 +9,7 @@ import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.walk
 
 internal class NewInstallationCleanup(
     private val store: LauncherStore,

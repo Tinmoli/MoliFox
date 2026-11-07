@@ -25,15 +25,23 @@ evaluationDependsOn(":multiplayer-core")
 sourceSets["main"].resources.srcDir(rootProject.file("assets"))
 // 默认背景已由 core 放在 META-INF/molifox，避免桌面资源再打包一份同样的压缩包。
 sourceSets["main"].resources.exclude(
-    "legal/**", "brand/**", "backgrounds/**",
-    "icons/app/icon.ico", "icons/app/icon-white-1024.png", "icons/app/icon-white-300.png",
+    "legal/**",
+    "brand/**",
+    "backgrounds/**",
+    "icons/app/icon.ico",
+    "icons/app/icon-white-1024.png",
+    "icons/app/icon-white-300.png",
 )
 // 测试与 GUI 检查源码统一放在仓库根的 tests/。
 sourceSets["test"].kotlin.srcDirs(rootProject.file("tests/desktop-app/test/kotlin"))
 
 val bootstrapProject = project(":launcher-bootstrap")
 val bootstrapSourceSets = bootstrapProject.extensions.getByType<SourceSetContainer>()
-val runtimeManifestFile = layout.buildDirectory.file("portable/deps.json")
+val windowsX64ManifestFile = layout.buildDirectory.file("portable/windows-x64/molifox-runtime.json")
+val linuxX64ManifestFile = layout.buildDirectory.file("portable/linux-x64/molifox-runtime.json")
+val linuxArm64ManifestFile = layout.buildDirectory.file("portable/linux-arm64/molifox-runtime.json")
+val macosX64ManifestFile = layout.buildDirectory.file("portable/macos-x64/molifox-runtime.json")
+val macosArm64ManifestFile = layout.buildDirectory.file("portable/macos-arm64/molifox-runtime.json")
 val usedIconPaths =
     fileTree("src/main/kotlin")
         .matching { include("**/*.kt") }
@@ -147,7 +155,14 @@ fun runtimeEntries(
                 artifact = module.module,
                 version = module.version,
                 // 有些 KMP 元数据给出的本地文件名不带版本，Maven 下载 URL 仍要求版本后缀。
-                filename = if (file.name == "${module.module}.jar") "${module.module}-${module.version}.jar" else file.name,
+                filename =
+                    if (file.name ==
+                        "${module.module}.jar"
+                    ) {
+                        "${module.module}-${module.version}.jar"
+                    } else {
+                        file.name
+                    },
                 sha256 = sha256Of(file),
                 size = file.length(),
             )
@@ -165,21 +180,26 @@ val skikoAwtVersion =
             .version
     }
 
-fun nativeRuntimeConfiguration(platform: String): Configuration =
-    configurations.create("${platform}RuntimeNative") {
+fun nativeRuntimeConfiguration(
+    platform: String,
+    arch: String = "x64",
+): Configuration =
+    configurations.create("${platform}${arch.replaceFirstChar { it.uppercase() }}RuntimeNative") {
         isCanBeConsumed = false
         isTransitive = false
         defaultDependencies {
             add(
                 project.dependencies.create(
-                    "org.jetbrains.skiko:skiko-awt-runtime-$platform-x64:" + skikoAwtVersion.get(),
+                    "org.jetbrains.skiko:skiko-awt-runtime-$platform-$arch:" + skikoAwtVersion.get(),
                 ),
             )
         }
     }
 
 val windowsRuntimeNative = nativeRuntimeConfiguration("windows")
+val windowsArm64RuntimeNative = nativeRuntimeConfiguration("windows", "arm64")
 val linuxRuntimeNative = nativeRuntimeConfiguration("linux")
+val linuxArm64RuntimeNative = nativeRuntimeConfiguration("linux", "arm64")
 
 /** 打包目标与构建宿主独立；原生库版本沿用实际解析的 skiko，不改变清单格式。 */
 fun platformRuntimeEntries(
@@ -194,9 +214,9 @@ fun platformRuntimeEntries(
 val preparePortableRuntime =
     tasks.register("preparePortableRuntime") {
         group = "distribution"
-        description = "生成运行时依赖清单 build/portable/deps.json（依赖改为首次启动下载）"
+        description = "生成 Windows x64 运行时依赖清单 build/portable/windows-x64/molifox-runtime.json（依赖改为首次启动下载）"
         inputs.files(configurations.runtimeClasspath, windowsRuntimeNative)
-        outputs.file(runtimeManifestFile)
+        outputs.file(windowsX64ManifestFile)
         doLast {
             val entries = platformRuntimeEntries(windowsRuntimeNative, "windows-x64")
             check(entries.isNotEmpty()) { "运行时依赖清单为空" }
@@ -204,7 +224,33 @@ val preparePortableRuntime =
             check(native.size == 1 && native.single().filename.contains("-windows-x64")) {
                 "Windows 清单应只带 skiko windows-x64 原生库：$native"
             }
-            val output = runtimeManifestFile.get().asFile
+            val output = windowsX64ManifestFile.get().asFile
+            output.parentFile.mkdirs()
+            output.writeText(manifestJson(entries))
+        }
+    }
+
+/**
+ * Windows ARM64 使用同一枚 32 位外壳启动；JAR 内同时带一份 ARM64 运行时清单，
+ * 由引导程序按 JVM 架构选择，避免为两种架构维护两份几乎相同的安装包。
+ */
+val windowsArm64ManifestFile =
+    layout.buildDirectory.file("portable/windows-arm64/molifox-runtime.json")
+
+val prepareWindowsArm64Runtime =
+    tasks.register("prepareWindowsArm64Runtime") {
+        group = "distribution"
+        description = "生成 Windows ARM64 运行时依赖清单"
+        inputs.files(configurations.runtimeClasspath, windowsArm64RuntimeNative)
+        outputs.file(windowsArm64ManifestFile)
+        doLast {
+            val entries = platformRuntimeEntries(windowsArm64RuntimeNative, "windows-arm64")
+            check(entries.isNotEmpty()) { "Windows ARM64 运行时依赖清单为空" }
+            val native = entries.filter { it.filename.startsWith("skiko-awt-runtime-") }
+            check(native.size == 1 && native.single().filename.contains("-windows-arm64")) {
+                "Windows ARM64 清单应只带 skiko windows-arm64 原生库：$native"
+            }
+            val output = windowsArm64ManifestFile.get().asFile
             output.parentFile.mkdirs()
             output.writeText(manifestJson(entries))
         }
@@ -247,6 +293,11 @@ tasks.register<Jar>("portableJar") {
         "Build the launcher jar: our classes + Swing bootstrap + dependency manifest; runtime jars are downloaded on first launch"
     dependsOn(
         preparePortableRuntime,
+        prepareWindowsArm64Runtime,
+        "prepareLinuxRuntime",
+        "prepareLinuxArm64Runtime",
+        "prepareMacosRuntime",
+        "prepareMacosArm64Runtime",
         ":launcher-bootstrap:jar",
         ":launcher-core:jar",
         ":multiplayer-core:jvmJar",
@@ -258,6 +309,7 @@ tasks.register<Jar>("portableJar") {
         attributes(
             "Main-Class" to "dev.molifox.bootstrap.BootstrapMainKt",
             "Multi-Release" to "true",
+            "Implementation-Version" to project.version.toString(),
         )
     }
     from(sourceSets.main.get().output)
@@ -288,8 +340,13 @@ tasks.register<Jar>("portableJar") {
             "META-INF/versions/**/module-info.class",
         )
     }
-    // 依赖清单固定落在 /molifox-runtime.json，引导程序按这个路径读取。
-    from(runtimeManifestFile) { rename { "molifox-runtime.json" } }
+    // 六份清单是发布的唯一运行时清单来源，不再保留按平台回退的主清单。
+    from(windowsX64ManifestFile) { rename { "molifox-runtime-windows-x64.json" } }
+    from(windowsArm64ManifestFile) { rename { "molifox-runtime-windows-arm64.json" } }
+    from(linuxX64ManifestFile) { rename { "molifox-runtime-linux-x64.json" } }
+    from(linuxArm64ManifestFile) { rename { "molifox-runtime-linux-arm64.json" } }
+    from(macosX64ManifestFile) { rename { "molifox-runtime-macos-x64.json" } }
+    from(macosArm64ManifestFile) { rename { "molifox-runtime-macos-arm64.json" } }
     from(rootProject.file("LICENSE")) { into("META-INF/molifox") }
     from(rootProject.file("assets/legal")) {
         into("META-INF/molifox")
@@ -324,6 +381,7 @@ val nativeMessageFields =
         "javaCancelled",
         "archUnsupported",
         "javaPreparingLinux",
+        "javaPreparingMacos",
         "checksumMissing",
         "checksumFailed",
         "runtimeUnusable",
@@ -415,8 +473,17 @@ val generateNativeMessages =
 
 val nativeBuildDirectory = layout.buildDirectory.dir("portable/native")
 val mingwDirectory = providers.environmentVariable("MOLIFOX_MINGW_BIN").orNull
+val mingwPrefix = providers.environmentVariable("MOLIFOX_MINGW_PREFIX").orNull
 
-fun nativeCompiler(name: String) = mingwDirectory?.let { file("$it/$name.exe").absolutePath } ?: name
+fun nativeCompiler(name: String): String {
+    val executable =
+        when {
+            name == "objdump" && mingwPrefix != null -> "llvm-objdump"
+            mingwPrefix != null -> "$mingwPrefix-$name"
+            else -> name
+        }
+    return mingwDirectory?.let { file("$it/$executable.exe").absolutePath } ?: executable
+}
 
 val windowsResource =
     tasks.register("prepareWindowsResource") {
@@ -496,6 +563,7 @@ val compileWindowsResource =
             rootProject.file("assets/icons/app/icon.ico"),
         )
         inputs.file(nativeBuildDirectory.map { it.file("molifox.rc") })
+        inputs.property("windres", nativeCompiler("windres"))
         outputs.file(nativeBuildDirectory.map { it.file("resource.o") })
         commandLine(
             nativeCompiler("windres"),
@@ -524,6 +592,7 @@ tasks.register<Exec>("portableWindows") {
     inputs.file(nativeMessageHeader)
     inputs.dir(rootProject.file("launcher-bootstrap/native/miniz"))
     inputs.property("nativeDefinitions", windowsNativeDefinitions)
+    inputs.property("gpp", nativeCompiler("g++"))
     inputs.file(nativeBuildDirectory.map { it.file("resource.o") })
     outputs.file(rootProject.file("dist/$windowsPackageName"))
     outputs.file(rootProject.file("build/validation/windows-package.sha256"))
@@ -543,7 +612,6 @@ tasks.register<Exec>("portableWindows") {
         "-x",
         "none",
         nativeBuildDirectory.get().file("resource.o").asFile,
-        "-std=c++17",
         "-O2",
         "-s",
         "-static",
@@ -575,13 +643,12 @@ tasks.register<Exec>("portableWindows") {
     }
 }
 
-val linuxManifestFile = layout.buildDirectory.file("portable/linux/molifox-runtime.json")
 val prepareLinuxRuntime =
     tasks.register("prepareLinuxRuntime") {
         inputs.files(configurations.runtimeClasspath, linuxRuntimeNative)
-        outputs.file(linuxManifestFile)
+        outputs.file(linuxX64ManifestFile)
         doLast {
-            val output = linuxManifestFile.get().asFile
+            val output = linuxX64ManifestFile.get().asFile
             output.parentFile.mkdirs()
             output.writeText(
                 manifestJson(platformRuntimeEntries(linuxRuntimeNative, "linux-x64"), "linux-x64"),
@@ -589,36 +656,10 @@ val prepareLinuxRuntime =
         }
     }
 
-// JVM UI 代码共用；Linux 包只把清单换成 linux-x64 版（原生库同样改为首次启动下载）。
-tasks.register<Jar>("portableLinuxJar") {
-    group = "distribution"
-    dependsOn("portableJar", prepareLinuxRuntime)
-    archiveFileName.set("MoliFox-linux.jar")
-    destinationDirectory.set(layout.buildDirectory.dir("portable/linux"))
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest {
-        attributes(
-            "Main-Class" to "dev.molifox.bootstrap.BootstrapMainKt",
-            "Multi-Release" to "true",
-        )
-    }
-    from({
-        zipTree(
-            layout.buildDirectory
-                .file("portable/MoliFox.jar")
-                .get()
-                .asFile,
-        )
-    }) {
-        exclude("molifox-runtime.json", "META-INF/MANIFEST.MF")
-    }
-    from(linuxManifestFile) { rename { "molifox-runtime.json" } }
-}
-
 tasks.register("portableLinux") {
     group = "distribution"
-    dependsOn("portableLinuxJar", generateNativeMessages)
-    val payload = layout.buildDirectory.file("portable/linux/MoliFox-linux.jar")
+    dependsOn("portableJar", generateNativeMessages)
+    val payload = layout.buildDirectory.file("portable/MoliFox.jar")
     inputs.file(rootProject.file("launcher-bootstrap/native/LinuxMain.sh"))
     inputs.file(nativeMessageShell)
     inputs.file(payload)
@@ -648,11 +689,122 @@ tasks.register("portableLinux") {
     }
 }
 
+tasks.register("prepareLinuxArm64Runtime") {
+    inputs.files(configurations.runtimeClasspath, linuxArm64RuntimeNative)
+    outputs.file(linuxArm64ManifestFile)
+    doLast {
+        val output = linuxArm64ManifestFile.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            manifestJson(platformRuntimeEntries(linuxArm64RuntimeNative, "linux-arm64"), "linux-arm64"),
+        )
+    }
+}
+
+val macosRuntimeNative = nativeRuntimeConfiguration("macos")
+val macosArm64RuntimeNative = nativeRuntimeConfiguration("macos", "arm64")
+
+tasks.register("prepareMacosRuntime") {
+    inputs.files(configurations.runtimeClasspath, macosRuntimeNative)
+    outputs.file(macosX64ManifestFile)
+    doLast {
+        val output = macosX64ManifestFile.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            manifestJson(platformRuntimeEntries(macosRuntimeNative, "macos-x64"), "macos-x64"),
+        )
+    }
+}
+
+tasks.register("prepareMacosArm64Runtime") {
+    inputs.files(configurations.runtimeClasspath, macosArm64RuntimeNative)
+    outputs.file(macosArm64ManifestFile)
+    doLast {
+        val output = macosArm64ManifestFile.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            manifestJson(platformRuntimeEntries(macosArm64RuntimeNative, "macos-arm64"), "macos-arm64"),
+        )
+    }
+}
+
+// 全平台单 JAR：用户自装 Java 17+（下载运行时仍是 21），首次启动按六份清单下载当前系统运行时。
+tasks.register<Copy>("universalJar") {
+    group = "distribution"
+    description = "把六清单 portableJar 复制为 dist/MoliFox.jar"
+    dependsOn("portableJar")
+    from(layout.buildDirectory.file("portable/MoliFox.jar"))
+    into(rootProject.layout.projectDirectory.dir("dist"))
+    rename { "MoliFox.jar" }
+}
+
+tasks.register("verifyUniversalJar") {
+    group = "verification"
+    dependsOn("universalJar")
+    doLast {
+        val jar = rootProject.file("dist/MoliFox.jar")
+        check(jar.isFile) { "缺少全平台 JAR：$jar" }
+        val expected =
+            mapOf(
+                "molifox-runtime-windows-x64.json" to "-windows-x64",
+                "molifox-runtime-windows-arm64.json" to "-windows-arm64",
+                "molifox-runtime-linux-x64.json" to "-linux-x64",
+                "molifox-runtime-linux-arm64.json" to "-linux-arm64",
+                "molifox-runtime-macos-x64.json" to "-macos-x64",
+                "molifox-runtime-macos-arm64.json" to "-macos-arm64",
+            )
+        ZipFile(jar).use { zip ->
+            checkNotNull(zip.getEntry("dev/molifox/bootstrap/BootstrapMainKt.class")) {
+                "全平台 JAR 缺少 BootstrapMainKt"
+            }
+            check(zip.getEntry("molifox-runtime.json") == null) {
+                "全平台 JAR 不应再带回退主清单"
+            }
+            val manifest =
+                zip.getInputStream(zip.getEntry("META-INF/MANIFEST.MF")).bufferedReader().use {
+                    it.readText()
+                }
+            check(manifest.contains("Implementation-Version: ${project.version}")) {
+                "全平台 JAR 的 Implementation-Version 与项目版本不一致"
+            }
+            expected.forEach { (resource, skikoSuffix) ->
+                val entry = checkNotNull(zip.getEntry(resource)) { "全平台 JAR 缺少 $resource" }
+                val json =
+                    zip.getInputStream(entry).reader().use {
+                        groovy.json.JsonSlurper().parse(it) as Map<*, *>
+                    }
+                val natives =
+                    (json["dependencies"] as List<*>)
+                        .map { it as Map<*, *> }
+                        .map { it["filename"] as String }
+                        .filter { it.startsWith("skiko-awt-runtime-") }
+                check(natives.size == 1 && natives.single().contains(skikoSuffix)) {
+                    "$resource 应只带 skiko $skikoSuffix 原生库：$natives"
+                }
+            }
+        }
+        val digest = sha256Of(jar)
+        val report = rootProject.file("build/validation/universal-jar.md")
+        report.parentFile.mkdirs()
+        report.writeText(
+            "# Universal JAR verification\n\n" +
+                "- file: dist/MoliFox.jar\n" +
+                "- bytes: ${jar.length()}\n" +
+                "- sha256: $digest\n" +
+                "- manifests: 6 (Windows/Linux/macOS x64/ARM64), no fallback manifest\n" +
+                "- Java: 21+ required, no bundled JRE\n" +
+                "- Not executed on ARM/macOS hardware in this build\n",
+        )
+        println("UNIVERSAL_JAR_OK ${jar.length()} bytes $digest")
+    }
+}
+
+// Linux x64/ARM64 共用同一个 .run：payload 与全平台 JAR 完全相同，不再生成独立 arm64 包。
 tasks.register("verifyDesktopPackages") {
     group = "verification"
     description =
         "Validate the dependency manifest and jar layout (no runtime jars embedded); does not launch Linux"
-    dependsOn("portableWindows", "portableLinux")
+    dependsOn("portableWindows", "portableLinux", "universalJar")
     doLast {
         val requiredBundledIcons =
             ZipFile(extendedIcons.get()).use { icons ->
@@ -660,84 +812,85 @@ tasks.register("verifyDesktopPackages") {
                     .map { it.replace("Kt*.class", "Kt.class") }
                     .filter { icons.getEntry(it) != null }
             }
-        val platforms =
-            listOf(
-                "windows" to
-                    layout.buildDirectory
-                        .file("portable/MoliFox.jar")
-                        .get()
-                        .asFile,
-                "linux" to
-                    layout.buildDirectory
-                        .file("portable/linux/MoliFox-linux.jar")
-                        .get()
-                        .asFile,
-            )
-        for ((platform, file) in platforms) {
-            ZipFile(file).use { zip ->
-                for (entry in listOf(
-                    "dev/molifox/multiplayer/domain/MultiplayerBackend.class",
-                    "dev/molifox/multiplayer/lobby/PclLobbyBackend.class",
-                )) {
-                    check(zip.getEntry(entry) != null) { "$platform 包缺少联机入口 $entry" }
+        val jar = rootProject.file("dist/MoliFox.jar")
+        check(jar.isFile) { "缺少桌面 JAR：$jar" }
+        ZipFile(jar).use { zip ->
+            for (entry in listOf(
+                "dev/molifox/multiplayer/domain/MultiplayerBackend.class",
+                "dev/molifox/multiplayer/lobby/PclLobbyBackend.class",
+                "dev/molifox/desktop/AppearancePageKt.class",
+                "dev/molifox/bootstrap/BootstrapMainKt.class",
+            )) {
+                check(zip.getEntry(entry) != null) { "桌面 JAR 缺少 $entry" }
+            }
+            for (icon in requiredBundledIcons) {
+                check(zip.getEntry(icon) != null) { "桌面 JAR 缺少界面图标 $icon" }
+            }
+            for (notice in listOf("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
+                check(zip.getEntry("META-INF/molifox/$notice") != null) {
+                    "桌面 JAR 缺少许可声明 $notice"
                 }
-                for (icon in requiredBundledIcons) {
-                    check(zip.getEntry(icon) != null) { "$platform 包缺少界面图标 $icon" }
+            }
+            val agreements =
+                listOf(
+                    "AGREEMENT.md",
+                    "AGREEMENT.en-US.md",
+                    "AGREEMENT.zh-TW.md",
+                    "AGREEMENT.zh-HK.md",
+                )
+            for (agreement in agreements) {
+                check(zip.getEntry("META-INF/molifox/$agreement") != null) {
+                    "桌面 JAR 缺少用户协议 $agreement"
                 }
-                for (notice in listOf("LICENSE", "NOTICE", "THIRD_PARTY.md")) {
-                    check(zip.getEntry("META-INF/molifox/$notice") != null) {
-                        "$platform 包缺少许可声明 $notice"
-                    }
+            }
+            val backgrounds = zip.getEntry("META-INF/molifox/default-backgrounds.zip")
+            check(backgrounds != null) { "桌面 JAR 缺少默认背景压缩资源" }
+            val backgroundNames = mutableSetOf<String>()
+            ZipInputStream(zip.getInputStream(backgrounds)).use { archive ->
+                while (true) {
+                    val entry = archive.nextEntry ?: break
+                    if (!entry.isDirectory) backgroundNames += entry.name
                 }
-                // 用户协议随包发布：四种界面语言各一份，缺任何一份都会让对应语言的阅读页空白。
-                val agreements =
-                    listOf(
-                        "AGREEMENT.md",
-                        "AGREEMENT.en-US.md",
-                        "AGREEMENT.zh-TW.md",
-                        "AGREEMENT.zh-HK.md",
-                    )
-                for (agreement in agreements) {
-                    check(zip.getEntry("META-INF/molifox/$agreement") != null) {
-                        "$platform 包缺少用户协议 $agreement"
-                    }
-                }
-                // 运行时依赖不再内嵌；jar 里只留清单。
-                val backgrounds = zip.getEntry("META-INF/molifox/default-backgrounds.zip")
-                check(backgrounds != null) { "$platform 包缺少默认背景压缩资源" }
-                val backgroundNames = mutableSetOf<String>()
-                ZipInputStream(zip.getInputStream(backgrounds)).use { archive ->
-                    while (true) {
-                        val entry = archive.nextEntry ?: break
-                        if (!entry.isDirectory) backgroundNames += entry.name
-                    }
-                }
-                check(backgroundNames == setOf("default-light.jpg", "default-dark.jpg")) {
-                    "$platform 包的默认背景资源不完整"
-                }
-                check(zip.getEntry("backgrounds/default-backgrounds.zip") == null) {
-                    "$platform 包重复嵌入默认背景"
-                }
-                check(zip.getEntry("icons/app/icon.png") != null) { "$platform 包缺少窗口图标" }
-                for (name in listOf("icon.ico", "icon-white-1024.png", "icon-white-300.png")) {
-                    check(zip.getEntry("icons/app/$name") == null) { "$platform 包包含多余图标 $name" }
-                }
-                val embedded =
-                    zip.entries().asSequence().filter {
-                        it.name.startsWith("molifox-dependencies/")
-                    }
-                check(!embedded.iterator().hasNext()) { "MoliFox.jar 仍然内嵌了运行时依赖" }
+            }
+            check(backgroundNames == setOf("default-light.jpg", "default-dark.jpg")) {
+                "桌面 JAR 的默认背景资源不完整"
+            }
+            check(zip.getEntry("backgrounds/default-backgrounds.zip") == null) {
+                "桌面 JAR 重复嵌入默认背景"
+            }
+            check(zip.getEntry("icons/app/icon.png") != null) { "桌面 JAR 缺少窗口图标" }
+            for (name in listOf("icon.ico", "icon-white-1024.png", "icon-white-300.png")) {
+                check(zip.getEntry("icons/app/$name") == null) { "桌面 JAR 包含多余图标 $name" }
+            }
+            check(
+                zip.entries().asSequence().none {
+                    it.name.startsWith("molifox-dependencies/")
+                },
+            ) { "MoliFox.jar 仍然内嵌了运行时依赖" }
+
+            val expected =
+                mapOf(
+                    "molifox-runtime-windows-x64.json" to "-windows-x64",
+                    "molifox-runtime-windows-arm64.json" to "-windows-arm64",
+                    "molifox-runtime-linux-x64.json" to "-linux-x64",
+                    "molifox-runtime-linux-arm64.json" to "-linux-arm64",
+                    "molifox-runtime-macos-x64.json" to "-macos-x64",
+                    "molifox-runtime-macos-arm64.json" to "-macos-arm64",
+                )
+            expected.forEach { (resource, nativeTag) ->
+                val entry = checkNotNull(zip.getEntry(resource)) { "桌面 JAR 缺少 $resource" }
                 val json =
-                    zip
-                        .getInputStream(zip.getEntry("molifox-runtime.json") ?: error("缺少运行时清单"))
-                        .reader()
-                        .use { groovy.json.JsonSlurper().parse(it) as Map<*, *> }
+                    zip.getInputStream(entry).reader().use {
+                        groovy.json.JsonSlurper().parse(it) as Map<*, *>
+                    }
                 val dependencies = (json["dependencies"] as List<*>).map { it as Map<*, *> }
-                check(dependencies.isNotEmpty()) { "运行时清单为空" }
-                check(dependencies.filter { it["group"] == "com.materialkolor" }.all {
-                    it["filename"] == "${it["artifact"]}-${it["version"]}.jar"
-                }) { "Material 运行依赖的文件名不符合 Maven 下载路径" }
-                check((json["version"] as String).contains("-")) { "清单版本号缺少依赖哈希" }
+                check(dependencies.isNotEmpty()) { "$resource 运行时清单为空" }
+                check((json["version"] as String).contains("-")) { "$resource 清单版本号缺少依赖哈希" }
+                check(
+                    dependencies.filter { it["group"] == "com.materialkolor" }.all {
+                        it["filename"] == "${it["artifact"]}-${it["version"]}.jar"
+                    },
+                ) { "$resource Material 运行依赖的文件名不符合 Maven 下载路径" }
                 for (dependency in dependencies) {
                     val filename = dependency["filename"] as String
                     check(filename.matches(Regex("[A-Za-z0-9_.+-]+\\.jar"))) { "文件名不合法" }
@@ -753,29 +906,29 @@ tasks.register("verifyDesktopPackages") {
                     dependencies.filter {
                         (it["filename"] as String).startsWith("skiko-awt-runtime-")
                     }
-                check(native.size == 1) { "清单应只有一个 skiko 原生库：$native" }
-                check((native.single()["filename"] as String).contains("-$platform-x64")) {
-                    "Wrong platform native library"
+                check(native.size == 1) { "$resource 应只有一个 skiko 原生库：$native" }
+                check((native.single()["filename"] as String).contains(nativeTag)) {
+                    "$resource 的 skiko 架构不正确"
                 }
                 check(
                     dependencies.any {
                         (it["filename"] as String).startsWith("kotlin-stdlib-")
                     },
-                ) {
-                    "清单缺少 kotlin-stdlib"
-                }
-                check(zip.getEntry("dev/molifox/desktop/AppearancePageKt.class") != null)
-                check(zip.getEntry("dev/molifox/bootstrap/BootstrapMainKt.class") != null)
-                check(
-                    checkNotNull(zip.getEntry("dev/molifox/bootstrap/BootstrapMainKt.class")).size >
-                        0,
-                )
+                ) { "$resource 缺少 kotlin-stdlib" }
             }
+            check(zip.getEntry("molifox-runtime.json") == null) { "桌面 JAR 不应带回退主清单" }
         }
         val report = rootProject.file("build/validation/desktop-packages.md")
         report.parentFile.mkdirs()
         report.writeText(
-            "# Desktop package verification\n\n- Runtime dependency manifest: present, hashes recorded\n- Embedded runtime jars: none (downloaded on first launch)\n- Windows skiko native: declared in manifest, windows-x64\n- Linux skiko native: declared in manifest, linux-x64\n- Linux desktop runtime: structure checked here; launcher UI and EasyTier core start were executed separately in WSL Arch + Xvfb (software rendering), not on this Windows host\n",
+            "# Desktop package verification\n\n" +
+                "- Artifacts: MoliFox.exe, MoliFox.run, MoliFox.jar\n" +
+                "- Universal JAR: six runtime manifests (Windows/Linux/macOS x64/ARM64), no fallback manifest\n" +
+                "- Embedded runtime jars: none (downloaded on first launch)\n" +
+                "- Windows shell: one 32-bit exe serves x64 and ARM64; Java/JAR paths are fixed names\n" +
+                "- Linux shell: one .run contains the same universal JAR; launcher selects by os.arch\n" +
+                "- Windows/Linux ARM64 and macOS: package/manifest assembled; not executed on ARM or macOS hardware\n" +
+                "- Linux desktop runtime: structure checked here; launcher UI was started separately in WSL Arch + Xvfb (software rendering), not on this Windows host\n",
         )
     }
 }
@@ -789,6 +942,7 @@ java {
 
 dependencies {
     implementation("com.materialkolor:material-kolor:4.0.5")
+    implementation("org.openani.mediamp:mediamp-mpv:0.5.3")
     implementation(project(":launcher-core"))
     implementation(project(":multiplayer-core"))
     implementation(project(":launcher-bootstrap"))
@@ -1083,12 +1237,27 @@ tasks.register<JavaExec>("nativePickerSmoke") {
 
 tasks.register<JavaExec>("appearanceUiSmoke") {
     group = "verification"
+    description = "Windows appearance UI check with automatic removal of its isolated test data"
     dependsOn("uiChecksClasses")
     classpath =
         files(uiChecksCompilation.output.allOutputs, uiChecksCompilation.runtimeDependencyFiles)
     mainClass.set("dev.molifox.desktop.checks.UiSmokeMainKt")
     systemProperty("molifox.ui.refinements", "true")
+    // 附带 -Dmolifox.ui.colorsOnly=true 时只跑 ThemeColorCases 的配色来源流程；默认跑 refinements 全套。
+    systemProperty(
+        "molifox.ui.colorsOnly",
+        providers.systemProperty("molifox.ui.colorsOnly").getOrElse("false"),
+    )
+    // UiSmokeMain 要求测试数据固定隔离在 tests/.tmp 下，运行结束即清理，失败时保留现场。
+    val testDirectory =
+        rootProject.layout.projectDirectory
+            .dir("tests/.tmp/${project.name}-appearanceUiSmoke")
+            .asFile
+    systemProperty("molifox.test.dir", testDirectory.absolutePath)
     jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dcompose.accessibility.enable=true")
     workingDir(rootProject.projectDir)
-    timeout.set(Duration.ofMinutes(4))
+    timeout.set(Duration.ofMinutes(6))
+    doLast {
+        testDirectory.deleteRecursively()
+    }
 }

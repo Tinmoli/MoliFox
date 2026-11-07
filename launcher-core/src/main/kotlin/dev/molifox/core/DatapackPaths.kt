@@ -180,7 +180,7 @@ internal class DatapackPaths(
         val directory = attributes.isDirectory
         if (!directory && !(attributes.isRegularFile && name.endsWith(".zip", true))) return null
         // 两条列表都没有 = 原版默认启用。
-        val enabled = packs?.enabledOf(name)
+        val enabled = packs?.isEnabled(name)
         return DatapackEntry(
             name = name,
             path = path,

@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.visible
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import dev.molifox.desktop.MoliButton as Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
@@ -83,9 +82,9 @@ fun ColumnScope.HomePage(
     val hasAccount = state.data.accounts.any { it.id == state.data.activeAccountId }
     val busy =
         if (selected == null) {
-            actions.controller.busy
+            rememberLauncherBusy(actions)
         } else {
-            actions.controller.isInstanceBusy(selected.id)
+            rememberInstanceBusy(actions, selected.id)
         }
     // 启动进度只读真实的排队/运行任务，不凭空造一份「launching」状态。
     val launchJob =

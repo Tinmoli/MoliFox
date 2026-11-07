@@ -12,7 +12,6 @@ import java.nio.file.Path
 import java.util.Base64
 import javax.imageio.ImageIO
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 
 private const val SERVERS_FILE = "servers.dat"

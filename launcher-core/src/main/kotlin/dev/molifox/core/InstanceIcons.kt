@@ -52,7 +52,7 @@ enum class InstanceIconStyle(
         get() = I18n.t(titleKey)
 }
 
-internal fun validInstanceIcon(file: Path): Boolean =
+internal fun isValidInstanceIcon(file: Path): Boolean =
     runCatching {
         if (
             !file.isRegularFile() ||
@@ -168,14 +168,14 @@ class InstanceIcons(
             if (instance.iconStyle == InstanceIconStyle.Custom) {
                 return@withContext runCatching {
                     managed(instance.iconId).takeIf {
-                        validInstanceIcon(it) && digest(it, "SHA-256") == instance.iconId
+                        isValidInstanceIcon(it) && digest(it, "SHA-256") == instance.iconId
                     }
                 }.getOrNull()
             }
             if (instance.iconStyle == InstanceIconStyle.Auto && instance.packIconId.isNotBlank()) {
                 runCatching {
                     managed(instance.packIconId).takeIf {
-                        validInstanceIcon(it) && digest(it, "SHA-256") == instance.packIconId
+                        isValidInstanceIcon(it) && digest(it, "SHA-256") == instance.packIconId
                     }
                 }.getOrNull()
                     ?.let {
@@ -212,7 +212,7 @@ class InstanceIcons(
             val candidates = iconCandidates(store, instance, version)
             val settings = version.resolve("PCL/Setup.ini")
             appendPclLogo(candidates, version, parseSetupIni(store, settings))
-            candidates.firstOrNull(::validInstanceIcon)
+            candidates.firstOrNull(::isValidInstanceIcon)
         }
 
     suspend fun setCustom(
@@ -231,7 +231,7 @@ class InstanceIcons(
         fromPack: Boolean,
     ) = withContext(Dispatchers.IO) {
         val original = store.instance(instanceId)
-        require(validInstanceIcon(source)) { I18n.t("instA2.icon.invalidSource") }
+        require(isValidInstanceIcon(source)) { I18n.t("instA2.icon.invalidSource") }
         root.createDirectories()
         val staging = safePath(root, ".${UUID.randomUUID()}.tmp")
         try {
@@ -239,7 +239,7 @@ class InstanceIcons(
                 Files.newInputStream(source).use { it.readNBytes(MAX_ICON_BYTES.toInt() + 1) }
             require(bytes.size <= MAX_ICON_BYTES) { I18n.t("instA2.icon.changedOrTooLarge") }
             staging.writeBytes(bytes)
-            require(validInstanceIcon(staging)) { I18n.t("instA2.icon.changedOrBroken") }
+            require(isValidInstanceIcon(staging)) { I18n.t("instA2.icon.changedOrBroken") }
             val image = ImageIO.read(staging.toFile())
             ImageIO.write(image, "png", staging.toFile())
             val hash = digest(staging, "SHA-256")

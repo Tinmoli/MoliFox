@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -23,9 +24,9 @@ import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
 import dev.molifox.core.ReleaseVersion
+import dev.molifox.core.i18n.Strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -97,7 +98,7 @@ internal fun ColumnScope.InstallGamePage(
             onChannelChange = { channel = it },
             selected = selected,
             onSelect = { selected = it },
-            busy = actions.controller.busy,
+            busy = rememberLauncherBusy(actions),
             onRefresh = { refresh++ },
         )
         InstallOptionsPanel(
@@ -140,27 +141,34 @@ private fun VersionListEffect(
     onVersions: (List<ReleaseVersion>) -> Unit,
     onSelect: (String) -> Unit,
 ) {
-    val strings = LocalStrings.current
+    // lambda 参数与 strings 每次重组都是新实例（strings 随语言切换变化）；rememberUpdatedState
+    // 让 effect 只随 refresh 重启，执行时读到最新回调与当前语言文案，避免一直显示旧翻译。
+    val latestSelected by rememberUpdatedState(currentSelected)
+    val latestOnLoadingChange by rememberUpdatedState(onLoadingChange)
+    val latestOnErrorChange by rememberUpdatedState(onErrorChange)
+    val latestOnVersions by rememberUpdatedState(onVersions)
+    val latestOnSelect by rememberUpdatedState(onSelect)
+    val latestStrings by rememberUpdatedState(LocalStrings.current)
     LaunchedEffect(refresh) {
-        onLoadingChange(true)
-        onErrorChange(null)
+        latestOnLoadingChange(true)
+        latestOnErrorChange(null)
         try {
             val loaded =
                 withContext(Dispatchers.IO) { actions.controller.installer.versions(refresh > 0) }
-            onVersions(loaded)
-            if (currentSelected().isBlank()) {
-                onSelect(loaded.firstOrNull { it.type == "release" }?.id.orEmpty())
+            latestOnVersions(loaded)
+            if (latestSelected().isBlank()) {
+                latestOnSelect(loaded.firstOrNull { it.type == "release" }?.id.orEmpty())
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: IOException) {
-            onErrorChange(failure.message ?: strings.t("deskE.install.versionLoadFailed"))
+            latestOnErrorChange(failure.message ?: latestStrings.t("deskE.install.versionLoadFailed"))
         } catch (failure: JsonParseException) {
-            onErrorChange(failure.message ?: strings.t("deskE.install.versionLoadFailed"))
+            latestOnErrorChange(failure.message ?: latestStrings.t("deskE.install.versionLoadFailed"))
         } catch (failure: IllegalStateException) {
-            onErrorChange(failure.message ?: strings.t("deskE.install.versionLoadFailed"))
+            latestOnErrorChange(failure.message ?: latestStrings.t("deskE.install.versionLoadFailed"))
         } finally {
-            onLoadingChange(false)
+            latestOnLoadingChange(false)
         }
     }
 }
@@ -178,23 +186,17 @@ private fun SupportedVersionsEffect(
     onSelect: (String) -> Unit,
     onResetQuery: () -> Unit,
 ) {
+    // lambda 参数每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // 让两个 effect 只随各自的 key（loader / supported+versions+selected）重启，执行时读到最新回调。
+    val latestLoader by rememberUpdatedState(currentLoader)
+    val latestOnSupported by rememberUpdatedState(onSupported)
+    val latestOnSelect by rememberUpdatedState(onSelect)
+    val latestOnResetQuery by rememberUpdatedState(onResetQuery)
     LaunchedEffect(loader) {
-        if (loader == LoaderType.Vanilla) {
-            onSupported(null)
-            return@LaunchedEffect
-        }
-        onSupported(null)
-        val loaded =
-            try {
-                withContext(Dispatchers.IO) {
-                    actions.controller.installer.supportedGameVersions(loader)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-        if (currentLoader() == loader) onSupported(loaded)
+        latestOnSupported(null)
+        if (loader == LoaderType.Vanilla) return@LaunchedEffect
+        val loaded = loadSupportedGameVersions(actions, loader)
+        if (latestLoader() == loader) latestOnSupported(loaded)
     }
     LaunchedEffect(supported, versions, selected) {
         val allowed = supported ?: return@LaunchedEffect
@@ -203,10 +205,25 @@ private fun SupportedVersionsEffect(
             versions
                 .filter { it.id in allowed }
                 .maxByOrNull { it.releaseTime }
-        onSelect(fallback?.id.orEmpty())
-        onResetQuery()
+        latestOnSelect(fallback?.id.orEmpty())
+        latestOnResetQuery()
     }
 }
+
+/** 拉取受限加载器支持的游戏版本；加载失败时返回 null，由调用方决定回退行为，取消继续向上传播。 */
+private suspend fun loadSupportedGameVersions(
+    actions: UiActions,
+    loader: LoaderType,
+): Set<String>? =
+    try {
+        withContext(Dispatchers.IO) {
+            actions.controller.installer.supportedGameVersions(loader)
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
 
 /** 跟随选中的游戏版本与加载器重新拉取加载器版本；切换过快时只保留最后一次结果。 */
 @Composable
@@ -221,37 +238,56 @@ private fun LoaderVersionEffect(
     onError: (String?) -> Unit,
     onLoading: (Boolean) -> Unit,
 ) {
-    val strings = LocalStrings.current
+    // lambda 参数与 strings 每次重组都是新实例；rememberUpdatedState 让 effect 只随 (selected, loader) 重启并读到最新回调与文案。
+    val latestSelected by rememberUpdatedState(currentSelected)
+    val latestLoader by rememberUpdatedState(currentLoader)
+    val latestOnLoaders by rememberUpdatedState(onLoaders)
+    val latestOnLoaderVersion by rememberUpdatedState(onLoaderVersion)
+    val latestOnError by rememberUpdatedState(onError)
+    val latestOnLoading by rememberUpdatedState(onLoading)
+    val latestStrings by rememberUpdatedState(LocalStrings.current)
     LaunchedEffect(selected, loader) {
-        val requestedVersion = selected
-        val requestedLoader = loader
-        onLoaders(emptyList())
-        onLoaderVersion("")
-        onError(null)
-        onLoading(false)
+        latestOnLoaders(emptyList())
+        latestOnLoaderVersion("")
+        latestOnError(null)
+        latestOnLoading(false)
         if (loader == LoaderType.Vanilla || selected.isBlank()) return@LaunchedEffect
-        onLoading(true)
+        latestOnLoading(true)
         try {
-            val loaded =
-                withContext(Dispatchers.IO) {
-                    actions.controller.installer.loaderVersions(requestedLoader, requestedVersion)
-                }
-            onLoaders(loaded)
-            onLoaderVersion(
-                (loaded.firstOrNull { it.stable } ?: loaded.firstOrNull())?.version.orEmpty(),
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: IOException) {
-            onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
-        } catch (failure: JsonParseException) {
-            onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
-        } catch (failure: IllegalStateException) {
-            onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
-        } finally {
-            if (currentSelected() == requestedVersion && currentLoader() == requestedLoader) {
-                onLoading(false)
+            val loaded = loadLoaderVersions(actions, loader, selected, latestStrings, latestOnError)
+            if (loaded != null) {
+                latestOnLoaders(loaded)
+                latestOnLoaderVersion(
+                    (loaded.firstOrNull { it.stable } ?: loaded.firstOrNull())?.version.orEmpty(),
+                )
             }
+        } finally {
+            if (latestSelected() == selected && latestLoader() == loader) latestOnLoading(false)
         }
     }
 }
+
+/** 拉取加载器版本列表；失败时用 onError 上报本地化文案并返回 null，取消继续向上传播。 */
+private suspend fun loadLoaderVersions(
+    actions: UiActions,
+    loader: LoaderType,
+    gameVersion: String,
+    strings: Strings,
+    onError: (String?) -> Unit,
+): List<LoaderVersion>? =
+    try {
+        withContext(Dispatchers.IO) {
+            actions.controller.installer.loaderVersions(loader, gameVersion)
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: IOException) {
+        onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
+        null
+    } catch (failure: JsonParseException) {
+        onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
+        null
+    } catch (failure: IllegalStateException) {
+        onError(failure.message ?: strings.t("deskE.install.loaderLoadFailed"))
+        null
+    }

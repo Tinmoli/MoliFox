@@ -15,35 +15,25 @@ import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.ContentDependency
 import dev.molifox.core.ContentDetails
 import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentVersion
-import dev.molifox.desktop.platform.dialogs.PickMode
-import dev.molifox.desktop.platform.dialogs.PickRequest
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.swing.Swing
-import kotlinx.coroutines.withContext
-import java.nio.file.Path
+import dev.molifox.core.GameInstance
 
-/** 模组/资源包/光影/数据包/世界：先让用户确认安装位置，再把确认结果交给对话框。 */
+/** 安装按钮：选好实例/存档后直接排队，进度只进任务中心；整合包仍先预览。 */
 internal fun contentDownload(
     actions: UiActions,
     hit: ContentHit,
     version: ContentVersion,
-    instanceId: String?,
-    worldName: String,
-    defaultDestination: Path?,
-    instanceRoot: Path?,
-    onDestination: (Path) -> Unit,
-    onConfirmDatapack: () -> Unit,
-    onConfirmWorld: () -> Unit,
-    onInstallVersion: () -> Unit,
+    target: GameInstance?,
+    ui: ContentProjectUiState,
     onInstallStarted: () -> Unit,
+    onError: (String) -> Unit,
 ) {
     if (hit.type == "modpack") {
         actions.run {
@@ -52,62 +42,168 @@ internal fun contentDownload(
         onInstallStarted()
         return
     }
-    // 世界落点由包内世界目录决定，不需要用户再挑文件夹，只确认安装到哪个实例。
-    if (hit.type == "world") {
-        onConfirmWorld()
-        return
-    }
-    actions.run {
-        chooseContentDirectory(actions, hit, instanceId, worldName, defaultDestination, instanceRoot) { picked ->
-            onDestination(picked)
-            if (hit.type == "datapack") onConfirmDatapack() else onInstallVersion()
+    val instance = target ?: return
+    when (hit.type) {
+        "world" -> {
+            actions.run { actions.controller.installWorld(hit, version.id, instance.id, null) }
+            onInstallStarted()
         }
+
+        "datapack" ->
+            downloadDatapack(
+                actions,
+                hit,
+                version,
+                instance,
+                ui,
+                onInstallStarted,
+                onError,
+            )
+
+        else -> installContentToInstance(actions, hit, version, instance, ui, onInstallStarted, onError)
     }
 }
 
-/** 新实例可能还没有 resourcepacks / shaderpacks：先建出目录，选择器停在将来真正写入的位置。 */
-private suspend fun chooseContentDirectory(
+/** 数据包项目的两个安装分支：模组版走普通模组安装，数据包版必须写入具体存档。 */
+private fun downloadDatapack(
     actions: UiActions,
     hit: ContentHit,
-    instanceId: String?,
-    worldName: String,
-    defaultDestination: Path?,
-    instanceRoot: Path?,
-    onPicked: (Path) -> Unit,
+    version: ContentVersion,
+    instance: GameInstance,
+    ui: ContentProjectUiState,
+    onInstallStarted: () -> Unit,
+    onError: (String) -> Unit,
 ) {
-    val directory =
-        if (instanceId == null) {
-            defaultDestination
-        } else {
-            runCatching {
-                actions.controller.content.ensureContentDestination(instanceId, hit.type, worldName)
-            }.getOrNull() ?: defaultDestination
+    if (contentVersionInstallKind(hit, version) == "mod") {
+        installContentToInstance(
+            actions,
+            hit.copy(type = "mod"),
+            version,
+            instance,
+            ui,
+            onInstallStarted,
+            onError,
+        )
+        return
+    }
+    if (ui.worldName.isBlank()) {
+        onError(tr("dialogs.content.noWorlds"))
+        return
+    }
+    actions.run { actions.controller.installDatapack(hit, version.id, instance.id, ui.worldName) }
+    onInstallStarted()
+}
+
+/** 普通内容直接排队安装；发现同名冲突时先挂起计划，等用户选择替换或跳过。 */
+private fun installContentToInstance(
+    actions: UiActions,
+    hit: ContentHit,
+    version: ContentVersion,
+    instance: GameInstance,
+    ui: ContentProjectUiState,
+    onInstallStarted: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    val instanceRoot = runCatching { actions.controller.store.instancePath(instance.id) }.getOrNull()
+    val destinationFolder = contentFolderOf(instanceRoot, ui.destination)
+    actions.run {
+        ui.installing = true
+        ui.installError = null
+        try {
+            val loaded =
+                loadInstallPlan(
+                    actions = actions,
+                    hit = hit,
+                    instanceId = instance.id,
+                    selected = emptySet(),
+                    versionId = version.id,
+                    knownDetails = ui.details,
+                    source = null,
+                    relatedSources = emptyList(),
+                    destinationFolder = destinationFolder,
+                ).getOrElse {
+                    onError(it.message ?: tr("dialogs.content.project.unavailable"))
+                    return@run
+                }
+            // 依赖默认不装：开关打开时才把未安装的依赖随主文件一起装。
+            val selected = selectedDependencyIds(ui, loaded.plan)
+            installOrConfirmPlan(
+                actions = actions,
+                ui = ui,
+                plan = planWithSelectedDependencies(loaded.plan, selected),
+                instanceRoot = instanceRoot,
+                onInstallStarted = onInstallStarted,
+                onError = onError,
+            )
+        } finally {
+            ui.installing = false
         }
-    val picked =
-        actions
-            .choose(
-                PickRequest(
-                    title = contentPickTitle(hit.type),
-                    mode = PickMode.Directory,
-                    initialDirectory = directory ?: actions.controller.store.dataDirectory,
-                ),
-            ).firstOrNull()
-    withContext(Dispatchers.Swing) {
-        if (picked == null) return@withContext
-        if (instanceRoot == null) {
-            actions.controller.store.notify(tr("deskD.content.instanceRequired"))
-            return@withContext
-        }
-        onPicked(picked)
     }
 }
 
-private fun contentPickTitle(type: String): String =
-    if (type == "datapack") {
-        tr("deskD.content.pickTitleDatapack")
-    } else {
-        tr("deskD.content.pickTitleDefault")
+/** 另存为：只下载选中版本的主文件，不安装、不写实例目录。 */
+internal fun saveContentAs(
+    actions: UiActions,
+    hit: ContentHit,
+    version: ContentVersion,
+) {
+    val extension = contentSaveExtension(hit, version)
+    actions.run {
+        val destination =
+            actions
+                .choose(
+                    title = tr("deskD.content.saveAsTitle", hit.title),
+                    save = true,
+                    extensions = listOf(extension),
+                    defaultName = contentSaveDefaultName(hit.title, extension),
+                    initialDirectory = actions.controller.store.downloadDirectory,
+                ).firstOrNull()
+                ?: return@run
+        actions.controller.saveContentFile(hit, version.id, destination)
     }
+}
+
+/** 另存为的默认扩展名；用户仍可在系统保存框里改文件名或选“所有文件”。 */
+internal fun contentSaveExtension(
+    hit: ContentHit,
+    version: ContentVersion,
+): String =
+    when {
+        hit.type == "mod" -> "jar"
+        hit.type == "datapack" && contentVersionInstallKind(hit, version) == "mod" -> "jar"
+        hit.type == "modpack" && hit.id.startsWith("curseforge:") -> "zip"
+        hit.type == "modpack" -> "mrpack"
+        else -> "zip"
+    }
+
+internal fun contentSaveDefaultName(
+    title: String,
+    extension: String,
+): String {
+    val safe = title.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { "content" }
+    return "$safe.$extension"
+}
+
+/** 依赖标签页：显示依赖项目的标题和简介，点整行进入该项目的详情。 */
+internal fun LazyListScope.contentDependencyItems(
+    dependencies: List<ContentDependency>,
+    hits: Map<String, ContentHit>,
+    onOpenProject: (ContentHit) -> Unit,
+) {
+    if (dependencies.isEmpty()) {
+        item {
+            Text(
+                LocalStrings.current.t("dialogs.content.dependencies.empty"),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    items(dependencies, key = { "${it.projectId}:${it.versionId}:${it.type}" }) { dependency ->
+        ContentDependencyRow(dependency, hits[dependency.projectId], onOpenProject)
+    }
+}
 
 /** 项目介绍：Modrinth 的 body 是 Markdown（可能夹带内联 HTML），交给 MarkdownText 渲染。 */
 internal fun LazyListScope.contentDescriptionItem(details: ContentDetails?) {
@@ -175,7 +271,7 @@ internal fun LazyListScope.contentRecommendationItem(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    TextButton({ onChoose(best) }) { Text(strings.t("deskD.content.chooseRecommended")) }
+                    MoliTextButton({ onChoose(best) }) { Text(strings.t("deskD.content.chooseRecommended")) }
                 }
             }
         }
@@ -187,6 +283,7 @@ internal fun LazyListScope.contentVersionItems(
     loading: Boolean,
     versions: List<ContentVersion>,
     versionId: String,
+    formatLabel: (ContentVersion) -> String?,
     onSelect: (ContentVersion) -> Unit,
     onResetFilters: () -> Unit,
 ) {
@@ -198,11 +295,16 @@ internal fun LazyListScope.contentVersionItems(
                 strings.t("deskD.content.noVersionsHint"),
                 Icons.Outlined.SearchOff,
             ) {
-                TextButton(onResetFilters) { Text(strings.t("deskD.content.showAllVersions")) }
+                MoliTextButton(onResetFilters) { Text(strings.t("deskD.content.showAllVersions")) }
             }
         }
     }
     items(versions, key = { it.id }) { version ->
-        ContentProjectVersionRow(version, version.id == versionId, onSelect)
+        ContentProjectVersionRow(
+            version = version,
+            selected = version.id == versionId,
+            formatLabel = formatLabel(version),
+            onSelect = onSelect,
+        )
     }
 }

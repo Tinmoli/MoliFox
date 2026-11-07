@@ -15,11 +15,9 @@ import java.nio.file.StandardCopyOption
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.extension
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.writeBytes
 
@@ -115,7 +113,7 @@ class SkinLibrary(
             require(name.isNotBlank() && name.trim().length <= MAX_SKIN_NAME_LENGTH) {
                 I18n.t("core.skinLibrary.6")
             }
-            require(validSkinTexture(source)) { I18n.t("core.skinLibrary.7") }
+            require(isValidSkinTexture(source)) { I18n.t("core.skinLibrary.7") }
             // Snapshot once: do not trust a user-selected file to stay unchanged while being
             // imported.
             val bytes = Files.newInputStream(source).use { it.readNBytes(MAX_SKIN_FILE_BYTES + 1) }
@@ -129,7 +127,7 @@ class SkinLibrary(
                 val staging = safePath(root, "$id.tmp")
                 try {
                     staging.writeBytes(bytes)
-                    require(validSkinTexture(staging)) { I18n.t("core.skinLibrary.10") }
+                    require(isValidSkinTexture(staging)) { I18n.t("core.skinLibrary.10") }
                     val hash = digest(staging, "SHA-256")
                     entries
                         .find { it.sha256 == hash && it.variant == variant }
@@ -157,7 +155,7 @@ class SkinLibrary(
             synchronized(this@SkinLibrary) {
                 val entry = readEntries().find { it.id == id } ?: error(I18n.t("core.skinLibrary.11"))
                 val file = safePath(root, "${entry.id}.png")
-                require(validSkinTexture(file) && digest(file, "SHA-256") == entry.sha256) {
+                require(isValidSkinTexture(file) && digest(file, "SHA-256") == entry.sha256) {
                     I18n.t("core.skinLibrary.12")
                 }
                 file
@@ -194,7 +192,7 @@ internal suspend fun exportSkinTexture(
     source: Path,
     destination: Path,
 ) = withContext(Dispatchers.IO) {
-    require(validSkinTexture(source)) { I18n.t("core.skinLibrary.15") }
+    require(isValidSkinTexture(source)) { I18n.t("core.skinLibrary.15") }
     require(destination.extension.equals("png", true)) { I18n.t("core.skinLibrary.16") }
     val target = destination.toAbsolutePath().normalize()
     require(target != source.toAbsolutePath().normalize() && !Files.isSymbolicLink(target)) {
@@ -204,7 +202,7 @@ internal suspend fun exportSkinTexture(
     val staging = Files.createTempFile(target.parent, ".molifox-skin-", ".tmp")
     try {
         Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
-        require(validSkinTexture(staging)) { I18n.t("core.skinLibrary.18") }
+        require(isValidSkinTexture(staging)) { I18n.t("core.skinLibrary.18") }
         Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING)
     } finally {
         staging.deleteIfExists()
@@ -215,7 +213,7 @@ internal fun validateUploadSkin(
     file: Path,
     variant: SkinVariant,
 ) {
-    require(validSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
+    require(isValidSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
     val image = ImageIO.read(file.toFile())
     require(
         image.width == STANDARD_SKIN_WIDTH &&
@@ -237,7 +235,7 @@ internal fun validateLocalSkinFile(
     file: Path,
     variant: SkinVariant,
 ) {
-    require(validSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
+    require(isValidSkinTexture(file)) { I18n.t("core.skinLibrary.19") }
     val image = ImageIO.read(file.toFile()) ?: error(I18n.t("core.skinLibrary.19"))
     try {
         require(

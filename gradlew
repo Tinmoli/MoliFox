@@ -92,7 +92,16 @@ APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exi
 GRADLE_USER_HOME=${GRADLE_USER_HOME:-"$APP_HOME/.dev/gradle-home"}
 TMPDIR="$APP_HOME/.dev/work/build-tmp"
 mkdir -p "$TMPDIR" || exit
-JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=\"$TMPDIR\""
+# Git Bash/MSYS 下上面算出的是 POSIX 路径，而这里的 JVM 是 Windows 版，只认 Windows 路径；
+# 不转换会导致 JVM 找不到 java.io.tmpdir/GRADLE_USER_HOME（临时文件与依赖缓存创建失败）。
+# cygpath -m 输出 E:/... 的混合斜杠形式，Java 可直接使用；非 MSYS 环境（如 Linux）保持原样。
+if command -v cygpath >/dev/null 2>&1; then
+    GRADLE_USER_HOME="$(cygpath -m "$GRADLE_USER_HOME")"
+    JVM_TMPDIR="$(cygpath -m "$TMPDIR")"
+else
+    JVM_TMPDIR="$TMPDIR"
+fi
+JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=\"$JVM_TMPDIR\""
 export GRADLE_USER_HOME TMPDIR JAVA_TOOL_OPTIONS
 
 # Use the maximum available, or set MAX_FD != -1 to use that value.

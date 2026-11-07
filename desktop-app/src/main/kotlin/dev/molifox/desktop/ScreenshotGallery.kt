@@ -5,6 +5,7 @@
 
 package dev.molifox.desktop
 
+import androidx.collection.LruCache
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,13 +32,25 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.GameScreenshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import org.jetbrains.skia.Image as SkiaImage
+
+/** 缩略图缓存条目上限：网格与预览同屏用量远到不了这个数。 */
+private const val SCREENSHOT_THUMBNAIL_CACHE_ENTRIES = 64
+
+/**
+ * 截图缩略图的解码结果缓存，键是截图记录加请求尺寸（网格 480 与预览 1024 各占一项）。
+ * 网格滚动、开关预览会让同一截图反复进入组合，不缓存就每次重新读盘抽样解码。
+ * 这是 UI 展示用的解码缓存，不是业务数据缓存，条目可随时按原流程重建；
+ * 必须有界：截图会被删除、重拍，缓存键含文件修改时间，旧键条目不会再用也不会自动失效，
+ * 无界缓存会让内存随使用增长，超限按 LRU 逐出，被逐出的截图下次显示时重新读盘即可。
+ */
+private val screenshotThumbnailCache =
+    LruCache<Pair<GameScreenshot, Int>, ImageBitmap>(SCREENSHOT_THUMBNAIL_CACHE_ENTRIES)
 
 /** 界面动作的统一失败边界：动作以 lambda 传入，失败类型无法枚举；取消仍原样抛出。 */
 internal suspend fun runScreenshotAction(
@@ -73,7 +86,10 @@ internal fun ScreenshotImageState(
     actions: UiActions,
     size: Int = 480,
 ): State<ImageBitmap?> =
-    produceState<ImageBitmap?>(null, shot, size) {
+    produceState<ImageBitmap?>(screenshotThumbnailCache.get(shot to size), shot, size) {
+        // 键未变且缓存里就是当前显示的位图时才直接保留；刷新会生成同名但修改时间
+        // 更新的记录，组合槽可能保留，旧位图必须重新解码，不能沿用。
+        if (value != null && value == screenshotThumbnailCache.get(shot to size)) return@produceState
         value =
             try {
                 val bytes = actions.controller.screenshots.thumbnail(shot, size)
@@ -85,6 +101,11 @@ internal fun ScreenshotImageState(
             } catch (_: Exception) {
                 null
             }
+        val decoded = value
+        // 解码失败不缓存，保持原有“下次进入组合时重试”的行为。
+        if (decoded != null) {
+            screenshotThumbnailCache.put(shot to size, decoded)
+        }
     }
 
 @Composable

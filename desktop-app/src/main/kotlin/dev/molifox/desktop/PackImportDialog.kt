@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.onClick
 import androidx.compose.foundation.rememberScrollState
@@ -22,7 +21,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,10 +71,10 @@ fun PackImportDialog(
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    TextButton({ selected = preview.optionalFiles.toSet() }) {
+                    MoliTextButton({ selected = preview.optionalFiles.toSet() }) {
                         Text(strings.t("dialogs.packImport.selectAll"))
                     }
-                    TextButton({ selected = emptySet() }) { Text(strings.t("dialogs.packImport.selectNone")) }
+                    MoliTextButton({ selected = emptySet() }) { Text(strings.t("dialogs.packImport.selectNone")) }
                 }
                 preview.optionalFiles.forEach { file ->
                     Row(
@@ -102,7 +100,7 @@ fun PackImportDialog(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) }
+            MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) }
             Spacer(Modifier.width(12.dp))
             PrimaryButton(
                 strings.t("dialogs.packImport.start"),

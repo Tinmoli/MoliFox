@@ -35,7 +35,6 @@ import dev.molifox.core.GameInstance
 import dev.molifox.core.InstanceIconStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException

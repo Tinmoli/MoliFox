@@ -24,10 +24,8 @@ import kotlin.io.path.fileSize
 import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.readText
-import kotlin.io.path.walk
 import kotlin.io.path.writeText
 
 internal const val EVIDENCE_MAX_LENGTH = 1000
@@ -56,6 +54,8 @@ data class LaunchIssue(
     val suggestion: String,
     val evidence: String,
     val directory: String,
+    /** 归属实例名：多局同时运行时，弹窗必须能区分是哪一局退出失败。 */
+    val instance: String = "",
 )
 
 internal fun isGameError(line: String): Boolean =
@@ -410,7 +410,10 @@ internal class LaunchSession(
         failure: Throwable?,
     ) {
         if (failure == null && exit == 0) return
-        val issue = diagnoseGameFailure(failureText(failure), directory)
+        val issue =
+            diagnoseGameFailure(failureText(failure), directory).copy(
+                instance = instance.name,
+            )
         metadata["issue"] = issue
         store.updateState { it.copy(launchIssue = issue) }
         store.log("${issue.title}：${issue.suggestion}", true)

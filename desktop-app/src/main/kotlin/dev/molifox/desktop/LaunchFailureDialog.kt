@@ -5,7 +5,9 @@
 
 package dev.molifox.desktop
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -14,7 +16,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -27,6 +28,7 @@ import dev.molifox.core.LaunchIssue
 internal fun LaunchFailureDialog(
     issue: LaunchIssue,
     onViewLogs: () -> Unit,
+    onExport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -41,6 +43,14 @@ internal fun LaunchFailureDialog(
                 Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
             ) {
                 Text(issue.suggestion, fontSize = 12.sp)
+                if (issue.instance.isNotBlank()) {
+                    Text(
+                        strings.t("dialogs.launchFailure.instance", issue.instance),
+                        modifier = Modifier.padding(top = 8.dp),
+                        fontSize = 12.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                    )
+                }
                 if (issue.evidence.isNotBlank()) {
                     Text(
                         strings.t("dialogs.launchFailure.evidence"),
@@ -66,12 +76,18 @@ internal fun LaunchFailureDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(strings.t("dialogs.common.close"))
+            // 借鉴 PCL：求助时给的是可复现的诊断包，而不是一张窗口截图。
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MoliTextButton(onClick = onExport) {
+                    Text(strings.t("dialogs.launchFailure.export"))
+                }
+                MoliTextButton(onClick = onDismiss) {
+                    Text(strings.t("dialogs.common.close"))
+                }
             }
         },
         dismissButton = {
-            TextButton(
+            MoliTextButton(
                 onClick = {
                     onDismiss()
                     onViewLogs()

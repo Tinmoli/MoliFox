@@ -83,6 +83,7 @@ internal fun settingNote(text: String) = SettingBlock(text, "") { MutedText(text
 
 /**
  * 还原默认配置的取值：设置页负责的选项全部回到出厂值。 游戏目录、游戏目录语义与正版登录身份不属于本页，保持原样；
+ * 协议同意记录不是偏好设置，重置不能让已同意的用户重新被首启弹窗拦住；
  * 已导入的字体、背景图片与左上角图标属于文件资产，只重置它们的选项，不删除文件本身。
  */
 internal fun defaultSettings(
@@ -94,6 +95,7 @@ internal fun defaultSettings(
     return defaults.copy(
         gameRoot = current.gameRoot,
         microsoftClientId = current.microsoftClientId,
+        agreementVersion = current.agreementVersion,
         customFonts = current.customFonts,
         backgroundPath = current.backgroundPath,
         backgroundRevision = current.backgroundRevision,

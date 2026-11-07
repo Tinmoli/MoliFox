@@ -40,6 +40,12 @@ private const val BODY_W = 8
 private const val BODY_H = 12
 private const val BODY_D = 4
 private const val BODY_Y = 18f
+private const val CAPE_TEXTURE_WIDTH = 64
+private const val CAPE_TEXTURE_HEIGHT = 32
+private const val CAPE_Y_OFFSET = 2f
+private const val CAPE_BOX_WIDTH = 10
+private const val CAPE_BOX_HEIGHT = 16
+private const val CAPE_BOX_Z = -3f
 private const val LIMB_W = 4
 private const val LIMB_H = 12
 private const val LIMB_D = 4
@@ -204,7 +210,20 @@ private class SkinRasterizer(
         textureWidth = image.width
         textureHeight = image.height
         texture = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
-        rasterize(listOf(Box(0f, BODY_Y - 2f, 10, 16, 1, 0, 0, z = -3f)))
+        rasterize(
+            listOf(
+                Box(
+                    0f,
+                    BODY_Y - CAPE_Y_OFFSET,
+                    CAPE_BOX_WIDTH,
+                    CAPE_BOX_HEIGHT,
+                    1,
+                    0,
+                    0,
+                    z = CAPE_BOX_Z,
+                ),
+            ),
+        )
     }
 
     fun rasterize(boxes: List<Box>): IntArray {
@@ -491,7 +510,11 @@ object SkinModelRenderer {
                 SkinCamera.of(yaw, pitch, headOnly, width, height),
             )
         val pixels = rasterizer.rasterize(boxes)
-        if (!headOnly && cape != null && cape.width == 64 && cape.height == 32) rasterizer.cape(cape)
+        if (!headOnly) {
+            cape
+                ?.takeIf { it.width == CAPE_TEXTURE_WIDTH && it.height == CAPE_TEXTURE_HEIGHT }
+                ?.let { rasterizer.cape(it) }
+        }
         return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).apply {
             setRGB(0, 0, width, height, pixels, 0, width)
         }

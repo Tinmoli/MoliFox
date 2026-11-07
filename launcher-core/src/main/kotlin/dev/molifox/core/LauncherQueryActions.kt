@@ -7,7 +7,6 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.nio.file.Files

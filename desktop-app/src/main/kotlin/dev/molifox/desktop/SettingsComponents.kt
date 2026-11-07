@@ -41,7 +41,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -59,29 +58,23 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherNoticeKind
 import dev.molifox.core.LauncherSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 // ---------- 即时保存 ----------
@@ -124,9 +117,11 @@ internal fun rememberSliderDraft(
     LaunchedEffect(draft.floatValue) {
         if (draft.floatValue == saved) return@LaunchedEffect
         delay(LIVE_WRITE_DELAY)
-        commit(draft.floatValue)
+        // 写盘（备份复制 + 全量写 JSON）移到 IO：防抖回调跑在界面线程，同步落盘会造成拖动停手时的卡顿。
+        withContext(Dispatchers.IO) { commit(draft.floatValue) }
     }
     DisposableEffect(Unit) {
+        // 销毁补写是一次性收尾：保持同步执行，不依赖可能已随页面取消的作用域，防止丢写。
         onDispose { if (draft.floatValue != saved) runCatching { commit(draft.floatValue) } }
     }
     return draft
@@ -153,9 +148,11 @@ internal fun rememberLiveTextDraft(
     LaunchedEffect(text) {
         if (text == saved) return@LaunchedEffect
         delay(LIVE_WRITE_DELAY)
-        error = commit(text)
+        // 与滑块同口径：写盘移到 IO，界面线程只更新本地草稿与错误提示。
+        error = withContext(Dispatchers.IO) { commit(text) }
     }
     DisposableEffect(Unit) {
+        // 销毁补写是一次性收尾：保持同步执行，不依赖可能已随页面取消的作用域，防止丢写。
         onDispose { if (text != saved) runCatching { commit(text) } }
     }
     return LiveTextDraft(
@@ -177,6 +174,7 @@ internal fun LiveTextField(
     label: String = "",
     placeholder: String = "",
     hint: String? = null,
+    description: String = "",
     enabled: Boolean = true,
     trailing: @Composable (() -> Unit)? = null,
 ) {
@@ -193,6 +191,7 @@ internal fun LiveTextField(
                 Modifier.weight(1f),
                 label = label,
                 placeholder = placeholder,
+                description = description,
                 enabled = enabled,
             )
             trailing?.invoke()
@@ -222,6 +221,7 @@ internal fun LiveNumberField(
     range: IntRange,
     modifier: Modifier = Modifier,
     placeholder: String = "",
+    description: String = "",
     enabled: Boolean = true,
     onCommit: (Int) -> String?,
 ) {
@@ -237,6 +237,7 @@ internal fun LiveNumberField(
             { text -> live.onChange(text.filter(Char::isDigit).take(5)) },
             label = label,
             placeholder = placeholder,
+            description = description,
             enabled = enabled,
         )
         val parsed = live.text.toIntOrNull()
@@ -278,19 +279,6 @@ fun NumberField(
     )
 }
 
-/** 桌面端物理回车提交：BasicTextField 不一定把回车转成 IME Done，这里显式兜住。 */
-private fun Modifier.submitOnEnter(onSubmit: () -> Unit): Modifier =
-    onPreviewKeyEvent { event ->
-        if (event.type == KeyEventType.KeyDown &&
-            (event.key == Key.Enter || event.key == Key.NumPadEnter)
-        ) {
-            onSubmit()
-            true
-        } else {
-            false
-        }
-    }
-
 /** 通用单行输入框：高 34dp、圆角 4、1dp 边（聚焦变主题色），标签与提示 11sp。 所有设置分区共用，替代 M3 `OutlinedTextField` 的 56dp 默认高度。 */
 @Composable
 fun CompactTextField(
@@ -300,6 +288,8 @@ fun CompactTextField(
     label: String = "",
     hint: String? = null,
     placeholder: String = "",
+    /** 仅写进无障碍名不渲染；行标题已经说明用途的字段用它，避免界面出现两份文字。 */
+    description: String = "",
     enabled: Boolean = true,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     // 可选的外部聚焦入口：例如「添加认证服务器」入口打开对话框后直接落焦在地址框上。
@@ -396,33 +386,13 @@ fun CompactTextField(
                         )
                     },
                 modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (focusRequester == null) {
-                                Modifier
-                            } else {
-                                Modifier.focusRequester(focusRequester)
-                            },
-                        ).then(
-                            if (onFocusChange == null) {
-                                Modifier
-                            } else {
-                                Modifier.onFocusChanged { onFocusChange(it.isFocused) }
-                            },
-                        ).then(
-                            if (onSubmit == null) {
-                                Modifier
-                            } else {
-                                Modifier.submitOnEnter(onSubmit)
-                            },
-                        ).then(
-                            if (label.isBlank()) {
-                                Modifier
-                            } else {
-                                Modifier.semantics { contentDescription = label }
-                            },
-                        ),
+                    fieldInteractionModifiers(
+                        focusRequester,
+                        onFocusChange,
+                        onSubmit,
+                        label,
+                        description,
+                    ),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder.isNotBlank()) {
                         Text(
@@ -483,12 +453,18 @@ fun CompactSwitch(
             .alpha(if (enabled) 1f else .38f)
             .clip(RoundedCornerShape(11.dp))
             .background(track)
-            .then(if (onCheckedChange == null) Modifier else Modifier.toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                onValueChange = onCheckedChange,
-            )).padding(3.dp),
+            .then(
+                if (onCheckedChange == null) {
+                    Modifier
+                } else {
+                    Modifier.toggleable(
+                        value = checked,
+                        enabled = enabled,
+                        role = Role.Switch,
+                        onValueChange = onCheckedChange,
+                    )
+                },
+            ).padding(3.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
@@ -563,6 +539,9 @@ fun CompactSlider(
     }
 }
 
+/** 滚动列右侧的滚动条留白；同容器里不滚动的内容（搜索框、页签、工具栏）按同一值留边，右缘才能对齐。 */
+internal val ScrollbarGutter: androidx.compose.ui.unit.Dp = 12.dp
+
 @Composable
 fun ScrollColumn(
     modifier: Modifier = Modifier,
@@ -572,7 +551,7 @@ fun ScrollColumn(
     val scroll = rememberScrollState()
     Box(modifier) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(scroll).padding(end = 12.dp),
+            Modifier.fillMaxSize().verticalScroll(scroll).padding(end = ScrollbarGutter),
             verticalArrangement = Arrangement.spacedBy(gap),
             content = content,
         )

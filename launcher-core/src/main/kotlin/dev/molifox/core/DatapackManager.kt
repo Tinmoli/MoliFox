@@ -86,11 +86,7 @@ class DatapackManager(
         worldName: String,
         archive: Path,
     ): String {
-        paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
-        require(!sessionLockHeld(world)) {
-            I18n.t("saveA1.datapackManager.installLocked", worldName)
-        }
         require(archive.isRegularFile(LinkOption.NOFOLLOW_LINKS)) {
             I18n.t("saveA1.datapackManager.fileNotFound", archive)
         }
@@ -113,6 +109,8 @@ class DatapackManager(
         } finally {
             Files.deleteIfExists(staging)
         }
+        // 世界没开着才动 level.dat；开着时新文件会被游戏在下次进入世界时自动收进世界数据包列表。
+        if (!sessionLockHeld(world)) runCatching { levelDat.toggle(world, name, true) }
         store.log(
             I18n.t(
                 "saveA1.datapackManager.logInstalled",
@@ -151,7 +149,6 @@ class DatapackManager(
         worldName: String,
         name: String,
     ): Boolean {
-        paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
             I18n.t("saveA1.datapackManager.deleteLocked", worldName)
@@ -181,12 +178,11 @@ class DatapackManager(
         }
     }
 
-    /** 切换数据包前的世界检查：游戏运行或世界被打开都拒绝写入。 */
+    /** 切换数据包前的世界检查：只要求世界没有被游戏打开，游戏本体可以继续运行。 */
     private fun enabledWorld(
         instanceId: String,
         worldName: String,
     ): Path {
-        paths.requireGameStopped(instanceId)
         val world = paths.worldDirectory(instanceId, worldName)
         require(!sessionLockHeld(world)) {
             I18n.t("saveA1.datapackManager.toggleLocked", worldName)

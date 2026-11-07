@@ -16,7 +16,6 @@ import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.nio.file.Path
-import kotlin.io.path.name
 
 private const val MAX_RELEASE_NOTES_CHARS = 20_000
 private const val MAX_UPDATE_PACKAGE_BYTES = 512L * 1024 * 1024
@@ -56,6 +55,7 @@ class GitHubUpdater
         private val store: LauncherStore,
         private val network: NetworkClient,
         private val api: String = "https://api.github.com/repos/Tinmoli/MoliFox",
+        private val jarMode: Boolean = LauncherBundlePath.currentJar() != null,
     ) {
         private val checkLock = Mutex()
 
@@ -174,18 +174,27 @@ class GitHubUpdater
                 I18n.t("networkB1.gitHubUpdater.invalidReleasePage")
             }
             // 新 release 只发固定名；旧包可能还在同名回退上，所以把历史名也留在候选里。
-            val fixedNames =
-                when (store.platform.osName) {
-                    "windows" -> listOf("MoliFox.exe")
-                    "linux" -> listOf("MoliFox.run", "MoliFox-linux-x64.run")
-                    else -> emptyList()
-                }
+            // JAR 模式只用通用 JAR，不带架构后缀；原生包继续按平台/架构区分。
+            val arm64 = store.platform.architecture == "arm64"
+            val archTag = if (arm64) "arm64" else "x86_64"
             val normalizedVersion = version.removePrefix("v")
-            val versioned =
-                when (store.platform.osName) {
-                    "windows" -> "MoliFox-$normalizedVersion-windows-x86_64.exe"
-                    "linux" -> "MoliFox-$normalizedVersion-linux-x86_64.run"
-                    else -> ""
+            val (versioned, fixedNames) =
+                if (jarMode) {
+                    "MoliFox-$normalizedVersion.jar" to listOf("MoliFox.jar")
+                } else {
+                    val versionedName =
+                        when (store.platform.osName) {
+                            "windows" -> "MoliFox-$normalizedVersion-windows-$archTag.exe"
+                            "linux" -> "MoliFox-$normalizedVersion-linux-$archTag.run"
+                            else -> ""
+                        }
+                    val fixed =
+                        when (store.platform.osName) {
+                            "windows" -> listOf("MoliFox.exe")
+                            "linux" -> listOf("MoliFox.run", "MoliFox-linux-x64.run", "MoliFox-linux-arm64.run")
+                            else -> emptyList()
+                        }
+                    versionedName to fixed
                 }
             val asset = releaseAssetOf(json, listOf(versioned) + fixedNames)
             return LauncherRelease(
@@ -208,10 +217,8 @@ class GitHubUpdater
             json
                 .getAsJsonArray("assets")
                 ?.map { it.asJsonObject }
-                ?.filter {
-                    it.string("name") in names &&
-                        store.platform.architecture == "x64"
-                }?.minByOrNull { names.indexOf(it.string("name")) }
+                ?.filter { it.string("name") in names }
+                ?.minByOrNull { names.indexOf(it.string("name")) }
                 ?.let {
                     val url = it.string("browser_download_url")
                     requireValidDownloadUrl(url)

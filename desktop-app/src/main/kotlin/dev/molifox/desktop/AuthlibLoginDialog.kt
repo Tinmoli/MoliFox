@@ -28,7 +28,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -536,11 +535,11 @@ private fun AuthlibRemoveDialog(
             Text(strings.t("dialogs.authlib.removeNote"))
         },
         confirmButton = {
-            TextButton(onConfirm) {
+            MoliTextButton(onConfirm) {
                 Text(strings.t("dialogs.authlib.removeConfirm"), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
+        dismissButton = { MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.cancel")) } },
     )
 }
 

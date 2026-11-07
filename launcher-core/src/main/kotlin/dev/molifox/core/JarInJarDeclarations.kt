@@ -21,9 +21,6 @@ private const val JARJAR_METADATA = "META-INF/jarjar/metadata.json"
 /** 内嵌路径只是 zip 条目名，超过这个长度按异常输入拒绝。 */
 private const val MAX_EMBEDDED_PATH_LENGTH = 4096
 
-private val windowsReservedName =
-    Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\..*)?")
-
 /** 清单里声明的一条内嵌 JAR；Forge JarJar 额外带 Maven 坐标。 */
 internal data class EmbeddedDeclaration(
     val path: String,
@@ -242,6 +239,6 @@ internal fun isSafeEmbeddedPath(path: String): Boolean {
                 segment == ".." ||
                 segment.endsWith('.') ||
                 segment.endsWith(' ') ||
-                windowsReservedName.matches(segment)
+                isWindowsReservedFileName(segment)
         }
 }

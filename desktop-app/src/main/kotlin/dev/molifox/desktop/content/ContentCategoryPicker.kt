@@ -27,7 +27,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.desktop.LocalStrings
 import dev.molifox.desktop.Metrics
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.controlBackground
 import dev.molifox.desktop.controlBorder
 import dev.molifox.desktop.hoverHighlight
@@ -114,7 +114,7 @@ internal fun ContentCategoryPicker(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { onChange(emptySet()) }, enabled = selected.isNotEmpty()) {
+                MoliTextButton(onClick = { onChange(emptySet()) }, enabled = selected.isNotEmpty()) {
                     Text(strings.t("pages.content.category.clear"), fontSize = 12.sp)
                 }
             }

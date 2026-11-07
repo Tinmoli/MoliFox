@@ -44,6 +44,15 @@ internal interface ContentSearchApi {
 private const val SEARCH_QUERY_MAX_LENGTH = 200
 private const val SEARCH_OFFSET_MAX = 10000
 
+/**
+ * Modrinth 项目/搜索对象的分类列表：categories 混有 fabric 等加载器 slug，不能直接展示；
+ * display_categories 已由 Modrinth 排除加载器，取它并丢弃空白项，缺失时保持空列表。
+ */
+internal fun JsonObject.modrinthDisplayCategories(): List<String> =
+    array("display_categories")
+        .mapNotNull { element -> element.takeIf { it.isJsonPrimitive }?.asString?.trim() }
+        .filter { it.isNotEmpty() }
+
 /** 实现由 [ContentService] 委托调用；方法体与原实现一致。 */
 internal abstract class ContentSearchActions(
     core: ContentServiceCore,
@@ -74,7 +83,7 @@ internal abstract class ContentSearchActions(
             "query=${encoded(query)}&facets=${encoded(gson.toJson(facets))}" +
                 "&limit=12&offset=$offset&index=$searchIndex"
         val result = network.json("$api/search?$parameters").asJsonObject
-        return ContentSearch(contentHits(result), result.int("total_hits"))
+        return ContentSearch(contentHits(result, kind), result.int("total_hits"))
     }
 
     /** 内容源的分类列表：CurseForge 用镜像自己的编号与名称，Modrinth 由界面内置的 slug 列表提供。 */
@@ -126,7 +135,10 @@ internal abstract class ContentSearchActions(
         return facets
     }
 
-    private fun contentHits(result: JsonObject): List<ContentHit> =
+    private fun contentHits(
+        result: JsonObject,
+        kind: String,
+    ): List<ContentHit> =
         result.array("hits").map { element ->
             val item = element.asJsonObject
             ContentHit(
@@ -136,8 +148,11 @@ internal abstract class ContentSearchActions(
                 item.string("description"),
                 item.string("author"),
                 item.get("downloads")?.asLong ?: 0,
-                item.string("project_type"),
+                // Modrinth 可能把「模组 + 数据包」双格式项目报成 project_type=mod；
+                // 以用户正在浏览的分类为准，数据包才能落到存档而不是 mods。
+                kind,
                 item.string("icon_url").takeIf { it.isNotBlank() },
+                categories = item.modrinthDisplayCategories(),
             )
         }
 

@@ -19,7 +19,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +72,7 @@ fun LauncherUpdatePanel(
         update.release?.let { release ->
             LauncherReleaseDetails(update, actions, release)
         }
-        TextButton({
+        MoliTextButton({
             actions.run { actions.controller.platform.openUrl(MoliFoxIdentity.RELEASES) }
         }) {
             Text(strings.t("settings.update.releases"))
@@ -138,13 +137,13 @@ private fun LauncherReleaseDetails(
                     Text(strings.t("settings.update.confirm.message"))
                 },
                 confirmButton = {
-                    TextButton({
+                    MoliTextButton({
                         confirmInstall = false
                         actions.controller.applyDownloadedUpdate()
                     }) { Text(strings.t("settings.update.confirm.confirm")) }
                 },
                 dismissButton = {
-                    TextButton({ confirmInstall = false }) { Text(strings.t("settings.common.cancel")) }
+                    MoliTextButton({ confirmInstall = false }) { Text(strings.t("settings.common.cancel")) }
                 },
             )
         }
@@ -165,7 +164,6 @@ fun LauncherAboutPanel(actions: UiActions) {
                 MutedText("$LAUNCHER_VERSION · Minecraft Java Edition Launcher")
             }
         }
-        MutedText(strings.t("settings.about.platform"))
         MutedText(
             "${actions.controller.platform.osName} " +
                 "${actions.controller.platform.architecture} · " +
@@ -217,7 +215,7 @@ fun LauncherAboutPanel(actions: UiActions) {
                     Text(text, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            TextButton({ document = null }) { Text(strings.t("settings.common.close")) }
+            MoliTextButton({ document = null }) { Text(strings.t("settings.common.close")) }
         }
     }
     if (licensesOpen) {

@@ -15,8 +15,6 @@ import java.util.zip.ZipOutputStream
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.walk
 
 /** 导出对话框与整合包/实例导出。 */
 internal interface ContentExportApi {

@@ -87,11 +87,11 @@ internal class CurseForgeFiles(
             val body =
                 JsonObject().apply { add("modIds", gson.toJsonTree(batch.map { it.toLong() })) }
             for (entry in api.request("mods", body).array("data")) {
-                val info = entry.asJsonObject
-                require(info.string("id") in batch && info.isMinecraftProject()) {
+                val project = entry.asJsonObject
+                require(project.string("id") in batch && project.isMinecraftProject()) {
                     I18n.t("packsB1.curseForgeFiles.projectMismatch")
                 }
-                projects[info.string("id")] = info
+                projects[project.string("id")] = project
             }
         }
         return projects
@@ -103,9 +103,9 @@ internal class CurseForgeFiles(
             val body =
                 JsonObject().apply { add("fileIds", gson.toJsonTree(batch.map { it.toLong() })) }
             for (entry in api.request("mods/files", body).array("data")) {
-                val info = entry.asJsonObject
-                require(info.string("id") in batch) { I18n.t("packsB1.curseForgeFiles.fileMismatch") }
-                files[info.string("id")] = info
+                val file = entry.asJsonObject
+                require(file.string("id") in batch) { I18n.t("packsB1.curseForgeFiles.fileMismatch") }
+                files[file.string("id")] = file
             }
         }
         return files

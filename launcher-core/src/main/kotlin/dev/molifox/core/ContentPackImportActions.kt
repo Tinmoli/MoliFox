@@ -7,14 +7,12 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
-import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 
 /** 原版与加载器占整合包安装进度的前 90%；剩余 10% 留给整合包文件。 */
@@ -32,26 +30,28 @@ internal abstract class ContentPackImportActions(
     ContentPackImportApi {
     override suspend fun previewPack(archive: Path): PackPreview =
         withPackSnapshot(archive) { snapshot ->
-            ZipFile(snapshot.toFile()).use { zip ->
-                val manifest =
-                    readPackManifest(
-                        zip,
-                        store.temporaryDirectory.resolve("pack-validation"),
-                        store.platform.osName,
+            withResolvedPack(snapshot) { packArchive ->
+                ZipFile(packArchive.toFile()).use { zip ->
+                    val manifest =
+                        readPackManifest(
+                            zip,
+                            store.temporaryDirectory.resolve("pack-validation"),
+                            store.platform.osName,
+                        )
+                    installer.validate(manifest.request)
+                    PackPreview(
+                        archive.toAbsolutePath().toString(),
+                        manifest.request.name,
+                        manifest.optionalFiles,
+                        digest(snapshot, "SHA-256"),
+                        manifest.request.gameVersion,
+                        manifest.request.loader,
+                        manifest.request.loaderVersion,
+                        manifest.version,
+                        manifest.summary,
+                        manifest.requiredFiles,
                     )
-                installer.validate(manifest.request)
-                PackPreview(
-                    archive.toAbsolutePath().toString(),
-                    manifest.request.name,
-                    manifest.optionalFiles,
-                    digest(snapshot, "SHA-256"),
-                    manifest.request.gameVersion,
-                    manifest.request.loader,
-                    manifest.request.loaderVersion,
-                    manifest.version,
-                    manifest.summary,
-                    manifest.requiredFiles,
-                )
+                }
             }
         }
 
@@ -64,40 +64,43 @@ internal abstract class ContentPackImportActions(
         gameDirectoryId: String?,
     ) = withPackSnapshot(archive) { snapshot ->
         verifyPackArchive(snapshot, expectedHash)
-        ZipFile(snapshot.toFile()).use { zip ->
-            val manifest = packManifest(zip)
-            val request = manifest.request
-            installer.validate(request)
-            val launchDefaults =
-                if (repairId == null) {
-                    manifest.launchOptions?.resolve(store.data.settings, store.platform.osName)
-                } else {
-                    null
-                }
-            // 修复只补文件：包内声明的内存/窗口默认值不再覆盖用户已有设置。
-            val instanceDefaults = if (repairId == null) manifest.instanceDefaults else null
-            verifyRepairTarget(request, repairId)
-            verifyOptionalFiles(manifest, optionalFiles)
-            val selection =
-                optionalFiles ?: repairId?.let { store.instance(it).packOptionalFiles?.toSet() }
-            val curseForgeFiles =
-                prepareCurseForgeFiles(manifest, selection, archive, context, repairId)
-            val instance =
-                importInstance(
-                    request,
-                    launchDefaults,
-                    instanceDefaults,
-                    repairId,
-                    gameDirectoryId,
-                )
-            context.bindInstance(instance.id)
-            if (repairId == null) NewInstallationCleanup(store).register(instance, context)
-            val root = store.instancePath(instance.id)
-            // Validate every override path before any download or extraction.
-            for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)
-            val pack = PackImport(manifest, selection, curseForgeFiles, repairId)
-            storePackArchive(snapshot, instance.id, pack)
-            installPackFiles(instance, snapshot, zip, pack, context)
+        withResolvedPack(snapshot) { packArchive ->
+            ZipFile(packArchive.toFile()).use { zip ->
+                val manifest = packManifest(zip)
+                val request = manifest.request
+                installer.validate(request)
+                val launchDefaults =
+                    if (repairId == null) {
+                        manifest.launchOptions?.resolve(store.data.settings, store.platform.osName)
+                    } else {
+                        null
+                    }
+                // 修复只补文件：包内声明的内存/窗口默认值不再覆盖用户已有设置。
+                val instanceDefaults = if (repairId == null) manifest.instanceDefaults else null
+                verifyRepairTarget(request, repairId)
+                verifyOptionalFiles(manifest, optionalFiles)
+                val selection =
+                    optionalFiles ?: repairId?.let { store.instance(it).packOptionalFiles?.toSet() }
+                val curseForgeFiles =
+                    prepareCurseForgeFiles(manifest, selection, archive, context, repairId)
+                val instance =
+                    importInstance(
+                        request,
+                        launchDefaults,
+                        instanceDefaults,
+                        repairId,
+                        gameDirectoryId,
+                    )
+                context.bindInstance(instance.id)
+                if (repairId == null) NewInstallationCleanup(store).register(instance, context)
+                val root = store.instancePath(instance.id)
+                // Validate every override path before any download or extraction.
+                for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)
+                val pack = PackImport(manifest, selection, curseForgeFiles, repairId)
+                // 保存内层整合包：之后“修复整合包”可直接按实例文件重新导入，不再依赖外层壳。
+                storePackArchive(packArchive, instance.id, pack)
+                installPackFiles(instance, packArchive, zip, pack, context)
+            }
         }
     }
 
@@ -117,6 +120,31 @@ internal abstract class ContentPackImportActions(
                 action(snapshot)
             } finally {
                 snapshot.deleteIfExists()
+            }
+        }
+
+    /**
+     * 外层 zip 自己不是整合包、但内部带了 modpack.mrpack/modpack.zip 时，先只解出内层包再处理。
+     * 解出的临时文件只在本次预览/导入期间有效，实例保存的是内层包。
+     */
+    private suspend fun <T> withResolvedPack(
+        snapshot: Path,
+        action: suspend (Path) -> T,
+    ): T =
+        withContext(Dispatchers.IO) {
+            val embedded =
+                ZipFile(snapshot.toFile()).use { zip ->
+                    if (hasRootPackMetadata(zip)) null else findEmbeddedPack(zip)
+                }
+            if (embedded == null) {
+                action(snapshot)
+            } else {
+                val extracted = extractEmbeddedPack(snapshot, store.temporaryDirectory, embedded)
+                try {
+                    action(extracted)
+                } finally {
+                    extracted.deleteIfExists()
+                }
             }
         }
 

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -38,7 +37,7 @@ internal fun PackDetailsDialog(
             Text(strings.t("content.details.modified", modified))
             update?.let { Text(strings.t("content.details.update", it.status.title)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onDismiss) { Text(strings.t("dialogs.common.close")) }
+                MoliTextButton(onDismiss) { Text(strings.t("dialogs.common.close")) }
             }
         }
     }

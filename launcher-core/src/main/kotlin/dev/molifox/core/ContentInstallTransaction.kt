@@ -17,10 +17,8 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.name
 import kotlin.io.path.readBytes
-import kotlin.io.path.walk
 import kotlin.io.path.writeBytes
 
 /** 下载阶段在整个安装进度里的上限，剩余区间留给文件落盘与登记。 */
@@ -166,7 +164,15 @@ private class ContentInstallRun(
 
     private suspend fun commitFiles(downloads: List<DownloadArtifact>) {
         val placement =
-            ContentFilePlacement(root, staging, registry, backups, installed, plan.sources)
+            ContentFilePlacement(
+                root,
+                staging,
+                registry,
+                backups,
+                installed,
+                plan.sources,
+                plan.overwriteExisting,
+            )
         for ((index, file) in plan.files.withIndex()) {
             context.checkCancelled()
             placement.commit(file, downloads[index])
@@ -238,6 +244,7 @@ private class ContentFilePlacement(
     private val backups: MutableMap<Path, Path>,
     private val installed: MutableList<Path>,
     private val sources: List<ContentSource>,
+    private val overwriteExisting: Boolean,
 ) {
     fun commit(
         file: PlannedContentFile,
@@ -257,7 +264,7 @@ private class ContentFilePlacement(
             target.exists() &&
                 target != old &&
                 target != old?.resolveSibling("${old.fileName}.disabled")
-        if (staleTarget) {
+        if (staleTarget && !overwriteExisting) {
             require(digest(target, file.algorithm).equals(file.hash, true)) {
                 I18n.t("core.contentInstallTransaction.10", filename)
             }

@@ -11,14 +11,13 @@ import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import com.google.gson.stream.JsonWriter
 import dev.molifox.core.i18n.I18n
-import java.net.URI
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 import kotlin.jvm.Transient
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
-const val LAUNCHER_VERSION = "0.4.7"
+const val LAUNCHER_VERSION = "0.4.8"
 
 enum class LoaderType {
     Vanilla,
@@ -203,6 +202,15 @@ data class LauncherSettings(
     /** null 沿用旧通用背景；显式 default/none 分别表示内置图和纯色。 */
     val lightBackgroundPath: String? = null,
     val darkBackgroundPath: String? = null,
+    /** 背景媒体类型：null/"image"/"video"；保留字段以兼容旧配置并回退旧值。 */
+    val lightBackgroundKind: String? = null,
+    val darkBackgroundKind: String? = null,
+    /** 视频背景的独立路径；与图片路径分开，切换图片/视频不丢另一份选择。 */
+    val lightVideoPath: String? = null,
+    val darkVideoPath: String? = null,
+    /** 视频背景声音默认关闭，只有用户明确开启才输出音频；音量 0..1。 */
+    val videoSoundEnabled: Boolean = false,
+    val videoVolume: Float = 0.8f,
     /**
      * 用户自定义的左上角品牌图标：只替换主窗口标题栏左侧的品牌标识。
      * 为空表示使用内置图标；文件副本保存在 MoliFox/appearance/branding，标题栏、任务栏与准备窗口仍用内置图标。
@@ -229,8 +237,8 @@ data class LauncherSettings(
     /** 主题颜色：预设键（sakura/ocean/mint/amber/lavender/graphite）或 #RRGGBB 自定义。 */
     val accentColor: String = "sakura",
     val automaticAccent: Boolean = false,
-    /** 配色来源与手动种子分开保存，切回手动时不会丢失用户选色。 */
-    val themeColorSource: String = "default",
+    /** 配色来源：background（跟随背景图取色）或 manual（自定义）；与手动种子分开保存，切回自定义不丢失选色。 */
+    val themeColorSource: String = "manual",
     /** 关闭后页面切换与提示不使用过渡动画。 */
     val animationsEnabled: Boolean = true,
     /** 标题栏半透明（无需玻璃效果也生效）。 */
@@ -272,7 +280,7 @@ data class LauncherSettings(
 
 /** 统一 Java 下载来源，未知值使用自动选择。 */
 fun normalizedJavaDownloadSource(value: String): String =
-    value.takeIf { it in setOf("auto", "azul", "adoptium") } ?: "auto"
+    value.takeIf { it in setOf("auto", "azul", "adoptium", "oracle") } ?: "auto"
 
 val LauncherSettings.effectiveJavaDownloadSource: String
     get() = normalizedJavaDownloadSource(javaDownloadSource)
@@ -294,16 +302,10 @@ val LauncherSettings.effectiveDownloadSource: String
 const val DEFAULT_CURSE_FORGE_BASE_URL = "https://mod.mcimirror.top/curseforge"
 
 /** 服务地址必须是绝对 http(s) URL；查询串、片段和用户信息不属于服务根地址。 */
-fun isValidCurseForgeBaseUrl(value: String): Boolean {
-    val text = value.trim()
-    if (text.isEmpty()) return false
-    val uri = runCatching { URI(text) }.getOrNull() ?: return false
-    return (uri.scheme?.lowercase() == "http" || uri.scheme?.lowercase() == "https") &&
-        !uri.host.isNullOrBlank() &&
-        uri.userInfo == null &&
-        uri.rawQuery == null &&
-        uri.rawFragment == null
-}
+fun isValidCurseForgeBaseUrl(value: String): Boolean =
+    isValidServiceRootUrl(value) { scheme ->
+        scheme?.lowercase() == "http" || scheme?.lowercase() == "https"
+    }
 
 /**
  * 实际请求使用的服务根地址：空值或非法值回落到默认镜像，末尾斜杠会被去掉。
@@ -575,10 +577,6 @@ enum class LogLevel {
     /** 写进日志文件与导出文件的档位名。 */
     val label: String
         get() = name.uppercase()
-
-    /** 达到「警告」及以上：界面用更醒目的颜色。 */
-    val isProblem: Boolean
-        get() = ordinal >= Warn.ordinal
 }
 
 data class LogLine(
@@ -705,6 +703,8 @@ data class ContentHit(
     val downloads: Long,
     val type: String,
     val iconUrl: String?,
+    /** 项目分类（Modrinth 的 display_categories slug 或 CurseForge 类别名）；来源未提供时保持空列表，不伪造分类。 */
+    val categories: List<String> = emptyList(),
 )
 
 data class ContentSearch(

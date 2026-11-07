@@ -19,7 +19,6 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,11 +26,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.molifox.desktop.FrostedPanel
 import dev.molifox.desktop.LocalStrings
+import dev.molifox.desktop.MoliTextButton
 import dev.molifox.desktop.PrimaryButton
 import dev.molifox.desktop.SettingsNavItem
 import dev.molifox.multiplayer.common.LobbyPhase
@@ -214,7 +215,7 @@ private fun PageMessage(page: MultiplayerPageState) {
     page.message?.let { message ->
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { page.message = null }) { Text(strings.t("dialogs.common.close")) }
+            MoliTextButton(onClick = { page.message = null }) { Text(strings.t("dialogs.common.close")) }
         }
     }
 }
@@ -266,6 +267,9 @@ private fun MultiplayerRuntimeAutoDownload(
 ) {
     val state by backend.state.collectAsState()
     val settings by backend.settings.collectAsState()
+    // downloadRuntime 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // 自动下载 effect 只随列出的状态 key 重启，触发时调用的是最新下载入口。
+    val currentDownloadRuntime by rememberUpdatedState(downloadRuntime)
     LaunchedEffect(
         page.initialized,
         settings.enabled,
@@ -281,7 +285,7 @@ private fun MultiplayerRuntimeAutoDownload(
         if (state.busy || state.phase != LobbyPhase.Idle) return@LaunchedEffect
         if (state.runtime?.installed == true) return@LaunchedEffect
         if (page.runtimeDownloadRequested) return@LaunchedEffect
-        downloadRuntime()
+        currentDownloadRuntime()
     }
 }
 

@@ -5,12 +5,12 @@
 
 package dev.molifox.desktop
 
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -54,6 +54,9 @@ internal fun rememberModIcon(
         remember(jar, modified) {
             jar.toAbsolutePath().normalize().toString() + "|" + modified
         }
+    // onFailure 是 lambda 参数，每次重组都是新实例；用 rememberUpdatedState 持有最新值，
+    // 解码 effect 只随 key/readIcon 重启（readIcon 作为 key 是有意为之），失败上报仍使用最新回调。
+    val currentOnFailure by rememberUpdatedState(onFailure)
     val image by
         produceState<ImageBitmap?>(ModIconBitmaps[key], key, readIcon) {
             if (value != null) return@produceState
@@ -68,15 +71,15 @@ internal fun rememberModIcon(
                     throw cancelled
                 } catch (failure: IllegalArgumentException) {
                     // Skia 解码失败（图片损坏/格式不支持）只影响这一个图标，退回占位图。
-                    onFailure(failure)
+                    currentOnFailure(failure)
                     null
                 } catch (failure: IOException) {
                     // 读取归档内的图标时文件被占用或损坏；与解码失败同样只退回占位图。
-                    onFailure(failure)
+                    currentOnFailure(failure)
                     null
                 } catch (failure: IllegalStateException) {
                     // 解码后转成 Compose 位图时画布/位图句柄已失效；同样只影响当前图标。
-                    onFailure(failure)
+                    currentOnFailure(failure)
                     null
                 }
             value?.let { ModIconBitmaps.put(key, it) }

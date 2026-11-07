@@ -36,7 +36,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -152,7 +151,7 @@ private fun ColumnScope.VersionListBody(
                     error.orEmpty(),
                     Icons.Outlined.CloudOff,
                 ) {
-                    TextButton(onRefresh) { Text(strings.t("deskE.version.reload")) }
+                    MoliTextButton(onRefresh) { Text(strings.t("deskE.version.reload")) }
                 }
             }
         filtered.isEmpty() ->

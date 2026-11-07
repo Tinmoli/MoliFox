@@ -15,7 +15,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import dev.molifox.desktop.MoliTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,7 +51,7 @@ internal fun ExportEntriesSection(
                         scanError.orEmpty(),
                         Icons.Outlined.ErrorOutline,
                     ) {
-                        TextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
+                        MoliTextButton({ onRetry() }) { Text(strings.t("dialogs.common.retry")) }
                     }
                 }
 

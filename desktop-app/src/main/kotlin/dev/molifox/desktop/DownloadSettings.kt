@@ -7,7 +7,6 @@ package dev.molifox.desktop
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -23,6 +22,7 @@ import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
 
 /** 下载：下载源、并发数、缓存文件夹与代理。 */
 @Composable
@@ -50,6 +50,7 @@ internal fun downloadSettingCards(
                             "bmclapi" to I18n.t("settings.download.source.bmclapi"),
                         ),
                         { value -> writer.commit { it.copy(versionListSource = value) } },
+                        label = I18n.t("settings.download.versionList.title"),
                     )
                 },
                 settingField(
@@ -64,6 +65,7 @@ internal fun downloadSettingCards(
                             "bmclapi" to I18n.t("settings.download.source.bmclapi"),
                         ),
                         { value -> writer.commit { it.copy(downloadSource = value) } },
+                        label = I18n.t("settings.download.fileSource.title"),
                     )
                 },
                 settingRow(
@@ -76,6 +78,7 @@ internal fun downloadSettingCards(
                         1..128,
                         Modifier.width(120.dp),
                         placeholder = "64",
+                        description = I18n.t("settings.download.threads.title"),
                     ) { value ->
                         applySetting(actions) { it.copy(downloadThreads = value) }
                     }
@@ -148,6 +151,7 @@ internal fun downloadSettingCards(
                         settings.downloadCachePath,
                         { value -> applySetting(actions) { it.copy(downloadCachePath = value) } },
                         placeholder = I18n.t("settings.download.cache.placeholder"),
+                        description = I18n.t("settings.download.cache.path.title"),
                     ) {
                         SmallIconButton(
                             Icons.Outlined.FolderOpen,
@@ -156,8 +160,14 @@ internal fun downloadSettingCards(
                                 actions.run {
                                     val chosen =
                                         actions
-                                            .choose(I18n.t("settings.download.cache.choose"), directory = true)
-                                            .firstOrNull()
+                                            .choose(
+                                                I18n.t("settings.download.cache.choose"),
+                                                directory = true,
+                                                initialDirectory =
+                                                    settings.downloadCachePath.takeIf { it.isNotBlank() }?.let(
+                                                        Path::of,
+                                                    ),
+                                            ).firstOrNull()
                                     if (chosen != null) {
                                         withContext(Dispatchers.Swing) {
                                             applySetting(actions) {
@@ -204,6 +214,7 @@ internal fun downloadSettingCards(
                             }
                         },
                         Modifier.width(150.dp),
+                        label = I18n.t("settings.download.proxy.mode.title"),
                     )
                 },
                 settingField(
