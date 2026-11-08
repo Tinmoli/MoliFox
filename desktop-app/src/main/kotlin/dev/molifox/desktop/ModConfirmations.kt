@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 展示删除确认，只向调用方发送确认和关闭事件。
+
+package dev.molifox.desktop
+
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import dev.molifox.core.ModFile
+
+@Composable
+internal fun DeleteModConfirmation(
+    mods: List<ModFile>,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    AlertDialog(
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(dismissOnClickOutside = false),
+        onDismissRequest = onDismiss,
+        title = { Text(strings.t("pages.mods.delete.title")) },
+        text = {
+            Text(
+                strings.t(
+                    if (mods.size == 1) "pages.mods.delete.message" else "pages.mods.delete.batchMessage",
+                    if (mods.size == 1) {
+                        mods
+                            .single()
+                            .metadata.title
+                            .ifBlank { mods.single().filename.removeSuffix(".disabled") }
+                    } else {
+                        mods.size
+                    },
+                ),
+            )
+        },
+        confirmButton = {
+            MoliTextButton(onConfirm) {
+                Text(strings.t("pages.mods.delete.confirm"), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            MoliTextButton(onDismiss) { Text(strings.t("pages.mods.delete.cancel")) }
+        },
+    )
+}

@@ -1,0 +1,236 @@
+// EasyTier 启动参数集中构建：角色、网络码、hostname 与端口白名单只在这里拼装。
+package dev.molifox.multiplayer.easytier
+
+import dev.molifox.core.i18n.I18n
+import dev.molifox.multiplayer.protocol.ScaffoldingCode
+import java.util.UUID
+
+/** EasyTier 节点角色；决定是否设置固定虚拟 IP、端口白名单与 DHCP。 */
+enum class EasyTierRole { HOST, GUEST }
+
+/** 可选的附加调优开关；全部关闭时保持默认行为，不额外传参数。 */
+data class EasyTierTuning(
+    val latencyFirst: Boolean = false,
+    val disableIpv6: Boolean = false,
+    val disableSymHolePunching: Boolean = false,
+) {
+    /** 追加到双方共用参数里的开关；关闭的不出现，避免改变 EasyTier 默认值。 */
+    fun flags(): List<String> =
+        buildList {
+            if (latencyFirst) add("--latency-first")
+            if (disableIpv6) add("--disable-ipv6")
+            if (disableSymHolePunching) add("--disable-sym-hole-punching")
+        }
+}
+
+/**
+ * EasyTier 中继节点：只使用用户自建的两台共享节点。
+ *
+ * 客户端优先走 P2P 直连，打洞失败时 EasyTier 会自动改用中继转发数据；
+ * 中继是否允许转发由节点的 `relay-network-whitelist` 决定（MoliFox 房间匹配
+ * `MoliFox*`）。两台节点按顺序尝试；用户可在设置里追加自定义中继，自定义地址
+ * 排在前面、最多 6 个。
+ */
+object EasyTierRelays {
+    val DEFAULT: List<String> =
+        listOf(
+            // sh 节点长期不可用，先移除；恢复后再加回来。
+            "tcp://xg-easytier.chior.top:11010",
+        )
+}
+
+/** 启动一个 EasyTier 节点所需的全部业务参数；RPC 端口由运行时分配。 */
+data class EasyTierNodeRequest(
+    val role: EasyTierRole,
+    /** 来自 21 字符房间码的 EasyTier 网络名。 */
+    val networkName: String,
+    /** 来自房间码的网络密钥。 */
+    val networkSecret: String,
+    /** 本机在虚拟网络里的稳定标识，避免多开时相互覆盖。 */
+    val machineId: String,
+    /** EasyTier 主机名；房主必须是 `MoliFox-server-<端口>`。 */
+    val hostname: String,
+    /** 房主需要放行的本机端口（Scaffolding 与 Minecraft）；房客为空。 */
+    val whitelistedPorts: List<Int> = emptyList(),
+    /** 叠加在默认节点之后的自定义中继。 */
+    val extraRelays: List<String> = emptyList(),
+    /** 用户附加开关；默认全部关闭。 */
+    val tuning: EasyTierTuning = EasyTierTuning(),
+) {
+    companion object {
+        /** 房主节点：固定虚拟 IP 与 hostname，白名单只放 Scaffolding 和 MC 端口。 */
+        fun host(
+            code: ScaffoldingCode,
+            machineId: String,
+            scaffoldingPort: Int,
+            minecraftPort: Int,
+            extraRelays: List<String> = emptyList(),
+            tuning: EasyTierTuning = EasyTierTuning(),
+        ): EasyTierNodeRequest =
+            EasyTierNodeRequest(
+                role = EasyTierRole.HOST,
+                networkName = code.networkName,
+                networkSecret = code.networkSecret,
+                machineId = machineId,
+                hostname = EasyTierArguments.hostHostname(scaffoldingPort),
+                whitelistedPorts = listOf(scaffoldingPort, minecraftPort),
+                extraRelays = extraRelays,
+                tuning = tuning,
+            )
+
+        /** 房客节点：随机 hostname，避免与房主的固定格式冲突。 */
+        fun guest(
+            code: ScaffoldingCode,
+            machineId: String,
+            hostname: String = UUID.randomUUID().toString(),
+            extraRelays: List<String> = emptyList(),
+            tuning: EasyTierTuning = EasyTierTuning(),
+        ): EasyTierNodeRequest =
+            EasyTierNodeRequest(
+                role = EasyTierRole.GUEST,
+                networkName = code.networkName,
+                networkSecret = code.networkSecret,
+                machineId = machineId,
+                hostname = hostname,
+                extraRelays = extraRelays,
+                tuning = tuning,
+            )
+    }
+}
+
+/**
+ * 把 [EasyTierNodeRequest] 转成 `easytier-core` 参数列表。
+ *
+ * 关键约定（网络名与 hostname 前缀用 MoliFox，便于自建中继用 `MoliFox*` 白名单匹配；
+ * 与其他启动器的联机房不互通，改动前必须核对）：
+ * - 房主虚拟 IP 固定 `10.114.51.41`，hostname `MoliFox-server-<Scaffolding 端口>`；
+ * - 双方都 `--no-tun`，不安装驱动、不要求管理员；
+ * - RPC 门户只绑 `127.0.0.1`，避免局域网内其他人控制本机 EasyTier。
+ */
+object EasyTierArguments {
+    /** 房主固定虚拟地址；房客从 peer 列表读取，不需要预置。 */
+    const val HOST_INTERFACE = "10.114.51.41"
+
+    private const val HOST_HOSTNAME_PREFIX = "MoliFox-server-"
+    private const val LOOPBACK_ADDRESS = "127.0.0.1"
+    private const val WILDCARD_LISTENER = "0.0.0.0"
+    private const val ENCRYPTION_ALGORITHM = "aes-gcm"
+    private const val COMPRESSION_ALGORITHM = "zstd"
+    private const val DEFAULT_PROTOCOL = "udp"
+    private const val NO_WHITELIST_PORT = "0"
+    private const val PRIVATE_MODE_ENABLED = "true"
+    private const val MIN_PORT = 1
+    private const val MAX_PORT = 65_535
+    private const val MAX_RELAYS = 6
+
+    /** 房主 hostname：Scaffolding 端口写在末尾，供房客解析。 */
+    fun hostHostname(scaffoldingPort: Int): String = "$HOST_HOSTNAME_PREFIX$scaffoldingPort"
+
+    /** `127.0.0.1:<rpc>` 形式的 RPC 门户地址。 */
+    fun rpcPortal(rpcPort: Int): String = "$LOOPBACK_ADDRESS:$rpcPort"
+
+    /** 生成核心进程参数；[rpcPort] 必须是可供 CLI 回环访问的空闲端口。 */
+    fun build(
+        request: EasyTierNodeRequest,
+        rpcPort: Int,
+    ): List<String> {
+        validate(request, rpcPort)
+        val arguments = mutableListOf<String>()
+        arguments += COMMON_FLAGS
+        arguments += listOf("--network-name", request.networkName)
+        arguments += listOf("--network-secret", request.networkSecret)
+        arguments += listOf("--machine-id", request.machineId)
+        arguments += listOf("--hostname", request.hostname)
+        arguments += listOf("--rpc-portal", rpcPortal(rpcPort))
+        arguments += COMMON_TUNING
+        arguments += request.tuning.flags()
+        when (request.role) {
+            EasyTierRole.HOST -> arguments += hostArguments(request)
+            EasyTierRole.GUEST -> arguments += GUEST_ARGUMENTS
+        }
+        arguments += listenerArguments()
+        relaysOf(request).forEach { relay -> arguments += listOf("-p", relay) }
+        return arguments
+    }
+
+    private fun hostArguments(request: EasyTierNodeRequest): List<String> {
+        val arguments = mutableListOf("-i", HOST_INTERFACE)
+        request.whitelistedPorts.forEach { port ->
+            arguments += listOf("--tcp-whitelist", port.toString())
+            arguments += listOf("--udp-whitelist", port.toString())
+        }
+        return arguments
+    }
+
+    private fun listenerArguments(): List<String> =
+        listOf(
+            "-l",
+            "tcp://$WILDCARD_LISTENER:0",
+            "-l",
+            "udp://$WILDCARD_LISTENER:0",
+        )
+
+    /**
+     * 自定义/实时节点优先于固定兜底，完全相同的地址只保留第一次出现。
+     *
+     * 最多保留 6 个对端：中继过多会拖慢握手。
+     */
+    private fun relaysOf(request: EasyTierNodeRequest): List<String> =
+        (request.extraRelays + EasyTierRelays.DEFAULT).distinct().take(MAX_RELAYS)
+
+    private fun validate(
+        request: EasyTierNodeRequest,
+        rpcPort: Int,
+    ) {
+        require(request.networkName.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.1") }
+        require(request.networkSecret.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.2") }
+        require(request.machineId.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.3") }
+        require(request.hostname.isNotBlank()) { I18n.t("multiplayer.easyTierArguments.4") }
+        require(rpcPort in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.easyTierArguments.5", MIN_PORT, MAX_PORT) }
+        request.whitelistedPorts.forEach { port ->
+            require(port in MIN_PORT..MAX_PORT) { I18n.t("multiplayer.easyTierArguments.6", port) }
+        }
+        if (request.role == EasyTierRole.HOST) {
+            require(request.whitelistedPorts.isNotEmpty()) { I18n.t("multiplayer.easyTierArguments.7") }
+            require(request.hostname.startsWith(HOST_HOSTNAME_PREFIX)) {
+                I18n.t("multiplayer.easyTierArguments.8", HOST_HOSTNAME_PREFIX)
+            }
+        }
+    }
+
+    // 双方共用：不装 TUN、多线程收发；私有模式拒绝没有相同网络密钥的外部网络；
+    // KCP/QUIC 代理提升部分网络的转发可用性。不传 --p2p-only：优先 P2P 直连，
+    // 打洞失败时允许 EasyTier 自动走中继转发。
+    private val COMMON_FLAGS =
+        listOf(
+            "--no-tun",
+            "--multi-thread",
+            "--enable-kcp-proxy",
+            "--enable-quic-proxy",
+            "--private-mode",
+            PRIVATE_MODE_ENABLED,
+        )
+
+    // 节点间直连优先尝试 UDP 组：UDP 直连与打洞覆盖面广，受限 NAT 下 TCP 直连几乎必然失败，
+    // 先试 TCP 只会白白耗掉超时；游戏 TCP 流量由 KCP/QUIC 代理提供可靠承载，
+    // 运营商限制 UDP 的网络仍有 TCP 组与中继兜底。
+    private val COMMON_TUNING =
+        listOf(
+            "--encryption-algorithm",
+            ENCRYPTION_ALGORITHM,
+            "--compression",
+            COMPRESSION_ALGORITHM,
+            "--default-protocol",
+            DEFAULT_PROTOCOL,
+        )
+
+    // 房客走 DHCP 拿虚拟 IP，本机不对外提供任何服务，所以白名单是 0。
+    private val GUEST_ARGUMENTS =
+        listOf(
+            "-d",
+            "--tcp-whitelist",
+            NO_WHITELIST_PORT,
+            "--udp-whitelist",
+            NO_WHITELIST_PORT,
+        )
+}

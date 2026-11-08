@@ -1,0 +1,51 @@
+// 提供界面唯一联机接口，调用方无需了解 EasyTier 进程、Scaffolding 协议或平台网络细节。
+package dev.molifox.multiplayer.domain
+
+import dev.molifox.multiplayer.common.CoreStatus
+import dev.molifox.multiplayer.common.MultiplayerSettings
+import dev.molifox.multiplayer.common.MultiplayerState
+import dev.molifox.multiplayer.common.NatDiagnostics
+import kotlinx.coroutines.flow.StateFlow
+
+// 联机后端是完整领域门面：方法数由“初始化/发现/建房/加入/运行时安装/取消/设置/关闭”职责决定，
+// 再拆接口只会产生纯转发层；保持 12 个领域方法可读性更好。
+@Suppress("TooManyFunctions")
+interface MultiplayerBackend {
+    val state: StateFlow<MultiplayerState>
+    val settings: StateFlow<MultiplayerSettings>
+
+    /** 读取联机设置，检查运行时并开始发现本机局域网世界。 */
+    suspend fun initialize(): Result<Unit>
+
+    /** 检查本地 EasyTier 运行时是否已安装且完整。 */
+    suspend fun inspectRuntime(): Result<CoreStatus>
+
+    /** 用本机 EasyTier CLI 做 NAT 类型测试；未安装运行时时返回可读失败。 */
+    suspend fun testNat(): Result<NatDiagnostics>
+
+    /** 下载并安装 EasyTier 运行时；进度通过 [state] 的 `progress` 上报。 */
+    suspend fun prepareRuntime(): Result<Unit>
+
+    /** 重新扫描本机 Minecraft 局域网世界；结果写入 [state] 的 `worlds`。 */
+    suspend fun refreshWorlds(): Result<Unit>
+
+    /** 用本机某世界创建房间；[worldPort] 为 null 时要求当前只有一个世界。 */
+    suspend fun host(worldPort: Int? = null): Result<Unit>
+
+    /** 加入房间；[roomCode] 为房主提供的 21 字符邀请码。 */
+    suspend fun join(roomCode: String): Result<Unit>
+
+    /** 关闭房间或退出房间，回到可发现世界的空闲阶段。 */
+    suspend fun leave()
+
+    /** 从本地 EasyTier zip 安装运行时（校验大小/SHA-256）；[archivePath] 为绝对路径。 */
+    suspend fun importRuntime(archivePath: String): Result<Unit>
+
+    /** 取消正在进行的运行时下载/安装；没有进行中的任务时无副作用。 */
+    fun cancelRuntimeInstall()
+
+    suspend fun saveSettings(settings: MultiplayerSettings): Result<Unit>
+
+    /** 关闭 EasyTier、Scaffolding 与本地转发，释放全部资源。 */
+    suspend fun close()
+}

@@ -1,0 +1,66 @@
+name: Build MoliFox
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - run: chmod +x gradlew
+      - name: Check source quality
+        run: >-
+          ./gradlew detekt detektUnused checkI18n checkNoHardcodedChinese
+          --no-daemon --console=plain
+          -Dorg.gradle.parallel=false --max-workers=1
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Prepare wrapper
+        if: runner.os == 'Linux'
+        run: chmod +x gradlew
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MOLIFOX_MINGW_BIN = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
+          $env:PATH = "$env:MOLIFOX_MINGW_BIN;$env:PATH"
+          .\gradlew.bat :desktop-app:portableWindows --console plain
+      - name: Build Linux
+        if: runner.os == 'Linux'
+        run: ./gradlew :desktop-app:portableLinux --console plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoliFox-${{ runner.os }}-x64
+          path: |
+            dist/MoliFox.exe
+            build/validation/windows-package.sha256
+            dist/MoliFox.run
+            build/validation/linux-package.sha256
+            LICENSE
+            assets/legal/THIRD_PARTY.md
+            assets/legal/AGREEMENT*.md
+            README.md

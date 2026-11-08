@@ -1,0 +1,17 @@
+MoliFox loader identification artwork
+
+Fabric icon: FabricMC/fabric-loader, cb9523bc29ef775c50b6aef5e43bc56927cd8e67,
+src/main/resources/assets/fabricloader/icon.png. Repository: Apache-2.0.
+Quilt icon: QuiltMC/quilt-loader, fe14f3161fd89f0b8acc6530e86f02c3920c78fc,
+src/main/resources/assets/quilt_loader/icon.png. Repository: Apache-2.0.
+NeoForge icon: neoforged/NeoForge, 3bb720446f9290c23eaf493a467a3eaaa93efe1b,
+src/main/resources/neoforge_icon.png. Repository: LGPL-2.1.
+Forge icon: original avatar of https://github.com/MinecraftForge
+(https://avatars.githubusercontent.com/u/1390178?v=4).
+Minecraft grass block and Steve texture: original pack.png and
+assets/minecraft/textures/entity/player/wide/steve.png from a locally supplied
+Minecraft client. Copyright Mojang/Microsoft; https://www.minecraft.net/en-us/usage-guidelines
+
+Images and trademarks remain their respective owners' property. Used for
+identification; no official affiliation or endorsement is claimed.
+Repository code licenses do not imply a separate trademark license.

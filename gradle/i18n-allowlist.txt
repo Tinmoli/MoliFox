@@ -1,0 +1,41 @@
+# 允许保留的中文字面量（`checkNoHardcodedChinese` 用）。
+# 格式：相对路径|字面量片段（字面量包含该片段即视为允许）。
+# 只允许“无法翻译的兼容值/协议值”，不允许为了过关把普通 UI 文案加进来。
+
+# Page 旧配置里保存的中文页面标题，仅用于旧值解析，不显示；显示走 nav.* 翻译 key。
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"开始"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"实例"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"下载"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"联机"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"设置"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"日志"
+desktop-app/src/main/kotlin/dev/molifox/desktop/Main.kt|"账户列表"
+
+# Java 运行时安装失败的兜底分类：正常路径由异常类型（DownloadVerificationException /
+# RuntimeFileWriteException / FileSystemException / IOException）判定，中文只用于匹配旧日志
+# 与外部安装器/系统的本地化异常文本（如「空间不足」），翻译后仍需保留以兼容这些文本。
+launcher-core/src/main/kotlin/dev/molifox/core/JavaRuntimeInstaller.kt|message.contains("校验")
+launcher-core/src/main/kotlin/dev/molifox/core/JavaRuntimeInstaller.kt|"空间不足"
+launcher-core/src/main/kotlin/dev/molifox/core/JavaRuntimeInstaller.kt|"下载"
+launcher-core/src/main/kotlin/dev/molifox/core/JavaRuntimeInstaller.kt|"连接"
+
+# 游戏诊断：匹配 Minecraft / Java 进程写出的历史中文日志行（外部产物，非本应用文案），
+# 用于归因 TLS、启动前命令与缺失文件；已同时提供英文模式，中文模式仅为兼容旧版本日志。
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|TLS 握手
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|启动前命令
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|游戏文件自动补全失败
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|缺少游戏主文件
+
+# Java 安装失败分类里的校验关键词，同上：只匹配旧日志/外部本地化异常文本。
+launcher-core/src/main/kotlin/dev/molifox/core/JavaRuntimeInstaller.kt|"校验"
+
+# 字体可用性探针：用来确认选中的字体是否含中文字形，字符串本身从不显示。
+desktop-app/src/main/kotlin/dev/molifox/desktop/LauncherFonts.kt|"茉狐中文字体"
+
+# 第三方许可清单解析：跳过仓库内中文 Markdown 表格的表头「组件」行，该文本不显示。
+desktop-app/src/main/kotlin/dev/molifox/desktop/ThirdPartyLicenses.kt|"组件"
+
+# 启动失败诊断：日志措辞随界面语言变化，匹配旧版本/其他语言日志里的账户登录与“启动中止”行。
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|登录凭据不可用
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|登入認證無法使用
+launcher-core/src/main/kotlin/dev/molifox/core/LaunchDiagnostics.kt|启动中止
