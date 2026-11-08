@@ -115,6 +115,10 @@ internal class InstanceUpgradeService(
         Files.createDirectories(mods)
         val total = plan.mods.size.coerceAtLeast(1)
         val done = AtomicInteger()
+        // 任务中心的传输计数只统计真实下载（下载速度与剩余文件由此驱动）；原样带入的文件不算下载。
+        context.beginTransfers(
+            plan.mods.count { it.state == InstanceModUpgradeState.HasNewVersion && it.candidate != null },
+        )
         // 与批量下载共用设置里的「下载线程数」：模组升级不再逐个串行等待，任一失败整体回滚。
         val permits =
             Semaphore(
@@ -127,7 +131,7 @@ internal class InstanceUpgradeService(
                     async(Dispatchers.IO) {
                         permits.withPermit {
                             context.checkCancelled()
-                            installModItem(item, mods, sourceMods)
+                            installModItem(item, mods, sourceMods, context)
                             val fraction =
                                 UPGRADE_INSTALL_END +
                                     (UPGRADE_MODS_END - UPGRADE_INSTALL_END) * done.incrementAndGet() / total
@@ -146,11 +150,22 @@ internal class InstanceUpgradeService(
         item: InstanceModUpgradeItem,
         mods: Path,
         sourceMods: Path,
+        context: JobContext,
     ) {
         val finalName =
             when {
                 item.state == InstanceModUpgradeState.HasNewVersion && item.candidate != null -> {
-                    val base = modInstaller.downloadCandidate(item.candidate, mods)
+                    val candidate = item.candidate
+                    val base =
+                        modInstaller.downloadCandidate(
+                            candidate,
+                            mods,
+                        ) { bytes, totalBytes ->
+                            // 字节只进任务中心的传输计数；进度条由阶段锚点统一驱动，避免并发刷屏互抢。
+                            context.transfer(item.filename, bytes, totalBytes)
+                        }
+                    // 下载回调未必覆盖到收尾字节：按校验通过后的声明大小补一次完成标记。
+                    context.transfer(item.filename, candidate.size, candidate.size, completed = true)
                     // 旧文件是禁用状态时，升级文件沿用禁用后缀，行为与实例内更新一致。
                     if (!item.enabled) {
                         Files.move(mods.resolve(base), mods.resolve("$base.disabled"))

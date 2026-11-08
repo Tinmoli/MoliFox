@@ -61,7 +61,12 @@ internal class ModUpdateInstaller(
         val temporary = safePath(mods, ".molifox-update-${UUID.randomUUID()}.jar")
         context?.progress(0f, I18n.t("packsB2.packUpdate.downloading", newBase))
         try {
-            downloadAndVerify(candidate, temporary, context)
+            downloadAndVerify(candidate, temporary, context) { bytes, total ->
+                context?.progress(
+                    if (total > 0) bytes.toFloat() / total else 0f,
+                    I18n.t("packsB2.packUpdate.downloading", newBase),
+                )
+            }
             store.replaceUpdatedFile(mods, old, target, temporary, "packsC.modUpdate")
             store.log(I18n.t("packsC.modUpdate.applied", item.title, item.currentVersion, candidate.versionNumber))
             context?.progress(1f, I18n.t("packsB2.packUpdate.done"))
@@ -74,11 +79,13 @@ internal class ModUpdateInstaller(
      * 「修改」页签的版本升级：把候选文件下载进目标 mods 目录并完成大小/摘要/ZIP 校验。
      * 只写新文件，不触碰任何既有文件；目录是新建实例的，重名即视为异常并拒绝。
      * 返回落盘的文件名（不含 `.disabled` 后缀，由调用方按启用状态补）。
+     * `listener` 接收下载字节；并发调用方用它上报任务中心，而不像 `context` 那样驱动进度条。
      */
     suspend fun downloadCandidate(
         candidate: ModUpdateCandidate,
         mods: Path,
         context: JobContext? = null,
+        listener: ModDownloadListener? = null,
     ): String =
         withContext(Dispatchers.IO) {
             val newBase = safeFilename(contentBaseFilename(candidate.filename.trim()))
@@ -87,7 +94,7 @@ internal class ModUpdateInstaller(
             require(!target.exists()) { I18n.t("packsC.modUpdate.targetExists", newBase) }
             val temporary = safePath(mods, ".molifox-update-${UUID.randomUUID()}.jar")
             try {
-                downloadAndVerify(candidate, temporary, context)
+                downloadAndVerify(candidate, temporary, context, listener)
                 Files.move(temporary, target)
             } finally {
                 temporary.deleteIfExists()
@@ -151,8 +158,9 @@ internal class ModUpdateInstaller(
         candidate: ModUpdateCandidate,
         temporary: Path,
         context: JobContext?,
+        listener: ModDownloadListener? = null,
     ) {
-        downloader(candidate.toRemoteVersion(), temporary, context)
+        downloader(candidate.toRemoteVersion(), temporary, listener)
         context?.checkCancelled()
         require(temporary.isRegularFile() && temporary.fileSize() > 0) { I18n.t("packsB2.packUpdate.empty") }
         if (candidate.size > 0) {

@@ -169,5 +169,13 @@ internal const val UPDATE_LOOKUP_CONCURRENCY = 6
 
 internal fun elapsedMillis(startedAt: Long): Long = (System.nanoTime() - startedAt) / NANOS_PER_MILLI
 
+/** 模组下载的字节回调：调用方决定接进度条、任务中心传输计数，或两者都接。 */
+internal fun interface ModDownloadListener {
+    fun onBytes(
+        bytes: Long,
+        total: Long,
+    )
+}
+
 internal typealias ModUpdateDownloader =
-    suspend (version: RemoteModVersion, target: Path, context: JobContext?) -> Unit
+    suspend (version: RemoteModVersion, target: Path, listener: ModDownloadListener?) -> Unit
