@@ -255,17 +255,20 @@ internal abstract class NetworkResumeActions(
         total: Long,
         progress: (Long, Long) -> Unit,
     ) {
-        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-        var received = 0L
-        while (true) {
-            coroutineContext.ensureActive()
-            val count = input.read(buffer)
-            if (count < 0) break
-            output.write(buffer, 0, count)
-            digest.update(buffer, 0, count)
-            received += count
-            recordNetworkBytes(count)
-            progress(start + received, total)
+        // 读取循环就是一条活跃连接的生命周期；与分段路径共用同一套连接计数。
+        withTransferConnection {
+            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+            var received = 0L
+            while (true) {
+                coroutineContext.ensureActive()
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                digest.update(buffer, 0, count)
+                received += count
+                recordNetworkBytes(count)
+                progress(start + received, total)
+            }
         }
     }
 }

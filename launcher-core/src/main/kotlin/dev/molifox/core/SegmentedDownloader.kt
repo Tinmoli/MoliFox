@@ -385,18 +385,20 @@ private suspend fun copySegmentBytes(
     startOffset: Long,
     expected: Long,
     onProgress: (Long) -> Unit,
-): Long {
-    var offset = startOffset
-    val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-    while (true) {
-        coroutineContext.ensureActive()
-        val length = input.read(buffer)
-        if (length < 0) break
-        if (offset + length > expected) throw RangeUnsupported()
-        output.write(buffer, 0, length)
-        offset += length
-        recordNetworkBytes(length)
-        onProgress(offset)
+): Long =
+    // 分段读取循环就是一条活跃连接的生命周期；取消与异常也在离开时关闭计数。
+    withTransferConnection {
+        var offset = startOffset
+        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        while (true) {
+            coroutineContext.ensureActive()
+            val length = input.read(buffer)
+            if (length < 0) break
+            if (offset + length > expected) throw RangeUnsupported()
+            output.write(buffer, 0, length)
+            offset += length
+            recordNetworkBytes(length)
+            onProgress(offset)
+        }
+        offset
     }
-    return offset
-}

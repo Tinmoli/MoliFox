@@ -249,6 +249,14 @@ fun TaskCenterDialog(
                                 "—"
                             },
                         )
+                        TaskStatistic(
+                            strings.t("pages.tasks.stat.connections"),
+                            if (active.any { it.activeConnections > 0 }) {
+                                active.sumOf { it.activeConnections }.toString()
+                            } else {
+                                "—"
+                            },
+                        )
                         Spacer(Modifier.weight(1f))
                         Text(
                             strings.t("pages.tasks.backgroundNote"),
@@ -412,6 +420,12 @@ private fun TaskDetailCard(
                             job.completedFiles,
                             job.totalFiles,
                         ),
+                        fontSize = 11.sp,
+                    )
+                }
+                if (job.activeConnections > 0) {
+                    Text(
+                        strings.t("pages.tasks.job.connections", job.activeConnections),
                         fontSize = 11.sp,
                     )
                 }

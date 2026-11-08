@@ -26,6 +26,20 @@ internal suspend fun recordNetworkBytes(bytes: Int) {
     task?.networkBytes(bytes.toLong())
 }
 
+/**
+ * 标记一次正在传数据的下载连接：进入响应体读取时打开、离开（含取消与异常）时关闭。
+ * 只覆盖文件传输的读取循环，API/清单等瞬时请求不计入；没有任务上下文时不计数。
+ */
+internal suspend fun <T> withTransferConnection(block: suspend () -> T): T {
+    val task = coroutineContext[TransferTrafficContext]?.task ?: coroutineContext[TaskDownloadContext]?.task
+    task?.connectionOpened()
+    try {
+        return block()
+    } finally {
+        task?.connectionClosed()
+    }
+}
+
 internal class TaskDownloadContext(
     val task: JobContext,
 ) : AbstractCoroutineContextElement(Key) {

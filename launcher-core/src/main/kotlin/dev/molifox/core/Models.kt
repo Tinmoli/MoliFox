@@ -545,6 +545,8 @@ data class DownloadJob(
     val completedFiles: Int = 0,
     val totalFiles: Int = 0,
     val bytesPerSecond: Long = 0,
+    /** 正在传数据的下载连接数：随传输进度一起发布，任务中心展示实际并发。 */
+    val activeConnections: Int = 0,
     val resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
 )
 

@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 
 /** 进度节流间隔（毫秒）：约 10 次/秒。 */
@@ -66,6 +67,32 @@ class JobContext
         private var transferCount = 0
         private var sampleTime = System.nanoTime()
         private var transferSpeed = 0L
+
+        /** 正在传数据的下载连接数：读取循环里 +1、离开 -1（见 withTransferConnection）。 */
+        private val openConnections = AtomicInteger(0)
+
+        internal fun connectionOpened() {
+            openConnections.incrementAndGet()
+            publishConnections()
+        }
+
+        internal fun connectionClosed() {
+            openConnections.decrementAndGet()
+            publishConnections()
+        }
+
+        /** 连接数变化独立于字节进度：没有进度回调的传输也要能实时显示并发。 */
+        private fun publishConnections() {
+            store.updateState { state ->
+                val current = openConnections.get().coerceAtLeast(0)
+                state.copy(
+                    jobs =
+                        state.jobs.map {
+                            if (it.id == id) it.copy(activeConnections = current) else it
+                        },
+                )
+            }
+        }
 
         @Synchronized
         fun beginTransfers(count: Int) {
@@ -136,6 +163,7 @@ class JobContext
                                     totalFiles = transferCount,
                                     bytesPerSecond =
                                         if (completed == transferCount) 0 else transferSpeed,
+                                    activeConnections = openConnections.get().coerceAtLeast(0),
                                 )
                             }
                         },
@@ -410,6 +438,7 @@ class JobQueue(
                                 error = error,
                                 progress = if (status == JobStatus.Completed) 1f else it.progress,
                                 bytesPerSecond = 0,
+                                activeConnections = 0,
                             )
                         } else {
                             it
