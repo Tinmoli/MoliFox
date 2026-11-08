@@ -51,8 +51,8 @@ internal class UpgradeDependencyResolver(
         reconcileDependencyVersions(created, mods, targetGameVersion, context)
     }
 
-    /** 已安装模组声明的 id 集合：依赖是否缺失按它判断。 */
-    private fun readKnownModIds(mods: Path): Set<String> = listModMetadata(mods).flatMap { it.second.ids }.toSet()
+    /** 已安装模组声明与内嵌 jar 提供的 id 集合：依赖是否缺失按它判断。 */
+    private fun readKnownModIds(mods: Path): Set<String> = listModMetadata(mods).flatMap { it.second.knownIds }.toSet()
 
     /** Fabric / Quilt 声明里的依赖 id；Forge 系声明格式不同，依赖收尾不覆盖。 */
     private fun readRequiredDependencies(
@@ -182,7 +182,9 @@ internal class UpgradeDependencyResolver(
         return runCatching {
             source
                 .versions(project, instance)
-                .filter { compatible(it, instance) && it.versionType.equals("release", true) }
+                // 和解按声明约束精确选版，约束会点名 beta（如 sodium 0.9.3-beta.3）：
+                // 这里不能只认 release，否则满足约束的版本被滤光，换装必然失败。
+                .filter { compatible(it, instance) }
                 .filter { version -> constraints.all { minecraftConstraintMatches(it, version.number) } }
                 .maxWithOrNull { left, right -> compareModVersions(left.number, right.number) }
         }.getOrElse { error ->

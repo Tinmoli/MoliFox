@@ -146,6 +146,8 @@ internal class InstanceUpgradeService(
                     }
                 }.awaitAll()
         }
+        // 依赖补齐与和解要逐个查内容源，可能持续数十秒：立刻刷新进度行，避免看似卡在最后一个模组上。
+        context.progress(UPGRADE_MODS_END, I18n.t("instA2.upgrade.deps.checking"))
         dependencies.completeDependencies(created, mods, plan.targetGameVersion, context)
         context.progress(UPGRADE_MODS_END, I18n.t("instA2.upgrade.modsDone", done.get()))
         return mods
