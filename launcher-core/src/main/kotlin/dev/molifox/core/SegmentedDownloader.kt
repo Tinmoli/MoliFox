@@ -8,12 +8,14 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import okhttp3.Response
 import okhttp3.ResponseBody
 import java.io.IOException
@@ -53,6 +55,13 @@ private const val SEGMENT_COUNT_LINE = 4
 private const val DOWNLOAD_SEGMENT_THREADS = 256
 
 private val DownloadSegmentDispatcher = Dispatchers.IO.limitedParallelism(DOWNLOAD_SEGMENT_THREADS)
+
+/**
+ * 分段预检（bytes=0-0 范围请求）的总时限：DNS、连接、TLS 和响应头都算在内。
+ * 预检只取一个字节的响应，正常源秒回；吊满读超时（默认 45 秒）只会把
+ * 「下载开始前的静默」拖成分钟级，所以超时按本源失败处理，交给候选源回退。
+ */
+internal const val SEGMENT_PROBE_TIMEOUT_MILLIS = 8_000L
 
 private fun ownedSegment(
     file: Path,
@@ -107,6 +116,7 @@ internal suspend fun <T> Response.readCancellable(block: suspend (Response) -> T
 
 internal class SegmentedDownloader(
     private val request: suspend (String, String) -> Response,
+    private val probeTimeoutMillis: Long = SEGMENT_PROBE_TIMEOUT_MILLIS,
 ) {
     companion object {
         const val MINIMUM_FILE_SIZE = 4L * 1024 * 1024
@@ -172,8 +182,7 @@ internal class SegmentedDownloader(
         }
         val count = segmentCount(artifact.size, segments)
         return try {
-            val supported =
-                request(url, "bytes=0-0").use { probe -> matches(probe, 0, 0, artifact.size) }
+            val supported = probeRangeSupport(url, artifact.size)
             if (!supported) {
                 false
             } else {
@@ -206,6 +215,21 @@ internal class SegmentedDownloader(
             false
         }
     }
+
+    /** 分段预检：整次调用限时，超时抛出本源失败交给候选回退；预检期间计一条活跃连接。 */
+    private suspend fun probeRangeSupport(
+        url: String,
+        size: Long,
+    ): Boolean =
+        withTransferConnection {
+            try {
+                withTimeout(probeTimeoutMillis) {
+                    request(url, "bytes=0-0").use { probe -> matches(probe, 0, 0, size) }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw IOException(I18n.t("networkA.segments.probeTimeout", java.net.URI(url).host))
+            }
+        }
 
     private fun existingSegments(
         artifact: DownloadArtifact,
@@ -293,18 +317,21 @@ internal class SegmentedDownloader(
             }
         report()
         if (offset == end - start + 1) return
-        request(url, "bytes=${start + offset}-$end")
-            .readCancellable { response ->
-                val body = segmentBody(response, start, offset, end, artifact.size)
-                val length = end - start + 1
-                ensureSegmentLength(body, length - offset)
-                offset =
-                    copySegment(body, piece, offset, length) { value ->
-                        offset = value
-                        report()
-                    }
-                if (offset != length) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
-            }
+        // 从请求发起到响应消费完是同一条连接：一并计数，连接建立慢时任务中心也能看到并发。
+        withTransferConnection {
+            request(url, "bytes=${start + offset}-$end")
+                .readCancellable { response ->
+                    val body = segmentBody(response, start, offset, end, artifact.size)
+                    val length = end - start + 1
+                    ensureSegmentLength(body, length - offset)
+                    offset =
+                        copySegment(body, piece, offset, length) { value ->
+                            offset = value
+                            report()
+                        }
+                    if (offset != length) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
+                }
+        }
     }
 
     private fun segmentBody(

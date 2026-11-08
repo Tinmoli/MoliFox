@@ -197,8 +197,11 @@ internal abstract class NetworkResumeActions(
             val request = builder(url)
             if (offset > 0) request.header("Range", "bytes=$offset-")
             var restart = true
-            execute(request.build(), attempts = 1).readCancellable { response ->
-                restart = receive(artifact, partial, offset, response, progress)
+            // 与分段路径一致：连接建立到响应消费完都算一条活跃连接，首字节前的等待也可见。
+            withTransferConnection {
+                execute(request.build(), attempts = 1).readCancellable { response ->
+                    restart = receive(artifact, partial, offset, response, progress)
+                }
             }
             if (!restart) return
         }
@@ -396,9 +399,11 @@ internal abstract class NetworkCandidateActions(
         candidate: CandidateSource,
     ) {
         val segmented =
-            SegmentedDownloader { url, range ->
-                execute(builder(url).header("Range", range).build(), attempts = 1)
-            }
+            SegmentedDownloader(
+                request = { url, range ->
+                    execute(builder(url).header("Range", range).build(), attempts = 1)
+                },
+            )
         if (
             !segmented.download(
                 run.artifact,
