@@ -43,6 +43,17 @@ private const val HTTP_PARTIAL_CONTENT = 206
 internal const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
 private const val SEGMENT_COUNT_LINE = 4
 
+/**
+ * 分段读取是阻塞 IO，占的是线程不是挂起协程：默认 IO 池只有 64 根线程，
+ * 而「下载线程数 × 分段连接数」最多上千路并发请求都会在这里排队，
+ * 实际同时只有约 64 条连接在跑，设置里的分段承诺落不到网上。
+ * 给分段读取单独一个高上限调度视图（Dispatchers.IO 的 limitedParallelism 视图
+ * 按需扩到超过默认池），线程只在传输期间存在，闲置约一分钟后回收。
+ */
+private const val DOWNLOAD_SEGMENT_THREADS = 256
+
+private val DownloadSegmentDispatcher = Dispatchers.IO.limitedParallelism(DOWNLOAD_SEGMENT_THREADS)
+
 private fun ownedSegment(
     file: Path,
     count: Int,
@@ -173,7 +184,7 @@ internal class SegmentedDownloader(
                 coroutineScope {
                     (0 until count)
                         .map { index ->
-                            async(Dispatchers.IO) {
+                            async(DownloadSegmentDispatcher) {
                                 downloadSegment(
                                     artifact,
                                     url,
