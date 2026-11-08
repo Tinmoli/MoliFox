@@ -26,7 +26,7 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
-private val modFilePattern = Regex("(?i).*\\.jar(?:\\.disabled)?")
+internal val modJarNamePattern = Regex("(?i).*\\.jar(?:\\.disabled)?")
 
 private const val FAILURE_MESSAGE_MAX_LENGTH = 160
 private const val ERROR_MESSAGE_MAX_LENGTH = 120
@@ -94,7 +94,7 @@ class ModUpdateService
                     it.isRegularFile() &&
                         !Files.isSymbolicLink(it) &&
                         !it.name.startsWith(".molifox-") &&
-                        modFilePattern.matches(it.name)
+                        modJarNamePattern.matches(it.name)
                 }.sortedBy { it.name.lowercase() }
                 .map {
                     currentCoroutineContext().ensureActive()
@@ -373,9 +373,11 @@ private fun latestItem(
         )
     }
     val newer = compareModVersions(latest.number, currentVersion) > 0
-    // 目标版本下可用的最高版本反而比当前文件旧：当前文件多半不支持目标版本，不能当「已是最新」带入。
+    // 目标版本下可用的最高版本比当前文件编号旧：编号常把游戏版本嵌进去（1.21.11-1.5.2 对 1.5.2+26.3），
+    // 数值比较跨版本线没有意义。仍带出候选文件，由升级预扫按文件自声明决定换装或沿用；
+    // 实例内更新的界面只认 Updatable，Latest 条目带候选不改变既有行为。
     val behind = !newer && compareModVersions(latest.number, currentVersion) < 0
-    val candidate = if (newer) candidateOf(latest) else null
+    val candidate = if (newer || behind) candidateOf(latest) else null
     return base.copy(
         status = if (newer) ModUpdateStatus.Updatable else ModUpdateStatus.Latest,
         latestVersion = latest.number,

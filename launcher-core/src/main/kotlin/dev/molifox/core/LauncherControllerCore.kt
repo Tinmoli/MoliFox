@@ -136,7 +136,7 @@ internal class LauncherControllerCore(
     val content = ContentService(store, network, installer)
 
     /** 「修改」页签：跨版本模组预扫、迁移统计与版本升级执行。 */
-    val upgradeScan = InstanceUpgradeScanService(store, content.modUpdates)
+    val upgradeScan = InstanceUpgradeScanService(store, content.modUpdates, content.core.metadataReader)
 
     val upgrade =
         InstanceUpgradeService(
