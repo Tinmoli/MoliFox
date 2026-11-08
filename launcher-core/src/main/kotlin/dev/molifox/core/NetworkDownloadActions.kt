@@ -323,7 +323,7 @@ internal abstract class NetworkCandidateActions(
                 attempt--
                 continue
             }
-            recordAttemptFailure(run, candidate, status, rateLimited, failure)
+            recordAttemptFailure(run, candidate, status, failure)
             val recoverable = isRecoverableDownloadFailure(failure, run.multiSource)
             if (attempt >= run.perSource || !recoverable) {
                 return failure
@@ -424,12 +424,11 @@ internal abstract class NetworkCandidateActions(
         return wait
     }
 
-    /** 记下这轮尝试的 URL 与状态码；连续失败达到阈值时同时把源标记为禁用。 */
+    /** 记下这轮尝试的 URL 与状态码；源不会被禁用，失败后由候选序列继续切换下一个源。 */
     private fun recordAttemptFailure(
         run: CandidateFetchRun,
         candidate: CandidateSource,
         status: Int?,
-        rateLimited: Boolean,
         failure: Exception,
     ) {
         run.failures +=
@@ -440,13 +439,7 @@ internal abstract class NetworkCandidateActions(
                 status,
                 failure.message ?: failure.javaClass.simpleName,
             )
-        if (!rateLimited && settings.health.recordFailure(candidate.source.key)) {
-            val count = settings.health.state(candidate.source.key).consecutiveFailures
-            settings.logger(
-                I18n.t("networkA.source.disabled", candidate.source.title, count),
-                true,
-            )
-        }
+        settings.health.recordFailure(candidate.source.key)
     }
 }
 

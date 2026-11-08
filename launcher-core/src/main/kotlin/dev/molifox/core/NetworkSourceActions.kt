@@ -49,7 +49,7 @@ internal abstract class NetworkSourceActions(
 
     /**
      * 实际请求用的源与地址顺序：自动模式按地区排首选（中国镜像优先，其余地区测速排序），
-     * 再按本轮源健康度重排（禁用的源剔除、限流的排到末尾）。官方与镜像地址相同的主机不发探测请求。
+     * 再按本轮源健康度重排（限流的排到末尾）。官方与镜像地址相同的主机不发探测请求。
      */
     suspend fun orderedSources(
         url: String,

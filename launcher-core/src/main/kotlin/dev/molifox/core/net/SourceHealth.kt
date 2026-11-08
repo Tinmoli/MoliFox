@@ -1,23 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责单次任务内的源健康度：连续失败禁用、403/429 退避重试同一源。
+// 负责单次任务内的源健康度：失败计数、403/429 退避重试同一源；失败后由候选序列切换下一个源。
 
 package dev.molifox.core.net
 
-private const val SOURCE_DISABLE_COOLDOWN_MS = 60_000L
 private const val MAX_RATE_LIMIT_STEP = 5
 
 /**
- * 每个源在当前任务里的状态：成功/失败次数、连续失败、禁用与限流到期时间。
+ * 每个源在当前任务里的状态：成功/失败次数与限流到期时间。
  * 403/429 只记限流，不进 [failures]，也不影响 [consecutiveFailures]。
+ * 源不会被禁用：单个文件失败后立即切换下一个候选源，全部失败才算文件失败。
  */
 class SourceHealth(
     private val clock: () -> Long = System::currentTimeMillis,
-    /** 连续多少次真实失败后禁用该源。 */
-    private val disableAfter: Int = 5,
-    /** 禁用冷却：到期后重新参加。 */
-    private val disableMillis: Long = SOURCE_DISABLE_COOLDOWN_MS,
     /** 403/429 的首次退避与上限：1s → 2s → 4s …（上限 30s）。 */
     private val rateLimitBaseMillis: Long = 1_000L,
     private val rateLimitCapMillis: Long = 30_000L,
@@ -28,11 +24,8 @@ class SourceHealth(
         val consecutiveFailures: Int = 0,
         val rateLimitHits: Int = 0,
         val rateLimitStep: Int = 0,
-        val disabledUntil: Long = 0L,
         val rateLimitedUntil: Long = 0L,
     ) {
-        fun disabled(now: Long): Boolean = disabledUntil > now
-
         fun rateLimited(now: Long): Boolean = rateLimitedUntil > now
     }
 
@@ -53,20 +46,15 @@ class SourceHealth(
             )
     }
 
-    /** 记录一次真实失败；返回是否刚好在这次触发禁用（调用方只记一次日志）。 */
+    /** 记录一次真实失败；只累计计数供排障与进度展示，不影响源是否继续参加。 */
     @Synchronized
-    fun recordFailure(key: String): Boolean {
+    fun recordFailure(key: String) {
         val current = state(key)
-        val now = clock()
-        val consecutive = current.consecutiveFailures + 1
-        val disable = consecutive >= disableAfter
         states[key] =
             current.copy(
                 failures = current.failures + 1,
-                consecutiveFailures = consecutive,
-                disabledUntil = if (disable) now + disableMillis else current.disabledUntil,
+                consecutiveFailures = current.consecutiveFailures + 1,
             )
-        return disable && !current.disabled(now)
     }
 
     /** 403/429：不算失败，返回按指数退避应等待的毫秒数，并推迟同一源的重试时间。 */
@@ -85,8 +73,8 @@ class SourceHealth(
     }
 
     /**
-     * 按健康度重排候选：可用源保持原顺序，限流的排到末尾，禁用的剔除。
-     * 全部被禁用时退回原列表，好让失败信息仍能列出每个源的地址。
+     * 按健康度重排候选：可用源保持原顺序，限流的排到末尾。
+     * 全部限流时退回原列表，好让失败信息仍能列出每个源的地址。
      */
     @Synchronized
     fun arrange(candidates: List<CandidateSource>): List<CandidateSource> {
@@ -96,11 +84,7 @@ class SourceHealth(
         val limited = mutableListOf<CandidateSource>()
         for (candidate in candidates) {
             val state = states[candidate.source.key] ?: State()
-            when {
-                state.disabled(now) -> Unit
-                state.rateLimited(now) -> limited += candidate
-                else -> usable += candidate
-            }
+            if (state.rateLimited(now)) limited += candidate else usable += candidate
         }
         val ordered = usable + limited
         return if (ordered.isEmpty()) candidates else ordered

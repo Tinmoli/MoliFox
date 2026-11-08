@@ -19,6 +19,7 @@ import java.net.URISyntaxException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.fileSize
@@ -34,6 +35,9 @@ internal const val MAX_DOWNLOAD_THREADS = 128
 
 /** 失败汇总里最多逐个列出的文件数，其余折叠成一行数量提示，避免消息无限膨胀。 */
 private const val MAX_REPORTED_FAILURES = 12
+
+/** 自上次成功以来连续失败的文件数达到该值就中止整批：网络故障时别让用户干等剩下的超时。 */
+private const val FAILURE_STREAK_ABORT = 8
 
 /** 单个文件的最终失败：文件、实际来源主机与 HTTP 状态码（没有状态码时给原因）。 */
 internal data class FileFailure(
@@ -71,14 +75,17 @@ internal class DownloadBatchException(
     )
 
 /**
- * 一批下载的共享状态：去重后的文件列表、下一个要取的下标、失败收集队列。
- * 工作协程都指向同一份状态，因此不会重复下载同一个目标。
+ * 一批下载的共享状态：去重后的文件列表、下一个要取的下标、失败收集队列，
+ * 以及「自上次成功以来的连续失败」计数：期间只要有一个文件成功就清零；
+ * 达到 [FAILURE_STREAK_ABORT] 时置位 [aborted]，工作协程停止派发剩余文件。
  */
 private class BatchState(
     val unique: List<DownloadArtifact>,
 ) {
     val next = AtomicInteger()
     val failures = ConcurrentLinkedQueue<FileFailure>()
+    val recentFailures = AtomicInteger()
+    val aborted = AtomicBoolean()
 }
 
 /**
@@ -87,7 +94,8 @@ private class BatchState(
  * 清掉本批可能残留的 `.part` 与分段缓存。
  *
  * 逐文件失败只收集不抛出，由调用方按「必需 / 可选」决定是否中断；这样一批 5000
- * 个资源里少数 404 不会让其余文件白等。
+ * 个资源里少数 404 不会让其余文件白等。但连续失败且期间毫无成功时判定为网络故障，
+ * 提前中止整批（[FAILURE_STREAK_ABORT]），把已收集的失败交给调用方报给用户，不再干等。
  */
 internal class DownloadScheduler(
     private val network: NetworkClient,
@@ -115,7 +123,7 @@ internal class DownloadScheduler(
             batch.failures.toList()
         }
 
-    /** 启动固定数量的工作协程，从共享队列里取文件；单个文件失败只登记，不结束整批。 */
+    /** 启动固定数量的工作协程，从共享队列里取文件；单个文件失败只登记，连续失败才中止整批。 */
     private fun startWorkers(
         scope: CoroutineScope,
         batch: BatchState,
@@ -126,19 +134,21 @@ internal class DownloadScheduler(
         scope.launch(Dispatchers.IO + TransferTrafficContext(context)) {
             while (coroutineContext.isActive) {
                 context.checkCancelled()
+                if (batch.aborted.get()) break
                 val index = batch.next.getAndIncrement()
                 if (index >= batch.unique.size) break
-                downloadOne(batch.unique[index], sink, batch.failures)
+                downloadOne(batch, index, sink)
             }
         }
     }
 
-    /** 下载单个文件：失败折成 [FileFailure] 记进批次，让其余文件继续。 */
+    /** 下载单个文件：失败折成 [FileFailure] 记进批次；期间有成功就重置连续失败计数。 */
     private suspend fun downloadOne(
-        artifact: DownloadArtifact,
+        batch: BatchState,
+        index: Int,
         sink: DownloadProgressSink,
-        failures: ConcurrentLinkedQueue<FileFailure>,
     ) {
+        val artifact = batch.unique[index]
         val key = artifact.target.toString()
         sink.started(key, artifact)
         try {
@@ -146,29 +156,33 @@ internal class DownloadScheduler(
                 sink.bytes(key, done, total)
             }
             sink.finished(key, artifact)
+            batch.recentFailures.set(0)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: IOException) {
-            recordFailure(artifact, key, error, sink, failures)
+            recordFailure(batch, artifact, key, error, sink)
         } catch (error: IllegalArgumentException) {
-            recordFailure(artifact, key, error, sink, failures)
+            recordFailure(batch, artifact, key, error, sink)
         } catch (error: IllegalStateException) {
-            recordFailure(artifact, key, error, sink, failures)
+            recordFailure(batch, artifact, key, error, sink)
         } catch (error: URISyntaxException) {
-            recordFailure(artifact, key, error, sink, failures)
+            recordFailure(batch, artifact, key, error, sink)
         }
     }
 
     /** 记录一次文件级失败；[error] 是这次尝试实际抛出的异常，消息原样保留。 */
     private fun recordFailure(
+        batch: BatchState,
         artifact: DownloadArtifact,
         key: String,
         error: Throwable,
         sink: DownloadProgressSink,
-        failures: ConcurrentLinkedQueue<FileFailure>,
     ) {
-        failures += failureOf(artifact, error)
+        batch.failures += failureOf(artifact, error)
         sink.failed(key, artifact)
+        if (batch.recentFailures.incrementAndGet() >= FAILURE_STREAK_ABORT) {
+            batch.aborted.set(true)
+        }
     }
 
     /** 取消后清掉本批可能残留的 `.part` 与分段缓存，不把半截文件留给用户。 */
