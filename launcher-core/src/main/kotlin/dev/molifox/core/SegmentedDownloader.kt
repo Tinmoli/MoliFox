@@ -1,0 +1,431 @@
+// SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+// 对已知大小和摘要的大文件进行有界分段传输、断点恢复与合并校验。
+
+package dev.molifox.core
+
+import dev.molifox.core.i18n.I18n
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import okhttp3.Response
+import okhttp3.ResponseBody
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import java.nio.file.StandardOpenOption.APPEND
+import java.nio.file.StandardOpenOption.CREATE
+import kotlin.coroutines.coroutineContext
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteExisting
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.isSymbolicLink
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+
+private const val MAX_SEGMENT_MARKER_BYTES = 2048
+private const val HTTP_PARTIAL_CONTENT = 206
+internal const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+private const val SEGMENT_COUNT_LINE = 4
+
+/**
+ * 分段读取是阻塞 IO，占的是线程不是挂起协程：默认 IO 池只有 64 根线程，
+ * 而「下载线程数 × 分段连接数」最多上千路并发请求都会在这里排队，
+ * 实际同时只有约 64 条连接在跑，设置里的分段承诺落不到网上。
+ * 给分段读取单独一个高上限调度视图（Dispatchers.IO 的 limitedParallelism 视图
+ * 按需扩到超过默认池），线程只在传输期间存在，闲置约一分钟后回收。
+ */
+private const val DOWNLOAD_SEGMENT_THREADS = 256
+
+private val DownloadSegmentDispatcher = Dispatchers.IO.limitedParallelism(DOWNLOAD_SEGMENT_THREADS)
+
+/**
+ * 分段预检（bytes=0-0 范围请求）的总时限：DNS、连接、TLS 和响应头都算在内。
+ * 预检只取一个字节的响应，正常源秒回；吊满读超时（默认 45 秒）只会把
+ * 「下载开始前的静默」拖成分钟级，所以超时按本源失败处理，交给候选源回退。
+ */
+internal const val SEGMENT_PROBE_TIMEOUT_MILLIS = 8_000L
+
+private fun ownedSegment(
+    file: Path,
+    count: Int,
+): Boolean {
+    val name = file.fileName.toString()
+    val index = name.removeSuffix(".part").toIntOrNull() ?: return false
+    return index in 0 until count && name == "$index.part" &&
+        !file.isSymbolicLink() && file.isRegularFile(NOFOLLOW_LINKS)
+}
+
+private class RangeUnsupported : IOException(I18n.t("networkA.segments.rangeUnsupported"))
+
+internal class ResponseCancellation(
+    val cancel: () -> Unit,
+)
+
+internal suspend fun <T> Response.readCancellable(block: suspend (Response) -> T): T =
+    coroutineScope {
+        val response = this@readCancellable
+        val finished =
+            java.util.concurrent.atomic
+                .AtomicBoolean(false)
+        val closer =
+            // 取消观察不排进被同步读取占满的 IO 池，否则满并发时无法及时关闭套接字。
+            launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (!finished.get()) {
+                        response.request
+                            .tag(ResponseCancellation::class.java)
+                            ?.cancel
+                            ?.invoke()
+                    }
+                }
+            }
+        try {
+            runCatching {
+                block(response)
+            }.getOrElse { failure ->
+                // block 是调用方传入的传输 lambda，可能抛出任意运行时异常；这里只做取消优先判定后原样重抛。
+                coroutineContext.ensureActive()
+                throw failure
+            }
+        } finally {
+            finished.set(true)
+            closer.cancel()
+            response.close()
+        }
+    }
+
+internal class SegmentedDownloader(
+    private val request: suspend (String, String) -> Response,
+    private val probeTimeoutMillis: Long = SEGMENT_PROBE_TIMEOUT_MILLIS,
+) {
+    companion object {
+        const val MINIMUM_FILE_SIZE = 4L * 1024 * 1024
+        private const val MINIMUM_SEGMENT_SIZE = 2L * 1024 * 1024
+        private const val MARKER = "molifox-segments-v1"
+
+        fun segmentCount(
+            size: Long,
+            configured: Int,
+        ): Int =
+            if (size < MINIMUM_FILE_SIZE || configured < 2) {
+                1
+            } else {
+                minOf(
+                    configured.coerceAtMost(MAX_DOWNLOAD_SEGMENTS),
+                    (size / MINIMUM_SEGMENT_SIZE).coerceAtMost(MAX_DOWNLOAD_SEGMENTS.toLong()).toInt(),
+                )
+            }
+
+        fun directory(target: Path): Path = target.resolveSibling("${target.fileName}.parts")
+
+        fun discard(target: Path) {
+            val folder = directory(target)
+            if (!folder.isDirectory(NOFOLLOW_LINKS) || folder.isSymbolicLink()) return
+            val marker = folder.resolve("manifest")
+            if (
+                !marker.isRegularFile(NOFOLLOW_LINKS) ||
+                marker.isSymbolicLink() ||
+                marker.fileSize() > MAX_SEGMENT_MARKER_BYTES
+            ) {
+                return
+            }
+            val identity = marker.readText()
+            if (!identity.startsWith("$MARKER\n")) return
+            val count =
+                identity
+                    .lineSequence()
+                    .drop(SEGMENT_COUNT_LINE)
+                    .firstOrNull()
+                    ?.toIntOrNull() ?: return
+            if (count !in 2..MAX_DOWNLOAD_SEGMENTS) return
+            folder
+                .listDirectoryEntries()
+                .filter { ownedSegment(it, count) }
+                .forEach { it.deleteIfExists() }
+            // Unknown files belong to someone else; leave the directory intact.
+            if (folder.listDirectoryEntries().all { it == marker }) {
+                marker.deleteIfExists()
+                folder.deleteIfExists()
+            }
+        }
+    }
+
+    suspend fun download(
+        artifact: DownloadArtifact,
+        partial: Path,
+        url: String,
+        segments: Int,
+        progress: (Long, Long) -> Unit,
+    ): Boolean {
+        if (segments < 2 || artifact.size < MINIMUM_FILE_SIZE || artifact.sha1.isBlank()) {
+            return false
+        }
+        val count = segmentCount(artifact.size, segments)
+        return try {
+            val supported = probeRangeSupport(url, artifact.size)
+            if (!supported) {
+                false
+            } else {
+                val folder = prepare(artifact, count)
+                val done = existingSegments(artifact, count, folder)
+                progress(done.sum(), artifact.size)
+                val monitor = Any()
+                coroutineScope {
+                    (0 until count)
+                        .map { index ->
+                            async(DownloadSegmentDispatcher) {
+                                downloadSegment(
+                                    artifact,
+                                    url,
+                                    folder,
+                                    index,
+                                    count,
+                                    done,
+                                    monitor,
+                                    progress,
+                                )
+                            }
+                        }.awaitAll()
+                }
+                mergeSegments(artifact, partial, folder, count, progress)
+                true
+            }
+        } catch (_: RangeUnsupported) {
+            discard(artifact.target)
+            false
+        }
+    }
+
+    /** 分段预检：整次调用限时，超时抛出本源失败交给候选回退；预检期间计一条活跃连接。 */
+    private suspend fun probeRangeSupport(
+        url: String,
+        size: Long,
+    ): Boolean =
+        withTransferConnection {
+            try {
+                withTimeout(probeTimeoutMillis) {
+                    request(url, "bytes=0-0").use { probe -> matches(probe, 0, 0, size) }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw IOException(I18n.t("networkA.segments.probeTimeout", java.net.URI(url).host))
+            }
+        }
+
+    private fun existingSegments(
+        artifact: DownloadArtifact,
+        count: Int,
+        folder: Path,
+    ): LongArray {
+        val done = LongArray(count)
+        for (index in 0 until count) {
+            val piece = folder.resolve("$index.part")
+            validatePiece(piece)
+            val length = artifact.size * (index + 1) / count - artifact.size * index / count
+            if (piece.exists() && piece.fileSize() > length) piece.deleteExisting()
+            done[index] = if (piece.exists()) piece.fileSize() else 0L
+        }
+        return done
+    }
+
+    private suspend fun mergeSegments(
+        artifact: DownloadArtifact,
+        partial: Path,
+        folder: Path,
+        count: Int,
+        progress: (Long, Long) -> Unit,
+    ) {
+        require(!partial.isSymbolicLink()) { I18n.t("networkA.segments.partialSymlink") }
+        Files.newOutputStream(partial).use { output ->
+            for (index in 0 until count) {
+                coroutineContext.ensureActive()
+                Files
+                    .newInputStream(folder.resolve("$index.part"))
+                    .use { it.copyTo(output) }
+            }
+        }
+        val problem = artifactProblem(artifact.copy(target = partial))
+        if (problem != null) {
+            partial.deleteIfExists()
+            discard(artifact.target)
+            throw DownloadVerificationException(
+                I18n.t(
+                    "networkA.segments.verifyFailed",
+                    artifact.target.fileName,
+                    problem,
+                ),
+            )
+        }
+        coroutineContext.ensureActive()
+        Files.move(partial, artifact.target, REPLACE_EXISTING)
+        discard(artifact.target)
+        progress(artifact.size, artifact.size)
+    }
+
+    private fun validatePiece(piece: Path) {
+        require(
+            !piece.isSymbolicLink() &&
+                (!piece.exists(NOFOLLOW_LINKS) || piece.isRegularFile(NOFOLLOW_LINKS)),
+        ) {
+            I18n.t("networkA.segments.invalidPath")
+        }
+    }
+
+    /** 单个分段的完整传输：请求、校验响应并按块写入缓存文件。 */
+    private suspend fun downloadSegment(
+        artifact: DownloadArtifact,
+        url: String,
+        folder: Path,
+        index: Int,
+        count: Int,
+        done: LongArray,
+        monitor: Any,
+        progress: (Long, Long) -> Unit,
+    ) {
+        val start = artifact.size * index / count
+        val end = artifact.size * (index + 1) / count - 1
+        val piece = folder.resolve("$index.part")
+        validatePiece(piece)
+        if (piece.exists() && piece.fileSize() > end - start + 1) {
+            piece.deleteExisting()
+        }
+        var offset = done[index]
+
+        fun report() =
+            synchronized(monitor) {
+                done[index] = offset
+                progress(done.sum(), artifact.size)
+            }
+        report()
+        if (offset == end - start + 1) return
+        // 从请求发起到响应消费完是同一条连接：一并计数，连接建立慢时任务中心也能看到并发。
+        withTransferConnection {
+            request(url, "bytes=${start + offset}-$end")
+                .readCancellable { response ->
+                    val body = segmentBody(response, start, offset, end, artifact.size)
+                    val length = end - start + 1
+                    ensureSegmentLength(body, length - offset)
+                    offset =
+                        copySegment(body, piece, offset, length) { value ->
+                            offset = value
+                            report()
+                        }
+                    if (offset != length) throw IOException(I18n.t("networkA.segments.transferInterrupted"))
+                }
+        }
+    }
+
+    private fun segmentBody(
+        response: Response,
+        start: Long,
+        offset: Long,
+        end: Long,
+        total: Long,
+    ): ResponseBody {
+        if (!matches(response, start + offset, end, total)) throw RangeUnsupported()
+        return response.body ?: throw IOException(I18n.t("networkA.segments.emptyBody"))
+    }
+
+    private fun ensureSegmentLength(
+        body: ResponseBody,
+        expected: Long,
+    ) {
+        if (body.contentLength() >= 0 && body.contentLength() != expected) throw RangeUnsupported()
+    }
+
+    private suspend fun copySegment(
+        body: ResponseBody,
+        piece: Path,
+        startOffset: Long,
+        expected: Long,
+        onProgress: (Long) -> Unit,
+    ): Long =
+        body.byteStream().use { input ->
+            Files.newOutputStream(piece, CREATE, APPEND).use { output ->
+                copySegmentBytes(input, output, startOffset, expected, onProgress)
+            }
+        }
+
+    private fun prepare(
+        artifact: DownloadArtifact,
+        count: Int,
+    ): Path {
+        val folder = directory(artifact.target)
+        val identity =
+            "$MARKER\n${artifact.size}\n${artifact.hashAlgorithm}\n" +
+                "${artifact.sha1.lowercase()}\n$count\n"
+        require(!folder.isSymbolicLink()) { I18n.t("networkA.segments.folderSymlink") }
+        if (folder.exists(NOFOLLOW_LINKS)) {
+            val marker = folder.resolve("manifest")
+            require(
+                folder.isDirectory(NOFOLLOW_LINKS) &&
+                    marker.isRegularFile(NOFOLLOW_LINKS) &&
+                    !marker.isSymbolicLink() &&
+                    marker.fileSize() <= MAX_SEGMENT_MARKER_BYTES &&
+                    marker.readText().startsWith("$MARKER\n"),
+            ) {
+                I18n.t("networkA.segments.folderOccupied")
+            }
+            if (marker.readText() != identity) discard(artifact.target)
+        }
+        folder.createDirectories()
+        val marker = folder.resolve("manifest")
+        if (!marker.exists(NOFOLLOW_LINKS)) {
+            marker.writeText(identity, Charsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW)
+        }
+        require(marker.readText() == identity) { I18n.t("networkA.segments.markerMismatch") }
+        return folder
+    }
+
+    private fun matches(
+        response: Response,
+        start: Long,
+        end: Long,
+        total: Long,
+    ): Boolean =
+        response.code == HTTP_PARTIAL_CONTENT &&
+            response.header("Content-Range") == "bytes $start-$end/$total"
+}
+
+private suspend fun copySegmentBytes(
+    input: InputStream,
+    output: OutputStream,
+    startOffset: Long,
+    expected: Long,
+    onProgress: (Long) -> Unit,
+): Long =
+    // 分段读取循环就是一条活跃连接的生命周期；取消与异常也在离开时关闭计数。
+    withTransferConnection {
+        var offset = startOffset
+        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        while (true) {
+            coroutineContext.ensureActive()
+            val length = input.read(buffer)
+            if (length < 0) break
+            if (offset + length > expected) throw RangeUnsupported()
+            output.write(buffer, 0, length)
+            offset += length
+            recordNetworkBytes(length)
+            onProgress(offset)
+        }
+        offset
+    }

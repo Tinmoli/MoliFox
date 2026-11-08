@@ -1,0 +1,13 @@
+{
+  "minLines": 10,
+  "minTokens": 70,
+  "maxLines": 20000,
+  "maxSize": "1mb",
+  "mode": "strict",
+  "format": ["kotlin", "cpp"],
+  "reporters": ["json"],
+  "output": ".dev/slim/jscpd",
+  "ignore": ["**/build/**", "**/generated/**", "**/.tmp/**", "**/vendor/**", "**/third_party/**", "**/miniz/**"],
+  "absolute": false,
+  "gitignore": false
+}
