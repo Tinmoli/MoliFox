@@ -282,7 +282,7 @@ class ModUpdateService
                     warning = failure,
                 )
             }
-            return latestItem(base, pool.versions, currentVersion, matchSource)
+            return latestItem(base, pool, currentVersion, matchSource)
         }
 
         suspend fun apply(
@@ -350,21 +350,31 @@ private suspend fun versionPool(
     val allowPrerelease = includePrerelease || isPrereleaseVersion(currentVersion)
     return VersionPool(
         supported.filter { allowPrerelease || it.versionType.equals("release", true) },
+        // 当前文件是预发布而设置未放开预发布时走「正式版优先」：选最新正式版，没有正式版才回退预发布，
+        // 避免一旦装过 beta 就沿 beta 线一路更新（sodium beta 族互不兼容、还 breaks 最新 iris 的实例教训）。
+        preferRelease = !includePrerelease && allowPrerelease,
     )
 }
 
 private fun latestItem(
     base: ModUpdateItem,
-    pool: List<RemoteModVersion>,
+    pool: VersionPool,
     currentVersion: String,
     matchSource: ModMatchSource,
 ): ModUpdateItem {
+    val byNumber =
+        Comparator { left: RemoteModVersion, right: RemoteModVersion ->
+            compareModVersions(left.number, right.number)
+        }
     val latest =
-        pool.maxWithOrNull(
-            Comparator { left, right ->
-                compareModVersions(left.number, right.number)
-            },
-        )
+        if (pool.preferRelease) {
+            pool.versions
+                .filter { it.versionType.equals("release", true) }
+                .maxWithOrNull(byNumber)
+                ?: pool.versions.maxWithOrNull(byNumber)
+        } else {
+            pool.versions.maxWithOrNull(byNumber)
+        }
     if (latest == null || latest.number.isBlank()) {
         return base.copy(
             status = ModUpdateStatus.Latest,
@@ -419,6 +429,7 @@ internal fun candidateOf(version: RemoteModVersion): ModUpdateCandidate? {
 private data class VersionPool(
     val versions: List<RemoteModVersion>,
     val failure: String? = null,
+    val preferRelease: Boolean = false,
 )
 
 internal fun shortErrorMessage(error: Exception): String = error.message.orEmpty().take(ERROR_MESSAGE_MAX_LENGTH)

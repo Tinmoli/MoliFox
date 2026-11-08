@@ -15,8 +15,10 @@ internal class ModUpdateBatchLookup(
     private val store: LauncherStore,
 ) {
     /**
-     * 按「内容源 + 是否接受预发布」分组调用批量接口；不支持的源返回 null，对应文件留待逐项目查询。
+     * 按「内容源 + 预发布策略」分组调用批量接口；不支持的源返回 null，对应文件留待逐项目查询。
      * 分组是为了保持每个文件各自的预发布策略，同时避免为每个项目单独发一次请求。
+     * 当前文件是预发布而设置未放开时走「正式版优先」：先查正式版，查不到的文件再按预发布回退，
+     * 避免装过 beta 就沿 beta 线一路更新。
      */
     suspend fun latestVersions(
         files: List<LocalModFile>,
@@ -33,17 +35,41 @@ internal class ModUpdateBatchLookup(
         val result = mutableMapOf<String, BatchLatest>()
         val groups =
             matched.groupBy { (_, source, installed) ->
-                source.provider to (includePrerelease || isPrereleaseVersion(installed.number))
+                source.provider to (includePrerelease to isPrereleaseVersion(installed.number))
             }
         for ((key, group) in groups) {
-            val (_, allowPrerelease) = key
+            val (settingOn, currentIsPrerelease) = key.second
             val source = group.first().second
-            val latest = latestForGroup(source, group, instance, allowPrerelease) ?: continue
-            group.forEach { (file, _, _) ->
-                result[file.filename] = BatchLatest(true, latest[file.filename])
+            if (settingOn || !currentIsPrerelease) {
+                val latest = latestForGroup(source, group, instance, settingOn) ?: continue
+                group.forEach { (file, _, _) ->
+                    result[file.filename] = BatchLatest(true, latest[file.filename])
+                }
+            } else {
+                preferReleaseGroup(source, group, instance, result)
             }
         }
         return result
+    }
+
+    /** 正式版优先分组：先按仅正式版查询；没有正式版的文件再用预发布查询回退。 */
+    private suspend fun preferReleaseGroup(
+        source: ModUpdateSource,
+        group: List<Triple<LocalModFile, ModUpdateSource, RemoteModVersion>>,
+        instance: GameInstance,
+        result: MutableMap<String, BatchLatest>,
+    ) {
+        // 源不支持批量接口或查询失败：整组留给逐项目查询，不能标记 checked 挡住回退。
+        val releases = latestForGroup(source, group, instance, false) ?: return
+        group.forEach { (file, _, _) ->
+            result[file.filename] = BatchLatest(true, releases[file.filename])
+        }
+        val missing = group.filter { releases[it.first.filename] == null }
+        if (missing.isEmpty()) return
+        val fallback = latestForGroup(source, missing, instance, true) ?: return
+        missing.forEach { (file, _, _) ->
+            result[file.filename] = BatchLatest(true, fallback[file.filename])
+        }
     }
 
     /** 单个分组的批量查询结果；接口失败时记录原因并返回 null，让文件回退到逐项目查询。 */

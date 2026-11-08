@@ -136,23 +136,35 @@ internal class InstanceUpgradeScanService(
                 )
 
             // 「最新」编号反而比当前文件旧：编号常把游戏版本嵌进去（1.21.11-1.5.2 对 1.5.2+26.3），
-            // 数值比较跨版本线没有意义。当前文件自声明支持目标版本 → 沿用，不按编号降级；
+            // 数值比较跨版本线没有意义。正式版优先时（当前是预发布、候选是正式版）要换装到正式版，
+            // 不按「编号更旧」沿用；其余情况当前文件自声明支持目标版本 → 沿用，不按编号降级；
             // 否则（声明不含目标版本或未声明）当前文件在目标版本下不可靠，换装目标版本下的这份文件。
             item.status == ModUpdateStatus.Latest && item.candidate != null ->
-                if (declaresThisTarget) {
-                    base.copy(state = InstanceModUpgradeState.CarryAsIs)
-                } else {
-                    base.copy(
-                        state = InstanceModUpgradeState.HasNewVersion,
-                        targetVersion = item.latestVersion,
-                        candidate = item.candidate,
-                        note =
-                            if (declaresOtherTarget) {
-                                I18n.t("instA2.upgrade.declaredIncompatible", targetGameVersion, declaredNote)
-                            } else {
-                                item.warning
-                            },
-                    )
+                when {
+                    // 当前文件在预发布线上、目标版本下有更稳的正式版：换回正式版（sodium beta 族互不兼容的实例教训）。
+                    isPrereleaseVersion(item.currentVersion) &&
+                        !isPrereleaseVersion(item.candidate.versionNumber) ->
+                        base.copy(
+                            state = InstanceModUpgradeState.HasNewVersion,
+                            targetVersion = item.latestVersion,
+                            candidate = item.candidate,
+                            note = I18n.t("instA2.upgrade.releasePreferred", item.latestVersion),
+                        )
+
+                    declaresThisTarget -> base.copy(state = InstanceModUpgradeState.CarryAsIs)
+
+                    else ->
+                        base.copy(
+                            state = InstanceModUpgradeState.HasNewVersion,
+                            targetVersion = item.latestVersion,
+                            candidate = item.candidate,
+                            note =
+                                if (declaresOtherTarget) {
+                                    I18n.t("instA2.upgrade.declaredIncompatible", targetGameVersion, declaredNote)
+                                } else {
+                                    item.warning
+                                },
+                        )
                 }
 
             // 提示非空：目标版本下没有兼容文件——带不过去。
