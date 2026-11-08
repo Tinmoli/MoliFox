@@ -10,11 +10,17 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isRegularFile
 
@@ -97,7 +103,7 @@ internal class InstanceUpgradeService(
         )
     }
 
-    /** 步骤三：按勾选下载升级文件或原样带入旧文件，最后补齐一层缺失的前置依赖。 */
+    /** 步骤三：按勾选并发下载升级文件或原样带入旧文件，最后补齐一层缺失的前置依赖。 */
     private suspend fun installMods(
         created: GameInstance,
         source: GameInstance,
@@ -108,38 +114,60 @@ internal class InstanceUpgradeService(
         val sourceMods = store.instancePath(source.id).resolve("mods")
         Files.createDirectories(mods)
         val total = plan.mods.size.coerceAtLeast(1)
-        var done = 0
-        for (item in plan.mods) {
-            context.checkCancelled()
-            val fraction = UPGRADE_INSTALL_END + (UPGRADE_MODS_END - UPGRADE_INSTALL_END) * done / total
-            context.progress(fraction, I18n.t("instA2.upgrade.mods.single", item.title))
-            val finalName =
-                when {
-                    item.state == InstanceModUpgradeState.HasNewVersion && item.candidate != null -> {
-                        val base = modInstaller.downloadCandidate(item.candidate, mods)
-                        // 旧文件是禁用状态时，升级文件沿用禁用后缀，行为与实例内更新一致。
-                        if (!item.enabled) {
-                            Files.move(mods.resolve(base), mods.resolve("$base.disabled"))
-                            "$base.disabled"
-                        } else {
-                            base
+        val done = AtomicInteger()
+        // 与批量下载共用设置里的「下载线程数」：模组升级不再逐个串行等待，任一失败整体回滚。
+        val permits =
+            Semaphore(
+                store.data.settings.downloadThreads
+                    .coerceIn(1, MAX_DOWNLOAD_THREADS),
+            )
+        coroutineScope {
+            plan.mods
+                .map { item ->
+                    async(Dispatchers.IO) {
+                        permits.withPermit {
+                            context.checkCancelled()
+                            installModItem(item, mods, sourceMods)
+                            val fraction =
+                                UPGRADE_INSTALL_END +
+                                    (UPGRADE_MODS_END - UPGRADE_INSTALL_END) * done.incrementAndGet() / total
+                            context.progress(fraction, I18n.t("instA2.upgrade.mods.single", item.title))
                         }
                     }
-
-                    else -> {
-                        Files.copy(sourceMods.resolve(item.filename), mods.resolve(item.filename))
-                        item.filename
-                    }
-                }
-            context.checkCancelled()
-            require(mods.resolve(finalName).isRegularFile()) {
-                I18n.t("instA2.upgrade.modsMissing", finalName)
-            }
-            done++
+                }.awaitAll()
         }
         dependencies.completeDependencies(created, mods, plan.targetGameVersion, context)
-        context.progress(UPGRADE_MODS_END, I18n.t("instA2.upgrade.modsDone", done))
+        context.progress(UPGRADE_MODS_END, I18n.t("instA2.upgrade.modsDone", done.get()))
         return mods
+    }
+
+    /** 单个模组条目：有新版本就下载（旧文件禁用时沿用禁用后缀），否则从旧实例原样带入。 */
+    private suspend fun installModItem(
+        item: InstanceModUpgradeItem,
+        mods: Path,
+        sourceMods: Path,
+    ) {
+        val finalName =
+            when {
+                item.state == InstanceModUpgradeState.HasNewVersion && item.candidate != null -> {
+                    val base = modInstaller.downloadCandidate(item.candidate, mods)
+                    // 旧文件是禁用状态时，升级文件沿用禁用后缀，行为与实例内更新一致。
+                    if (!item.enabled) {
+                        Files.move(mods.resolve(base), mods.resolve("$base.disabled"))
+                        "$base.disabled"
+                    } else {
+                        base
+                    }
+                }
+
+                else -> {
+                    Files.copy(sourceMods.resolve(item.filename), mods.resolve(item.filename))
+                    item.filename
+                }
+            }
+        require(mods.resolve(finalName).isRegularFile()) {
+            I18n.t("instA2.upgrade.modsMissing", finalName)
+        }
     }
 
     /**

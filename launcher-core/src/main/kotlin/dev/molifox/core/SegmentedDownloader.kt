@@ -98,8 +98,8 @@ internal class SegmentedDownloader(
     private val request: suspend (String, String) -> Response,
 ) {
     companion object {
-        const val MINIMUM_FILE_SIZE = 8L * 1024 * 1024
-        private const val MINIMUM_SEGMENT_SIZE = 4L * 1024 * 1024
+        const val MINIMUM_FILE_SIZE = 4L * 1024 * 1024
+        private const val MINIMUM_SEGMENT_SIZE = 2L * 1024 * 1024
         private const val MARKER = "molifox-segments-v1"
 
         fun segmentCount(

@@ -121,7 +121,7 @@ internal abstract class LauncherContentUpdateActions(
             taskResourcesForInstances(store, instanceId),
             kind = LauncherTaskKind.UpdateContent,
         ) {
-            val result = applyContentUpdateBatch(this, tasks)
+            val result = applyContentUpdateBatch(this, tasks, store.data.settings.downloadThreads)
             if (result.failures.isNotEmpty()) throw IllegalStateException(result.summary())
         }
     }

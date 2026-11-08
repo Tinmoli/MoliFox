@@ -44,6 +44,9 @@ private const val MAX_RETRY_BACKOFF_MILLIS = 8_000L
 /** 单个文件对同一源的限流重试次数；1s→2s→4s 之后仍被拒就换下一个源。 */
 private const val MAX_RATE_LIMIT_RETRIES = 3
 
+/** 多源时整个候选列表完整重试的轮数：两个源都失败后隔一拍把每个源再各试一次。 */
+private const val MULTI_SOURCE_ROUNDS = 2
+
 /** 403/429：限流而不是失败，退避后重试同一源，不计入禁用。 */
 private val RATE_LIMIT_STATUSES = setOf(403, 429)
 
@@ -272,8 +275,10 @@ internal abstract class NetworkCandidateActions(
     settings: NetworkClientSettings,
 ) : NetworkResumeActions(settings) {
     /**
-     * 依次尝试候选源：一个源失败立刻换下一个；403/429 不是失败，按 1→2→4s 退避后重试
-     * 同一个源，且不计入禁用。所有源都失败时抛出带「每个源尝试的 URL 与状态码」的异常。
+     * 依次尝试候选源：一个源失败立刻换下一个；多源时两个源都失败后隔一拍再把每个源
+     * 各试一轮（[MULTI_SOURCE_ROUNDS]），偶发故障不至于一次就放弃整个文件；403/429 不是
+     * 失败，按 1→2→4s 退避后重试同一个源。所有源都失败时抛出带「每个源尝试的 URL 与
+     * 状态码」的异常。
      */
     protected suspend fun fetchFromCandidates(
         artifact: DownloadArtifact,
@@ -295,8 +300,15 @@ internal abstract class NetworkCandidateActions(
                 progress = progress,
             )
         var lastError: Exception? = null
-        for (candidate in candidates) {
-            lastError = fetchFromSource(run, candidate) ?: return
+        val rounds = if (candidates.size > 1) MULTI_SOURCE_ROUNDS else 1
+        for (round in 0 until rounds) {
+            if (round > 0) {
+                coroutineContext.ensureActive()
+                delay(RETRY_BACKOFF_BASE_MILLIS shl (round - 1))
+            }
+            for (candidate in candidates) {
+                lastError = fetchFromSource(run, candidate) ?: return
+            }
         }
         // 只有一个候选源时保留原来的异常类型与中文消息（调用方按状态码分类）；
         // 多个源都失败时汇总，逐个列出尝试过的 URL 与状态码。
