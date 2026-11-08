@@ -116,9 +116,11 @@ internal class InstanceUpgradeService(
         val total = plan.mods.size.coerceAtLeast(1)
         val done = AtomicInteger()
         // 任务中心的传输计数只统计真实下载（下载速度与剩余文件由此驱动）；原样带入的文件不算下载。
-        context.beginTransfers(
-            plan.mods.count { it.state == InstanceModUpgradeState.HasNewVersion && it.candidate != null },
-        )
+        val downloads =
+            plan.mods.count { it.state == InstanceModUpgradeState.HasNewVersion && it.candidate != null }
+        context.beginTransfers(downloads)
+        // 进入模组阶段立即刷新进度行，别让上一阶段的「校验文件 N/N」一直挂着。
+        context.progress(UPGRADE_INSTALL_END, I18n.t("instA2.upgrade.mods.start", plan.mods.size, downloads))
         // 与批量下载共用设置里的「下载线程数」：模组升级不再逐个串行等待，任一失败整体回滚。
         val permits =
             Semaphore(
