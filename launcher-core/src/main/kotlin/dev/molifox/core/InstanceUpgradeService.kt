@@ -46,7 +46,7 @@ internal class InstanceUpgradeService(
         plan: InstanceUpgradePlan,
         context: JobContext,
     ) {
-        val created = createInstanceForUpgrade(source, plan)
+        val created = createInstanceForUpgrade(source, plan, context)
         try {
             installTarget(created, context)
             val mods = installMods(created, source, plan, context)
@@ -63,6 +63,7 @@ internal class InstanceUpgradeService(
     private fun createInstanceForUpgrade(
         source: GameInstance,
         plan: InstanceUpgradePlan,
+        context: JobContext,
     ): GameInstance {
         val created =
             installer.createInstance(
@@ -84,6 +85,9 @@ internal class InstanceUpgradeService(
                 advancedLaunch = source.advancedLaunch,
             )
         }
+        // 新实例由任务运行中创建，必须声明归属：否则它的记录会以「其他实例」身份保护自己的
+        // 版本目录，取消/失败回滚时 canRemoveDownload 守卫拒绝删除，留下孤儿目录。
+        context.bindInstances(created.id)
         return store.instance(created.id)
     }
 

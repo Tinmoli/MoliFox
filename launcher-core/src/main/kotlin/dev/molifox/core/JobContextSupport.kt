@@ -45,3 +45,15 @@ internal fun JobContext.canRemoveDownload(path: Path): Boolean {
 internal fun JobContext.bindInstance(instanceId: String) {
     bindResources?.invoke(taskResourcesForInstances(store, instanceId))
 }
+
+/** 在任务已绑定资源的基础上追加实例：新实例由任务运行中创建，不能像整合包导入那样整体替换。 */
+internal fun JobContext.bindInstances(vararg instanceIds: String) {
+    if (instanceIds.isEmpty()) return
+    val current =
+        store.state.value.jobs
+            .find { it.id == id }
+            ?.resources
+            .orEmpty()
+    val added = instanceIds.flatMap { taskResourcesForInstances(store, it).toList() }
+    bindResources?.invoke(current + added)
+}
