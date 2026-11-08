@@ -122,7 +122,13 @@ class JobContext
                     0L
                 }
             transferSpeed = transferRate.record(measuredBytes)
-            transfers[key] = Triple(bytes.coerceAtLeast(0), total.coerceAtLeast(0), completed)
+            // 文件重试从头再来时字节计数会缩水，展示值按单文件钳住，任务卡片不出现「已下载变少」。
+            transfers[key] =
+                Triple(
+                    maxOf(previous?.first ?: 0L, bytes.coerceAtLeast(0)),
+                    total.coerceAtLeast(0),
+                    completed,
+                )
             val elapsed = System.nanoTime() - sampleTime
             if (elapsed >= TRANSFER_SAMPLE_INTERVAL_NANOS || completed) {
                 sampleTime = System.nanoTime()
@@ -210,7 +216,12 @@ class JobContext
                 state.copy(
                     jobs =
                         state.jobs.map {
-                            if (it.id == id) it.copy(progress = value, detail = detail) else it
+                            if (it.id == id) {
+                                // 任务进度只进不退：阶段重新锚定或各段口径有偏差时，已展示的百分比不回跳。
+                                it.copy(progress = maxOf(it.progress, value), detail = detail)
+                            } else {
+                                it
+                            }
                         },
                 )
             }
