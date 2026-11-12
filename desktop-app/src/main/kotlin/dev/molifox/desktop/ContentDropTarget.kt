@@ -22,6 +22,7 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.awtTransferable
 import androidx.compose.ui.unit.dp
 import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
 import java.io.File
 import java.nio.file.Path
 
@@ -33,7 +34,6 @@ private const val DROP_FILE_LIMIT = 20
  *
  * 只接受系统文件列表（Finder / 资源管理器的拖放都走这一种）；数量上限 20，避免误拖整个目录。
  */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun Modifier.contentDropTarget(
     enabled: Boolean = true,
@@ -41,13 +41,30 @@ internal fun Modifier.contentDropTarget(
     onError: (String) -> Unit = {},
     onFiles: (List<Path>) -> Unit,
 ): Modifier {
-    var hovered by remember { mutableStateOf(false) }
-    val receiver by rememberUpdatedState(onFiles)
-    val failure by rememberUpdatedState(onError)
-    // 默认提示文案随语言变化，调用方传入的 hint 优先。
     val effectiveHint = hint.ifEmpty { tr("pages.drop.hint") }
+    return desktopFileDropTarget(enabled, { tr("pages.drop.unreadable") }, onError) { raw ->
+        val files = raw.orEmpty().filterIsInstance<File>().map { it.toPath() }
+        require(files.isNotEmpty()) { effectiveHint }
+        require(files.size <= DROP_FILE_LIMIT) { tr("pages.drop.tooMany", DROP_FILE_LIMIT) }
+        onFiles(files)
+    }
+}
+
+/** 共享系统文件列表接收、悬停描边及异常反馈。 */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+internal fun Modifier.desktopFileDropTarget(
+    enabled: Boolean,
+    unreadable: () -> String,
+    onError: (String) -> Unit,
+    onDropFiles: (List<*>?) -> Unit,
+): Modifier {
+    var hovered by remember(enabled) { mutableStateOf(false) }
+    val receiver by rememberUpdatedState(onDropFiles)
+    val failure by rememberUpdatedState(onError)
+    val fallback by rememberUpdatedState(unreadable)
     val target =
-        remember(enabled, effectiveHint) {
+        remember(enabled) {
             object : DragAndDropTarget {
                 override fun onEntered(event: DragAndDropEvent) {
                     if (enabled) hovered = true
@@ -64,21 +81,7 @@ internal fun Modifier.contentDropTarget(
                 override fun onDrop(event: DragAndDropEvent): Boolean {
                     hovered = false
                     if (!enabled) return false
-                    return runCatching {
-                        val raw =
-                            event.awtTransferable.getTransferData(DataFlavor.javaFileListFlavor)
-                                as? List<*>
-                        val files = raw.orEmpty().filterIsInstance<File>().map { it.toPath() }
-                        require(files.isNotEmpty()) { effectiveHint }
-                        require(files.size <= DROP_FILE_LIMIT) {
-                            tr("pages.drop.tooMany", DROP_FILE_LIMIT)
-                        }
-                        receiver(files)
-                        true
-                    }.getOrElse { error ->
-                        failure(error.message ?: tr("pages.drop.unreadable"))
-                        false
-                    }
+                    return receiveDesktopFileDrop(event.awtTransferable, fallback, failure, receiver)
                 }
             }
         }
@@ -98,3 +101,17 @@ internal fun Modifier.contentDropTarget(
             target = target,
         )
 }
+
+internal fun receiveDesktopFileDrop(
+    transferable: Transferable,
+    unreadable: () -> String,
+    onError: (String) -> Unit,
+    onFiles: (List<*>?) -> Unit,
+): Boolean =
+    runCatching {
+        onFiles(transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<*>)
+        true
+    }.getOrElse { error ->
+        onError(error.message ?: unreadable())
+        false
+    }

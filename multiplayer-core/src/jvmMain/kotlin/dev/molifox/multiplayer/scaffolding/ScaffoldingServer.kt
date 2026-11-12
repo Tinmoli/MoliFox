@@ -21,6 +21,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 
 /**
  * Scaffolding 服务端：绑定 `127.0.0.1` 的 [requestedPort]（0 表示由系统分配），按
@@ -33,14 +34,32 @@ import java.net.Socket
  * @param clock 时间源，测试可注入以跳过真实等待。
  * @param onError 后台接受/读取错误回调；调用方记录即可，服务端继续服务其它连接。
  */
-class ScaffoldingServer(
-    private val requestedPort: Int = 0,
-    private val playerTimeoutMillis: Long = DEFAULT_PLAYER_TIMEOUT_MILLIS,
-    private val cleanupIntervalMillis: Long = DEFAULT_CLEANUP_INTERVAL_MILLIS,
-    hostProfile: ScaffoldingPlayer? = null,
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val onError: (Throwable) -> Unit = { failure -> failure.printStackTrace() },
+class ScaffoldingServer internal constructor(
+    private val requestedPort: Int,
+    private val playerTimeoutMillis: Long,
+    private val cleanupIntervalMillis: Long,
+    hostProfile: ScaffoldingPlayer?,
+    private val clock: () -> Long,
+    private val onError: (Throwable) -> Unit,
+    private val connectionLimits: ScaffoldingConnectionLimits,
 ) : AutoCloseable {
+    constructor(
+        requestedPort: Int = 0,
+        playerTimeoutMillis: Long = DEFAULT_PLAYER_TIMEOUT_MILLIS,
+        cleanupIntervalMillis: Long = DEFAULT_CLEANUP_INTERVAL_MILLIS,
+        hostProfile: ScaffoldingPlayer? = null,
+        clock: () -> Long = System::currentTimeMillis,
+        onError: (Throwable) -> Unit = { failure -> failure.printStackTrace() },
+    ) : this(
+        requestedPort,
+        playerTimeoutMillis,
+        cleanupIntervalMillis,
+        hostProfile,
+        clock,
+        onError,
+        ScaffoldingConnectionLimits(),
+    )
+
     init {
         require(requestedPort in 0..MAX_PORT) {
             I18n.t("multiplayer.scaffoldingServer.1", MAX_PORT, requestedPort)
@@ -55,7 +74,7 @@ class ScaffoldingServer(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val serverSocket = ServerSocket()
     private val stateLock = Any()
-    private val openSockets = HashSet<Socket>()
+    private val openSockets = HashMap<Socket, ConnectionDeadline>()
 
     @Volatile
     private var closed = false
@@ -102,7 +121,7 @@ class ScaffoldingServer(
         closed = true
         val sockets =
             synchronized(stateLock) {
-                val snapshot = openSockets.toList()
+                val snapshot = openSockets.keys.toList()
                 openSockets.clear()
                 snapshot
             }
@@ -135,32 +154,34 @@ class ScaffoldingServer(
                     }
                     return
                 }
-            val accepted =
+            val deadline =
                 synchronized(stateLock) {
-                    if (closed) {
-                        false
+                    if (closed || openSockets.size >= connectionLimits.connections) {
+                        null
                     } else {
-                        openSockets.add(socket)
-                        true
+                        ConnectionDeadline(connectionLimits.firstFrameMillis).also { openSockets[socket] = it }
                     }
                 }
-            if (!accepted) {
+            if (deadline == null) {
                 closeQuietly(socket)
             } else {
-                scope.launch { serveConnection(socket) }
+                scope.launch { serveConnection(socket, deadline) }
             }
         }
     }
 
-    private fun serveConnection(socket: Socket) {
+    private fun serveConnection(
+        socket: Socket,
+        deadline: ConnectionDeadline,
+    ) {
         try {
-            readRequests(socket)
+            readRequests(socket, deadline)
         } catch (failure: ScaffoldingProtocolException) {
             if (!closed) {
                 onError(failure)
             }
         } catch (failure: IOException) {
-            if (!closed) {
+            if (!closed && failure !is SocketTimeoutException && deadline.remainingNanos() > 0) {
                 onError(failure)
             }
         } finally {
@@ -170,11 +191,17 @@ class ScaffoldingServer(
         }
     }
 
-    private fun readRequests(socket: Socket) {
+    private fun readRequests(
+        socket: Socket,
+        deadline: ConnectionDeadline,
+    ) {
         val decoder = RequestFrameDecoder()
         val buffer = ByteArray(READ_BUFFER_BYTES)
         val input = socket.getInputStream()
         while (!closed) {
+            val remainingNanos = deadline.remainingNanos()
+            if (remainingNanos <= 0) return
+            socket.soTimeout = (remainingNanos / NANOS_PER_MILLI).coerceAtLeast(1).toInt()
             val read = input.read(buffer)
             if (read < 0) {
                 return
@@ -184,6 +211,7 @@ class ScaffoldingServer(
             }
             decoder.feed(buffer.copyOf(read)).forEach { request ->
                 writeResponse(socket, requestHandler.handle(socket, request))
+                deadline.extend(connectionLimits.frameMillis)
             }
         }
     }
@@ -201,6 +229,11 @@ class ScaffoldingServer(
         while (!closed) {
             delay(cleanupIntervalMillis)
             registry.sweep(clock())
+            val expired =
+                synchronized(stateLock) {
+                    openSockets.filterValues { it.remainingNanos() <= 0 }.keys.toList()
+                }
+            expired.forEach(::closeQuietly)
         }
     }
 
@@ -213,8 +246,35 @@ class ScaffoldingServer(
     }
 }
 
+/** 同一截止时间也由清理循环检查，读取或写回阻塞时都能关闭连接。 */
+private class ConnectionDeadline(
+    timeoutMillis: Int,
+) {
+    @Volatile private var deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLI
+
+    fun remainingNanos(): Long = deadline - System.nanoTime()
+
+    fun extend(timeoutMillis: Int) {
+        deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLI
+    }
+}
+
+internal class ScaffoldingConnectionLimits(
+    val connections: Int = DEFAULT_CONNECTION_LIMIT,
+    val firstFrameMillis: Int = DEFAULT_FIRST_FRAME_TIMEOUT_MILLIS,
+    val frameMillis: Int = DEFAULT_FRAME_TIMEOUT_MILLIS,
+) {
+    init {
+        require(connections > 0 && firstFrameMillis > 0 && frameMillis > 0)
+    }
+}
+
 private const val LOOPBACK_ADDRESS = "127.0.0.1"
 private const val BACKLOG = 16
+private const val DEFAULT_CONNECTION_LIMIT = 64
+private const val DEFAULT_FIRST_FRAME_TIMEOUT_MILLIS = 15_000
+private const val DEFAULT_FRAME_TIMEOUT_MILLIS = 30_000
+private const val NANOS_PER_MILLI = 1_000_000L
 private const val READ_BUFFER_BYTES = 4096
 private const val MIN_PORT = 1
 private const val MAX_PORT = 65_535

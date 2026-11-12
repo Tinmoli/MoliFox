@@ -146,6 +146,7 @@ class UiActions
         private var packPreviewLoading = false
         var launchPreview by mutableStateOf<LaunchPlan?>(null)
         var taskCenterOpen by mutableStateOf(false)
+        internal var homeLaunchCardVisible by mutableStateOf(false)
 
         /** 用户协议阅读页：设置里的「用户协议」与首启提示的「查看」都打开它。 */
         var agreementOpen by mutableStateOf(false)

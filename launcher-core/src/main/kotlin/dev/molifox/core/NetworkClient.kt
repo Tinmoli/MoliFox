@@ -23,9 +23,6 @@ import javax.net.ssl.SSLPeerUnverifiedException
 /** 默认总尝试次数（含首次）：首次 + 4 次重试。 */
 private const val DEFAULT_DOWNLOAD_ATTEMPT_COUNT = 5
 
-/** 分段下载的默认分段数。 */
-private const val DEFAULT_DOWNLOAD_SEGMENTS = 1
-
 /** 请求超时默认秒数。 */
 private const val DEFAULT_REQUEST_TIMEOUT_SECONDS = 45
 
@@ -75,7 +72,7 @@ class NetworkClient
             proxyProvider: () -> Proxy? = { null },
             systemProxyEnabled: () -> Boolean = { false },
             systemProxySelector: ProxySelector = SystemProxyResolver(),
-            downloadSegments: () -> Int = { DEFAULT_DOWNLOAD_SEGMENTS },
+            downloadSegments: () -> Int = { 1 },
             downloadAttempts: () -> Int = { DEFAULT_DOWNLOAD_ATTEMPT_COUNT },
             requestTimeoutSeconds: () -> Int = { DEFAULT_REQUEST_TIMEOUT_SECONDS },
             /** 文件级并发数（设置项「并发下载数」）：只用来换算传输许可，派发仍由调度器决定。 */
@@ -127,6 +124,13 @@ class NetworkClient
             attempts: Int = actions.transport.attemptLimit(),
             progress: (Long, Long) -> Unit = { _, _ -> },
         ) = actions.download(artifact, attempts, progress)
+
+        /** 同一文件的多个来源共用目标锁、摘要校验和重试预算。 */
+        suspend fun downloadFrom(
+            artifact: DownloadArtifact,
+            urls: List<String>,
+            progress: (Long, Long) -> Unit = { _, _ -> },
+        ) = actions.download(artifact, actions.transport.attemptLimit(), progress, urls)
 
         /**
          * 可选文件：所有候选源都失败时只警告并跳过，不中断整批任务。

@@ -291,61 +291,28 @@ internal class JavaRuntimeInstaller(
         return runtime
     }
 
-    /** 依次尝试每个下载地址；失败时记录日志并清掉本次的压缩包。 */
+    /** 同一运行时的候选地址共用摘要验证和回退。 */
     private suspend fun download(
         packageInfo: JavaRuntimePackage,
         archive: Path,
         context: JobContext,
     ) {
-        var lastError: IOException? = null
-        for (url in packageInfo.urls) {
-            context.checkCancelled()
-            network.discardPartial(archive)
-            archive.deleteIfExists()
-            context.beginTransfers(1)
-            lastError = downloadFromSource(url, packageInfo, archive, context) ?: return
-        }
-        throw lastError ?: IllegalStateException(I18n.t("core.javaRuntimeInstaller.10"))
+        val url = packageInfo.urls.firstOrNull() ?: error(I18n.t("core.javaRuntimeInstaller.10"))
+        network.downloadTracked(
+            context,
+            // 部分运行时元数据大小与实际 CDN 响应有偏差，归档以 SHA-256 校验。
+            DownloadArtifact(url, archive, packageInfo.sha256, hashAlgorithm = "SHA-256"),
+            packageInfo.urls,
+            downloadProgress(packageInfo, context),
+        )
     }
 
-    /** 从单个地址下载到 [archive]，成功返回 null，失败返回异常供 [download] 换源重试。 */
-    private suspend fun downloadFromSource(
-        url: String,
-        packageInfo: JavaRuntimePackage,
-        archive: Path,
-        context: JobContext,
-    ): IOException? =
-        try {
-            network.download(
-                DownloadArtifact(
-                    url,
-                    archive,
-                    packageInfo.sha256,
-                    // 不传元数据大小：Zulu 的 size 与 CDN 响应可能相差几十字节，避免误杀正确文件。
-                    size = 0,
-                    hashAlgorithm = "SHA-256",
-                ),
-                progress = downloadProgress(url, packageInfo, archive, context),
-            )
-            val size = archive.fileSize()
-            context.transfer(archive.toString(), size, size, completed = true)
-            null
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (error: IOException) {
-            logDownloadFailure(url, archive, error)
-            error
-        }
-
-    /** 下载进度回调：传输计数与「镜像 版本 已下 x MB」的进度文案。 */
+    /** 下载进度回调：显示运行时版本和已接收的字节。 */
     private fun downloadProgress(
-        url: String,
         packageInfo: JavaRuntimePackage,
-        archive: Path,
         context: JobContext,
     ): (Long, Long) -> Unit =
         { bytes, total ->
-            context.transfer(archive.toString(), bytes, total)
             context.progress(
                 if (total > 0) {
                     PROGRESS_DOWNLOAD_BASE + bytes.toFloat() / total * PROGRESS_DOWNLOAD_SPAN
@@ -354,31 +321,12 @@ internal class JavaRuntimeInstaller(
                 },
                 I18n.t(
                     "networkB1.javaRuntimeInstaller.downloading",
-                    javaDownloadUrlLabel(url),
                     packageInfo.vendor,
                     packageInfo.version,
                     bytes / BYTES_PER_MEBIBYTE,
                 ),
             )
         }
-
-    /** 换源重试前记录失败原因并清掉半成品归档。 */
-    private suspend fun logDownloadFailure(
-        url: String,
-        archive: Path,
-        error: IOException,
-    ) {
-        val host = runCatching { java.net.URI(url).host }.getOrDefault(url)
-        store.log(
-            I18n.t(
-                "networkB1.javaRuntimeInstaller.downloadSourceFailed",
-                host,
-                error.message ?: error.javaClass.simpleName,
-            ),
-            true,
-        )
-        archive.deleteIfExists()
-    }
 
     companion object {
         /** 游戏侧需要的主版本；26.x 版本线使用 25，27 起新版本线直接用 27。 */

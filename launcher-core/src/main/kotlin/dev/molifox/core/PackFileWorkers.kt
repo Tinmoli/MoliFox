@@ -9,20 +9,29 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 
 /** 固定数量的工作协程领取文件；失败或取消时等待同批任务结束，之后才允许清理暂存目录。 */
-internal suspend fun <T> stagePackFilesConcurrently(
+internal suspend fun <T : Any> stagePackFilesConcurrently(
     files: List<T>,
     concurrency: Int,
     context: JobContext,
     action: suspend (T) -> Unit,
-) = coroutineScope {
+) {
     val next = AtomicInteger()
-    repeat(minOf(files.size, concurrency.coerceIn(1, MAX_DOWNLOAD_THREADS))) {
+    runDownloadWorkers(files.size, concurrency, context, { files.getOrNull(next.getAndIncrement()) }, action)
+}
+
+/** 工作者共享任务取消与传输计数；调用返回时所有工作协程均已退出。 */
+internal suspend fun <T : Any> runDownloadWorkers(
+    count: Int,
+    concurrency: Int,
+    context: JobContext,
+    next: () -> T?,
+    action: suspend (T) -> Unit,
+) = coroutineScope {
+    repeat(minOf(count, concurrency.coerceIn(1, MAX_DOWNLOAD_THREADS))) {
         launch(Dispatchers.IO + TransferTrafficContext(context)) {
             while (true) {
                 context.checkCancelled()
-                val index = next.getAndIncrement()
-                if (index >= files.size) break
-                action(files[index])
+                action(next() ?: break)
             }
         }
     }

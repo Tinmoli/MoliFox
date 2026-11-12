@@ -96,7 +96,7 @@ enum class PackExportFormat(
 
     companion object {
         /**
-         * 导出界面提供的格式：Modrinth、通用 ZIP、MultiMC、MCBBS 与完整备份。
+         * 导出界面提供的格式：Modrinth、通用 ZIP、实例组件格式、MCBBS 与完整备份。
          * 服务器整合包不在其中；只有 Modrinth 允许在线解析资源，其余格式一律全量本地打包。
          */
         val offeredForExport: List<PackExportFormat> =
@@ -166,7 +166,7 @@ class MrpackExportPlan
         internal val root: Path,
         internal val realRoot: Path,
         internal val components: InstallRequest,
-        /** 实例级启动设置（内存/JVM/窗口），供 MultiMC/Prism 的 instance.cfg 使用。 */
+        /** 实例级启动设置（内存/JVM/窗口），供 实例配置文件 instance.cfg 使用。 */
         internal val instance: GameInstance,
         internal val fileStamps: Map<String, ExportFileStamp> = emptyMap(),
     ) {
@@ -366,7 +366,7 @@ internal class MrpackExporter(
     }
 
     /**
-     * 整合包图标：Modrinth / MCBBS 写根目录 `icon.png`，MultiMC/Prism 写 `icons/<key>.png`；
+     * 整合包图标：Modrinth / MCBBS 写根目录 `icon.png`，实例组件格式 写 `icons/<key>.png`；
      * 完整备份与 CurseForge 清单不需要图标。取图标失败不阻断打包。
      */
     private suspend fun exportIcon(

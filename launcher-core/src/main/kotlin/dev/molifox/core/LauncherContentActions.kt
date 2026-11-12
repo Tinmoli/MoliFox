@@ -126,6 +126,7 @@ internal abstract class LauncherContentActions(
             resources,
             kind = LauncherTaskKind.InstallContent,
         ) {
+            if (hit.type == "modpack") enableInstallationTransfers()
             content.installContent(hit, id, this, directoryId)
         }
     }

@@ -125,6 +125,8 @@ fun SettingsSection(
     action: @Composable RowScope.() -> Unit = {},
     contentGap: Dp = Metrics.rowGap,
     compact: Boolean = false,
+    onHeaderClick: (() -> Unit)? = null,
+    showContent: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -137,6 +139,7 @@ fun SettingsSection(
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .clickable(enabled = onHeaderClick != null) { onHeaderClick?.invoke() }
                     .padding(
                         start = Metrics.cardPadding,
                         end = Metrics.cardPadding,
@@ -158,15 +161,17 @@ fun SettingsSection(
                 }
                 action()
             }
-            HorizontalDivider(color = hairline())
-            Column(
-                Modifier.padding(
-                    horizontal = Metrics.cardPadding,
-                    vertical = if (LocalCompactSettings.current) 8.dp else 12.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(contentGap),
-                content = content,
-            )
+            if (showContent) {
+                HorizontalDivider(color = hairline())
+                Column(
+                    Modifier.padding(
+                        horizontal = Metrics.cardPadding,
+                        vertical = if (LocalCompactSettings.current) 8.dp else 12.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(contentGap),
+                    content = content,
+                )
+            }
         }
     }
 }

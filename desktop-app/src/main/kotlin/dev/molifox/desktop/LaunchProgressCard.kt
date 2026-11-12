@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -123,6 +124,7 @@ fun LaunchProgressCard(
     onRetry: () -> Unit,
     onViewLogs: () -> Unit,
     onDismiss: () -> Unit,
+    onOpenTasks: () -> Unit = {},
 ) {
     val status = job?.status
     val running = status == JobStatus.Queued || status == JobStatus.Running
@@ -181,12 +183,13 @@ fun LaunchProgressCard(
             .graphicsLayer {
                 alpha = appear
                 translationY = (1f - appear) * 8f
-            }
-            // 吞掉卡片区域的点击，避免点击落到下方「最近游玩」行；点卡片外部不会关闭卡片。
-            .clickable(
+            }.clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-            ) {},
+                onClickLabel = LocalStrings.current.t("pages.tasks.open"),
+                role = Role.Button,
+                onClick = onOpenTasks,
+            ),
         shape = RoundedCornerShape(Metrics.dialogRadius),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .28f)),

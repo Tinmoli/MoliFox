@@ -7,12 +7,7 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
 import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
@@ -31,7 +26,7 @@ internal const val DEFAULT_DOWNLOAD_THREADS = 64
 internal const val DEFAULT_FILE_CONCURRENCY = DEFAULT_DOWNLOAD_THREADS
 
 /** 设置项允许的下载线程数上限。 */
-internal const val MAX_DOWNLOAD_THREADS = 128
+const val MAX_DOWNLOAD_THREADS = 256
 
 /** 失败汇总里最多逐个列出的文件数，其余折叠成一行数量提示，避免消息无限膨胀。 */
 private const val MAX_REPORTED_FAILURES = 12
@@ -105,41 +100,19 @@ internal class DownloadScheduler(
         context: JobContext,
         concurrency: Int = DEFAULT_FILE_CONCURRENCY,
         sink: DownloadProgressSink = DownloadProgressSink.None,
-    ): List<FileFailure> =
-        coroutineScope {
-            val unique = artifacts.distinctBy { it.target }
-            if (unique.isEmpty()) return@coroutineScope emptyList()
-            sink.planned(unique.size, unique.sumOf { if (it.size > 0) it.size else 0L })
-            val batch = BatchState(unique)
-            val workers = startWorkers(this, batch, concurrency, context, sink)
-            try {
-                workers.joinAll()
-            } finally {
-                if (!coroutineContext.isActive) {
-                    // 取消后不再派发；本批可能还有半截缓存，逐个清掉，别把 .part 留给用户。
-                    discardPartials(unique)
-                }
-            }
-            batch.failures.toList()
-        }
-
-    /** 启动固定数量的工作协程，从共享队列里取文件；单个文件失败只登记，连续失败才中止整批。 */
-    private fun startWorkers(
-        scope: CoroutineScope,
-        batch: BatchState,
-        concurrency: Int,
-        context: JobContext,
-        sink: DownloadProgressSink,
-    ) = (0 until minOf(concurrency.coerceIn(1, MAX_FILE_CONCURRENCY), batch.unique.size)).map {
-        scope.launch(Dispatchers.IO + TransferTrafficContext(context)) {
-            while (coroutineContext.isActive) {
-                context.checkCancelled()
-                if (batch.aborted.get()) break
-                val index = batch.next.getAndIncrement()
-                if (index >= batch.unique.size) break
+    ): List<FileFailure> {
+        val unique = artifacts.distinctBy { it.target }
+        if (unique.isEmpty()) return emptyList()
+        sink.planned(unique.size, unique.sumOf { it.size.coerceAtLeast(0) })
+        val batch = BatchState(unique)
+        try {
+            runDownloadWorkers(unique.size, concurrency, context, batch::nextIndex) { index ->
                 downloadOne(batch, index, sink)
             }
+        } finally {
+            if (!coroutineContext.isActive) discardPartials(unique)
         }
+        return batch.failures.toList()
     }
 
     /** 下载单个文件：失败折成 [FileFailure] 记进批次；期间有成功就重置连续失败计数。 */
@@ -211,12 +184,10 @@ internal class DownloadScheduler(
             reason = error.message ?: error.javaClass.simpleName,
         )
     }
-
-    companion object {
-        /** 单批允许的最大文件并发。 */
-        const val MAX_FILE_CONCURRENCY = MAX_DOWNLOAD_THREADS
-    }
 }
+
+private fun BatchState.nextIndex(): Int? =
+    if (aborted.get()) null else next.getAndIncrement().takeIf { it < unique.size }
 
 /** 复用旧 `downloadAll` 语义的简单进度：按完成文件数在 [from]..[to] 区间内推进。 */
 internal class BatchRangeProgress(

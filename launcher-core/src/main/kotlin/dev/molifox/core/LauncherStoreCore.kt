@@ -175,7 +175,7 @@ internal class LauncherStoreCore(
             }
         val rawCurseForgeBase = settings.curseForgeBaseUrl.orEmpty()
         val curseForgeBase = normalizedCurseForgeBaseUrl(rawCurseForgeBase)
-        curseForgeBaseFallback = curseForgeBase != rawCurseForgeBase.trim().trimEnd('/')
+        curseForgeBaseFallback = rawCurseForgeBase.isNotBlank() && !isValidCurseForgeBaseUrl(rawCurseForgeBase)
         return settings.copy(
             accentColor = normalizedAccentColor(settings.accentColor),
             // 配色来源有默认、跟随背景图与手动三档；旧配置的 default 原样保留，
@@ -194,9 +194,11 @@ internal class LauncherStoreCore(
             gameLanguageFollowsLauncher = gameLanguageFollows,
             javaDownloadSource = settings.effectiveJavaDownloadSource,
             downloadSource = normalizedDownloadSource(settings.downloadSource),
+            downloadSegments =
+                raw.get("downloadSegments")?.let { settings.downloadSegments.coerceIn(1, MAX_DOWNLOAD_SEGMENTS) }
+                    ?: DEFAULT_DOWNLOAD_SEGMENTS,
             versionListSource = versionListSource,
-            // 旧配置没有这个字段（或手改成了非法值）时直接显示默认镜像。
-            curseForgeBaseUrl = curseForgeBase,
+            curseForgeBaseUrl = curseForgeBase.takeUnless { it == DEFAULT_CURSE_FORGE_BASE_URL }.orEmpty(),
         )
     }
 

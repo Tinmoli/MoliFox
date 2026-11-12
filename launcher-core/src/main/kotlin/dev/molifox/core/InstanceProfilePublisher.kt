@@ -106,6 +106,10 @@ internal class InstanceProfilePublisher(
         profile.addProperty("id", id)
         // 真实游戏版本单独记录：Java/资源/加载器匹配和目录扫描（InstanceCatalog）都读它。
         profile.addProperty("_minecraftVersion", instance.gameVersion)
+        profile.addProperty(
+            MINECRAFT_VERSION_TYPE_MARKER,
+            instance.gameVersionType.ifBlank { base.json.string("type") },
+        )
         profile.addProperty("gameVersion", instance.gameVersion)
         // 本启动器生成的配置：扫描时按受管实例处理（可以修复/改加载器），不会被当成外部整合包。
         profile.addProperty(MANAGED_PROFILE_MARKER, true)

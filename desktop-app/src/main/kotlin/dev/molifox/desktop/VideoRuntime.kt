@@ -95,7 +95,7 @@ internal object VideoRuntime {
         val cache = controller.dataDirectory.resolve("cache/video").createDirectories()
         val archive = cache.resolve(asset.fileName)
         val urls = controller.network.rankDownloadSources(asset.urls())
-        controller.network.download(
+        controller.network.downloadFrom(
             DownloadArtifact(
                 url = urls.firstOrNull() ?: error(I18n.t("settings.appearance.background.videoDownloadFailed")),
                 target = archive,
@@ -103,6 +103,7 @@ internal object VideoRuntime {
                 size = asset.size,
                 hashAlgorithm = "SHA-256",
             ),
+            urls,
             progress = { done, total ->
                 val expected = if (total > 0) total else asset.size
                 progress((done.toFloat() / expected.toFloat()).coerceIn(0f, 1f))

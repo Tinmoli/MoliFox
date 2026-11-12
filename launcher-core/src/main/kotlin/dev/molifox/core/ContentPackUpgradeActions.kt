@@ -183,9 +183,9 @@ internal abstract class ContentPackUpgradeActions(
                 false,
                 context,
                 concurrency = store.data.settings.downloadThreads,
-            ) {
-                network.download(it) { done, total ->
-                    context.transfer(it.target.toString(), done, total)
+            ) { artifact, urls ->
+                network.downloadFrom(artifact, urls) { done, total ->
+                    context.transfer(artifact.target.toString(), done, total)
                 }
             }
             context.checkCancelled()

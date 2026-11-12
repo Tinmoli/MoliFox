@@ -80,16 +80,7 @@ internal suspend fun applyContentUpdateBatch(
                         } catch (failure: IllegalArgumentException) {
                             failures += failureEntry(task.label, failure)
                         } finally {
-                            val finished = completed.incrementAndGet()
-                            context.progress(
-                                finished.toFloat() / tasks.size,
-                                I18n.t(
-                                    "contentA2.contentUpdateBatch.updatingItem",
-                                    task.label,
-                                    finished,
-                                    tasks.size,
-                                ),
-                            )
+                            context.reportContentUpdate(task.label, completed.incrementAndGet(), tasks.size)
                         }
                     }
                 }
@@ -97,6 +88,17 @@ internal suspend fun applyContentUpdateBatch(
     }
     context.progress(1f, I18n.t("contentA2.contentUpdateBatch.completed"))
     return ContentUpdateBatchResult(updated.get(), failures.toList())
+}
+
+private fun JobContext.reportContentUpdate(
+    label: String,
+    finished: Int,
+    total: Int,
+) {
+    progress(
+        finished.toFloat() / total,
+        I18n.t("contentA2.contentUpdateBatch.updatingItem", label, finished, total),
+    )
 }
 
 /** 单项失败摘要：保留用户能看懂的原因，过长的服务端信息截断。 */

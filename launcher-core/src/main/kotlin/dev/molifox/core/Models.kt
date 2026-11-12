@@ -17,7 +17,7 @@ import java.util.UUID
 import kotlin.jvm.Transient
 
 /** 当前启动器版本号；更新检查以此对比清单中的 version 字段。 */
-const val LAUNCHER_VERSION = "0.4.9"
+const val LAUNCHER_VERSION = "0.5.0"
 
 enum class LoaderType {
     Vanilla,
@@ -187,10 +187,12 @@ data class LauncherSettings(
     val autoMemory: Boolean = false,
     val width: Int = 1280,
     val height: Int = 720,
-    val extraJvmArgs: String = "",
+    val extraJvmArgs: String = DEFAULT_EXTRA_JVM_ARGS,
+    /** GC 策略只保存选择，启动时按 Java 版本生成参数，不写进附加 JVM 参数。 */
+    val gcPreset: String = GcPreset.TunedG1.value,
     val advancedLaunch: AdvancedLaunchSettings = AdvancedLaunchSettings(),
     val downloadSource: String = "auto",
-    val downloadSegments: Int = 4,
+    val downloadSegments: Int = DEFAULT_DOWNLOAD_SEGMENTS,
     val networkTimeoutSeconds: Int = 45,
     val microsoftClientId: String = MoliFoxIdentity.MICROSOFT_CLIENT_ID,
     val isolateVersions: Boolean = true,
@@ -263,7 +265,7 @@ data class LauncherSettings(
     val contentDownloadSource: String = "modrinth",
     /** 文件下载缓存文件夹；为空使用数据目录 cache/。 */
     val downloadCachePath: String = "",
-    /** 同时下载的文件数（1..128，默认 64），改动对下一个任务生效。 */
+    /** 同时下载的文件数（默认 64），新任务采用当前设置。 */
     val downloadThreads: Int = 64,
     val proxyEnabled: Boolean = false,
     /** 空值沿用旧代理开关；新配置默认跟随系统，支持 system/direct/manual。 */
@@ -272,7 +274,8 @@ data class LauncherSettings(
     val proxyHost: String = "",
     val proxyPort: Int = 0,
     /** CurseForge 服务地址；默认社区镜像，可改为自建代理。请求始终追加 `/v1/`。 */
-    val curseForgeBaseUrl: String = DEFAULT_CURSE_FORGE_BASE_URL,
+    val curseForgeBaseUrl: String = "",
+    val versionIsolationPolicy: VersionIsolationPolicy? = null,
     /** 全局游戏窗口模式：launcher（与启动器一样大）/ fullscreen / custom。 */
     val gameWindowMode: String = "custom",
     /** 游戏进程优先级：仅 Windows 生效，启动游戏后尽力设置，失败只记警告。 */
@@ -402,6 +405,7 @@ data class GameInstance(
     /** 扫描时发现版本配置缺失/损坏或 inheritsFrom 断链：仍显示，但不可启动。 */
     val broken: Boolean = false,
     val brokenReason: String = "",
+    val gameVersionType: String = "",
 )
 
 /**
@@ -548,6 +552,7 @@ data class DownloadJob(
     /** 正在传数据的下载连接数：随传输进度一起发布，任务中心展示实际并发。 */
     val activeConnections: Int = 0,
     val resources: Set<String> = setOf(GLOBAL_TASK_RESOURCE),
+    val downloadTotalPending: Boolean = false,
 )
 
 /**
@@ -605,6 +610,8 @@ data class LauncherState(
     val update: LauncherUpdateState = LauncherUpdateState(),
     /** 当前实例缺少兼容 Java 时的安装/选择入口；为空表示无需提示。 */
     val javaPrompt: JavaPrompt? = null,
+    /** 本次提示来自启动请求时，安装/选择完成后要接着启动的实例。 */
+    val pendingJavaLaunch: PendingJavaLaunch? = null,
 )
 
 data class ReleaseVersion(
@@ -686,6 +693,21 @@ data class JavaPrompt(
     val gameVersion: String,
     val requiredMajor: Int,
     val candidates: List<JavaRuntime> = emptyList(),
+)
+
+/** 一次启动请求的结果：要么已进入任务队列，要么缺 Java 并已登记提示。 */
+sealed interface LaunchAttempt {
+    data class Started(
+        val jobId: String,
+    ) : LaunchAttempt
+
+    data object NeedsJava : LaunchAttempt
+}
+
+/** 缺 Java 提示若由一次启动请求触发，安装/选择完成后继续这次启动。 */
+data class PendingJavaLaunch(
+    val instanceId: String,
+    val target: GameLaunchTarget? = null,
 )
 
 data class ModFile(

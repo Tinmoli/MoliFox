@@ -71,7 +71,7 @@ class MinecraftInstaller(
             legacyFabricMetaBase = legacyFabricMetaBase,
         )
     private val publisher = InstanceProfilePublisher(store, network, catalog)
-    private val pipeline =
+    internal val pipeline =
         MinecraftInstallPipeline(
             store = store,
             network = network,

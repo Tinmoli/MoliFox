@@ -7,12 +7,9 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 
 /** Java 提示、安装、选择与移除。 */
 internal interface LauncherJavaApi {
-    fun refreshJavaPrompt()
-
     /** [remember] 为 true 时把「不再提示」写进实例；只影响提示，不影响手动选择的 Java。 */
     fun dismissJavaPrompt(remember: Boolean)
 
@@ -44,64 +41,54 @@ internal abstract class LauncherJavaActions(
     core: LauncherControllerCore,
 ) : LauncherRuntimeActions(core),
     LauncherJavaApi {
-    override fun refreshJavaPrompt() {
-        scope.launch { evaluateJavaPrompt() }
+    /** 清除当前提示；本来没有提示时不写状态。 */
+    internal fun clearJavaPrompt() {
+        if (state.value.javaPrompt != null) store.updateState { it.copy(javaPrompt = null) }
     }
 
-    private suspend fun evaluateJavaPrompt() {
-        val selectedId = store.data.selectedInstanceId
-        val existing = state.value.javaPrompt
-        if (existing != null && existing.instanceId != selectedId) {
-            store.updateState { it.copy(javaPrompt = null) }
-        }
-        val instance =
-            selectedId?.let { id -> store.data.instances.find { it.id == id } }
-        if (instance == null) return
+    /**
+     * 只在真正点启动时检查：解析实例版本并探测本机 Java，返回缺失提示或 null。
+     * 不做任何自动安装；显式指定 Java、用户已关闭提示或已有兼容运行时都返回 null。
+     */
+    internal suspend fun javaPromptFor(instance: GameInstance): JavaPrompt? {
         val needsPrompt =
             instance.installed &&
                 !instance.suppressJavaPrompt &&
                 instance.javaPath.ifBlank { store.data.settings.javaPath }.isBlank()
-        if (!needsPrompt) {
-            clearJavaPrompt()
-        } else {
-            resolveJavaPrompt(instance)
-        }
-    }
-
-    /** 清除当前提示；本来没有提示时不写状态。 */
-    private fun clearJavaPrompt() {
-        if (state.value.javaPrompt != null) store.updateState { it.copy(javaPrompt = null) }
-    }
-
-    /** 解析实例版本配置并检测本机 Java；没有满足要求的候选时登记提示。 */
-    private suspend fun resolveJavaPrompt(instance: GameInstance) {
+        if (!needsPrompt) return null
         val profile =
             runCatching {
                 VersionResolver(store.minecraftRoot(instance), platform)
                     .resolve(instance.versionId)
-            }.getOrNull()
-        if (profile != null) {
-            val requirement = JavaRequirement.from(profile)
-            val candidates = java.detect().filter { it.usable }
-            if (candidates.any { requirement.problem(it, platform.architecture) == null }) {
-                clearJavaPrompt()
+            }.getOrNull() ?: return null
+        val requirement = JavaRequirement.from(profile)
+        val candidates = java.detect().filter { it.usable }
+        val compatible = candidates.filter { requirement.problem(it, platform.architecture) == null }
+        if (requirement.automaticCandidates(compatible).isNotEmpty()) return null
+        val gameVersion = instance.gameVersion.ifBlank { profile.id }
+        return JavaPrompt(
+            instanceId = instance.id,
+            instanceName = instance.name,
+            gameVersion = gameVersion,
+            requiredMajor = requirement.minimum,
+            candidates = candidates,
+        )
+    }
+
+    /** 弹窗安装/选择完成后，如果本次提示源于一次启动请求，就交给实例动作继续启动。 */
+    protected open fun resumePendingLaunch(pending: PendingJavaLaunch) = Unit
+
+    private fun completeJavaPrompt(prompt: JavaPrompt) {
+        var pending: PendingJavaLaunch? = null
+        store.updateState {
+            if (it.javaPrompt !== prompt) {
+                it
             } else {
-                val gameVersion = instance.gameVersion.ifBlank { profile.id }
-                store.updateState {
-                    it.copy(
-                        javaPrompt =
-                            JavaPrompt(
-                                instanceId = instance.id,
-                                instanceName = instance.name,
-                                gameVersion = gameVersion,
-                                requiredMajor =
-                                    requiredJavaMajor(gameVersion, profile.requiredJava),
-                                candidates = candidates,
-                            ),
-                    )
-                }
+                pending = it.pendingJavaLaunch
+                it.copy(javaPrompt = null, pendingJavaLaunch = null)
             }
         }
+        pending?.let(::resumePendingLaunch)
     }
 
     /** [remember] 为 true 时把「不再提示」写进实例；只影响提示，不影响手动选择的 Java。 */
@@ -110,7 +97,7 @@ internal abstract class LauncherJavaActions(
         if (remember) {
             store.updateInstance(prompt.instanceId) { it.copy(suppressJavaPrompt = true) }
         }
-        store.updateState { it.copy(javaPrompt = null) }
+        store.updateState { it.copy(javaPrompt = null, pendingJavaLaunch = null) }
     }
 
     /** 从提示弹窗直接安装缺少的主版本；进度进入任务队列，成功后清除提示。 */
@@ -122,8 +109,8 @@ internal abstract class LauncherJavaActions(
             kind = LauncherTaskKind.InstallJava,
         ) {
             val runtime = java.install(prompt.requiredMajor, this)
-            store.updateState { it.copy(javaPrompt = null) }
             store.notify(I18n.t("coreC.java.installed", runtime.displayName))
+            completeJavaPrompt(prompt)
         }
     }
 
@@ -150,8 +137,8 @@ internal abstract class LauncherJavaActions(
                 it.copy(javaPath = path, suppressJavaPrompt = false)
             }
             java.invalidate()
-            store.updateState { it.copy(javaPrompt = null) }
             store.notify(I18n.t("coreC.java.selected", runtime.displayName, runtime.path))
+            completeJavaPrompt(prompt)
         }
 
     /**
@@ -215,7 +202,6 @@ internal abstract class LauncherJavaActions(
                 }
                 else -> error(I18n.t("coreC.java.systemReadOnly"))
             }
-            refreshJavaPrompt()
         }
 
     override fun installJava(

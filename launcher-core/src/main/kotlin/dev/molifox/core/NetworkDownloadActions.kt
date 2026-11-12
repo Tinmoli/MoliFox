@@ -8,6 +8,7 @@ package dev.molifox.core
 import dev.molifox.core.i18n.I18n
 import dev.molifox.core.net.CandidateSource
 import dev.molifox.core.net.DownloadConcurrency
+import dev.molifox.core.net.DownloadSourceCatalog
 import dev.molifox.core.net.DownloadSourceFailureException
 import dev.molifox.core.net.SourceAttempt
 import dev.molifox.core.net.SourceThrottle
@@ -26,20 +27,26 @@ import okhttp3.ResponseBody
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
+import kotlin.io.path.fileSize
 import kotlin.io.path.isRegularFile
 
 /** 重试退避：500ms 起翻倍，最长 8 秒。 */
 private const val HTTP_RANGE_NOT_SATISFIABLE = 416
 private const val RETRY_BACKOFF_BASE_MILLIS = 500L
 private const val MAX_RETRY_BACKOFF_MILLIS = 8_000L
+
+/** 正文读取会阻塞线程，单独调度以免通用 IO 池限制文件并发。 */
+private val FileTransferDispatcher = Dispatchers.IO.limitedParallelism(MAX_DOWNLOAD_THREADS)
 
 /** 单个文件对同一源的限流重试次数；1s→2s→4s 之后仍被拒就换下一个源。 */
 private const val MAX_RATE_LIMIT_RETRIES = 3
@@ -99,7 +106,9 @@ internal abstract class NetworkSessionActions(
 
     /** 删除普通与分段缓存；显式取消不保留断点，网络中断则允许重试续传。 */
     override fun discardPartial(target: Path) {
-        partialFile(target).deleteIfExists()
+        val partial = partialFile(target)
+        partial.deleteIfExists()
+        resumeIdentityFile(partial).deleteIfExists()
         SegmentedDownloader.discard(target)
     }
 
@@ -191,37 +200,61 @@ internal abstract class NetworkResumeActions(
         partial: Path,
         url: String,
         progress: (Long, Long) -> Unit,
-    ) {
+        timeoutSeconds: Int? = null,
+    ) = withContext(FileTransferDispatcher) {
+        val source = resumeSourceKey(url)
         repeat(2) {
-            val offset = resumeOffset(artifact, partial)
-            val request = builder(url)
-            if (offset > 0) request.header("Range", "bytes=$offset-")
+            val identity = readResumeIdentity(partial)?.takeIf { it.source == source }
+            val offset = verifiedResumeOffset(artifact, partial, identity)
+            val request = builder(url).header("Accept-Encoding", "identity")
+            if (offset > 0) {
+                request.header("Range", "bytes=$offset-")
+                identity?.let { request.header("If-Range", it.etag) }
+            }
             var restart = true
             // 与分段路径一致：连接建立到响应消费完都算一条活跃连接，首字节前的等待也可见。
             withTransferConnection {
-                execute(request.build(), attempts = 1).readCancellable { response ->
-                    restart = receive(artifact, partial, offset, response, progress)
+                execute(request.build(), attempts = 1, timeoutSeconds = timeoutSeconds).readCancellable { response ->
+                    restart = receive(artifact, partial, ResumeRequest(source, offset, identity), response, progress)
                 }
             }
-            if (!restart) return
+            if (!restart) return@withContext
         }
         // 第二次仍未成功：断点或服务器状态异常，交给重试策略。
         throw DownloadHttpException(HTTP_RANGE_NOT_SATISFIABLE, java.net.URI(url).host)
+    }
+
+    private fun verifiedResumeOffset(
+        artifact: DownloadArtifact,
+        partial: Path,
+        identity: ResumeIdentity?,
+    ): Long {
+        val offset = resumeOffset(artifact, partial)
+        if (offset == 0L || (identity == null && artifact.sha1.isBlank())) {
+            partial.deleteIfExists()
+            resumeIdentityFile(partial).deleteIfExists()
+            return 0
+        }
+        return offset
     }
 
     /** 处理一次响应：写完并校验后改名成功返回 `false`；需要清空 `.part` 重新请求时返回 `true`。 */
     private suspend fun receive(
         artifact: DownloadArtifact,
         partial: Path,
-        offset: Long,
+        resume: ResumeRequest,
         response: Response,
         progress: (Long, Long) -> Unit,
     ): Boolean {
-        val start = resumableStart(partial, response, offset) ?: return true
+        val start = resumableStart(partial, response, resume.offset, resume.identity) ?: return true
         val body = checkedResponseBody(response)
         val total = totalBytes(artifact, response, start)
         val digest = MessageDigest.getInstance(artifact.hashAlgorithm)
         if (start > 0) updateDigest(partial, digest, start)
+        recordResumeIdentity(partial, resume.source, response)
+        coroutineContext[TaskDownloadContext]?.task?.updateInstallationTransfer {
+            it.transfer(artifact.target, start, total)
+        }
         writeResponseBody(body, partial, start, total, digest, progress)
         commitVerified(artifact, partial, digest, total, progress)
         return false
@@ -243,6 +276,7 @@ internal abstract class NetworkResumeActions(
                     StandardOpenOption.CREATE,
                     StandardOpenOption.WRITE,
                     StandardOpenOption.APPEND,
+                    NOFOLLOW_LINKS,
                 ).use { output ->
                     copyBody(input, output, digest, start, total, progress)
                 }
@@ -258,20 +292,17 @@ internal abstract class NetworkResumeActions(
         total: Long,
         progress: (Long, Long) -> Unit,
     ) {
-        // 读取循环就是一条活跃连接的生命周期；与分段路径共用同一套连接计数。
-        withTransferConnection {
-            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-            var received = 0L
-            while (true) {
-                coroutineContext.ensureActive()
-                val count = input.read(buffer)
-                if (count < 0) break
-                output.write(buffer, 0, count)
-                digest.update(buffer, 0, count)
-                received += count
-                recordNetworkBytes(count)
-                progress(start + received, total)
-            }
+        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        var received = 0L
+        while (true) {
+            coroutineContext.ensureActive()
+            val count = input.read(buffer)
+            if (count < 0) break
+            output.write(buffer, 0, count)
+            digest.update(buffer, 0, count)
+            received += count
+            recordNetworkBytes(count)
+            progress(start + received, total)
         }
     }
 }
@@ -312,8 +343,23 @@ internal abstract class NetworkCandidateActions(
                 coroutineContext.ensureActive()
                 delay(RETRY_BACKOFF_BASE_MILLIS shl (round - 1))
             }
-            for (candidate in candidates) {
-                lastError = fetchFromSource(run, candidate) ?: return
+            val ordered =
+                if (run.multiSource && settings.source() == DownloadSourceCatalog.AUTO) {
+                    settings.health.arrangeTransfers(candidates)
+                } else {
+                    candidates
+                }
+            for ((index, candidate) in ordered.withIndex()) {
+                // 有备用源时首源的响应头使用短期限，正文继续遵循用户设置。
+                val failoverTimeout =
+                    if (run.multiSource && index == 0 &&
+                        settings.requestTimeoutSeconds() > FAST_FAILOVER_TIMEOUT_SECONDS
+                    ) {
+                        FAST_FAILOVER_TIMEOUT_SECONDS
+                    } else {
+                        null
+                    }
+                lastError = fetchFromSource(run, candidate, failoverTimeout) ?: return
             }
         }
         // 只有一个候选源时保留原来的异常类型与中文消息（调用方按状态码分类）；
@@ -325,13 +371,14 @@ internal abstract class NetworkCandidateActions(
     private suspend fun fetchFromSource(
         run: CandidateFetchRun,
         candidate: CandidateSource,
+        timeoutSeconds: Int?,
     ): Exception? {
         var attempt = 0
         var rateLimitRetries = 0
         while (true) {
             coroutineContext.ensureActive()
             attempt++
-            val failure = transferOnce(run, candidate) ?: return null
+            val failure = transferOnce(run, candidate, timeoutSeconds) ?: return null
             coroutineContext.ensureActive()
             val status = (failure as? DownloadHttpException)?.code
             val rateLimited = status != null && status in RATE_LIMIT_STATUSES
@@ -357,9 +404,10 @@ internal abstract class NetworkCandidateActions(
     private suspend fun transferOnce(
         run: CandidateFetchRun,
         candidate: CandidateSource,
+        timeoutSeconds: Int?,
     ): Exception? =
         try {
-            transferOnSource(run, candidate)
+            transferOnSource(run, candidate, timeoutSeconds)
             settings.health.recordSuccess(candidate.source.key)
             null
         } catch (cancelled: CancellationException) {
@@ -376,6 +424,7 @@ internal abstract class NetworkCandidateActions(
     private suspend fun transferOnSource(
         run: CandidateFetchRun,
         candidate: CandidateSource,
+        timeoutSeconds: Int?,
     ) {
         val segments =
             if (run.artifact.sha1.isBlank()) {
@@ -387,8 +436,29 @@ internal abstract class NetworkCandidateActions(
         run.budget.run(bufferBytes, ::logClampedConcurrency) {
             SourceThrottle.run(candidate.source, run.budget.sourceConcurrency) {
                 transferSlots.run(run.budget.units) {
-                    fetchSegmentedOrPlain(run, candidate)
+                    measuredTransfer(run, candidate, timeoutSeconds)
                 }
+            }
+        }
+    }
+
+    private suspend fun measuredTransfer(
+        run: CandidateFetchRun,
+        candidate: CandidateSource,
+        timeoutSeconds: Int?,
+    ) {
+        if (!run.multiSource || settings.source() != DownloadSourceCatalog.AUTO) {
+            fetchSegmentedOrPlain(run, candidate, timeoutSeconds)
+            return
+        }
+        val sample = SourceTransferSample()
+        val started = System.nanoTime()
+        try {
+            withContext(sample) { fetchSegmentedOrPlain(run, candidate, timeoutSeconds) }
+        } finally {
+            if (coroutineContext.isActive) {
+                val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+                settings.health.recordTransfer(candidate, sample.bytes.get(), elapsed)
             }
         }
     }
@@ -397,23 +467,26 @@ internal abstract class NetworkCandidateActions(
     private suspend fun fetchSegmentedOrPlain(
         run: CandidateFetchRun,
         candidate: CandidateSource,
+        timeoutSeconds: Int?,
     ) {
         val segmented =
             SegmentedDownloader(
                 request = { url, range ->
-                    execute(builder(url).header("Range", range).build(), attempts = 1)
+                    execute(
+                        builder(url).header("Range", range).build(),
+                        attempts = 1,
+                        timeoutSeconds = timeoutSeconds,
+                    )
                 },
             )
-        if (
-            !segmented.download(
-                run.artifact,
-                run.partial,
-                candidate.url,
-                run.budget.segmentLimit,
-                run.progress,
-            )
-        ) {
-            fetch(run.artifact, run.partial, candidate.url, run.progress)
+        val finished =
+            try {
+                segmented.download(run.artifact, run.partial, candidate.url, run.budget.segmentLimit, run.progress)
+            } catch (_: SegmentProbeTimeout) {
+                false
+            }
+        if (!finished) {
+            fetch(run.artifact, run.partial, candidate.url, run.progress, timeoutSeconds)
         }
     }
 
@@ -472,9 +545,11 @@ internal class NetworkActions(
         artifact: DownloadArtifact,
         attempts: Int = transport.attemptLimit(),
         progress: (Long, Long) -> Unit = { _, _ -> },
+        urls: List<String> = listOf(artifact.url),
     ) = withContext(Dispatchers.IO) {
         val target = artifact.target
         withTargetLock(target) {
+            val task = coroutineContext[TaskDownloadContext]?.task
             prepareTargetDirectory(artifact)
             val partial = partialFile(target)
             val path = target.toAbsolutePath().normalize()
@@ -484,9 +559,16 @@ internal class NetworkActions(
             if (artifactProblem(artifact) == null) {
                 // 目标已经完整，残留的断点只会占空间。
                 discardPartial(target)
+                task?.updateInstallationTransfer { it.reuse(target) }
                 return@withTargetLock
             }
-            transferFromCandidates(artifact, partial, existed, journal, attempts, progress)
+            task?.updateInstallationTransfer { it.plan(target, artifact.size) }
+            val candidates = urls.flatMap { orderedSources(it, fileDownload = true) }.distinctBy { it.url }
+            transferFromCandidates(artifact, partial, existed, journal, attempts, candidates) { done, total ->
+                task?.updateInstallationTransfer { it.transfer(target, done, total) }
+                progress(done, total)
+            }
+            task?.updateInstallationTransfer { it.finish(target, target.fileSize()) }
         }
     }
 
@@ -524,6 +606,7 @@ internal class NetworkActions(
         existed: Boolean,
         journal: TaskDownloadJournal?,
         attempts: Int,
+        candidates: List<CandidateSource>,
         progress: (Long, Long) -> Unit,
     ) {
         val path = artifact.target.toAbsolutePath().normalize()
@@ -531,7 +614,7 @@ internal class NetworkActions(
             fetchFromCandidates(
                 artifact,
                 partial,
-                orderedSources(artifact.url),
+                candidates,
                 attempts.coerceIn(1, MAX_DOWNLOAD_ATTEMPT_LIMIT),
                 progress,
             )
@@ -542,6 +625,7 @@ internal class NetworkActions(
         } finally {
             if (!existed && artifact.target.isRegularFile()) journal?.completed(path)
             if (!coroutineContext.isActive) discardPartial(artifact.target)
+            if (!partial.exists()) resumeIdentityFile(partial).deleteIfExists()
         }
     }
 }

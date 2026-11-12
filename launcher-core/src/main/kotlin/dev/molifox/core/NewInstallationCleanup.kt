@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 在新实例安装取消后回收其专属版本目录、整合包副本和实例记录。
+// 在新实例安装失败或取消后回收其专属版本目录、整合包副本和实例记录。
 
 package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
+import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -21,24 +22,57 @@ internal class NewInstallationCleanup(
         val root = store.minecraftRoot(instance).toAbsolutePath().normalize()
         val folder = store.versionGamePath(instance).toAbsolutePath().normalize()
         require(folder.parent == root.resolve("versions"))
+        context.reservedInstallDirectory = folder
+        val discard: suspend () -> Unit = {
+            try {
+                if (context.freshInstallDirectory == folder) {
+                    removeVersionFolder(context, folder, instance.id)
+                } else {
+                    removeEmptyReservation(folder)
+                }
+            } finally {
+                try {
+                    removePackArchive(instance)
+                } finally {
+                    store.endPendingInstall(instance.instanceFolderName())
+                    removeInstanceRecord(instance)
+                }
+            }
+        }
         context.onFinished(
-            "new-installation:${instance.id}",
-            cancel = {
-                removeVersionFolder(context, folder)
-                removePackArchive(instance)
-                removeInstanceRecord(instance)
-            },
+            cleanupKey(instance.id),
+            cancel = discard,
             complete = {},
+            failure = discard,
         )
+    }
+
+    fun disarm(
+        instance: GameInstance,
+        context: JobContext,
+    ) {
+        context.disarmCleanup(cleanupKey(instance.id))
+    }
+
+    private fun cleanupKey(instanceId: String): String = "new-installation:$instanceId"
+
+    private fun removeEmptyReservation(folder: Path) {
+        if (!Files.isDirectory(folder, NOFOLLOW_LINKS) || folder.toRealPath() != folder) return
+        try {
+            Files.deleteIfExists(folder)
+        } catch (_: DirectoryNotEmptyException) {
+            // 安装未取得写入权时，保留其他来源写入的文件。
+        }
     }
 
     /** 删除专属版本目录；目录本身或其中任一条目变成链接时拒绝删除。版本升级回滚复用同一套守卫。 */
     internal fun removeVersionFolder(
         context: JobContext,
         folder: Path,
+        ownedInstanceId: String? = null,
     ) {
         if (!folder.exists(NOFOLLOW_LINKS)) return
-        require(context.canRemoveDownload(folder)) {
+        require(context.canRemoveDownload(folder, ownedInstanceId)) {
             I18n.t("diagA2.newInstallationCleanup.versionReferenced")
         }
         require(folder.toRealPath() == folder) {

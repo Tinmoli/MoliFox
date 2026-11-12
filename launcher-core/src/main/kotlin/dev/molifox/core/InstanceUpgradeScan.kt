@@ -112,13 +112,6 @@ internal class InstanceUpgradeScanService(
                 size = item.size,
                 enabled = item.enabled,
             )
-        val declaredNote = declared.joinToString("；")
-        val declaresOtherTarget =
-            targetGameVersion.isNotBlank() && declared.isNotEmpty() &&
-                declared.none { minecraftConstraintMatches(it, targetGameVersion) }
-        val declaresThisTarget =
-            targetGameVersion.isNotBlank() && declared.isNotEmpty() &&
-                declared.any { minecraftConstraintMatches(it, targetGameVersion) }
         return when {
             item.status == ModUpdateStatus.Updatable && item.candidate != null && item.applicable ->
                 base.copy(
@@ -135,56 +128,72 @@ internal class InstanceUpgradeScanService(
                     note = item.warning.ifBlank { item.failure },
                 )
 
-            // 「最新」编号反而比当前文件旧：编号常把游戏版本嵌进去（1.21.11-1.5.2 对 1.5.2+26.3），
-            // 数值比较跨版本线没有意义。正式版优先时（当前是预发布、候选是正式版）要换装到正式版，
-            // 不按「编号更旧」沿用；其余情况当前文件自声明支持目标版本 → 沿用，不按编号降级；
-            // 否则（声明不含目标版本或未声明）当前文件在目标版本下不可靠，换装目标版本下的这份文件。
-            item.status == ModUpdateStatus.Latest && item.candidate != null ->
-                when {
-                    // 当前文件在预发布线上、目标版本下有更稳的正式版：换回正式版（sodium beta 族互不兼容的实例教训）。
-                    isPrereleaseVersion(item.currentVersion) &&
-                        !isPrereleaseVersion(item.candidate.versionNumber) ->
-                        base.copy(
-                            state = InstanceModUpgradeState.HasNewVersion,
-                            targetVersion = item.latestVersion,
-                            candidate = item.candidate,
-                            note = I18n.t("instA2.upgrade.releasePreferred", item.latestVersion),
-                        )
+            item.status == ModUpdateStatus.Latest -> latestItem(base, item, declared, targetGameVersion)
 
-                    declaresThisTarget -> base.copy(state = InstanceModUpgradeState.CarryAsIs)
+            else ->
+                base.copy(state = InstanceModUpgradeState.QueryFailed, note = item.warning.ifBlank { item.failure })
+        }
+    }
 
-                    else ->
-                        base.copy(
-                            state = InstanceModUpgradeState.HasNewVersion,
-                            targetVersion = item.latestVersion,
-                            candidate = item.candidate,
-                            note =
-                                if (declaresOtherTarget) {
-                                    I18n.t("instA2.upgrade.declaredIncompatible", targetGameVersion, declaredNote)
-                                } else {
-                                    item.warning
-                                },
-                        )
-                }
+    private fun latestItem(
+        base: InstanceModUpgradeItem,
+        item: ModUpdateItem,
+        declared: List<String>,
+        targetGameVersion: String,
+    ): InstanceModUpgradeItem {
+        val hasDeclaration = targetGameVersion.isNotBlank() && declared.isNotEmpty()
+        val declaresThisTarget = hasDeclaration && declared.any { minecraftConstraintMatches(it, targetGameVersion) }
+        val declaresOtherTarget = hasDeclaration && !declaresThisTarget
+        val declaredNote = declared.joinToString("；")
+        return when {
+            item.candidate != null ->
+                latestCandidateItem(
+                    base,
+                    item,
+                    declaresThisTarget,
+                    declaresOtherTarget,
+                    targetGameVersion,
+                    declaredNote,
+                )
 
-            // 提示非空：目标版本下没有兼容文件——带不过去。
-            item.status == ModUpdateStatus.Latest && item.warning.isNotBlank() ->
+            item.warning.isNotBlank() ->
                 base.copy(state = InstanceModUpgradeState.Incompatible, note = item.warning)
 
-            // 编号持平的「无需更新」：jar 自声明不含目标版本时（远端标签错标）改判不兼容。
-            item.status == ModUpdateStatus.Latest && declaresOtherTarget ->
+            // 远端标签可能错标，编号持平时仍需检查文件自身声明。
+            declaresOtherTarget ->
                 base.copy(
                     state = InstanceModUpgradeState.Incompatible,
                     note = I18n.t("instA2.upgrade.declaredIncompatible", targetGameVersion, declaredNote),
                 )
 
-            item.status == ModUpdateStatus.Latest ->
-                base.copy(state = InstanceModUpgradeState.CarryAsIs)
-
-            // 未找到匹配项目、查询失败或无法确认版本：没有可靠结论，不可带入。
-            else ->
-                base.copy(state = InstanceModUpgradeState.QueryFailed, note = item.warning.ifBlank { item.failure })
+            else -> base.copy(state = InstanceModUpgradeState.CarryAsIs)
         }
+    }
+
+    // 跨游戏版本的文件编号不能直接比较；优先考虑正式版和文件自身的兼容声明。
+    private fun latestCandidateItem(
+        base: InstanceModUpgradeItem,
+        item: ModUpdateItem,
+        declaresThisTarget: Boolean,
+        declaresOtherTarget: Boolean,
+        targetGameVersion: String,
+        declaredNote: String,
+    ): InstanceModUpgradeItem {
+        val candidate = requireNotNull(item.candidate)
+        val prefersRelease = isPrereleaseVersion(item.currentVersion) && !isPrereleaseVersion(candidate.versionNumber)
+        if (!prefersRelease && declaresThisTarget) return base.copy(state = InstanceModUpgradeState.CarryAsIs)
+        val note =
+            when {
+                prefersRelease -> I18n.t("instA2.upgrade.releasePreferred", item.latestVersion)
+                declaresOtherTarget -> I18n.t("instA2.upgrade.declaredIncompatible", targetGameVersion, declaredNote)
+                else -> item.warning
+            }
+        return base.copy(
+            state = InstanceModUpgradeState.HasNewVersion,
+            targetVersion = item.latestVersion,
+            candidate = candidate,
+            note = note,
+        )
     }
 
     /** 读取 mods 目录各文件声明的 Minecraft 版本约束；元数据刚被检查管线解析过，命中读取缓存。 */

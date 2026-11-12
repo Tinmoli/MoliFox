@@ -70,7 +70,7 @@ internal class CurseForgeApi(
             store.data.settings.curseForgeBaseUrl
                 .orEmpty()
         val effective = normalizedCurseForgeBaseUrl(raw)
-        if (effective == DEFAULT_CURSE_FORGE_BASE_URL && raw.trim().trimEnd('/') != effective) {
+        if (raw.isNotBlank() && !isValidCurseForgeBaseUrl(raw)) {
             if (fallbackLoggedFor != raw) {
                 store.log(I18n.t("packsB1.curseForgeApi.invalidBaseUrl", DEFAULT_CURSE_FORGE_BASE_URL), true)
                 fallbackLoggedFor = raw

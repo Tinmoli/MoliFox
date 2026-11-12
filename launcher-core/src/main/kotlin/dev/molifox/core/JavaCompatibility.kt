@@ -12,6 +12,7 @@ private const val JAVA_MAJOR_8 = 8
 private const val JAVA_MAJOR_17 = 17
 private const val JAVA_MAJOR_21 = 21
 private const val JAVA_MAJOR_25 = 25
+private const val JAVA_MAJOR_27 = 27
 
 /** 2026 版本线（26.x 与 26w 快照）的分界。 */
 private const val VERSION_YEAR_2026 = 26
@@ -184,3 +185,14 @@ internal data class JavaRequirement(
         }
     }
 }
+
+/** 自动选择候选：模组实例优先精确主版本，但要求 25 的版本也接受 27。 */
+internal fun JavaRequirement.automaticCandidates(candidates: List<JavaRuntime>): List<JavaRuntime> =
+    if (exactAutomatic) {
+        candidates.filter {
+            it.majorVersion == minimum ||
+                (minimum == JAVA_MAJOR_25 && it.majorVersion == JAVA_MAJOR_27)
+        }
+    } else {
+        candidates
+    }

@@ -10,6 +10,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
@@ -27,6 +28,7 @@ internal fun resumableStart(
     partial: Path,
     response: Response,
     offset: Long,
+    identity: ResumeIdentity?,
 ): Long? =
     when {
         response.code == HTTP_RANGE_NOT_SATISFIABLE -> {
@@ -34,13 +36,18 @@ internal fun resumableStart(
             partial.deleteIfExists()
             null
         }
+
         offset > 0 && response.code == HTTP_OK -> {
             // 服务器不支持 Range：必须清空重写，不能把完整响应拼到已有字节后面。
             partial.deleteIfExists()
             0
         }
+
         response.code != HTTP_PARTIAL_CONTENT -> offset
-        contentRange(response.header("Content-Range"))?.first == offset -> offset
+
+        contentRange(response.header("Content-Range"))?.first == offset &&
+            (offset == 0L || identity?.matches(response) != false) -> offset
+
         else -> {
             partial.deleteIfExists()
             null
@@ -60,7 +67,7 @@ internal fun resumeOffset(
     artifact: DownloadArtifact,
     partial: Path,
 ): Long {
-    if (!partial.isRegularFile()) return 0
+    if (!partial.isRegularFile(NOFOLLOW_LINKS)) return 0
     val size = partial.fileSize()
     if (size <= 0) return 0
     if (artifact.size > 0 && size > artifact.size) {
@@ -120,13 +127,13 @@ internal fun commitVerified(
     progress: (Long, Long) -> Unit,
 ) {
     val size = partial.fileSize()
-    if (artifact.size > 0 && size != artifact.size) {
+    if (total > 0 && size != total) {
         partial.deleteIfExists()
         throw DownloadVerificationException(
             I18n.t(
                 "networkA.resume.sizeMismatch",
                 artifact.target.fileName,
-                artifact.size,
+                total,
                 size,
             ),
         )

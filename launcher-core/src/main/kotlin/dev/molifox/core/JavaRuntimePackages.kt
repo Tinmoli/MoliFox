@@ -379,24 +379,6 @@ fun javaDownloadSourceLabel(value: String): String =
         else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceAuto")
     }
 
-/** 下载进度按当前真正尝试的地址显示来源；只剩 Azul / Temurin / Oracle 三个官方主机。 */
-internal fun javaDownloadUrlLabel(url: String): String =
-    when (runCatching { URI(url).host.orEmpty() }.getOrDefault("")) {
-        "cdn.azul.com",
-        "api.azul.com",
-        -> "Azul"
-
-        "github.com",
-        "objects.githubusercontent.com",
-        "api.adoptium.net",
-        -> "Adoptium"
-
-        "download.oracle.com",
-        -> "Oracle"
-
-        else -> I18n.t("networkB2.javaRuntimePackages.downloadSourceOfficial")
-    }
-
 /**
  * 设置里可见的下载来源：对当前系统/架构没有任何安装包的来源不显示，避免选了就必然失败。
  * 覆盖情况按 2026-11-07 官方清单核验：Azul 与 Adoptium 覆盖全部桌面平台（部分旧版本除外），

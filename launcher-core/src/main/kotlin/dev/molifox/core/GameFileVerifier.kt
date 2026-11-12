@@ -81,24 +81,32 @@ internal class GameFileVerifier(
         context: JobContext,
         label: String,
         optional: List<DownloadArtifact> = emptyList(),
+        checkedMissing: List<DownloadArtifact>? = null,
         warn: (String) -> Unit = {},
     ) {
         val unique = artifacts.distinctBy { it.target }
         ensureOptional(optional.distinctBy { it.target }, context, warn)
         if (unique.isEmpty()) return
-        progress?.begin(InstallPhase.VERIFY)
-        val broken = mutableListOf<DownloadArtifact>()
-        for (artifact in unique) {
-            context.checkCancelled()
-            val problem = artifactProblem(if (verifyHashes) artifact else artifact.copy(sha1 = ""))
-            progress?.verified(InstallPhase.VERIFY, artifact)
-            if (problem != null) broken += artifact
-        }
+        val broken = checkedMissing ?: missing(unique, context)
         // 已经完好的文件不需要下载，把预留给它们的下载份额还回去。
         val brokenTargets = broken.mapTo(HashSet()) { it.target }
         val intact = unique.filter { it.target !in brokenTargets }
+        context.updateInstallationTransfer { transfers -> intact.forEach { transfers.reuse(it.target) } }
         progress?.release(label, intact.size, intact.sumOf { it.size.coerceAtLeast(0) })
         downloadBroken(broken, context, label)
+    }
+
+    suspend fun missing(
+        artifacts: List<DownloadArtifact>,
+        context: JobContext,
+    ): List<DownloadArtifact> {
+        progress?.begin(InstallPhase.VERIFY)
+        return artifacts.distinctBy { it.target }.filter { artifact ->
+            context.checkCancelled()
+            val problem = artifactProblem(if (verifyHashes) artifact else artifact.copy(sha1 = ""))
+            progress?.verified(InstallPhase.VERIFY, artifact)
+            problem != null
+        }
     }
 
     private suspend fun downloadBroken(
@@ -154,12 +162,19 @@ internal class GameFileVerifier(
                 context.checkCancelled()
                 artifactProblem(if (verifyHashes) it else it.copy(sha1 = "")) != null
             }
+        val pendingTargets = pending.mapTo(HashSet()) { it.target }
+        context.updateInstallationTransfer { transfers ->
+            optional.filterNot { it.target in pendingTargets }.forEach { transfers.reuse(it.target) }
+        }
         val downloadable = pending.filter { it.url.isNotBlank() }
         pending
             .filter { it.url.isBlank() }
             .forEach { warn(I18n.t("core.gameFileVerifier.8", it.target)) }
         if (downloadable.isEmpty()) return
         val failures = scheduler.run(downloadable, context, concurrency)
+        context.updateInstallationTransfer { transfers ->
+            failures.forEach { transfers.reuse(it.target) }
+        }
         failures.forEach { failure ->
             warn(I18n.t("core.gameFileVerifier.9", failure.target, failure.reason))
         }

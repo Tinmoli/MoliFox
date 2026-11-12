@@ -13,7 +13,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
@@ -24,6 +23,7 @@ import kotlin.io.path.readBytes
 private const val MAX_TOKEN_PLAINTEXT_BYTES = 32768
 private const val MAX_WINDOWS_CREDENTIAL_BYTES = 65536
 private const val CREDENTIAL_TOOL_TIMEOUT_SECONDS = 5L
+private const val CREDENTIAL_TOOL_OUTPUT_LIMIT_BYTES = 64 * 1024
 
 /** 凭据信封文件的最大体积；超过视为损坏，不再解析。 */
 private const val MAX_ENVELOPE_FILE_BYTES = 65536
@@ -194,23 +194,14 @@ private class SystemLegacyTokenStore(
         id: String,
     ): String? =
         runCatching {
-            val process =
+            val builder =
                 ProcessBuilder("secret-tool", action, "application", "molifox", "account", id)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-            try {
-                val finished = process.waitFor(CREDENTIAL_TOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                if (!finished || process.exitValue() != 0) {
-                    null
-                } else {
-                    process.inputStream
-                        .bufferedReader()
-                        .readText()
-                        .trimEnd()
-                        .takeIf { it.isNotBlank() }
-                }
-            } finally {
-                if (process.isAlive) process.destroyForcibly()
-            }
+            runShortCommand(builder, CREDENTIAL_TOOL_TIMEOUT_SECONDS, CREDENTIAL_TOOL_OUTPUT_LIMIT_BYTES)
+                ?.takeIf { it.exitCode == 0 && !it.truncated }
+                ?.output
+                ?.toString(Charsets.UTF_8)
+                ?.trimEnd()
+                ?.takeIf { it.isNotBlank() }
         }.getOrNull()
 }

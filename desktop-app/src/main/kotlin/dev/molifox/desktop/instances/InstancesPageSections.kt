@@ -363,7 +363,7 @@ private fun launchInstance(
     } else {
         actions.run {
             actions.controller.selectInstance(instance.id)
-            actions.controller.launch(instance.id)
+            actions.controller.launchWithJavaPrompt(instance.id)
         }
         actions.taskQueued()
     }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责生成 MultiMC/Prism 导入预览摘要：已迁移项、未迁移提示与越界警告。
+// 负责生成 实例组件格式 导入预览摘要：已迁移项、未迁移提示与越界警告。
 
 package dev.molifox.core
 

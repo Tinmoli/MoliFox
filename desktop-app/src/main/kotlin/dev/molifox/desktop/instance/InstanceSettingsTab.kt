@@ -27,11 +27,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.InstanceMemoryPolicy
-import dev.molifox.core.IsolationSource
 import dev.molifox.core.JavaRuntime
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.VersionIsolation
 import dev.molifox.core.applyInstanceMemoryPolicy
+import dev.molifox.core.effectiveVersionIsolationPolicy
 import dev.molifox.core.instanceMemoryPolicy
 import dev.molifox.core.parseInstanceLaunchNumberInput
 import dev.molifox.core.validateInstanceDirectoryName
@@ -162,7 +162,7 @@ internal fun InstanceSettingsTab(
                 maxLines = 4,
             )
         }
-        InstanceIsolationSection(actions, settings, draft, onDraftChange)
+        InstanceIsolationSection(actions, instance, draft, settings, instanceBusy, onDraftChange)
         InstanceVersionSection(instance, actions)
         InstanceAdvancedLaunchSection(
             instance = instance,
@@ -320,12 +320,14 @@ private fun InstanceJavaMemorySection(
     }
 }
 
-/** 目录与隔离：目录名就是实例名；隔离来源与覆盖方式都在这里说明。 */
+/** 目录与隔离：切换覆盖方式并查看实际游戏目录。 */
 @Composable
 private fun InstanceIsolationSection(
     actions: UiActions,
-    settings: LauncherSettings,
+    instance: GameInstance,
     draft: GameInstance,
+    settings: LauncherSettings,
+    busy: Boolean,
     onDraftChange: (GameInstance) -> Unit,
 ) {
     val strings = LocalStrings.current
@@ -333,75 +335,52 @@ private fun InstanceIsolationSection(
         strings.t("instA1.settings.foldersAndIsolation"),
         strings.t("instA1.settings.foldersAndIsolation.detail"),
     ) {
-        val isolationSource =
-            actions.controller.store.isolationSource(draft)
-        val isolationEvidence =
-            actions.controller.store.isolationEvidence(draft)
-        SettingRow(
-            strings.t("settings.game.isolation.title"),
-            when (isolationSource) {
-                IsolationSource.Inferred ->
-                    strings.t(
-                        "instA1.settings.isolation.inferred",
-                        actions.controller.store.isolationTitle(draft),
-                        isolationEvidence ?: strings.t("instA1.settings.isolation.gameData"),
-                    )
-                IsolationSource.Explicit ->
-                    when (draft.isolation) {
-                        VersionIsolation.Enabled ->
-                            strings.t("instA1.settings.isolation.enabled")
-                        VersionIsolation.Disabled ->
-                            strings.t("instA1.settings.isolation.disabled")
-                        VersionIsolation.Inherit -> ""
-                    }
-                IsolationSource.GlobalDefault ->
-                    strings.t(
-                        "instA1.settings.isolation.globalDefault",
-                        if (settings.isolateVersions) {
-                            strings.t("core.versionIsolation.enabled")
-                        } else {
-                            strings.t("core.versionIsolation.disabled")
-                        },
-                    )
-            },
-        ) {
+        SettingRow(strings.t("settings.game.isolation.title")) {
             Box(Modifier.width(190.dp)) {
-                SimpleDropdown(
-                    draft.isolation.name,
-                    VersionIsolation.entries.map {
-                        it.name to
-                            if (
-                                it == VersionIsolation.Inherit &&
-                                isolationSource ==
-                                IsolationSource.Inferred
-                            ) {
-                                strings.t("instA1.settings.isolation.inheritInferred")
-                            } else {
-                                it.title
-                            }
-                    },
-                    { key ->
-                        onDraftChange(
-                            draft.copy(
-                                isolation =
-                                    VersionIsolation.valueOf(
-                                        key,
-                                    ),
-                            ),
-                        )
-                    },
-                )
+                InstanceIsolationDropdown(draft.isolation, settings, busy) { isolation ->
+                    onDraftChange(draft.copy(isolation = isolation))
+                }
             }
         }
         SettingRow(
             strings.t("instA1.settings.actualGameFolder"),
             runCatching {
                 actions.controller.store
-                    .gamePath(draft)
+                    .gamePath(instance)
                     .toString()
             }.getOrDefault(strings.t("instA1.settings.folderUnavailable")),
         ) {}
     }
+}
+
+@Composable
+private fun InstanceIsolationDropdown(
+    isolation: VersionIsolation,
+    settings: LauncherSettings,
+    busy: Boolean,
+    onSelect: (VersionIsolation) -> Unit,
+) {
+    val strings = LocalStrings.current
+    val policy = settings.effectiveVersionIsolationPolicy
+    val global = strings.t("settings.game.isolation.policy.${policy.name}")
+    SimpleDropdown(
+        isolation.name,
+        listOf(
+            VersionIsolation.Inherit.name to VersionIsolation.Inherit.title,
+            VersionIsolation.Disabled.name to strings.t("settings.game.isolation.policy.Disabled"),
+            VersionIsolation.Enabled.name to strings.t("settings.game.isolation.instance.Enabled"),
+        ),
+        { key -> onSelect(VersionIsolation.valueOf(key)) },
+        enabled = !busy,
+        label = strings.t("settings.game.isolation.title"),
+        descriptions =
+            mapOf(
+                VersionIsolation.Inherit.name to
+                    strings.t("settings.game.isolation.instance.inheritHelp", global),
+                VersionIsolation.Disabled.name to strings.t("settings.game.isolation.instance.disabledHelp"),
+                VersionIsolation.Enabled.name to strings.t("settings.game.isolation.instance.enabledHelp"),
+            ),
+    )
 }
 
 /** 版本信息：Minecraft 版本、包来源、创建时间与打开目录。 */

@@ -24,6 +24,7 @@ import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
 import dev.molifox.core.ReleaseVersion
+import dev.molifox.core.effectiveVersionIsolationPolicy
 import dev.molifox.core.i18n.Strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -102,8 +103,17 @@ internal fun ColumnScope.InstallGamePage(
             onRefresh = { refresh++ },
         )
         InstallOptionsPanel(
-            state = state,
             actions = actions,
+            isolated =
+                state.data.settings.effectiveVersionIsolationPolicy.isolates(
+                    loader,
+                    versions
+                        .firstOrNull {
+                            it.id ==
+                                selected
+                        }?.type
+                        .orEmpty(),
+                ),
             selected = selected,
             name = name,
             onNameChange = { name = it.take(80) },

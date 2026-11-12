@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.ConnectionSpec
@@ -26,6 +27,7 @@ import java.io.IOException
 import java.net.Proxy
 import java.net.ProxySelector
 import java.net.SocketAddress
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
@@ -43,6 +45,9 @@ private const val MIN_REQUEST_TIMEOUT_SECONDS = 10
 private const val MAX_REQUEST_TIMEOUT_SECONDS = 180
 private const val DEFAULT_REQUEST_TIMEOUT_SECONDS = 45
 private const val MAX_CONNECT_TIMEOUT_SECONDS = 30
+
+/** 首个候选源先用短超时试一次，卡住就立刻换源；后续候选仍用用户设置的完整超时。 */
+internal const val FAST_FAILOVER_TIMEOUT_SECONDS = 10
 
 /** 网络客户端的全部配置来源：设置改动通过 lambda 在每次请求时读取。 */
 internal class NetworkClientSettings(
@@ -66,7 +71,7 @@ internal class NetworkClientSettings(
 private fun requestLimit(settings: NetworkClientSettings): Int {
     val files = settings.maxConcurrent().coerceIn(1, MAX_DOWNLOAD_THREADS)
     val segments = settings.downloadSegments().coerceIn(1, MAX_DOWNLOAD_SEGMENTS)
-    return files * segments
+    return minOf(files * segments, files + MAX_ACTIVE_SEGMENT_REQUESTS)
 }
 
 private fun configureRequestLimits(
@@ -211,14 +216,15 @@ internal class NetworkTransport(
         request: Request,
         redirects: Boolean = true,
         attempts: Int = attemptLimit(),
+        timeoutSeconds: Int? = null,
     ): Response {
         for (attempt in 1..attempts) {
             try {
-                return executeOnce(request, redirects)
+                return executeOnce(request, redirects, timeoutSeconds = timeoutSeconds)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: IOException) {
-                handleFailure(request, redirects, attempt, attempts, failure)?.let { return it }
+                handleFailure(request, redirects, attempt, attempts, failure, timeoutSeconds)?.let { return it }
             }
         }
         error("Network retry state exhausted")
@@ -231,9 +237,10 @@ internal class NetworkTransport(
         attempt: Int,
         attempts: Int,
         failure: IOException,
+        timeoutSeconds: Int?,
     ): Response? {
         if (attempt == attempts || !canRetryRequest(request.method, failure)) {
-            retryDirect(request, redirects, failure)?.let { return it }
+            retryDirect(request, redirects, failure, timeoutSeconds)?.let { return it }
             throw connectionFailure(request, attempt, failure, proxyRoute(request))
         }
         delay(RETRY_DELAY_STEP_MILLIS * attempt)
@@ -248,6 +255,7 @@ internal class NetworkTransport(
         request: Request,
         redirects: Boolean,
         failure: IOException,
+        timeoutSeconds: Int?,
     ): Response? {
         if (proxiedRoute(request) == null) return null
         if (!canRetryRequest(request.method, failure)) return null
@@ -262,7 +270,7 @@ internal class NetworkTransport(
             true,
         )
         return try {
-            executeOnce(request, redirects, direct = true)
+            executeOnce(request, redirects, direct = true, timeoutSeconds = timeoutSeconds)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (directFailure: IOException) {
@@ -278,43 +286,22 @@ internal class NetworkTransport(
         request: Request,
         redirects: Boolean,
         direct: Boolean = false,
+        timeoutSeconds: Int? = null,
     ): Response {
         configureRequestLimits(client, settings)
         val configured = clientVariants.configured(settings.boundedRequestTimeout(), redirects, direct)
-        return suspendCancellableCoroutine { continuation ->
-            val call = configured.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(
-                object : Callback {
-                    override fun onFailure(
-                        call: Call,
-                        e: IOException,
-                    ) {
-                        if (continuation.isActive) continuation.resumeWith(Result.failure(e))
-                    }
+        if (timeoutSeconds == null) return awaitResponse(configured, request)
 
-                    override fun onResponse(
-                        call: Call,
-                        response: Response,
-                    ) {
-                        val cancellable =
-                            response
-                                .newBuilder()
-                                .request(
-                                    response.request
-                                        .newBuilder()
-                                        .tag(
-                                            ResponseCancellation::class.java,
-                                            ResponseCancellation(call::cancel),
-                                        ).build(),
-                                ).build()
-                        continuation.resume(cancellable) { _, value, _ ->
-                            call.cancel()
-                            value.close()
-                        }
-                    }
-                },
-            )
+        var pending: Response? = null
+        try {
+            val response =
+                withTimeoutOrNull(TimeUnit.SECONDS.toMillis(timeoutSeconds.toLong())) {
+                    awaitResponse(configured, request).also { pending = it }
+                } ?: throw SocketTimeoutException("Response headers timed out")
+            pending = null
+            return response
+        } finally {
+            pending?.close()
         }
     }
 
@@ -403,12 +390,53 @@ internal abstract class NetworkActionBase(
         request: Request,
         redirects: Boolean = true,
         attempts: Int = transport.attemptLimit(),
-    ): Response = transport.execute(request, redirects, attempts)
+        timeoutSeconds: Int? = null,
+    ): Response = transport.execute(request, redirects, attempts, timeoutSeconds)
 
     internal suspend fun measureUrl(url: String): Long? = transport.measureUrl(url)
 }
 
 /** 把底层 IO 失败翻译成带证书与代理说明的中文错误，原始异常保留为 cause。 */
+private suspend fun awaitResponse(
+    configured: OkHttpClient,
+    request: Request,
+): Response =
+    suspendCancellableCoroutine { continuation ->
+        val call = configured.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(
+                    call: Call,
+                    e: IOException,
+                ) {
+                    if (continuation.isActive) continuation.resumeWith(Result.failure(e))
+                }
+
+                override fun onResponse(
+                    call: Call,
+                    response: Response,
+                ) {
+                    val cancellable =
+                        response
+                            .newBuilder()
+                            .request(
+                                response.request
+                                    .newBuilder()
+                                    .tag(
+                                        ResponseCancellation::class.java,
+                                        ResponseCancellation(call::cancel),
+                                    ).build(),
+                            ).build()
+                    continuation.resume(cancellable) { _, value, _ ->
+                        call.cancel()
+                        value.close()
+                    }
+                }
+            },
+        )
+    }
+
 private fun connectionFailure(
     request: Request,
     attempt: Int,

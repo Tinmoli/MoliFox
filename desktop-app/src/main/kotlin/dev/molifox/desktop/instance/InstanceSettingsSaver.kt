@@ -6,19 +6,16 @@
 package dev.molifox.desktop.instance
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import dev.molifox.core.GameInstance
 import dev.molifox.core.validateInstanceDirectoryName
+import dev.molifox.desktop.SaveSettingsDraft
 import dev.molifox.desktop.UiActions
 import dev.molifox.desktop.tr
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -134,23 +131,21 @@ internal fun InstanceSettingsAutoSave(
     snapshot: GameInstance,
     busy: Boolean,
 ) {
-    LaunchedEffect(instance.id, snapshot, busy, saver.nameCommitting) {
-        if (busy || saver.nameCommitting || snapshot == instance) return@LaunchedEffect
-        // 连续输入合并成一次写盘；核心会再次校验，非法值不会落盘。
-        delay(300)
-        if (saver.nameCommitting) return@LaunchedEffect
-        saver.saveError =
-            savePendingInstanceSettings(actions.controller, snapshot)
-                .exceptionOrNull()
-                ?.let { it.message ?: tr("pages.common.actionFailed") }
-    }
-    // 离开页面时补写还没到防抖时间的有效改动；非法值仍由核心拒绝，不会落盘。
-    val latestEdit by rememberUpdatedState(snapshot)
-    val latestInstance by rememberUpdatedState(instance)
-    DisposableEffect(instance.id) {
-        onDispose {
-            val pending = latestEdit
-            if (!saver.nameCommitting && pending != latestInstance) {
+    SaveSettingsDraft(
+        snapshot,
+        instance,
+        owner = instance.id,
+        enabled = !busy && !saver.nameCommitting,
+        save = { pending ->
+            if (!saver.nameCommitting) {
+                saver.saveError =
+                    savePendingInstanceSettings(actions.controller, pending)
+                        .exceptionOrNull()
+                        ?.let { it.message ?: tr("pages.common.actionFailed") }
+            }
+        },
+        flush = { pending ->
+            if (!saver.nameCommitting) {
                 actions.controller.scope.launch {
                     savePendingInstanceSettings(actions.controller, pending)
                         .onFailure { failure ->
@@ -160,6 +155,6 @@ internal fun InstanceSettingsAutoSave(
                         }
                 }
             }
-        }
-    }
+        },
+    )
 }

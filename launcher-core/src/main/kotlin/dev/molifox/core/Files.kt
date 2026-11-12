@@ -12,7 +12,6 @@ import com.google.gson.JsonParser
 import dev.molifox.core.i18n.I18n
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 import kotlin.io.path.createDirectories
@@ -51,16 +50,7 @@ internal fun writeJson(
     val temporary = path.resolveSibling("${path.fileName}.${UUID.randomUUID()}.tmp")
     try {
         temporary.writeText(gson.toJson(value))
-        try {
-            Files.move(
-                temporary,
-                path,
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING)
-        }
+        replaceStagedFile(temporary, path)
     } finally {
         temporary.deleteIfExists()
     }

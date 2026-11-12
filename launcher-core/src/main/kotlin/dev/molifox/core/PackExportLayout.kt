@@ -7,7 +7,7 @@ package dev.molifox.core
 
 import java.time.Instant
 
-/** MultiMC/Prism 的实例图标键：导出写 `icons/<key>.png`，导入按 iconKey 回读。 */
+/** 实例配置中的实例图标键：导出写 `icons/<key>.png`，导入按 iconKey 回读。 */
 internal const val MULTIMC_ICON_KEY = "pack"
 
 /** 一次导出的归档结构：清单文档、按文件复制的条目、目录条目与必需条目。 */
@@ -17,7 +17,7 @@ internal class PackExportLayout(
     val directories: List<String>,
     val icon: ByteArray?,
     val requiredEntries: List<String>,
-    /** 图标在归档内的路径：MultiMC/Prism 用 `icons/<key>.png`，其它格式是 `icon.png`。 */
+    /** 图标在归档内的路径：实例组件格式 用 `icons/<key>.png`，其它格式是 `icon.png`。 */
     val iconPath: String = "icon.png",
 ) {
     val totalEntries: Int

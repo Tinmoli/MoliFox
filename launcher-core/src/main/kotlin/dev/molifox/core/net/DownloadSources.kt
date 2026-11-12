@@ -14,6 +14,9 @@ private const val MAX_REASON_LENGTH = 160
 /** 失败消息里最多逐条列出的源尝试数量，其余合并为「另有 N 个源」。 */
 private const val MAX_LISTED_ATTEMPTS = 8
 
+/** CurseForge/Modrinth 内容镜像的源 key；它只服务模组平台 API 与 CDN。 */
+internal const val MCIM = "mcim"
+
 /** 源的一条地址前缀映射：官方前缀 → 该源前缀，路径原样保留。 */
 data class SourceRoute(
     val from: String,
@@ -55,6 +58,7 @@ private fun sourceTitleOf(key: String): String =
         "tencent" -> I18n.t("networkA.source.tencent")
         "huawei" -> I18n.t("networkA.source.huawei")
         "central" -> "Maven Central"
+        MCIM -> "MCIM"
         else -> key
     }
 
@@ -111,6 +115,7 @@ class DownloadSourceCatalog(
     ): Int =
         when {
             source.key == BMCLAPI -> if (mirrorFirst) 0 else 1
+            source.key == MCIM -> if (mirrorFirst) 0 else 2 + (index[source.key] ?: 0)
             source.key == OFFICIAL -> if (mirrorFirst) 1 else 0
             else -> 2 + (index[source.key] ?: Int.MAX_VALUE / 2)
         }
@@ -192,7 +197,34 @@ class DownloadSourceCatalog(
                 ),
         )
 
-        val DEFAULT = DownloadSourceCatalog(GAME_SOURCES + MAVEN_SOURCES)
+        /**
+         * CurseForge/Modrinth 的国内镜像：镜像保留原路径，
+         * 只替换 API/CDN 前缀，因此搜索、版本和文件地址都能走同一套候选源。
+         */
+        private val CONTENT_MIRROR =
+            DownloadSource(
+                MCIM,
+                mirror = true,
+                routes =
+                    listOf(
+                        SourceRoute(
+                            "https://api.modrinth.com/",
+                            "https://mod.mcimirror.top/modrinth/",
+                        ),
+                        SourceRoute("https://cdn.modrinth.com/", "https://mod.mcimirror.top/"),
+                        SourceRoute(
+                            "https://api.curseforge.com/",
+                            "https://mod.mcimirror.top/curseforge/",
+                        ),
+                        SourceRoute("https://edge.forgecdn.net/", "https://mod.mcimirror.top/"),
+                        SourceRoute(
+                            "https://mediafilez.forgecdn.net/",
+                            "https://mod.mcimirror.top/",
+                        ),
+                    ),
+            )
+
+        val DEFAULT = DownloadSourceCatalog(GAME_SOURCES + MAVEN_SOURCES + CONTENT_MIRROR)
 
         /** 官方 + BMCLAPI，不含 Maven 镜像；测试与只关心两个主源的调用方使用。 */
         val PRIMARY = DownloadSourceCatalog(GAME_SOURCES)

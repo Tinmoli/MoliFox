@@ -6,7 +6,10 @@
 package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
@@ -14,9 +17,6 @@ import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
-
-/** 原版与加载器占整合包安装进度的前 90%；剩余 10% 留给整合包文件。 */
-private const val PACK_GAME_PROGRESS_END = 0.9f
 
 /** 整合包校验预览。 */
 internal interface ContentPackImportApi {
@@ -62,6 +62,18 @@ internal abstract class ContentPackImportActions(
         optionalFiles: Set<String>? = null,
         expectedHash: String? = null,
         gameDirectoryId: String?,
+    ) = context.cleanOnFailure {
+        context.enableInstallationTransfers()
+        importPackSnapshot(archive, context, repairId, optionalFiles, expectedHash, gameDirectoryId)
+    }
+
+    private suspend fun importPackSnapshot(
+        archive: Path,
+        context: JobContext,
+        repairId: String?,
+        optionalFiles: Set<String>?,
+        expectedHash: String?,
+        gameDirectoryId: String?,
     ) = withPackSnapshot(archive) { snapshot ->
         verifyPackArchive(snapshot, expectedHash)
         withResolvedPack(snapshot) { packArchive ->
@@ -70,11 +82,9 @@ internal abstract class ContentPackImportActions(
                 val request = manifest.request
                 installer.validate(request)
                 val launchDefaults =
-                    if (repairId == null) {
-                        manifest.launchOptions?.resolve(store.data.settings, store.platform.osName)
-                    } else {
-                        null
-                    }
+                    manifest.launchOptions
+                        ?.takeIf { repairId == null }
+                        ?.resolve(store.data.settings, store.platform.osName)
                 // 修复只补文件：包内声明的内存/窗口默认值不再覆盖用户已有设置。
                 val instanceDefaults = if (repairId == null) manifest.instanceDefaults else null
                 verifyRepairTarget(request, repairId)
@@ -90,16 +100,19 @@ internal abstract class ContentPackImportActions(
                         instanceDefaults,
                         repairId,
                         gameDirectoryId,
+                        context,
                     )
                 context.bindInstance(instance.id)
-                if (repairId == null) NewInstallationCleanup(store).register(instance, context)
                 val root = store.instancePath(instance.id)
                 // Validate every override path before any download or extraction.
                 for (prefix in manifest.overridePrefixes) validateArchive(zip, prefix, root)
                 val pack = PackImport(manifest, selection, curseForgeFiles, repairId)
+                val sizes = pack.networkFileSizes(root).map { it.second }
+                context.updateInstallationTransfer { it.reservePack(sizes) }
                 // 保存内层整合包：之后“修复整合包”可直接按实例文件重新导入，不再依赖外层壳。
                 storePackArchive(packArchive, instance.id, pack)
                 installPackFiles(instance, packArchive, zip, pack, context)
+                if (repairId == null) NewInstallationCleanup(store).disarm(instance, context)
             }
         }
     }
@@ -170,21 +183,13 @@ internal abstract class ContentPackImportActions(
     ) {
         if (repairId == null) return
         val existing = store.instance(repairId)
+        val gameVersion = existing.gameVersion.ifBlank { persistedGameVersion(store, existing) }
         require(
-            existing.gameVersion == request.gameVersion &&
+            gameVersion == request.gameVersion &&
                 existing.loader == request.loader &&
                 existing.loaderVersion == request.loaderVersion,
         ) {
             I18n.t("contentA2.contentPackImportActions.repairMismatch")
-        }
-    }
-
-    private fun verifyOptionalFiles(
-        manifest: PackManifest,
-        optionalFiles: Set<String>?,
-    ) {
-        require(optionalFiles == null || optionalFiles.all { it in manifest.optionalFiles }) {
-            I18n.t("contentA2.contentPackImportActions.optionalFilesChanged")
         }
     }
 
@@ -217,23 +222,20 @@ internal abstract class ContentPackImportActions(
     ) {
         var transaction: PackFileTransaction? = null
         var completed = false
+        val createTransaction = {
+            PackFileTransaction(store, store.instancePath(instance.id)).also { transaction = it }
+        }
+        val stage: suspend (PackFileTransaction) -> Unit = { stagePackContent(it, it.root, zip, pack, context) }
         try {
-            // 原版/加载器只占前 90%，剩余进度留给整合包文件；避免这里先报 100% 再倒回 2%。
-            installer.install(
-                instance.id,
-                context,
-                freshInstall = pack.repairId == null,
-                progressEnd = PACK_GAME_PROGRESS_END,
-                // 整合包导入失败要保留实例和存档，供同一实例重试修复。
-                discardOnFailure = false,
-                // 等整合包文件全部落盘后再重新扫描，避免中间状态把实例列表重建丢。
-                refreshAfterInstall = false,
-            )
-            val root = store.instancePath(instance.id)
-            val staged = PackFileTransaction(store, root)
-            transaction = staged
-            store.updateInstance(instance.id) { it.copy(installed = false) }
-            commitPackContent(instance.id, staged, root, snapshot, zip, pack, context)
+            val staged =
+                if (pack.repairId == null) {
+                    stageFreshPack(installer.pipeline, instance.id, context, createTransaction, stage)
+                } else {
+                    installer.install(instance.id, context, discardOnFailure = false, refreshAfterInstall = false)
+                    store.updateInstance(instance.id) { it.copy(installed = false) }
+                    createTransaction().also { stage(it) }
+                }
+            commitPackContent(instance.id, staged, snapshot, zip, pack, context)
             completed = true
         } finally {
             try {
@@ -244,33 +246,26 @@ internal abstract class ContentPackImportActions(
                     }
                 }
             } finally {
+                if (transaction?.retain == true) context.freshInstallDirectory = null
                 transaction?.cleanup()
             }
         }
     }
 
-    /** 落盘整合包文件、提交事务并标记完成；进度接在原版安装之后。 */
+    /** 基础安装和暂存均完成后，提交整合包文件并发布实例。 */
     private suspend fun commitPackContent(
         instanceId: String,
         transaction: PackFileTransaction,
-        root: Path,
         snapshot: Path,
         zip: ZipFile,
         pack: PackImport,
         context: JobContext,
     ) {
-        stagePackContent(
-            transaction,
-            root,
-            zip,
-            pack,
-            context,
-            progressStart = PACK_GAME_PROGRESS_END,
-            progressEnd = 1f,
-        )
+        context.progressImmediate(0f, I18n.t("pages.tasks.downloadFinalizing"))
         transaction.commit(context)
-        writePackOwnership(root, snapshot, zip, pack)
+        writePackOwnership(transaction.root, snapshot, zip, pack)
         store.updateInstance(instanceId) { it.copy(installed = true) }
+        if (pack.repairId == null) store.endPendingInstall(store.instance(instanceId).instanceFolderName())
         applyPackIconSafely(
             instanceId,
             zip,
@@ -279,5 +274,39 @@ internal abstract class ContentPackImportActions(
         )
         context.progress(1f, I18n.t("contentA2.contentPackImportActions.installed"))
         store.refreshInstances()
+    }
+}
+
+/** 基础安装确认目录归属后启动暂存；任一侧失败都会等待另一侧取消。 */
+private suspend fun stageFreshPack(
+    pipeline: MinecraftInstallPipeline,
+    instanceId: String,
+    context: JobContext,
+    createTransaction: () -> PackFileTransaction,
+    stage: suspend (PackFileTransaction) -> Unit,
+): PackFileTransaction =
+    coroutineScope {
+        val target = CompletableDeferred<PackFileTransaction>()
+        val staging =
+            async {
+                target.await().also { stage(it) }
+            }
+        pipeline.install(
+            instanceId,
+            context,
+            freshInstall = true,
+            discardOnFailure = false,
+            refreshAfterInstall = false,
+            onPackTargetReady = { target.complete(createTransaction()) },
+        )
+        staging.await()
+    }
+
+private fun verifyOptionalFiles(
+    manifest: PackManifest,
+    optionalFiles: Set<String>?,
+) {
+    require(optionalFiles == null || optionalFiles.all { it in manifest.optionalFiles }) {
+        I18n.t("contentA2.contentPackImportActions.optionalFilesChanged")
     }
 }

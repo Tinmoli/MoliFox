@@ -21,6 +21,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,8 +36,12 @@ class JobContext
         val id: String,
         internal val bindResources: ((Set<String>) -> Unit)? = null,
     ) {
-        private val cancellationActions = ConcurrentHashMap<Any, suspend () -> Unit>()
+        internal val cancellationActions = ConcurrentHashMap<Any, suspend () -> Unit>()
+        internal val failureActions = ConcurrentHashMap<Any, suspend () -> Unit>()
         private val completionActions = ConcurrentHashMap<Any, () -> Unit>()
+        internal var freshInstallDirectory: Path? = null
+        internal var reservedInstallDirectory: Path? = null
+        internal var installationTransfers: InstallationTransfers? = null
         internal val outputs = TaskOutputCleanup(this)
         internal var references: Pair<List<GameInstance>, TaskFileReferences>? = null
 
@@ -44,9 +49,11 @@ class JobContext
             key: Any,
             cancel: suspend () -> Unit,
             complete: () -> Unit,
+            failure: (suspend () -> Unit)? = null,
         ) {
             cancellationActions.putIfAbsent(key, cancel)
             completionActions.putIfAbsent(key, complete)
+            failure?.let { failureActions.putIfAbsent(key, it) }
         }
 
         internal suspend fun finish(cancelled: Boolean): Boolean {
@@ -66,36 +73,15 @@ class JobContext
         private var hasNetworkMeasurement = false
         private var transferCount = 0
         private var sampleTime = System.nanoTime()
-        private var transferSpeed = 0L
+        internal var transferSpeed = 0L
+            private set
 
-        /** 正在传数据的下载连接数：读取循环里 +1、离开 -1（见 withTransferConnection）。 */
-        private val openConnections = AtomicInteger(0)
-
-        internal fun connectionOpened() {
-            openConnections.incrementAndGet()
-            publishConnections()
-        }
-
-        internal fun connectionClosed() {
-            openConnections.decrementAndGet()
-            publishConnections()
-        }
-
-        /** 连接数变化独立于字节进度：没有进度回调的传输也要能实时显示并发。 */
-        private fun publishConnections() {
-            store.updateState { state ->
-                val current = openConnections.get().coerceAtLeast(0)
-                state.copy(
-                    jobs =
-                        state.jobs.map {
-                            if (it.id == id) it.copy(activeConnections = current) else it
-                        },
-                )
-            }
-        }
+        /** 已发起且响应尚未关闭的文件请求数。 */
+        internal val openConnections = AtomicInteger(0)
 
         @Synchronized
         fun beginTransfers(count: Int) {
+            if (installationTransfers != null) return
             transfers.clear()
             observedTransfers.clear()
             transferRate.reset()
@@ -114,6 +100,7 @@ class JobContext
             total: Long,
             completed: Boolean = false,
         ) {
+            if (installationTransfers != null) return
             val previous = transfers[key]
             val measuredBytes =
                 if (!observedTransfers.add(key) && previous != null && !hasNetworkMeasurement) {
@@ -142,6 +129,7 @@ class JobContext
             key: String,
             total: Long,
         ) {
+            if (installationTransfers != null) return
             transfers[key] = Triple(0L, total.coerceAtLeast(0), false)
             observedTransfers.remove(key)
         }
@@ -208,6 +196,7 @@ class JobContext
             publish(clamped, detail)
         }
 
+        @Synchronized
         private fun publish(
             value: Float,
             detail: String,
@@ -218,7 +207,9 @@ class JobContext
                         state.jobs.map {
                             if (it.id == id) {
                                 // 任务进度只进不退：阶段重新锚定或各段口径有偏差时，已展示的百分比不回跳。
-                                it.copy(progress = maxOf(it.progress, value), detail = detail)
+                                val installation = installationTransfers?.apply(it)
+                                installation?.copy(detail = detail)
+                                    ?: it.copy(progress = maxOf(it.progress, value), detail = detail)
                             } else {
                                 it
                             }
@@ -227,6 +218,29 @@ class JobContext
             }
         }
     }
+
+internal fun JobContext.connectionOpened() {
+    openConnections.incrementAndGet()
+    publishConnections()
+}
+
+internal fun JobContext.connectionClosed() {
+    openConnections.decrementAndGet()
+    publishConnections()
+}
+
+/** 连接数变化独立于字节进度：没有进度回调的传输也要能实时显示并发。 */
+private fun JobContext.publishConnections() {
+    store.updateState { state ->
+        val current = openConnections.get().coerceAtLeast(0)
+        state.copy(
+            jobs =
+                state.jobs.map {
+                    if (it.id == id) it.copy(activeConnections = current) else it
+                },
+        )
+    }
+}
 
 /** 逐个执行取消清理：单个清理失败也继续，返回是否全部成功。 */
 private suspend fun cleanupCancelledTask(
@@ -394,6 +408,7 @@ class JobQueue(
         error: Throwable,
     ) {
         if (error !is CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { context.cleanFailure(error) }
             val message = error.message ?: error.javaClass.simpleName
             update(id, JobStatus.Failed, message, message)
             store.log("$title：$message", true)
@@ -448,6 +463,7 @@ class JobQueue(
                                 detail = detail,
                                 error = error,
                                 progress = if (status == JobStatus.Completed) 1f else it.progress,
+                                downloadTotalPending = false,
                                 bytesPerSecond = 0,
                                 activeConnections = 0,
                             )

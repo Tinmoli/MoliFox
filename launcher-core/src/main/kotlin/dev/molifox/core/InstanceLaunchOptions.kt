@@ -291,15 +291,19 @@ private object InstanceLaunchOptionResolver {
         instance: GameInstance,
         warnings: MutableList<String>,
     ): String {
-        val requestedJvmArgs = instance.extraJvmArgs.ifBlank { settings.extraJvmArgs }
+        val requestedJvmArgs =
+            instance.extraJvmArgs.ifBlank {
+                settings.extraJvmArgs.ifBlank { DEFAULT_EXTRA_JVM_ARGS }
+            }
         return try {
             extraJvmArguments(requestedJvmArgs)
             requestedJvmArgs
         } catch (failure: IllegalArgumentException) {
             val fallback =
-                settings.extraJvmArgs.takeIf {
-                    runCatching { extraJvmArguments(it) }.isSuccess
-                } ?: ""
+                settings.extraJvmArgs
+                    .takeIf { runCatching { extraJvmArguments(it) }.isSuccess }
+                    ?.ifBlank { DEFAULT_EXTRA_JVM_ARGS }
+                    ?: ""
             warnings +=
                 if (fallback.isBlank()) {
                     I18n.t("instA2.launchOptions.jvmInvalidDefault", failure.message)

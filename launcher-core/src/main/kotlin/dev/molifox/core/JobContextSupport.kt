@@ -5,7 +5,34 @@
 
 package dev.molifox.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
+
+internal suspend fun JobContext.cleanFailure(error: Throwable) {
+    for (key in failureActions.keys) {
+        val cleanup = failureActions.remove(key) ?: continue
+        runCatching { cleanup() }.onFailure {
+            if (it !== error) error.addSuppressed(it)
+        }
+    }
+}
+
+internal fun JobContext.disarmCleanup(key: Any) {
+    cancellationActions.remove(key)
+    failureActions.remove(key)
+}
+
+/** 直接调用安装服务时也执行失败清理，取消继续由任务队列处理。 */
+internal suspend fun <T> JobContext.cleanOnFailure(action: suspend () -> T): T =
+    runCatching { action() }.getOrElse { error ->
+        if (error !is CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { cleanFailure(error) }
+        }
+        throw error
+    }
 
 internal fun JobContext.beforeDirectoryCreation(path: Path) = outputs.beforeDirectoryCreation(path)
 
@@ -17,7 +44,10 @@ internal fun JobContext.writeOutput(
 internal fun JobContext.trackOutput(path: Path) = outputs.track(path)
 
 /** 下载文件只有不在任何实例的引用范围内、且不属于运行时目录时才可回收。 */
-internal fun JobContext.canRemoveDownload(path: Path): Boolean {
+internal fun JobContext.canRemoveDownload(
+    path: Path,
+    ownedInstanceId: String? = null,
+): Boolean {
     val resources =
         store.state.value.jobs
             .find { it.id == id }
@@ -30,10 +60,18 @@ internal fun JobContext.canRemoveDownload(path: Path): Boolean {
             .toSet()
     val normalized = path.toAbsolutePath().normalize()
     val instances = store.data.instances
-    if (references?.first != instances) {
+    if (ownedInstanceId == null && references?.first != instances) {
         references = instances to TaskFileReferences(store, ownedIds)
     }
-    return !requireNotNull(references).second.protects(normalized) &&
+    val fileReferences =
+        if (ownedInstanceId ==
+            null
+        ) {
+            requireNotNull(references).second
+        } else {
+            TaskFileReferences(store, ownedIds + ownedInstanceId)
+        }
+    return !fileReferences.protects(normalized) &&
         !normalized.startsWith(
             store.dataDirectory
                 .resolve("runtimes")

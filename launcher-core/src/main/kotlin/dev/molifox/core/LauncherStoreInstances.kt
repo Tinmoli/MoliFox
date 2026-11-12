@@ -210,14 +210,18 @@ internal abstract class StorePathActions(
 
     /**
      * 实例的有效隔离状态。显式选择永远优先；未选择时先用目录证据推断（外部启动器的配置
-     * 读不到，只看 `versions/<名字>/` 里有没有自己的数据），再回落到全局开关。true 时工作目录是
+     * 读不到，只看 `versions/<名字>/` 里有没有自己的数据），再回落到全局策略。true 时工作目录是
      * `versions/<实例目录>`，false 时是游戏根。实例覆盖优先、未覆盖才用全局默认。
      */
     override fun isolated(instance: GameInstance): Boolean =
         when (isolationSource(instance)) {
             IsolationSource.Explicit -> instance.isolation == VersionIsolation.Enabled
+
             IsolationSource.Inferred -> true
-            IsolationSource.GlobalDefault -> core.data.settings.isolateVersions
+
+            IsolationSource.GlobalDefault ->
+                core.data.settings.effectiveVersionIsolationPolicy
+                    .isolates(instance.loader, instance.gameVersionType)
         }
 
     /**
@@ -237,7 +241,7 @@ internal abstract class StorePathActions(
                 }
         }
 
-    /** 界面展示用：推断值明确标注为「自动推断」，不冒充用户选择。 */
+    /** 界面展示用的隔离标题。 */
     override fun isolationTitle(instance: GameInstance): String =
         when (isolationSource(instance)) {
             IsolationSource.Explicit ->
@@ -246,9 +250,11 @@ internal abstract class StorePathActions(
                 } else {
                     I18n.t("core.isolationMigration.1")
                 }
-            IsolationSource.Inferred -> I18n.t("miscA2.storePath.isolationInferredTitle")
+
+            IsolationSource.Inferred -> I18n.t("core.versionIsolation.enabled")
+
             IsolationSource.GlobalDefault ->
-                if (core.data.settings.isolateVersions) {
+                if (isolated(instance)) {
                     I18n.t("miscA2.storePath.isolationGlobalDefault")
                 } else {
                     I18n.t("miscA2.storePath.sharedGlobalDefault")

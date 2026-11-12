@@ -11,7 +11,7 @@ internal data class PackExportContent(
     val payload: List<Pair<String, MrpackExportFile>>,
     val directories: List<String>,
     val required: List<String>,
-    /** MultiMC/Prism 使用 `icons/<key>.png`，其它格式仍是根目录 `icon.png`。 */
+    /** 实例组件格式 使用 `icons/<key>.png`，其它格式使用根目录 `icon.png`。 */
     val iconPath: String = "icon.png",
 )
 
@@ -76,7 +76,7 @@ private fun multimcContent(
     files: List<MrpackExportFile>,
     hasIcon: Boolean,
 ): PackExportContent {
-    // Prism 只认 icons/<key>.png + instance.cfg 的 iconKey；没有实例图时用内置图标。
+    // 图标以 icons/<key>.png + instance.cfg 的 iconKey；没有实例图时用内置图标。
     val iconKey = if (hasIcon) MULTIMC_ICON_KEY else "default"
     val iconPath = if (hasIcon) "icons/$MULTIMC_ICON_KEY.png" else "icon.png"
     return PackExportContent(

@@ -80,7 +80,6 @@ internal abstract class LauncherSettingsActions(
 
     private fun applyLaunchSettings() {
         java.invalidate()
-        refreshJavaPrompt()
     }
 
     /** 切换内容（模组/整合包等）下载源；CurseForge 走设置里的公共镜像，无需 API Key。 */

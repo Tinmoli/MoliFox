@@ -122,9 +122,10 @@ internal class UpgradeDependencyResolver(
         for ((id, constraints) in required) {
             context.checkCancelled()
             currentCoroutineContext().ensureActive()
-            val current = installed[id] ?: continue
-            if (constraints.all { minecraftConstraintMatches(it, current.version) }) continue
-            replaceDependency(pseudo, id, constraints, current, mods)
+            val current = installed[id]
+            if (current != null && constraints.any { !minecraftConstraintMatches(it, current.version) }) {
+                replaceDependency(pseudo, id, constraints, current, mods)
+            }
         }
     }
 
@@ -192,35 +193,35 @@ internal class UpgradeDependencyResolver(
             null
         }
     }
-
-    /** 已装模组：mod id → 版本与所在文件；同一 jar 声明多个 id 时都指向该文件。 */
-    private fun installedMods(metadata: List<Pair<String, ModMetadata>>): Map<String, InstalledDependency> =
-        metadata
-            .flatMap { (filename, meta) ->
-                meta.entries.map { entry -> entry.id to InstalledDependency(entry.version, filename) }
-            }.filter { (id, mod) -> id.isNotBlank() && mod.version.isNotBlank() }
-            .toMap()
-
-    /** 各模组声明的依赖版本约束：被依赖 id → 约束列表；环境类 id 不参与，与依赖补齐同一口径。 */
-    private fun declaredConstraints(metadata: List<Pair<String, ModMetadata>>): Map<String, List<String>> =
-        metadata
-            .filter { it.second.loader.startsWith("Fabric") || it.second.loader.startsWith("Quilt") }
-            .flatMap { it.second.entries }
-            .flatMap { it.dependencies }
-            .mapNotNull { declaration ->
-                val id = declaration.substringBefore(' ').trim()
-                // 声明串来自 JsonElement.toString()，字符串值带着 JSON 引号；约束按版本号比较前先剥掉。
-                val constraint = declaration.substringAfter(' ', "").trim().removeSurrounding("\"")
-                (id to constraint)
-                    .takeIf { (dep, value) -> dep.isNotBlank() && value.isNotBlank() && dep !in NON_MOD_DEPENDENCIES }
-            }.groupBy(keySelector = { it.first }, valueTransform = { it.second })
-
-    private fun unresolvedMessage(
-        id: String,
-        version: String,
-        constraints: List<String>,
-    ): String = I18n.t("instA2.upgrade.dependencyConflictUnresolved", id, version, constraints.joinToString("；"))
 }
+
+/** 已装模组：mod id → 版本与所在文件；同一 jar 声明多个 id 时都指向该文件。 */
+private fun installedMods(metadata: List<Pair<String, ModMetadata>>): Map<String, InstalledDependency> =
+    metadata
+        .flatMap { (filename, meta) ->
+            meta.entries.map { entry -> entry.id to InstalledDependency(entry.version, filename) }
+        }.filter { (id, mod) -> id.isNotBlank() && mod.version.isNotBlank() }
+        .toMap()
+
+/** 各模组声明的依赖版本约束：被依赖 id → 约束列表；环境类 id 不参与，与依赖补齐同一口径。 */
+private fun declaredConstraints(metadata: List<Pair<String, ModMetadata>>): Map<String, List<String>> =
+    metadata
+        .filter { it.second.loader.startsWith("Fabric") || it.second.loader.startsWith("Quilt") }
+        .flatMap { it.second.entries }
+        .flatMap { it.dependencies }
+        .mapNotNull { declaration ->
+            val id = declaration.substringBefore(' ').trim()
+            // 声明串来自 JsonElement.toString()，字符串值带着 JSON 引号；约束按版本号比较前先剥掉。
+            val constraint = declaration.substringAfter(' ', "").trim().removeSurrounding("\"")
+            (id to constraint)
+                .takeIf { (dep, value) -> dep.isNotBlank() && value.isNotBlank() && dep !in NON_MOD_DEPENDENCIES }
+        }.groupBy(keySelector = { it.first }, valueTransform = { it.second })
+
+private fun unresolvedMessage(
+    id: String,
+    version: String,
+    constraints: List<String>,
+): String = I18n.t("instA2.upgrade.dependencyConflictUnresolved", id, version, constraints.joinToString("；"))
 
 /** 已安装依赖的现状：版本与所在文件，用于约束核对与换装。 */
 private data class InstalledDependency(

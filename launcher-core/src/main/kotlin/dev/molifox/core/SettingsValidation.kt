@@ -9,7 +9,8 @@ import java.util.UUID
 private const val MIN_TIMEOUT_SECONDS = 10
 private const val MAX_TIMEOUT_SECONDS = 180
 private const val MIN_DOWNLOAD_SEGMENTS = 1
-internal const val MAX_DOWNLOAD_SEGMENTS = 16
+const val DEFAULT_DOWNLOAD_SEGMENTS = 8
+const val MAX_DOWNLOAD_SEGMENTS = 32
 private const val MIN_MEMORY_MB = 512
 private const val MIN_GAME_WINDOW_WIDTH = 640
 private const val MAX_GAME_WINDOW_WIDTH = 7680
@@ -88,7 +89,7 @@ private fun validateEngineSettings(
         I18n.t("core.settingsValidation.2")
     }
     validateAdvancedLaunchSettings(settings.advancedLaunch, osName)
-    if (settings.isolateVersions != current.isolateVersions) isIdle()
+    if (settings.effectiveVersionIsolationPolicy != current.effectiveVersionIsolationPolicy) isIdle()
 }
 
 private fun validateGameRootSettings(

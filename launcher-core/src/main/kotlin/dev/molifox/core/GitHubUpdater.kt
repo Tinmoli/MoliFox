@@ -278,24 +278,20 @@ class GitHubUpdater
                 } else {
                     candidates
                 }
-            var lastFailure: IOException? = null
-            for (url in ordered) {
-                try {
-                    network.downloadTracked(
-                        context,
-                        DownloadArtifact(url, target, asset.sha256, asset.size, "SHA-256"),
-                    ) { done, _ ->
-                        context.progress(
-                            (done.toDouble() / asset.size).coerceIn(0.0, 1.0).toFloat() * UPDATE_DOWNLOAD_PROGRESS,
-                            I18n.t("core.gitHubUpdater.12"),
-                        )
-                    }
-                    return
-                } catch (failure: IOException) {
-                    lastFailure = failure
+            try {
+                network.downloadTracked(
+                    context,
+                    DownloadArtifact(asset.url, target, asset.sha256, asset.size, "SHA-256"),
+                    ordered,
+                ) { done, _ ->
+                    context.progress(
+                        (done.toDouble() / asset.size).coerceIn(0.0, 1.0).toFloat() * UPDATE_DOWNLOAD_PROGRESS,
+                        I18n.t("core.gitHubUpdater.12"),
+                    )
                 }
+            } catch (failure: IOException) {
+                throw IOException(I18n.t("core.gitHubUpdater.13", failure.message), failure)
             }
-            throw IOException(I18n.t("core.gitHubUpdater.13", lastFailure?.message), lastFailure)
         }
 
         private fun requireValidDownloadUrl(url: String) {

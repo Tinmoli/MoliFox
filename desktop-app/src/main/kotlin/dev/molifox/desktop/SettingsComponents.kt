@@ -44,14 +44,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,14 +72,10 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.LauncherNoticeKind
 import dev.molifox.core.LauncherSettings
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 // ---------- 即时保存 ----------
-
-/** 连续控件（滑块 / 文本输入）停手 300ms 后写盘：拖动与逐字输入不拆成几十次落盘。 */
-internal const val LIVE_WRITE_DELAY = 300L
 
 /**
  * 设置页唯一的写入口：把改动合并到最新已保存设置后立即写入 store。
@@ -112,19 +106,13 @@ internal fun rememberSliderDraft(
     onCommit: (Float) -> Unit,
 ): MutableFloatState {
     val draft = remember { mutableFloatStateOf(value) }
-    val commit by rememberUpdatedState(onCommit)
-    val saved by rememberUpdatedState(value)
     LaunchedEffect(value) { if (draft.floatValue != value) draft.floatValue = value }
-    LaunchedEffect(draft.floatValue) {
-        if (draft.floatValue == saved) return@LaunchedEffect
-        delay(LIVE_WRITE_DELAY)
-        // 写盘（备份复制 + 全量写 JSON）移到 IO：防抖回调跑在界面线程，同步落盘会造成拖动停手时的卡顿。
-        withContext(Dispatchers.IO) { commit(draft.floatValue) }
-    }
-    DisposableEffect(Unit) {
-        // 销毁补写是一次性收尾：保持同步执行，不依赖可能已随页面取消的作用域，防止丢写。
-        onDispose { if (draft.floatValue != saved) runCatching { commit(draft.floatValue) } }
-    }
+    SaveSettingsDraft(
+        draft.floatValue,
+        value,
+        save = { pending -> withContext(Dispatchers.IO) { onCommit(pending) } },
+        flush = { pending -> runCatching { onCommit(pending) } },
+    )
     return draft
 }
 
@@ -143,19 +131,13 @@ internal fun rememberLiveTextDraft(
 ): LiveTextDraft {
     var text by remember { mutableStateOf(value) }
     var error by remember { mutableStateOf<String?>(null) }
-    val commit by rememberUpdatedState(onCommit)
-    val saved by rememberUpdatedState(value)
     LaunchedEffect(value) { if (text != value) text = value }
-    LaunchedEffect(text) {
-        if (text == saved) return@LaunchedEffect
-        delay(LIVE_WRITE_DELAY)
-        // 与滑块同口径：写盘移到 IO，界面线程只更新本地草稿与错误提示。
-        error = withContext(Dispatchers.IO) { commit(text) }
-    }
-    DisposableEffect(Unit) {
-        // 销毁补写是一次性收尾：保持同步执行，不依赖可能已随页面取消的作用域，防止丢写。
-        onDispose { if (text != saved) runCatching { commit(text) } }
-    }
+    SaveSettingsDraft(
+        text,
+        value,
+        save = { pending -> error = withContext(Dispatchers.IO) { onCommit(pending) } },
+        flush = { pending -> runCatching { onCommit(pending) } },
+    )
     return LiveTextDraft(
         text,
         { next ->

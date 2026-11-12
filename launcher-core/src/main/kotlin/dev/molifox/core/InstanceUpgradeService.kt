@@ -223,47 +223,6 @@ internal class InstanceUpgradeService(
         context.progress(UPGRADE_MIGRATION_END, I18n.t("instA2.upgrade.migrationDone", names.size))
     }
 
-    /** 复制顺序与界面一致：目录在前、名称不分大小写排序；执行时按实际目录属性判断，清单大小写保留原样。 */
-    private fun migrationEntryOrder(
-        sourceRoot: Path,
-        entries: Set<String>,
-    ): List<String> =
-        entries.sortedWith(
-            compareBy<String> { !Files.isDirectory(sourceRoot.resolve(it)) }.thenBy { it.lowercase(Locale.ROOT) },
-        )
-
-    /** 递归复制一个迁移条目目录；链接条目原样跳过，被单独取消的子路径不进新实例。 */
-    private suspend fun copyTree(
-        sourceRoot: Path,
-        targetRoot: Path,
-        entryName: String,
-        excluded: Set<String>,
-        context: JobContext,
-    ) {
-        Files.walk(sourceRoot).use { stream ->
-            stream.forEach { entry ->
-                if (Files.isSymbolicLink(entry)) return@forEach
-                val inner = sourceRoot.relativize(entry).joinToString("/")
-                if (migrationEntrySkipped("$entryName/$inner", excluded)) return@forEach
-                when {
-                    Files.isDirectory(entry) -> targetRoot.resolve(inner).createDirectories()
-                    entry.isRegularFile() -> copyFile(entry, targetRoot.resolve(inner))
-                }
-            }
-        }
-        context.checkCancelled()
-    }
-
-    private fun copyFile(
-        source: Path,
-        target: Path,
-    ) {
-        if (!source.isRegularFile() || Files.isSymbolicLink(source)) return
-        target.parent?.createDirectories()
-        // 目标是全新实例目录，理论不会重名；带 REPLACE 兜底重复执行时不炸。
-        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
-    }
-
     /** 步骤五：版本配置落盘、每个勾选项与迁移分组都必须在新实例里真实存在。 */
     private suspend fun verify(
         created: GameInstance,
@@ -346,4 +305,45 @@ internal class InstanceUpgradeService(
             }
         }
     }
+}
+
+/** 复制顺序与界面一致：目录在前、名称不分大小写排序；执行时按实际目录属性判断，清单大小写保留原样。 */
+private fun migrationEntryOrder(
+    sourceRoot: Path,
+    entries: Set<String>,
+): List<String> =
+    entries.sortedWith(
+        compareBy<String> { !Files.isDirectory(sourceRoot.resolve(it)) }.thenBy { it.lowercase(Locale.ROOT) },
+    )
+
+/** 递归复制一个迁移条目目录；链接条目原样跳过，被单独取消的子路径不进新实例。 */
+private suspend fun copyTree(
+    sourceRoot: Path,
+    targetRoot: Path,
+    entryName: String,
+    excluded: Set<String>,
+    context: JobContext,
+) {
+    Files.walk(sourceRoot).use { stream ->
+        stream.forEach { entry ->
+            if (Files.isSymbolicLink(entry)) return@forEach
+            val inner = sourceRoot.relativize(entry).joinToString("/")
+            if (migrationEntrySkipped("$entryName/$inner", excluded)) return@forEach
+            when {
+                Files.isDirectory(entry) -> targetRoot.resolve(inner).createDirectories()
+                entry.isRegularFile() -> copyFile(entry, targetRoot.resolve(inner))
+            }
+        }
+    }
+    context.checkCancelled()
+}
+
+private fun copyFile(
+    source: Path,
+    target: Path,
+) {
+    if (!source.isRegularFile() || Files.isSymbolicLink(source)) return
+    target.parent?.createDirectories()
+    // 目标是全新实例目录，理论不会重名；带 REPLACE 兜底重复执行时不炸。
+    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
 }

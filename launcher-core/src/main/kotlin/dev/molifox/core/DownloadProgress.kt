@@ -11,10 +11,11 @@ import kotlin.io.path.fileSize
 internal suspend fun NetworkClient.downloadTracked(
     context: JobContext,
     artifact: DownloadArtifact,
+    urls: List<String> = listOf(artifact.url),
     progress: (Long, Long) -> Unit = { _, _ -> },
 ) = withContext(TransferTrafficContext(context)) {
     context.beginTransfers(1)
-    download(artifact) { bytes, total ->
+    downloadFrom(artifact, urls) { bytes, total ->
         context.transfer(artifact.target.toString(), bytes, total)
         progress(bytes, total)
     }

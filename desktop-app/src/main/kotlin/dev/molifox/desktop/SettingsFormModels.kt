@@ -31,6 +31,8 @@ internal class SettingCard(
     val title: String,
     val detail: String = "",
     val blocks: List<SettingBlock>,
+    val collapsible: Boolean = false,
+    val startExpanded: Boolean = true,
 )
 
 /** 卡片侧写入口：把写盘失败的原因交回页面，在底部提示行如实显示。 */

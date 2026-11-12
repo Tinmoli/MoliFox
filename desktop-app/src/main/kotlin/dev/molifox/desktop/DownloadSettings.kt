@@ -13,8 +13,10 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.molifox.core.DEFAULT_CURSE_FORGE_BASE_URL
+import dev.molifox.core.DEFAULT_DOWNLOAD_SEGMENTS
 import dev.molifox.core.LauncherSettings
+import dev.molifox.core.MAX_DOWNLOAD_SEGMENTS
+import dev.molifox.core.MAX_DOWNLOAD_THREADS
 import dev.molifox.core.effectiveDownloadSource
 import dev.molifox.core.effectiveProxyMode
 import dev.molifox.core.effectiveVersionListSource
@@ -75,7 +77,7 @@ internal fun downloadSettingCards(
                     LiveNumberField(
                         settings.downloadThreads,
                         "",
-                        1..128,
+                        1..MAX_DOWNLOAD_THREADS,
                         Modifier.width(120.dp),
                         placeholder = "64",
                         description = I18n.t("settings.download.threads.title"),
@@ -90,9 +92,9 @@ internal fun downloadSettingCards(
                     LiveNumberField(
                         settings.downloadSegments,
                         "",
-                        1..16,
+                        1..MAX_DOWNLOAD_SEGMENTS,
                         Modifier.width(120.dp),
-                        placeholder = "4",
+                        placeholder = DEFAULT_DOWNLOAD_SEGMENTS.toString(),
                     ) { value ->
                         applySetting(actions) { it.copy(downloadSegments = value) }
                     }
@@ -116,7 +118,6 @@ internal fun downloadSettingCards(
                         { value ->
                             applySetting(actions) { it.copy(curseForgeBaseUrl = value.trim()) }
                         },
-                        placeholder = DEFAULT_CURSE_FORGE_BASE_URL,
                     )
                 },
                 settingRow(

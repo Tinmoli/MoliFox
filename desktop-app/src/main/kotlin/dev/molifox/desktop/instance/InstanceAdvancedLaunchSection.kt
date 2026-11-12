@@ -6,7 +6,15 @@
 package dev.molifox.desktop.instance
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import dev.molifox.core.GameInstance
 import dev.molifox.core.LauncherSettings
@@ -30,9 +38,18 @@ internal fun InstanceAdvancedLaunchSection(
 ) {
     val strings = LocalStrings.current
     if (settings.pages.showAdvancedLaunchOptions) {
+        var expanded by remember { mutableStateOf(true) }
         SettingsSection(
             strings.t("pages.instance.advanced.title"),
             strings.t("pages.instance.advanced.hint"),
+            action = {
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = null,
+                )
+            },
+            onHeaderClick = { expanded = !expanded },
+            showContent = expanded,
         ) {
             CompactTextField(
                 draft.extraJvmArgs,

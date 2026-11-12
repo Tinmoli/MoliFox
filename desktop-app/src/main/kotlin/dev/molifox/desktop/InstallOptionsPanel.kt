@@ -42,15 +42,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.molifox.core.LauncherState
 import dev.molifox.core.LoaderType
 import dev.molifox.core.LoaderVersion
 
 /** 右侧安装选项卡片：实例名、加载器与隔离提示。 */
 @Composable
 internal fun RowScope.InstallOptionsPanel(
-    state: LauncherState,
     actions: UiActions,
+    isolated: Boolean,
     selected: String,
     name: String,
     onNameChange: (String) -> Unit,
@@ -105,7 +104,7 @@ internal fun RowScope.InstallOptionsPanel(
                 onLoaderVersionChange,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            IsolationHint(state.data.settings.isolateVersions)
+            IsolationHint(isolated)
             Text(
                 strings.t("deskA.installOptions.installNote"),
                 fontSize = 11.sp,

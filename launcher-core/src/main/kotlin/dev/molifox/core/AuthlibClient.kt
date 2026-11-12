@@ -124,25 +124,30 @@ data class AuthlibMetadata(
     val rawJson: String,
 )
 
-/** 规范化用户输入的认证服务器地址：补 https://、去首尾空白与末尾 `/`。 只接受 http(s) 且不含账号密码、查询串或片段的地址；无法识别时返回 null。 */
+/** 规范化认证服务器地址。明文 HTTP 仅用于数值回环地址的本机服务。 */
 fun normalizeAuthlibServerUrl(raw: String): String? {
     val trimmed = raw.trim()
     if (trimmed.isEmpty() || trimmed.length > MAX_SERVER_URL_LENGTH) return null
     if (trimmed.any { it.isWhitespace() || it.code < MIN_PRINTABLE_CHAR_CODE }) return null
     val candidate = if ("://" in trimmed) trimmed else "https://$trimmed"
     val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
-    val scheme = uri.scheme?.lowercase() ?: return null
-    if (scheme != "https" && scheme != "http") return null
+    if (!uri.isAuthlibTransportAllowed()) return null
     if (uri.host.isNullOrBlank() || uri.userInfo != null) return null
     if (uri.query != null || uri.fragment != null) return null
     return candidate.trimEnd('/').ifBlank { null }
 }
 
+private fun URI.isAuthlibTransportAllowed(): Boolean =
+    when (scheme?.lowercase()) {
+        "https" -> true
+        "http" -> host in setOf("127.0.0.1", "[::1]")
+        else -> false
+    }
+
 /**
  * Yggdrasil 客户端。
  *
- * 只负责协议与错误归类：认证服务器由用户自行填写（LittleSkin 等）， 因此请求直接使用 [NetworkClient] 的代理配置，但允许 http(s) 地址—— 启动器其它接口仍强制
- * HTTPS。选择 http 会让密码与令牌明文传输，由用户自行承担。
+ * 认证服务器由用户指定。凭据请求仅发往已选定的认证地址。
  */
 class AuthlibClient(
     private val network: NetworkClient,
@@ -154,8 +159,11 @@ class AuthlibClient(
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)
+            .followSslRedirects(false)
             .build()
     }
+
+    private val credentialHttp by lazy { http.newBuilder().followRedirects(false).build() }
 
     /**
      * 读取并校验服务器元数据。先请求用户填写的地址，失败后再尝试 `<地址>/api/yggdrasil`， 兼容只填写站点根地址（如 https://littleskin.cn）的情况。
@@ -295,7 +303,8 @@ class AuthlibClient(
                 addProperty("accessToken", accessToken)
                 addProperty("clientToken", clientToken)
             }
-        return request("$server/authserver/validate", body)
+        val root = normalizeAuthlibServerUrl(server) ?: throw invalidServer()
+        return request("$root/authserver/validate", body)
             .code in HTTP_MIN_SUCCESS..HTTP_MAX_SUCCESS
     }
 
@@ -368,7 +377,7 @@ class AuthlibClient(
     ): HttpResult {
         val request = createAuthlibRequest(url, body)
         return suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(request)
+            val call = (if (body == null) http else credentialHttp).newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(
                 object : Callback {

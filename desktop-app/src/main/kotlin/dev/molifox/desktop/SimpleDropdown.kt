@@ -7,6 +7,9 @@ package dev.molifox.desktop
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -30,6 +34,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,6 +53,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -64,6 +70,8 @@ fun SimpleDropdown(
     enabled: Boolean = true,
     /** 控件的无障碍名；默认用当前值文本，多个下拉同值时会分不清，由调用方给字段名。 */
     label: String = "",
+    selectedText: String? = null,
+    descriptions: Map<String, String> = emptyMap(),
 ) {
     var expanded by remember { mutableStateOf(false) }
     var anchorWidth by remember { androidx.compose.runtime.mutableIntStateOf(0) }
@@ -90,34 +98,36 @@ fun SimpleDropdown(
         label = "dropdownBorder",
     )
     Box(modifier.onSizeChanged { anchorWidth = it.width }) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(Metrics.controlHeight)
-                .alpha(if (enabled) 1f else .45f)
-                .clip(shape)
-                .background(fill, shape)
-                .border(1.dp, border, shape)
-                .hoverable(interaction, enabled = enabled)
-                .clickable(enabled = enabled, role = Role.DropdownList) { expanded = true }
-                .semantics { if (label.isNotBlank()) contentDescription = label }
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                values.find { it.first == value }?.second ?: value.ifBlank { tr("deskI.dropdown.placeholder") },
-                Modifier.weight(1f),
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Icon(
-                Icons.Outlined.ExpandMore,
-                null,
-                Modifier.size(16.dp).rotate(if (expanded) 180f else 0f),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        DropdownHint(descriptions[value].takeUnless { expanded }) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(Metrics.controlHeight)
+                    .alpha(if (enabled) 1f else .45f)
+                    .clip(shape)
+                    .background(fill, shape)
+                    .border(1.dp, border, shape)
+                    .hoverable(interaction, enabled = enabled)
+                    .clickable(enabled = enabled, role = Role.DropdownList) { expanded = true }
+                    .semantics { if (label.isNotBlank()) contentDescription = label }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    dropdownSelectedText(value, values, selectedText),
+                    Modifier.weight(1f),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Icon(
+                    Icons.Outlined.ExpandMore,
+                    null,
+                    Modifier.size(16.dp).rotate(if (expanded) 180f else 0f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         DropdownMenu(
             expanded,
@@ -132,42 +142,77 @@ fun SimpleDropdown(
         ) {
             values.forEach { (id, label) ->
                 val selected = id == value
-                DropdownMenuItem(
-                    {
-                        Text(
-                            label,
-                            fontSize = 13.sp,
-                            color =
-                                if (selected) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    {
-                        onSelect(id)
-                        expanded = false
-                    },
-                    modifier =
-                        Modifier.padding(horizontal = 4.dp).height(36.dp).clip(RoundedCornerShape(6.dp)).background(
-                            if (selected) selectedRowBackground() else Color.Transparent,
-                        ),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    trailingIcon = {
-                        if (selected) {
-                            Icon(
-                                Icons.Outlined.Check,
-                                null,
-                                Modifier.size(16.dp),
-                                MaterialTheme.colorScheme.primary,
+                DropdownHint(descriptions[id]) {
+                    DropdownMenuItem(
+                        {
+                            Text(
+                                label,
+                                fontSize = 13.sp,
+                                color =
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                        }
-                    },
-                )
+                        },
+                        {
+                            onSelect(id)
+                            expanded = false
+                        },
+                        modifier =
+                            Modifier.padding(horizontal = 4.dp).height(36.dp).clip(RoundedCornerShape(6.dp)).background(
+                                if (selected) selectedRowBackground() else Color.Transparent,
+                            ),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        trailingIcon = {
+                            if (selected) {
+                                Icon(
+                                    Icons.Outlined.Check,
+                                    null,
+                                    Modifier.size(16.dp),
+                                    MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                    )
+                }
             }
         }
     }
 }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DropdownHint(
+    text: String?,
+    content: @Composable () -> Unit,
+) {
+    if (text.isNullOrBlank()) {
+        content()
+    } else {
+        TooltipArea(
+            tooltip = {
+                Surface(shadowElevation = 3.dp, shape = MaterialTheme.shapes.small) {
+                    Text(text, Modifier.widthIn(max = 380.dp).padding(10.dp), fontSize = 12.sp)
+                }
+            },
+            tooltipPlacement =
+                TooltipPlacement.ComponentRect(
+                    anchor = Alignment.BottomEnd,
+                    alignment = Alignment.BottomStart,
+                    offset = DpOffset(0.dp, 4.dp),
+                ),
+            content = content,
+        )
+    }
+}
+
+private fun dropdownSelectedText(
+    value: String,
+    values: List<Pair<String, String>>,
+    selectedText: String?,
+): String =
+    selectedText ?: values.find { it.first == value }?.second ?: value.ifBlank { tr("deskI.dropdown.placeholder") }

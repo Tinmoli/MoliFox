@@ -7,7 +7,6 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import java.io.IOException
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -337,16 +336,7 @@ internal class PackUpgradeTransaction(
         val part = Files.createTempFile(parent, "${state.archive.fileName}.", ".part")
         try {
             Files.copy(archiveSource, part, StandardCopyOption.REPLACE_EXISTING)
-            try {
-                Files.move(
-                    part,
-                    state.archive,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(part, state.archive, StandardCopyOption.REPLACE_EXISTING)
-            }
+            replaceStagedFile(part, state.archive)
         } finally {
             part.deleteIfExists()
         }
@@ -420,16 +410,7 @@ internal class PackUpgradeTransaction(
     ): Throwable {
         val failures = mutableListOf<Throwable>()
         runCatching {
-            state.installed.asReversed().forEach { Files.deleteIfExists(it) }
-            for ((target, saved) in state.backups.entries
-                .toList()
-                .asReversed()) {
-                Files.move(
-                    saved,
-                    target,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            }
+            restoreReplacedFiles(state.installed, state.backups)
             if (state.ledgerWritten) restoreOrDelete(state.ledger, state.ledgerBackup)
             if (state.archiveWritten) restoreOrDelete(state.archive, state.archiveBackup)
         }.onFailure { failures += it }

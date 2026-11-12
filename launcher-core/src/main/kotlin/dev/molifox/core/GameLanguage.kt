@@ -7,12 +7,9 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.AppLanguage
 import dev.molifox.core.i18n.I18n
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
-import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
@@ -80,11 +77,7 @@ private fun writeLanguageOptions(
     val temporary = Files.createTempFile(file.parent, ".molifox-language-", ".tmp")
     try {
         temporary.writeText(updated)
-        try {
-            Files.move(temporary, file, REPLACE_EXISTING, ATOMIC_MOVE)
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(temporary, file, REPLACE_EXISTING)
-        }
+        replaceStagedFile(temporary, file)
     } finally {
         temporary.deleteIfExists()
     }

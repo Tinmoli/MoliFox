@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import dev.molifox.core.GameInstance
 import dev.molifox.core.GameLaunchTarget
 import dev.molifox.core.JobStatus
+import dev.molifox.core.LaunchAttempt
 import dev.molifox.core.LauncherState
 import dev.molifox.core.LauncherTaskKind
 
@@ -161,6 +163,10 @@ fun ColumnScope.HomePage(
         }
         // 启动浮窗固定在右下角：不遮挡左栏的「启动游戏」按钮，点击页面其他区域也不会关闭它。
         if (launchCard.visible) {
+            DisposableEffect(actions) {
+                actions.homeLaunchCardVisible = true
+                onDispose { actions.homeLaunchCardVisible = false }
+            }
             HomeLaunchCard(
                 card = launchCard,
                 job = cardJob,
@@ -182,6 +188,7 @@ fun ColumnScope.HomePage(
                             navigate(Page.Downloads)
                         },
                         onDismiss = { launcher.close(state) },
+                        onOpenTasks = actions::showTasks,
                     ),
                 modifier =
                     Modifier
@@ -202,13 +209,18 @@ private class HomeLaunchHandlers(
         target: GameLaunchTarget? = null,
     ) {
         launchCard.begin(instance, target)
-        actions.run { actions.controller.selectInstance(instance.id) }
-        try {
-            launchCard.attach(actions.controller.launch(instance.id, target))
-        } catch (failure: IllegalArgumentException) {
-            launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
-        } catch (failure: IllegalStateException) {
-            launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
+        actions.run {
+            try {
+                actions.controller.selectInstance(instance.id)
+                when (val attempt = actions.controller.launchWithJavaPrompt(instance.id, target)) {
+                    is LaunchAttempt.Started -> launchCard.attach(attempt.jobId)
+                    LaunchAttempt.NeedsJava -> launchCard.clear()
+                }
+            } catch (failure: IllegalArgumentException) {
+                launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
+            } catch (failure: IllegalStateException) {
+                launchCard.fail(failure.message ?: tr("pages.home.launch.failed"))
+            }
         }
     }
 

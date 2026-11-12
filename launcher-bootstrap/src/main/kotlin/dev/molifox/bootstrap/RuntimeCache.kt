@@ -11,7 +11,6 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
-import java.time.LocalDateTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
@@ -25,8 +24,28 @@ internal fun runtimeMarkerMatches(
 ): Boolean =
     marker.isRegularFile(LinkOption.NOFOLLOW_LINKS) &&
         runCatching {
-            Files.readAllLines(marker).firstOrNull() == "version=${manifest.version}"
+            runtimeMarkerContents(marker.parent, manifest)?.let { Files.readString(marker) == it } ?: false
         }.getOrDefault(false)
+
+private fun runtimeMarkerContents(
+    cache: Path,
+    manifest: RuntimeManifest,
+): String? {
+    if (!cache.isDirectory(LinkOption.NOFOLLOW_LINKS)) return null
+    val entries = mutableListOf("version=${manifest.version}")
+    for (dependency in manifest.dependencies) {
+        val attributes =
+            Files.readAttributes(
+                cache.resolve(dependency.filename),
+                BasicFileAttributes::class.java,
+                LinkOption.NOFOLLOW_LINKS,
+            )
+        if (!attributes.isRegularFile || attributes.size() != dependency.size) return null
+        entries += "${dependency.filename}\t${dependency.sha256}\t${attributes.size()}\t" +
+            "${attributes.lastModifiedTime()}\t${attributes.fileKey()}"
+    }
+    return entries.joinToString("\n", postfix = "\n")
+}
 
 internal fun isRuntimeDependencyCached(
     target: Path,
@@ -36,16 +55,15 @@ internal fun isRuntimeDependencyCached(
     return sha256Of(target).equals(dependency.sha256, ignoreCase = true)
 }
 
-/** 标记匹配时只检查文件存在；清单变化或旧缓存迁移后才逐文件重新校验。 */
+/** 清单与文件属性都匹配时使用快速路径，变化后重新校验摘要。 */
 internal fun runtimeCacheReady(
     data: Path,
     cache: Path,
     marker: Path,
     manifest: RuntimeManifest,
 ): Boolean {
-    val markedReady =
-        runtimeMarkerMatches(marker, manifest) &&
-            manifest.dependencies.all { Files.isRegularFile(cache.resolve(it.filename)) }
+    if (!cache.isDirectory(LinkOption.NOFOLLOW_LINKS)) return false
+    val markedReady = runtimeMarkerMatches(marker, manifest)
     val verified =
         markedReady || manifest.dependencies.all { isRuntimeDependencyCached(cache.resolve(it.filename), it) }
     if (!verified) return false
@@ -59,11 +77,14 @@ internal fun writeRuntimeMarker(
     marker: Path,
     manifest: RuntimeManifest,
 ) {
-    Files.writeString(
-        marker,
-        "version=${manifest.version}\nverified=${LocalDateTime.now()}\n" +
-            "files=${manifest.dependencies.size}\n",
-    )
+    val contents = checkNotNull(runtimeMarkerContents(marker.parent, manifest))
+    val temporary = Files.createTempFile(marker.parent, ".ready-", ".tmp")
+    try {
+        Files.writeString(temporary, contents)
+        moveRuntimeIntoPlace(temporary, marker)
+    } finally {
+        Files.deleteIfExists(temporary)
+    }
 }
 
 /** 首次采用稳定目录时，从旧版本缓存中复用逐字节校验通过的文件。 */

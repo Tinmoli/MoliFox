@@ -173,6 +173,7 @@ private fun readInstance(
         id = InstanceCatalog.instanceId(root.directoryId, name),
         name = name,
         gameVersion = profile.gameVersion,
+        gameVersionType = profile.type,
         versionId = name,
         gameDirectoryName = name,
         loader = profile.loader,
@@ -365,7 +366,11 @@ private fun buildProfile(
     val loader = inheritance.loader
     return Profile(
         id = id,
-        type = json.string("type").ifBlank { parentProfile?.type.orEmpty() },
+        type =
+            json
+                .string(MINECRAFT_VERSION_TYPE_MARKER)
+                .ifBlank { parentProfile?.type.orEmpty() }
+                .ifBlank { json.string("type") },
         time =
             json.string("time").takeIf { it.isNotBlank() }
                 ?: json.string("releaseTime").ifBlank { parentProfile?.time.orEmpty() },

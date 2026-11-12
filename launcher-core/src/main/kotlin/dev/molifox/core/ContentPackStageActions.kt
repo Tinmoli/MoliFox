@@ -7,7 +7,6 @@ package dev.molifox.core
 
 import dev.molifox.core.i18n.I18n
 import kotlinx.coroutines.CancellationException
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -15,6 +14,7 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
+import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
 
 /** 导入已解析、后续存档与安装共用的整合包信息。 */
@@ -25,31 +25,59 @@ internal data class PackImport(
     val repairId: String?,
 )
 
+internal fun PackImport.networkFileSizes(root: Path): List<Pair<String, Long>> =
+    buildList {
+        for (file in manifest.selectedIndexFiles(selection)) {
+            add(file.string("path") to file.get("fileSize").asLong)
+        }
+        for (file in curseForgeFiles) {
+            if (file.artifact != null) add(file.path to file.size)
+        }
+        for (file in manifest.checkedFiles) {
+            if (file.url.isNotBlank() && (repairId == null || !packPath(root, file.path).exists())) {
+                add(file.path to 0L)
+            }
+        }
+    }.distinctBy { it.first }
+
 /** 实现由 [ContentService] 委托调用；方法体与原实现一致。 */
 internal abstract class ContentPackStageActions(
     core: ContentServiceCore,
 ) : ContentLocalActions(core) {
-    protected fun importInstance(
+    protected suspend fun importInstance(
         request: InstallRequest,
         launchDefaults: PackLaunchDefaults?,
         instanceDefaults: PackInstanceDefaults?,
         repairId: String?,
         gameDirectoryId: String?,
-    ): GameInstance =
-        repairId?.let { store.instance(it) }
-            ?: installer.createInstance(request, gameDirectoryId).let { created ->
-                store.updateInstance(created.id) {
-                    applyPackInstanceDefaults(
-                        it.copy(
-                            isolation = VersionIsolation.Inherit,
-                            extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
-                            advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
-                        ),
-                        instanceDefaults,
-                    )
-                }
-                store.instance(created.id)
+        context: JobContext,
+    ): GameInstance {
+        if (repairId != null) return store.instance(repairId)
+        val versionType =
+            if (store.data.settings.effectiveVersionIsolationPolicy.usesVersionType) {
+                installer
+                    .versions()
+                    .firstOrNull { it.id == request.gameVersion }
+                    ?.type
+                    .orEmpty()
+            } else {
+                ""
             }
+        val created = installer.createInstance(request, gameDirectoryId)
+        NewInstallationCleanup(store).register(created, context)
+        store.updateInstance(created.id) {
+            applyPackInstanceDefaults(
+                it.copy(
+                    isolation = VersionIsolation.Inherit,
+                    gameVersionType = versionType,
+                    extraJvmArgs = launchDefaults?.jvm ?: it.extraJvmArgs,
+                    advancedLaunch = launchDefaults?.advanced ?: it.advancedLaunch,
+                ),
+                instanceDefaults,
+            )
+        }
+        return store.instance(created.id)
+    }
 
     protected fun storePackArchive(
         snapshot: Path,
@@ -79,16 +107,7 @@ internal abstract class ContentPackStageActions(
         val replacement = Files.createTempFile(savedPack.parent, "${savedPack.fileName}.", ".part")
         try {
             Files.copy(snapshot, replacement, StandardCopyOption.REPLACE_EXISTING)
-            try {
-                Files.move(
-                    replacement,
-                    savedPack,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(replacement, savedPack, StandardCopyOption.REPLACE_EXISTING)
-            }
+            replaceStagedFile(replacement, savedPack)
         } finally {
             replacement.deleteIfExists()
         }
@@ -104,6 +123,11 @@ internal abstract class ContentPackStageActions(
         progressStart: Float = 0f,
         progressEnd: Float = 1f,
     ) {
+        val artifacts =
+            pack.networkFileSizes(root).map { (path, size) ->
+                DownloadArtifact("", packPath(transaction.content, path), size = size)
+            }
+        context.updateInstallationTransfer { it.beginPack(artifacts) }
         stageCurseForgePackFiles(
             pack.curseForgeFiles,
             transaction,
@@ -127,9 +151,9 @@ internal abstract class ContentPackStageActions(
             progressStart,
             progressEnd,
             concurrency = store.data.settings.downloadThreads,
-        ) {
-            network.download(it) { done, total ->
-                context.transfer(it.target.toString(), done, total)
+        ) { artifact, urls ->
+            network.downloadFrom(artifact, urls) { done, total ->
+                context.transfer(artifact.target.toString(), done, total)
             }
         }
     }

@@ -10,7 +10,6 @@ import dev.molifox.core.i18n.I18n
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
@@ -82,12 +81,13 @@ internal fun packPath(
 /** Stages all pack content before replacing any existing user file. */
 internal class PackFileTransaction(
     private val store: LauncherStore,
-    private val root: Path,
+    val root: Path,
 ) {
     val directory =
         safePath(root, ".molifox-pack-${UUID.randomUUID()}").apply { createDirectories() }
     val content = directory.resolve("files").apply { createDirectories() }
-    private var retain = false
+    var retain = false
+        private set
 
     suspend fun commit(context: JobContext) {
         val backups = linkedMapOf<Path, Path>()
@@ -139,16 +139,7 @@ internal class PackFileTransaction(
         installed: List<Path>,
     ): Throwable {
         val result =
-            runCatching {
-                installed.asReversed().forEach { Files.deleteIfExists(it) }
-                for ((target, backup) in backups.entries.toList().asReversed()) {
-                    Files.move(
-                        backup,
-                        target,
-                        StandardCopyOption.REPLACE_EXISTING,
-                    )
-                }
-            }
+            runCatching { restoreReplacedFiles(installed, backups) }
         if (result.isFailure) {
             retain = true
             return IOException(

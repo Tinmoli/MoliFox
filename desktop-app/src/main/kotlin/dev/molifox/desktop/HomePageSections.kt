@@ -239,20 +239,6 @@ internal fun ColumnScope.CurrentGameCardBody(
             }
         }
     }
-    Spacer(Modifier.height(8.dp))
-    Text(
-        instance?.let {
-            actions.controller.store
-                .gamePath(it)
-                .toString()
-        }
-            ?: actions.controller.store.minecraftRoot
-                .toString(),
-        fontSize = 11.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
     // 中间弹性留白：窗口变矮时先吃掉这里，不挤压按钮、不截断文字。
     Spacer(Modifier.weight(1f))
     // 整行「启动游戏」按钮；再往下是贴底的版本入口。
@@ -400,12 +386,13 @@ internal fun ColumnScope.HomeRecentPlaySection(
     )
 }
 
-/** 启动浮窗的四个操作入口。 */
+/** 启动浮窗的操作入口。 */
 internal data class HomeLaunchCardCallbacks(
     val onCancel: () -> Unit,
     val onRetry: () -> Unit,
     val onViewLogs: () -> Unit,
     val onDismiss: () -> Unit,
+    val onOpenTasks: () -> Unit,
 )
 
 /** 右下角启动浮窗：只读真实任务进度，点击页面其他区域不会关闭它。 */
@@ -428,5 +415,6 @@ internal fun HomeLaunchCard(
         onRetry = callbacks.onRetry,
         onViewLogs = callbacks.onViewLogs,
         onDismiss = callbacks.onDismiss,
+        onOpenTasks = callbacks.onOpenTasks,
     )
 }

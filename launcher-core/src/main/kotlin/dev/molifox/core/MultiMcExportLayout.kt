@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责 MultiMC/Prism 的组件清单与 instance.cfg 生成（内存、JVM、窗口与实例名）。
+// 负责 实例配置中的组件清单与 instance.cfg 生成（内存、JVM、窗口与实例名）。
 
 package dev.molifox.core
 
@@ -9,7 +9,7 @@ import dev.molifox.core.i18n.I18n
 
 private const val FALLBACK_EXPORT_INSTANCE_NAME_KEY = "packsA1.multiMcExport.fallbackInstanceName"
 
-/** MultiMC / Prism 组件 uid。 */
+/** 实例清单 组件 uid。 */
 internal fun multimcLoaderUid(loader: LoaderType): String? =
     when (loader) {
         LoaderType.Vanilla -> null
@@ -28,7 +28,7 @@ internal fun multimcManifest(plan: MrpackExportPlan): Map<String, Any> {
     val gameVersion = plan.components.gameVersion
     require(gameVersion.isNotBlank()) { I18n.t("packsA1.multiMcExport.gameVersionMissing") }
     val loaderUid = multimcLoaderUid(plan.components.loader)
-    // 空版本会让 Prism 无法补全组件，导出的包连本启动器都读不回来：导出前就拒绝。
+    // 导出前拒绝空版本，避免组件清单缺少加载器版本。
     require(loaderUid == null || plan.components.loaderVersion.isNotBlank()) {
         I18n.t("packsA1.multiMcExport.loaderVersionUnknown")
     }
@@ -50,7 +50,7 @@ internal fun multimcManifest(plan: MrpackExportPlan): Map<String, Any> {
     return mapOf("formatVersion" to 1, "components" to components)
 }
 
-/** 实例级设置按 Prism 的键写回；0 / 空值表示跟随全局，不写对应键。 */
+/** 实例级设置按配置键写入；0 / 空值表示跟随全局，不写对应键。 */
 internal fun multimcInstanceConfig(
     plan: MrpackExportPlan,
     iconKey: String,
@@ -61,7 +61,7 @@ internal fun multimcInstanceConfig(
     val jvm = exportedJvmArguments(instance.extraJvmArgs)
     val width = instance.width.takeIf { it in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE }
     val height = instance.height.takeIf { it in MIN_GAME_WINDOW_SIZE..MAX_GAME_WINDOW_SIZE }
-    // MultiMC/Prism 的自由实例：OneSix + 由 mmc-pack.json 声明的组件。
+    // 实例配置中的自由实例：OneSix + 由 mmc-pack.json 声明的组件。
     return buildString {
         appendLine("[General]")
         appendLine("ConfigVersion=1.4")

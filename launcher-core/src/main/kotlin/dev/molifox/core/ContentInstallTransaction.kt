@@ -11,7 +11,6 @@ import java.io.IOException
 import java.net.URISyntaxException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
@@ -204,10 +203,7 @@ private class ContentInstallRun(
         val storedRegistry = original
         val rollback =
             runCatching {
-                installed.asReversed().forEach { Files.deleteIfExists(it) }
-                for ((target, backup) in backups.entries.toList().asReversed()) {
-                    Files.move(backup, target, StandardCopyOption.REPLACE_EXISTING)
-                }
+                restoreReplacedFiles(installed, backups)
                 if (storedRegistry == null) {
                     registryFile.deleteIfExists()
                 } else {

@@ -9,6 +9,7 @@ import dev.molifox.core.i18n.I18n
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -150,5 +151,28 @@ internal fun copyTree(
                 Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING)
             }
         }
+    }
+}
+
+/** 替换目标文件。只有文件系统明确不支持原子移动时，才使用普通移动。 */
+internal fun replaceStagedFile(
+    staged: Path,
+    target: Path,
+) {
+    try {
+        Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
+/** 倒序撤销新文件，再按备份登记的逆序恢复旧文件。遇到首个错误就交给调用方处理。 */
+internal fun restoreReplacedFiles(
+    installed: List<Path>,
+    backups: Map<Path, Path>,
+) {
+    installed.asReversed().forEach { Files.deleteIfExists(it) }
+    for ((target, backup) in backups.entries.toList().asReversed()) {
+        Files.move(backup, target, StandardCopyOption.REPLACE_EXISTING)
     }
 }

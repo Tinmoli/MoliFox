@@ -660,7 +660,6 @@ class IsolationMigration(
                 transaction.apply(plan, context, copySaves, moveSource) { record ->
                     store.mutate { data ->
                         data.copy(
-                            settings = data.settings.copy(isolateVersions = isolate),
                             instances =
                                 data.instances.map {
                                     if (it.id == record.id) {

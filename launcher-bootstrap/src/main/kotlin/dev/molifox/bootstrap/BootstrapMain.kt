@@ -179,6 +179,7 @@ private fun prepareRuntime(
     configureProcessEnvironment(data)
     val manifest = readManifest()
     val cache = runtimeCacheDirectory(data)
+    require(!Files.isSymbolicLink(cache)) { I18n.t("bootstrapB.startup.invalidCache", cache) }
     val marker = cache.resolve("ready.marker")
     log(
         I18n.t(

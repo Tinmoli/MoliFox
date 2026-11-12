@@ -5,7 +5,12 @@
 
 package dev.molifox.core.net
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 private const val MAX_RATE_LIMIT_STEP = 5
+private const val MIN_SPEED_SAMPLE_MILLIS = 5_000L
+private const val SLOW_BYTES_PER_SECOND = 64 * 1024L
+private const val SLOW_SOURCE_RECHECK_MILLIS = 60_000L
 
 /**
  * 每个源在当前任务里的状态：成功/失败次数与限流到期时间。
@@ -30,6 +35,7 @@ class SourceHealth(
     }
 
     private val states = HashMap<String, State>()
+    private val slowHosts = HashMap<String, Long>()
 
     @Synchronized
     fun state(key: String): State = states[key] ?: State()
@@ -90,6 +96,43 @@ class SourceHealth(
         return if (ordered.isEmpty()) candidates else ordered
     }
 
+    /** 只根据实际传输观察降低同一主机的优先级，短请求不参与。 */
     @Synchronized
-    fun reset() = states.clear()
+    internal fun recordTransfer(
+        candidate: CandidateSource,
+        bytes: Long,
+        elapsedMillis: Long,
+    ) {
+        if (elapsedMillis < MIN_SPEED_SAMPLE_MILLIS) return
+        val now = clock()
+        slowHosts.values.removeIf { it <= now }
+        val key = speedKey(candidate)
+        val bytesPerSecond = bytes * 1000.0 / elapsedMillis
+        if (bytesPerSecond < SLOW_BYTES_PER_SECOND) {
+            slowHosts[key] = now + SLOW_SOURCE_RECHECK_MILLIS
+        } else {
+            slowHosts.remove(key)
+        }
+    }
+
+    @Synchronized
+    internal fun arrangeTransfers(candidates: List<CandidateSource>): List<CandidateSource> {
+        val now = clock()
+        return candidates.sortedBy { candidate ->
+            when {
+                state(candidate.source.key).rateLimited(now) -> 2
+                (slowHosts[speedKey(candidate)] ?: 0) > now -> 1
+                else -> 0
+            }
+        }
+    }
+
+    private fun speedKey(candidate: CandidateSource): String =
+        "${candidate.source.key}@${candidate.url.toHttpUrlOrNull()?.host}"
+
+    @Synchronized
+    fun reset() {
+        states.clear()
+        slowHosts.clear()
+    }
 }

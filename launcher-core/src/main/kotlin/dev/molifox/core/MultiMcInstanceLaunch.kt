@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责把 MultiMC/Prism 的 JvmArgs、内存与窗口设置转换成实例可用的导入默认值。
+// 负责把 实例配置中的 JvmArgs、内存与窗口设置转换成实例可用的导入默认值。
 
 package dev.molifox.core
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责 MultiMC/Prism 整合包的识别与导入。
+// 负责 实例组件格式 整合包的识别与导入。
 
 package dev.molifox.core
 
@@ -111,7 +111,7 @@ private fun validateMultiMcArchive(
     }
 }
 
-/** Prism 的补丁目录、jarmods 与实例自带 libraries 都不在支持范围内。 */
+/** 归档的补丁目录、jarmods 与实例自带 libraries 都不在支持范围内。 */
 private fun unsupportedMultiMcEntry(
     name: String,
     prefix: String,
@@ -153,7 +153,7 @@ private fun readMultiMcGame(enabled: List<JsonObject>): MultiMcGame {
     )
 }
 
-/** Prism 的版本字段可能带 `<游戏版本>-` 或加载器前缀；其它写法不猜，交给后续校验拒绝。 */
+/** 组件清单的版本字段可能带 `<游戏版本>-` 或加载器前缀；其它写法不猜，交给后续校验拒绝。 */
 private fun multiMcLoaderVersion(
     version: String,
     gameVersion: String,

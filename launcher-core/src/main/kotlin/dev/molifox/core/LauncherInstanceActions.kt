@@ -17,6 +17,15 @@ internal interface LauncherInstanceApi {
         target: GameLaunchTarget? = null,
     ): String
 
+    /**
+     * 点启动时先检查 Java：缺 Java 只登记提示并返回 [LaunchAttempt.NeedsJava]，
+     * 不创建启动任务；提示安装/选择完成后由 [resumePendingLaunch] 继续这次启动。
+     */
+    suspend fun launchWithJavaPrompt(
+        id: String,
+        target: GameLaunchTarget? = null,
+    ): LaunchAttempt
+
     fun selectInstance(id: String)
 
     /**
@@ -73,6 +82,7 @@ internal abstract class LauncherInstanceActions(
             kind = LauncherTaskKind.InstallInstance,
             prepare = { NewInstallationCleanup(store).register(instance, it) },
         ) {
+            enableInstallationTransfers()
             network.resetSourceHealth()
             // 新安装：目录名就是实例名，开工前再确认它没有被别的目录或实例占用。
             installer.install(instance.id, this, freshInstall = true)
@@ -104,22 +114,10 @@ internal abstract class LauncherInstanceActions(
         target: GameLaunchTarget?,
     ): String {
         val instance = store.instance(id)
-        // 损坏/缺失 JSON 的目录仍显示在列表里，但绝不尝试启动或隐式改写它。
-        require(!instance.broken) {
-            I18n.t("instA2.instance.unrecognized", instance.brokenReason)
-        }
-        require(instance.installed) { I18n.t("instA2.instance.notInstalled") }
+        validateLaunchRequest(store, state.value.jobs, instance)
         val resources = taskResourcesForInstances(store, id)
-        check(
-            state.value.jobs.none {
-                it.kind == LauncherTaskKind.ExportContent &&
-                    it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
-                    taskResourcesConflict(resources, it.resources)
-            },
-        ) { I18n.t("miscA1.runtimeActions.instanceInUse") }
-        require(store.data.activeAccountId != null) { I18n.t("core.accountService.1") }
         return jobs.enqueue(
-            I18n.t("instA2.tasks.launch", store.instance(id).name),
+            I18n.t("instA2.tasks.launch", instance.name),
             resources,
             kind = LauncherTaskKind.LaunchGame,
         ) {
@@ -127,18 +125,38 @@ internal abstract class LauncherInstanceActions(
         }
     }
 
+    override suspend fun launchWithJavaPrompt(
+        id: String,
+        target: GameLaunchTarget?,
+    ): LaunchAttempt {
+        val instance = store.instance(id)
+        validateLaunchRequest(store, state.value.jobs, instance)
+        val prompt = javaPromptFor(instance)
+        if (prompt == null) {
+            store.updateState { it.copy(javaPrompt = null, pendingJavaLaunch = null) }
+            return LaunchAttempt.Started(launch(id, target))
+        }
+        store.updateState {
+            it.copy(
+                javaPrompt = prompt,
+                pendingJavaLaunch = PendingJavaLaunch(id, target),
+            )
+        }
+        return LaunchAttempt.NeedsJava
+    }
+
+    /** 弹窗安装/选择完成后继续之前的启动请求；启动失败只提示，不留在启动浮窗。 */
+    override fun resumePendingLaunch(pending: PendingJavaLaunch) {
+        runCatching { launch(pending.instanceId, pending.target) }
+            .onFailure { store.notify(it.message ?: I18n.t("settings.java.prompt.title")) }
+    }
+
     override fun selectInstance(id: String) {
         val instance = store.instance(id)
         store.mutate {
             it.copy(selectedInstanceId = id, activeGameDirectoryId = instance.gameDirectoryId)
         }
-        refreshJavaPrompt()
     }
-
-    /**
-     * 启动检查：当前选中实例缺少兼容 Java 时，给出「下载并安装 / 选择已有 / 使用系统 Java / 取消」入口。
-     * 已显式指定 Java（实例或全局）、用户点过不再提示、或已有满足要求的候选时都不弹窗。
-     */
 
     override fun renameInstance(
         instanceId: String,
@@ -163,7 +181,7 @@ internal abstract class LauncherInstanceActions(
         notify: Boolean,
     ) {
         requireIdle(configuration.id)
-        validateInstanceConfiguration(configuration)
+        validateInstanceConfiguration(configuration, platform, store.data.settings)
         val previousJavaPath = store.instance(configuration.id).javaPath
         store.updateInstance(configuration.id) {
             it.copy(
@@ -183,60 +201,8 @@ internal abstract class LauncherInstanceActions(
                 replaceSaveOnRestore = configuration.replaceSaveOnRestore,
             )
         }
-        if (previousJavaPath != configuration.javaPath) {
-            java.invalidate()
-            refreshJavaPrompt()
-        }
+        if (previousJavaPath != configuration.javaPath) java.invalidate()
         if (notify) store.notify(I18n.t("instA2.instance.settingsSaved"))
-    }
-
-    /** 校验实例设置；失败时抛出的文案直接展示在设置页。 */
-    private fun validateInstanceConfiguration(configuration: GameInstance) {
-        require(
-            configuration.name.isNotBlank() &&
-                configuration.name.length <= MAX_INSTANCE_NAME_LENGTH,
-        ) {
-            I18n.t("instA2.instance.nameLength")
-        }
-        validateInstanceLaunchOptions(
-            memoryMb = configuration.memoryMb,
-            width = configuration.width,
-            height = configuration.height,
-            windowMode = configuration.windowMode,
-            extraJvmArgs = configuration.extraJvmArgs,
-            extraGameArgs = configuration.extraGameArgs,
-            totalMemoryMb = platform.totalMemoryMb,
-        )
-        val maximumMemory = maximumMemoryMb(configuration)
-        require(
-            configuration.initialMemoryMb == 0 ||
-                configuration.initialMemoryMb in MIN_INITIAL_MEMORY_MB..maximumMemory,
-        ) {
-            I18n.t("instA2.instance.initialMemoryInvalid")
-        }
-        require(configuration.notes.length <= MAX_NOTES_LENGTH) {
-            I18n.t("instA2.instance.notesTooLong")
-        }
-        configuration.advancedLaunch?.let {
-            validateAdvancedLaunchSettings(
-                it,
-                platform.osName,
-            )
-        }
-    }
-
-    /** 允许的最大内存：自动分配时给系统留出同等余量，否则使用实例或全局设置。 */
-    private fun maximumMemoryMb(configuration: GameInstance): Int {
-        val inheritedAutoMemory =
-            configuration.autoMemory == null &&
-                configuration.memoryMb == 0 &&
-                store.data.settings.autoMemory
-        val autoMemoryRequested = configuration.autoMemory == true || inheritedAutoMemory
-        return if (autoMemoryRequested) {
-            maxOf(MEMORY_HEADROOM_MB, platform.totalMemoryMb - MEMORY_HEADROOM_MB)
-        } else {
-            configuration.memoryMb.takeIf { it > 0 } ?: store.data.settings.memoryMb
-        }
     }
 
     /** 升级既有实例的加载器小版本（同加载器、同游戏版本）；模组、存档与配置不动。 */
@@ -304,5 +270,84 @@ internal abstract class LauncherInstanceActions(
                     prepareFiles = false,
                 )
         return plan.copy(environment = environmentForDiagnostics(plan.environment))
+    }
+}
+
+/** 启动前的同步校验；真正的 Java 探测留给 `launchWithJavaPrompt`。 */
+private fun validateLaunchRequest(
+    store: LauncherStore,
+    jobs: List<DownloadJob>,
+    instance: GameInstance,
+) {
+    // 损坏/缺失 JSON 的目录仍显示在列表里，但绝不尝试启动或隐式改写它。
+    require(!instance.broken) {
+        I18n.t("instA2.instance.unrecognized", instance.brokenReason)
+    }
+    require(instance.installed) { I18n.t("instA2.instance.notInstalled") }
+    val resources = taskResourcesForInstances(store, instance.id)
+    check(
+        jobs.none {
+            it.kind == LauncherTaskKind.ExportContent &&
+                it.status in setOf(JobStatus.Queued, JobStatus.Running) &&
+                taskResourcesConflict(resources, it.resources)
+        },
+    ) { I18n.t("miscA1.runtimeActions.instanceInUse") }
+    require(store.data.activeAccountId != null) { I18n.t("core.accountService.1") }
+}
+
+/** 校验实例设置；失败时抛出的文案直接展示在设置页。 */
+private fun validateInstanceConfiguration(
+    configuration: GameInstance,
+    platform: PlatformServices,
+    settings: LauncherSettings,
+) {
+    require(
+        configuration.name.isNotBlank() &&
+            configuration.name.length <= MAX_INSTANCE_NAME_LENGTH,
+    ) {
+        I18n.t("instA2.instance.nameLength")
+    }
+    validateInstanceLaunchOptions(
+        memoryMb = configuration.memoryMb,
+        width = configuration.width,
+        height = configuration.height,
+        windowMode = configuration.windowMode,
+        extraJvmArgs = configuration.extraJvmArgs,
+        extraGameArgs = configuration.extraGameArgs,
+        totalMemoryMb = platform.totalMemoryMb,
+    )
+    val maximumMemory = maximumMemoryMb(configuration, platform, settings)
+    require(
+        configuration.initialMemoryMb == 0 ||
+            configuration.initialMemoryMb in MIN_INITIAL_MEMORY_MB..maximumMemory,
+    ) {
+        I18n.t("instA2.instance.initialMemoryInvalid")
+    }
+    require(configuration.notes.length <= MAX_NOTES_LENGTH) {
+        I18n.t("instA2.instance.notesTooLong")
+    }
+    configuration.advancedLaunch?.let {
+        validateAdvancedLaunchSettings(
+            it,
+            platform.osName,
+        )
+    }
+}
+
+/** 允许的最大内存：自动分配时给系统留出同等余量，否则使用实例或全局设置。 */
+private fun maximumMemoryMb(
+    configuration: GameInstance,
+    platform: PlatformServices,
+    settings: LauncherSettings,
+): Int {
+    val inheritedAutoMemory =
+        configuration.autoMemory == null &&
+            configuration.memoryMb == 0 &&
+            settings.autoMemory
+    val autoMemoryRequested = configuration.autoMemory == true || inheritedAutoMemory
+    return if (autoMemoryRequested) {
+        maxOf(MEMORY_HEADROOM_MB, platform.totalMemoryMb - MEMORY_HEADROOM_MB)
+    } else {
+        configuration.memoryMb.takeIf { it > 0 } ?: settings.memoryMb
     }
 }

@@ -28,13 +28,11 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
-import kotlin.io.path.reader
 
 /** 每个命令行参数额外占用的引号与空格。 */
 private const val ARGUMENT_QUOTE_OVERHEAD = 3
@@ -70,7 +68,7 @@ private const val ACTIVITY_POLL_INTERVAL_MS = 750L
 
 /** 设置进程优先级的外部命令超时、输出读取等待与失败输出预览长度。 */
 private const val PRIORITY_COMMAND_TIMEOUT_SECONDS = 15L
-private const val PRIORITY_READER_JOIN_MILLIS = 500L
+private const val PRIORITY_OUTPUT_LIMIT_BYTES = 16 * 1024
 private const val PRIORITY_OUTPUT_PREVIEW_CHARS = 300
 
 data class LaunchPlan(
@@ -103,6 +101,8 @@ private class LaunchParameters(
     val settings: LauncherSettings,
     val advanced: AdvancedLaunchSettings,
     val options: ResolvedLaunchOptions,
+    val gcPreset: GcPreset,
+    val javaMajor: Int,
 )
 
 /** 版本模板需要的占位符、feature 开关与已展开的游戏参数。 */
@@ -137,7 +137,13 @@ private class LaunchParameterResolver(
                 runtime.architecture,
                 advanced,
             )
-        return LaunchParameters(settings, advanced, options)
+        return LaunchParameters(
+            settings,
+            advanced,
+            options,
+            GcPreset.from(settings.gcPreset),
+            runtime.majorVersion,
+        )
     }
 
     /** 版本占位符、feature 开关与游戏参数：quick play 目标在这里进入模板。 */
@@ -305,7 +311,10 @@ private class LaunchCommandAssembler(
         features: Map<String, Boolean>,
         credentials: GameCredentials,
     ): MutableList<String> {
-        val command = jvmRuntimeFlags(parameters.options.memory)
+        val extra =
+            jvmArguments(profile, values, platform, features, files) + splitArguments(parameters.options.extraJvmArgs)
+        val command =
+            jvmRuntimeFlags(parameters.options.memory, parameters.gcPreset.launchFlags(parameters.javaMajor, extra))
         val logging = profile.json.obj("logging").obj("client")
         if (
             logging.string("argument").isNotBlank() &&
@@ -318,15 +327,17 @@ private class LaunchCommandAssembler(
                 )
             command += logging.string("argument").replace("\${path}", config.toString())
         }
-        command += jvmArguments(profile, values, platform, features, files)
-        command += splitArguments(parameters.options.extraJvmArgs)
+        command += extra
         // 外置认证：在生成 @argfile 与长度校验之前加入，确保长参数也被正确转义。
         if (credentials.authlibServer.isNotBlank()) command += authlibArguments(credentials)
         return command
     }
 
-    /** 固定 JVM 前缀：内存、UTF-8 编码与关闭远程 codebase 的安全参数。 */
-    private fun jvmRuntimeFlags(memory: GameMemoryAllocation): MutableList<String> =
+    /** 固定 JVM 前缀：内存、GC 策略、UTF-8 编码与关闭远程 codebase 的安全参数。 */
+    private fun jvmRuntimeFlags(
+        memory: GameMemoryAllocation,
+        gcFlags: List<String>,
+    ): MutableList<String> =
         mutableListOf(
             "-Xms${memory.initialMb}M",
             "-Xmx${memory.maximumMb}M",
@@ -336,7 +347,7 @@ private class LaunchCommandAssembler(
             "-Dlog4j2.formatMsgNoLookups=true",
             "-Djava.rmi.server.useCodebaseOnly=true",
             "-Dcom.sun.jndi.rmi.object.trustURLCodebase=false",
-        )
+        ).apply { addAll(gcFlags) }
 
     /** 外置认证的 javaagent 参数：注入器缺失时按下载失败提示重启。 */
     private suspend fun authlibArguments(credentials: GameCredentials): List<String> {
@@ -779,26 +790,17 @@ private fun priorityCommands(
 
 /** 执行外部命令；退出码非 0 或超时都抛异常，由 [applyGameProcessPriority] 转成一条警告。 */
 private fun runPriorityCommand(command: List<String>) {
-    val process = ProcessBuilder(command).redirectErrorStream(true).start()
-    // 输出必须边跑边读，命令卡住或输出偏多时不会堵在管道上。
-    val output = StringBuilder()
-    val reader =
-        Thread {
-            runCatching {
-                process.inputStream.bufferedReader().forEachLine { output.appendLine(it) }
-            }.onFailure { output.append(it.javaClass.simpleName) }
-        }.apply {
-            isDaemon = true
-            start()
-        }
-    if (!process.waitFor(PRIORITY_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-        process.destroyForcibly()
-        error(I18n.t("core.gameLauncher.14"))
-    }
-    reader.join(PRIORITY_READER_JOIN_MILLIS)
-    check(process.exitValue() == 0) {
-        output.lineSequence().firstOrNull { it.isNotBlank() }?.take(PRIORITY_OUTPUT_PREVIEW_CHARS)
-            ?: I18n.t("core.gameLauncher.15", process.exitValue())
+    val builder = ProcessBuilder(command).redirectErrorStream(true)
+    val result =
+        runShortCommand(builder, PRIORITY_COMMAND_TIMEOUT_SECONDS, PRIORITY_OUTPUT_LIMIT_BYTES)
+            ?: error(I18n.t("core.gameLauncher.14"))
+    check(result.exitCode == 0) {
+        result.output
+            .toString(Charsets.UTF_8)
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            ?.take(PRIORITY_OUTPUT_PREVIEW_CHARS)
+            ?: I18n.t("core.gameLauncher.15", result.exitCode)
     }
 }
 
@@ -1230,6 +1232,15 @@ class GameLauncher(
     ): LaunchInputs {
         run.session.stage(I18n.t("core.gameLauncher.19"))
         val profile = installer.resolveForLaunch(run.instance, context)
+        context.progress(JAVA_SELECT_PROGRESS, I18n.t("core.gameLauncher.22", profile.requiredJava))
+        run.session.stage(I18n.t("core.gameLauncher.23"))
+        val runtime =
+            java.resolve(
+                profile,
+                run.instance.javaPath.ifBlank { store.data.settings.javaPath },
+                context,
+                installMissing = false,
+            )
         run.session.stage(I18n.t("core.gameLauncher.20"))
         context.progress(FILE_CHECK_START_PROGRESS, I18n.t("core.gameLauncher.21"))
         installer.installDependencies(
@@ -1240,14 +1251,6 @@ class GameLauncher(
             FILE_CHECK_END_PROGRESS,
             verifyHashes = run.settings.verifyFileHashes,
         )
-        context.progress(JAVA_SELECT_PROGRESS, I18n.t("core.gameLauncher.22", profile.requiredJava))
-        run.session.stage(I18n.t("core.gameLauncher.23"))
-        val runtime =
-            java.resolve(
-                profile,
-                run.instance.javaPath.ifBlank { store.data.settings.javaPath },
-                context,
-            )
         context.progress(ACCOUNT_PROGRESS, I18n.t("core.gameLauncher.24"))
         run.session.stage(I18n.t("core.gameLauncher.25"))
         return LaunchInputs(profile, runtime, accounts.credentials())

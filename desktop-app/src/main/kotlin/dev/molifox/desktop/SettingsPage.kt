@@ -58,7 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-// 设置页七个分区：全局游戏设置 / Java 管理 / 通用 / 外观 / 下载 / 日志 / 关于。
+// 设置页七个分区：游戏设置 / Java 管理 / 通用 / 外观 / 下载 / 日志 / 关于。
 // 标题按当前语言生成；顺序固定，APPEARANCE_SECTION 等索引常量以此为准。
 private fun settingsIndex(strings: Strings): List<Pair<String, ImageVector>> =
     listOf(

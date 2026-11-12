@@ -16,24 +16,11 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.isRegularFile
 
 private const val MAX_JAVA_PROBE_CONCURRENCY = 2
 private const val MAX_JAVA_PROBE_OUTPUT_BYTES = 64 * 1024
 private const val JAVA_PROBE_TIMEOUT_SECONDS = 10L
-private const val JAVA_PROBE_STOP_TIMEOUT_SECONDS = 2L
-
-private fun stopJavaVersionProbe(process: Process) {
-    val descendants = process.descendants().use { it.toList() }
-    descendants.asReversed().forEach { child ->
-        if (child.isAlive) child.destroyForcibly()
-    }
-    if (process.isAlive) process.destroyForcibly()
-    check(process.waitFor(JAVA_PROBE_STOP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-        I18n.t("networkB1.javaDiscovery.probeTimeout")
-    }
-}
 
 /** 探测候选路径并构建 [JavaRuntime]；结果不缓存，由调用方决定何时重探。 */
 internal class JavaDiscovery(
@@ -71,43 +58,15 @@ internal class JavaDiscovery(
             probeSlots.withPermit {
                 runCatching {
                     // 用参数列表而不是拼接命令行，保留合法路径中的空格和中文。
-                    val process =
-                        ProcessBuilder(
-                            executable.toString(),
-                            "-XshowSettings:properties",
-                            "-version",
-                        ).redirectErrorStream(true)
-                            .start()
-                    try {
-                        readJavaVersionOutput(process)?.let(::parseJavaProbe)
-                    } finally {
-                        stopJavaVersionProbe(process)
-                    }
+                    val command =
+                        ProcessBuilder(executable.toString(), "-XshowSettings:properties", "-version")
+                            .redirectErrorStream(true)
+                    runInterruptible {
+                        runShortCommand(command, JAVA_PROBE_TIMEOUT_SECONDS, MAX_JAVA_PROBE_OUTPUT_BYTES)
+                    }?.takeUnless { it.truncated }?.output?.toString(Charsets.UTF_8)?.let(::parseJavaProbe)
                 }.onFailure { failure ->
                     if (failure is CancellationException) throw failure
                 }.getOrNull()
-            }
-        }
-
-    private suspend fun readJavaVersionOutput(process: Process): String? =
-        coroutineScope {
-            val output =
-                async(Dispatchers.IO) {
-                    process.inputStream.use { it.readNBytes(MAX_JAVA_PROBE_OUTPUT_BYTES + 1) }
-                }
-            try {
-                val exited =
-                    runInterruptible(Dispatchers.IO) {
-                        process.waitFor(JAVA_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    }
-                if (exited) {
-                    output.await().takeIf { it.size <= MAX_JAVA_PROBE_OUTPUT_BYTES }?.toString(Charsets.UTF_8)
-                } else {
-                    null
-                }
-            } finally {
-                // 先终止进程再等待结构化子协程退出，避免读输出的协程等待 EOF 导致超时失效。
-                stopJavaVersionProbe(process)
             }
         }
 

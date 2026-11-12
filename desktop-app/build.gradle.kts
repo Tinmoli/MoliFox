@@ -1116,6 +1116,11 @@ val uiSmoke =
         systemProperty("molifox.ui.lifecycleOnly", providers.gradleProperty("uiLifecycleOnly").getOrElse("false"))
         systemProperty("molifox.ui.exportOnly", providers.gradleProperty("uiExportOnly").getOrElse("false"))
         systemProperty("molifox.ui.agreementOnly", providers.gradleProperty("uiAgreementOnly").getOrElse("false"))
+        systemProperty("molifox.ui.javaPromptOnly", providers.gradleProperty("uiJavaPromptOnly").getOrElse("false"))
+        systemProperty(
+            "molifox.ui.installCleanupOnly",
+            providers.gradleProperty("uiInstallCleanupOnly").getOrElse("false"),
+        )
         group = "verification"
         description =
             "Exercise current desktop UI with temporary instances and in-process API fixtures"

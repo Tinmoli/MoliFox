@@ -12,7 +12,7 @@ private const val MAX_PACK_LAUNCH_ARGUMENT_CHARS = 4096
 
 /**
  * Source arguments become editable instance overrides; repair never reapplies them.
- * [overrideJvm] 对应 MultiMC 的 `OverrideJavaArgs`：为真时实例参数替换全局，而不是追加。
+ * [overrideJvm] 对应实例配置中的 `OverrideJavaArgs`：为真时实例参数替换全局，而不是追加。
  */
 internal data class PackLaunchOptions(
     val jvm: List<String>,

@@ -22,11 +22,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -49,16 +53,7 @@ internal fun SettingCardFlow(
     val strings = LocalStrings.current
     val matched =
         cards.mapNotNull { card ->
-            val cardHit = card.title.contains(query, true) || card.detail.contains(query, true)
-            val blocks =
-                if (query.isBlank() || cardHit) {
-                    card.blocks
-                } else {
-                    card.blocks.filter {
-                        it.title.contains(query, true) || it.detail.contains(query, true)
-                    }
-                }
-            if (blocks.isEmpty()) null else card to blocks
+            card.matchingBlocks(query).takeIf { it.isNotEmpty() }?.let { card to it }
         }
     if (query.isNotBlank() && matched.isNotEmpty()) {
         MutedText(
@@ -80,11 +75,28 @@ internal fun SettingCardFlow(
         return
     }
     matched.forEach { (card, blocks) ->
+        var expanded by remember(card.title) { mutableStateOf(card.startExpanded) }
+        val open = !card.collapsible || expanded || query.isNotBlank()
         SettingsSection(
             card.title,
             card.detail,
             // 行间使用 1dp 细分隔线：首行之前、末行之后都不画，卡片保留内边距与 44/52 行高。
             contentGap = 0.dp,
+            action = {
+                if (card.collapsible) {
+                    Icon(
+                        if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = null,
+                    )
+                }
+            },
+            onHeaderClick =
+                if (card.collapsible) {
+                    { expanded = !expanded }
+                } else {
+                    null
+                },
+            showContent = open,
         ) {
             blocks.forEachIndexed { index, block ->
                 if (index > 0) SettingDivider()
@@ -93,6 +105,13 @@ internal fun SettingCardFlow(
         }
     }
 }
+
+private fun SettingCard.matchingBlocks(query: String): List<SettingBlock> =
+    if (query.isBlank() || title.contains(query, true) || detail.contains(query, true)) {
+        blocks
+    } else {
+        blocks.filter { it.title.contains(query, true) || it.detail.contains(query, true) }
+    }
 
 /** 多行输入框：用于附加 JVM 参数；输入停手 300ms 后写入设置，非法参数就地提示原因。 */
 @Composable

@@ -101,7 +101,7 @@ fun TaskProgressButton(
             actions.controller.jobs.clearFinished(finishedIds)
         }
     }
-    if (state.jobs.isEmpty()) return
+    if (state.jobs.isEmpty() || actions.homeLaunchCardVisible) return
     val strings = LocalStrings.current
     Surface(
         modifier
@@ -390,11 +390,16 @@ private fun TaskDetailCard(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
             )
-            LinearProgressIndicator(
-                progress = { job.progress.coerceIn(0f, 1f) },
-                drawStopIndicator = {},
-                modifier = Modifier.fillMaxWidth().height(4.dp),
-            )
+            val progressModifier = Modifier.fillMaxWidth().height(4.dp)
+            if (job.downloadTotalPending) {
+                LinearProgressIndicator(modifier = progressModifier)
+            } else {
+                LinearProgressIndicator(
+                    progress = { job.progress.coerceIn(0f, 1f) },
+                    drawStopIndicator = {},
+                    modifier = progressModifier,
+                )
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -409,7 +414,11 @@ private fun TaskDetailCard(
                         JobStatus.Failed -> strings.t("pages.tasks.status.failed")
                     }
                 Text(
-                    strings.t("pages.tasks.status.progress", label, (job.progress * 100).toInt()),
+                    if (job.downloadTotalPending) {
+                        strings.t("pages.tasks.downloadPlanning")
+                    } else {
+                        strings.t("pages.tasks.status.progress", label, (job.progress * 100).toInt())
+                    },
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -430,14 +439,19 @@ private fun TaskDetailCard(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                if (job.totalBytes > 0) {
-                    Text(
-                        "${transferSize(job.downloadedBytes)} / ${transferSize(job.totalBytes)}",
-                        fontSize = 11.sp,
-                    )
-                }
+                TaskByteTotals(job)
             }
         }
+    }
+}
+
+@Composable
+private fun TaskByteTotals(job: DownloadJob) {
+    val downloaded = transferSize(job.downloadedBytes)
+    if (job.downloadTotalPending) {
+        if (job.downloadedBytes > 0) Text(downloaded, fontSize = 11.sp)
+    } else if (job.totalBytes > 0) {
+        Text("$downloaded / ${transferSize(job.totalBytes)}", fontSize = 11.sp)
     }
 }
 

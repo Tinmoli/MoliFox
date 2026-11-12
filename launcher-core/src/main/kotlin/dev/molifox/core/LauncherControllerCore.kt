@@ -200,7 +200,6 @@ internal class LauncherControllerCore(
         store.log(I18n.t("miscA1.controllerCore.welcome", platform.osName, platform.architecture))
         scope.launch { maintainLauncherStorage(store) }
         if (store.data.settings.autoCheckUpdates) scope.launch { updater.check(false) }
-        actions.refreshJavaPrompt()
     }
 
     /** 释放顺序与原先的 close() 一致：先停服务，再取消作用域，最后放锁。 */

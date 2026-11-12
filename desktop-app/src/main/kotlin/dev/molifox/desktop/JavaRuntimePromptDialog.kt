@@ -153,7 +153,6 @@ internal fun JavaRuntimePromptDialog(
             }
             SecondaryButton({ dismiss() }) { Text(strings.t("settings.common.cancel")) }
         }
-        MutedText(strings.t("settings.java.prompt.note"))
     }
 }
 

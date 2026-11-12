@@ -25,7 +25,7 @@ import dev.molifox.core.ContentHit
 import dev.molifox.core.ContentVersion
 import dev.molifox.core.GameInstance
 
-/** 安装按钮：选好实例/存档后直接排队，进度只进任务中心；整合包仍先预览。 */
+/** 安装按钮：选好实例/存档后直接排队，进度只进任务中心；整合包下载完直接安装，不再预览确认。 */
 internal fun contentDownload(
     actions: UiActions,
     hit: ContentHit,
@@ -36,9 +36,8 @@ internal fun contentDownload(
     onError: (String) -> Unit,
 ) {
     if (hit.type == "modpack") {
-        actions.run {
-            actions.controller.preparePack(hit, version.id) { actions.pendingPack = it }
-        }
+        // 下载页选中的整合包直接走下载 + 导入；可选文件按安装器默认全部包含。
+        actions.run { actions.controller.installContent(hit, null) }
         onInstallStarted()
         return
     }

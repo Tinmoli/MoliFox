@@ -243,6 +243,35 @@ allprojects {
     }
 }
 
+tasks.register("verifyLocalTests") {
+    group = "verification"
+    description = "Run all local test suites and require a result from every module"
+    val suites =
+        mapOf(
+            ":launcher-core" to "test",
+            ":desktop-app" to "test",
+            ":multiplayer-core" to "jvmTest",
+            ":launcher-bootstrap" to "test",
+        )
+    dependsOn(suites.map { (module, suite) -> "$module:$suite" })
+    doLast {
+        val executedSuite = Regex("""<testsuite\b[^>]*\btests="[1-9]\d*"""")
+        for ((module, suite) in suites) {
+            val test = project(module).tasks.named<Test>(suite).get()
+            val xml = test.reports.junitXml
+            val results = xml.outputLocation.get().asFile
+            val hasTests =
+                results.listFiles().orEmpty().any { report ->
+                    report.name.startsWith("TEST-") && report.extension == "xml" &&
+                        report.bufferedReader().useLines { lines -> lines.take(5).any(executedSuite::containsMatchIn) }
+                }
+            check(!test.state.noSource && hasTests) {
+                "No results for ${test.path}. Restore the matching local tests/ before verifying a release."
+            }
+        }
+    }
+}
+
 tasks.register("cleanTestData") {
     group = "verification"
     description = "Remove project-owned test sandboxes left by an interrupted build"

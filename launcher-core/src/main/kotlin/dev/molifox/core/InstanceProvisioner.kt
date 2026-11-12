@@ -53,12 +53,16 @@ internal class InstanceProvisioner(
         val id = store.instanceIdFor(directoryName, gameDirectoryId)
         val loaderId = loaderIdOf(request)
         store.beginPendingInstall(directoryName, request.gameVersion, loaderId)
+        var reserved = false
         return try {
-            folder.createDirectories()
+            folder.parent.createDirectories()
+            Files.createDirectory(folder)
+            reserved = true
             registerInstance(request, directoryName, gameDirectoryId, id)
         } catch (expected: Throwable) {
             // 登记失败不留空目录，也不留着「安装中」标记；Error 也要清理，所以必须捕获 Throwable。
-            cleanupFailedRegistration(directoryName, folder)
+            store.endPendingInstall(directoryName)
+            if (reserved) cleanupFailedRegistration(folder)
             throw expected
         }
     }
@@ -131,11 +135,7 @@ internal class InstanceProvisioner(
         return store.instance(id)
     }
 
-    private fun cleanupFailedRegistration(
-        directoryName: String,
-        folder: Path,
-    ) {
-        store.endPendingInstall(directoryName)
+    private fun cleanupFailedRegistration(folder: Path) {
         runCatching {
             if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty()) {
                 Files.deleteIfExists(folder)
@@ -159,10 +159,7 @@ internal class InstanceProvisioner(
     }
 
     /** 新安装失败后不留下空目录和记录：它下次会被扫描成「无法识别」的实例。 */
-    fun discardFailedFreshInstall(
-        instance: GameInstance,
-        folderName: String,
-    ) {
+    fun discardFailedFreshInstall(instance: GameInstance) {
         runCatching {
             val folder = store.versionGamePath(instance)
             if (folder.isDirectory(NOFOLLOW_LINKS) && folder.listDirectoryEntries().isEmpty()) {
@@ -172,7 +169,7 @@ internal class InstanceProvisioner(
         runCatching {
             store.mutate { data ->
                 data.copy(
-                    instances = data.instances.filter { it.instanceSettingsKey() != folderName },
+                    instances = data.instances.filter { it.id != instance.id },
                     selectedInstanceId =
                         if (data.selectedInstanceId == instance.id) {
                             null

@@ -54,12 +54,23 @@ internal abstract class NetworkSourceActions(
     suspend fun orderedSources(
         url: String,
         selection: String = settings.source(),
+        fileDownload: Boolean = false,
     ): List<CandidateSource> {
         val base = candidateSources(url, selection)
         if (base.isEmpty()) return base
-        val ordered = if (selection == DownloadSourceCatalog.AUTO) orderByProbe(base) else base
+        val ordered =
+            when {
+                selection != DownloadSourceCatalog.AUTO -> base
+                fileDownload && prefersDirectContentFile(url) -> base.sortedBy { it.url != url }
+                else -> orderByProbe(base)
+            }
         return settings.health.arrange(ordered)
     }
+
+    private fun prefersDirectContentFile(url: String): Boolean =
+        url.startsWith("https://cdn.modrinth.com/") ||
+            url.startsWith("https://edge.forgecdn.net/") ||
+            url.startsWith("https://mediafilez.forgecdn.net/")
 
     suspend fun orderedCandidates(
         url: String,

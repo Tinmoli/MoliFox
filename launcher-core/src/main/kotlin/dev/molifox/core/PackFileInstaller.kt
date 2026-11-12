@@ -7,8 +7,6 @@ package dev.molifox.core
 
 import com.google.gson.JsonObject
 import dev.molifox.core.i18n.I18n
-import kotlinx.coroutines.CancellationException
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -31,7 +29,7 @@ internal suspend fun stagePackFiles(
     progressStart: Float = 0f,
     progressEnd: Float = 1f,
     concurrency: Int = 1,
-    download: suspend (DownloadArtifact) -> Unit,
+    download: suspend (DownloadArtifact, List<String>) -> Unit,
 ) {
     val stager = PackFileStager(context, download, progressStart, progressEnd, concurrency)
     stager.indexed(manifest, transaction, optionalFiles)
@@ -47,9 +45,20 @@ private data class PackStagingTarget(
     val repairing: Boolean,
 )
 
+internal fun PackManifest.selectedIndexFiles(optionalFiles: Set<String>?): List<JsonObject> =
+    index
+        ?.array("files")
+        ?.map { it.asJsonObject }
+        .orEmpty()
+        .filter {
+            val support = it.obj("env").string("client")
+            support != "unsupported" &&
+                (support != "optional" || optionalFiles == null || it.string("path") in optionalFiles)
+        }
+
 private class PackFileStager(
     private val context: JobContext,
-    private val download: suspend (DownloadArtifact) -> Unit,
+    private val download: suspend (DownloadArtifact, List<String>) -> Unit,
     private val progressStart: Float,
     private val progressEnd: Float,
     private val concurrency: Int,
@@ -59,20 +68,8 @@ private class PackFileStager(
         transaction: PackFileTransaction,
         optionalFiles: Set<String>?,
     ) {
-        if (manifest.index == null) return
-        val files =
-            manifest.index
-                .array("files")
-                .map { it.asJsonObject }
-                .filter {
-                    it.obj("env").string("client") != "unsupported" &&
-                        (
-                            it.obj("env").string("client") != "optional" ||
-                                optionalFiles == null ||
-                                it.string("path") in optionalFiles
-                        )
-                }
-        // 整合包下载是独立阶段：重置任务中心的文件计数，避免沿用原版安装的 1 万多文件。
+        val files = manifest.selectedIndexFiles(optionalFiles)
+        if (files.isEmpty()) return
         context.beginTransfers(files.size)
         val finished = AtomicInteger()
         stagePackFilesConcurrently(files, concurrency, context) { file ->
@@ -94,34 +91,19 @@ private class PackFileStager(
         file: JsonObject,
         target: Path,
     ): Long {
-        var failure: Exception? = null
-        for (url in file.array("downloads")) {
-            try {
-                val artifact = packDownload(file, target, url.asString)
-                download(artifact)
-                check(
-                    target.isRegularFile() &&
-                        target.fileSize() == artifact.size &&
-                        digest(target, "SHA-512")
-                            .equals(file.obj("hashes").string("sha512"), true) &&
-                        digest(target, "SHA-1").equals(file.obj("hashes").string("sha1"), true),
-                ) {
-                    I18n.t("packsA2.packStaging.sizeOrHashMismatch", file.string("path"))
-                }
-                failure = null
-                return target.fileSize()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: IOException) {
-                failure = error
-            } catch (error: IllegalStateException) {
-                failure = error
-            } catch (error: IllegalArgumentException) {
-                failure = error
-            }
+        val urls = file.array("downloads").map { validatePackUrl(it.asString) }.distinct()
+        val first = urls.firstOrNull() ?: error(I18n.t("packsA2.packStaging.downloadFailed", file.string("path")))
+        val artifact = packDownload(file, target, first)
+        download(artifact, urls)
+        check(
+            target.isRegularFile() &&
+                target.fileSize() == artifact.size &&
+                digest(target, "SHA-512").equals(artifact.sha1, true) &&
+                digest(target, "SHA-1").equals(file.obj("hashes").string("sha1"), true),
+        ) {
+            I18n.t("packsA2.packStaging.sizeOrHashMismatch", file.string("path"))
         }
-        failure?.let { throw it }
-        error(I18n.t("packsA2.packStaging.downloadFailed", file.string("path")))
+        return artifact.size
     }
 
     suspend fun checked(
@@ -133,7 +115,7 @@ private class PackFileStager(
             val target = packPath(destination.transaction.content, file.path)
             val actual = packPath(destination.game, file.path)
             if (destination.repairing && actual.exists()) return@stagePackFilesConcurrently
-            download(DownloadArtifact(file.url, target, file.hash))
+            download(DownloadArtifact(file.url, target, file.hash), listOf(file.url))
             require(target.isRegularFile() && digest(target).equals(file.hash, true)) {
                 I18n.t("packsA2.packStaging.verificationFailed", file.path)
             }

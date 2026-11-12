@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Tinmoli and MoliFox Contributors
 // SPDX-License-Identifier: GPL-3.0-only
 
-// 负责解析 MultiMC/Prism 的 instance.cfg：实例名、通用键值、名称回退与文本读取。
+// 负责解析 实例配置文件 instance.cfg：实例名、通用键值、名称回退与文本读取。
 
 package dev.molifox.core
 
@@ -18,7 +18,7 @@ private const val GENERAL_SECTION = "General"
 /** 名称缺失时的兜底实例名：随当前语言变化，不能固化成常量。 */
 private fun fallbackInstanceName(): String = I18n.t("packsC.multiMc.fallbackName")
 
-/** cfg 里表示布尔开启的 `key=true`（Prism 写小写，这里兼容大小写与空白）。 */
+/** cfg 里表示布尔开启的 `key=true`（兼容大小写与空白）。 */
 internal fun isMultiMcEnabled(value: String?): Boolean = value.orEmpty().trim().equals("true", ignoreCase = true)
 
 /** instance.cfg 解析后的导入结果：名称、预览摘要与两类可迁移设置。 */
@@ -30,7 +30,7 @@ internal data class MultiMcInstanceSettings(
 )
 
 /**
- * 读取 instance.cfg；文件缺失时按 Prism 习惯容忍，名称回退到实例目录名或压缩包名。
+ * 读取 instance.cfg；文件缺失时允许缺失，名称回退到实例目录名或压缩包名。
  * 启动前命令、自动进服与忽略 Java 兼容性只生成提示，不改变实例设置。
  */
 internal fun readMultiMcInstanceConfig(

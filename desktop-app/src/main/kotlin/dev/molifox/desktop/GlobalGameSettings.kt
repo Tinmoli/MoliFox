@@ -14,13 +14,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,16 +26,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.molifox.core.DEFAULT_EXTRA_JVM_ARGS
+import dev.molifox.core.GcPreset
 import dev.molifox.core.LauncherSettings
 import dev.molifox.core.LauncherState
 import dev.molifox.core.ProcessPriority
-import dev.molifox.core.automaticMemoryMb
-import kotlinx.coroutines.delay
+import dev.molifox.core.VersionIsolationPolicy
+import dev.molifox.core.effectiveVersionIsolationPolicy
+import dev.molifox.core.withVersionIsolationPolicy
 
 private const val GLOBAL_MEMORY_STEP_MB = 256
 private const val GLOBAL_MINIMUM_MEMORY_MB = 512
 
-/** 全局游戏设置：内存、游戏窗口、高级参数、游戏目录与版本隔离。 */
+/** 游戏设置：内存、版本隔离、游戏窗口、高级参数与游戏目录。 */
 @Composable
 internal fun gameSettingCards(
     state: LauncherState,
@@ -54,27 +55,17 @@ internal fun gameSettingCards(
     // 高级参数草稿：编辑器每敲一个字符就回调一次，停手 300ms 再写设置；
     // 还原默认（advancedRevision 变化）时按新的已保存值重建，编辑器内部文本一并重建。
     var advancedDraft by remember(advancedRevision) { mutableStateOf(settings.advancedLaunch) }
-    val pendingAdvanced by rememberUpdatedState(advancedDraft)
-    val savedAdvanced by rememberUpdatedState(settings.advancedLaunch)
-    LaunchedEffect(advancedDraft) {
-        val pending = advancedDraft
-        if (pending == settings.advancedLaunch) return@LaunchedEffect
-        delay(LIVE_WRITE_DELAY)
-        writer.commit { it.copy(advancedLaunch = pending) }
-    }
     // 「启动后最小化」也会写同一个字段：已保存值被其它入口改动时把草稿同步过来，
     // 否则旧草稿会在下一次编辑时把它覆盖回去。
     LaunchedEffect(settings.advancedLaunch) {
         if (advancedDraft != settings.advancedLaunch) advancedDraft = settings.advancedLaunch
     }
-    // 离开设置页时补写还没到 300ms 的编辑，最后敲的几个字符不会丢。
-    DisposableEffect(Unit) {
-        onDispose {
-            if (pendingAdvanced != savedAdvanced) {
-                runCatching { applySetting(actions) { it.copy(advancedLaunch = pendingAdvanced) } }
-            }
-        }
-    }
+    SaveSettingsDraft(
+        advancedDraft,
+        settings.advancedLaunch,
+        save = { pending -> writer.commit { it.copy(advancedLaunch = pending) } },
+        flush = { pending -> runCatching { applySetting(actions) { it.copy(advancedLaunch = pending) } } },
+    )
     cards.add(
         SettingCard(
             strings.t("settings.game.memory.title"),
@@ -94,19 +85,7 @@ internal fun gameSettingCards(
                 },
                 settingField(
                     strings.t("settings.game.memory.max.title"),
-                    strings.t(
-                        "settings.game.memory.max.detail",
-                        actions.controller.platform.totalMemoryMb / 1024,
-                    ),
                 ) {
-                    if (settings.autoMemory) {
-                        val estimate =
-                            automaticMemoryMb(
-                                actions.controller.platform.totalMemoryMb,
-                                actions.controller.platform.availableMemoryMb,
-                            )
-                        MutedText(strings.t("settings.game.memory.estimate", estimate))
-                    }
                     // 拖动只改本地值，停手 300ms 才写设置；初始内存跟着最大值一起收窄。
                     val memory =
                         rememberSliderDraft(settings.memoryMb.toFloat()) { dragged ->
@@ -134,7 +113,20 @@ internal fun gameSettingCards(
                         )
                         Tag(gigabytesFromMebibytes(memory.floatValue))
                     }
-                    MutedText(strings.t("settings.game.memory.hint"))
+                    MemoryAllocationBar(actions.controller.platform, memory.floatValue.toInt(), settings.autoMemory)
+                },
+            ),
+        ),
+    )
+    cards.add(
+        SettingCard(
+            strings.t("settings.game.isolation.title"),
+            "",
+            listOf(
+                settingControl(strings.t("settings.game.isolation.title")) {
+                    GlobalIsolationDropdown(settings.effectiveVersionIsolationPolicy) { policy ->
+                        writer.commit { it.withVersionIsolationPolicy(policy) }
+                    }
                 },
             ),
         ),
@@ -227,9 +219,15 @@ internal fun gameSettingCards(
                 strings.t("settings.game.advanced.title"),
                 strings.t("settings.game.advanced.detail"),
                 listOf(
+                    settingControl(strings.t("settings.game.advanced.gc")) {
+                        GcPresetRow(
+                            GcPreset.from(settings.gcPreset),
+                            { preset -> applySetting(actions) { it.copy(gcPreset = preset.value) } },
+                        )
+                    },
                     settingControl(strings.t("settings.game.advanced.jvm")) {
                         SettingTextArea(
-                            settings.extraJvmArgs,
+                            settings.extraJvmArgs.ifBlank { DEFAULT_EXTRA_JVM_ARGS },
                             { value -> applySetting(actions) { it.copy(extraJvmArgs = value) } },
                             strings.t("settings.game.advanced.jvm"),
                             strings.t("settings.game.advanced.jvm.hint"),
@@ -267,6 +265,8 @@ internal fun gameSettingCards(
                         }
                     },
                 ),
+                collapsible = true,
+                startExpanded = false,
             ),
         )
     }
@@ -281,25 +281,28 @@ internal fun gameSettingCards(
             ),
         ),
     )
-    cards.add(
-        SettingCard(
-            strings.t("settings.game.isolation.title"),
-            "",
-            listOf(
-                settingRow(
-                    strings.t("settings.game.isolation.enable.title"),
-                    strings.t("settings.game.isolation.enable.detail"),
-                ) {
-                    CompactSwitch(
-                        settings.isolateVersions,
-                        { value -> writer.commit { it.copy(isolateVersions = value) } },
-                    )
-                },
-                settingNote(strings.t("settings.game.isolation.note")),
-            ),
-        ),
-    )
     return cards
+}
+
+@Composable
+private fun GlobalIsolationDropdown(
+    selected: VersionIsolationPolicy,
+    onSelect: (VersionIsolationPolicy) -> Unit,
+) {
+    val strings = LocalStrings.current
+    val choices = listOf(VersionIsolationPolicy.Disabled, VersionIsolationPolicy.Modded, VersionIsolationPolicy.All)
+    SimpleDropdown(
+        selected.name,
+        choices.map { it.name to strings.t("settings.game.isolation.policy.${it.name}") },
+        { value -> onSelect(VersionIsolationPolicy.valueOf(value)) },
+        label = strings.t("settings.game.isolation.title"),
+        selectedText = strings.t("settings.game.isolation.policy.${selected.name}"),
+        descriptions =
+            (choices + selected).associate {
+                val key = if (it in choices) it.name else "Legacy"
+                it.name to strings.t("settings.game.isolation.help.$key")
+            },
+    )
 }
 
 /** 内存按 256 MB 步进并限制在有效范围内：滑块与数字输入共用。 */

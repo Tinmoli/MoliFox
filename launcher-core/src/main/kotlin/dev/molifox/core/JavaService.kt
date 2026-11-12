@@ -170,18 +170,20 @@ class JavaService(
         requiredMajor: Int,
         preferred: String,
         context: JobContext,
-    ): JavaRuntime = resolve(JavaRequirement(requiredMajor, exactAutomatic = true), preferred, context)
+    ): JavaRuntime = resolve(JavaRequirement(requiredMajor, exactAutomatic = true), preferred, context, true)
 
     suspend fun resolve(
         profile: ResolvedProfile,
         preferred: String,
         context: JobContext,
-    ): JavaRuntime = resolve(JavaRequirement.from(profile), preferred, context)
+        installMissing: Boolean = true,
+    ): JavaRuntime = resolve(JavaRequirement.from(profile), preferred, context, installMissing)
 
     private suspend fun resolve(
         requirement: JavaRequirement,
         preferred: String,
         context: JobContext,
+        installMissing: Boolean,
     ): JavaRuntime {
         if (preferred.isNotBlank()) {
             val runtime =
@@ -199,15 +201,7 @@ class JavaService(
                 requirement.problem(it, store.platform.architecture) ==
                     null
             }
-        val pool =
-            if (requirement.exactAutomatic) {
-                candidates.filter {
-                    it.majorVersion ==
-                        requirement.minimum
-                }
-            } else {
-                candidates
-            }
+        val pool = requirement.automaticCandidates(candidates)
         // 优先精确匹配所需主版本，其次用最低的兼容版本。
         pool
             .sortedWith(compareBy({ it.majorVersion != requirement.minimum }, { it.majorVersion }))
@@ -215,6 +209,9 @@ class JavaService(
             ?.let {
                 return it
             }
+        if (!installMissing) {
+            error(I18n.t("settings.java.prompt.title"))
+        }
         return install(requirement.minimum, context).also {
             check(requirement.problem(it, store.platform.architecture) == null) {
                 I18n.t("networkB2.javaService.downloadedIncompatible")

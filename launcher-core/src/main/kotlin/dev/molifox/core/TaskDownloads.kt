@@ -11,6 +11,7 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
@@ -24,11 +25,18 @@ internal class TransferTrafficContext(
 internal suspend fun recordNetworkBytes(bytes: Int) {
     val task = coroutineContext[TransferTrafficContext]?.task ?: coroutineContext[TaskDownloadContext]?.task
     task?.networkBytes(bytes.toLong())
+    coroutineContext[SourceTransferSample]?.bytes?.addAndGet(bytes.toLong())
+}
+
+internal class SourceTransferSample : AbstractCoroutineContextElement(Key) {
+    val bytes = AtomicLong()
+
+    companion object Key : CoroutineContext.Key<SourceTransferSample>
 }
 
 /**
- * 标记一次正在传数据的下载连接：进入响应体读取时打开、离开（含取消与异常）时关闭。
- * 只覆盖文件传输的读取循环，API/清单等瞬时请求不计入；没有任务上下文时不计数。
+ * 从文件请求发起到响应关闭计一次，取消与异常也会释放计数。
+ * API 请求不计入；没有任务上下文时不计数。
  */
 internal suspend fun <T> withTransferConnection(block: suspend () -> T): T {
     val task = coroutineContext[TransferTrafficContext]?.task ?: coroutineContext[TaskDownloadContext]?.task
